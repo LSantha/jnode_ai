@@ -8,16 +8,16 @@
  * by the Free Software Foundation; either version 2.1 of the License, or
  * (at your option) any later version.
  *
- * This library is distributed in the hope that it will be useful, but 
+ * This library is distributed in the hope that it will be useful, but
  * WITHOUT ANY WARRANTY; without even the implied warranty of MERCHANTABILITY
- * or FITNESS FOR A PARTICULAR PURPOSE. See the GNU Lesser General Public 
+ * or FITNESS FOR A PARTICULAR PURPOSE. See the GNU Lesser General Public
  * License for more details.
  *
  * You should have received a copy of the GNU Lesser General Public License
- * along with this library; If not, write to the Free Software Foundation, Inc., 
+ * along with this library; If not, write to the Free Software Foundation, Inc.,
  * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
  */
- 
+
 package org.jnode.vm.x86.compiler;
 
 import java.util.HashMap;
@@ -116,6 +116,8 @@ public class X86CompilerHelper {
 
     private final boolean debug = VmUtils.getVm().isDebugMode();
 
+    private int debugLabelCounter;
+
     private final AbstractX86StackManager stackMgr;
 
     private X86Assembler os;
@@ -168,6 +170,7 @@ public class X86CompilerHelper {
      */
     public final void reset() {
         classInitLabels.clear();
+        debugLabelCounter = 0;
     }
 
     /**
@@ -533,7 +536,7 @@ public class X86CompilerHelper {
             .getOffset();
         if (isTestOnly) {
             if (debug) {
-                final Label ok = new Label(curInstrLabel + labelPrefix + "_" + (os.getLength() % 256) + "$$ediok");
+                final Label ok = new Label(curInstrLabel + labelPrefix + "_" + (debugLabelCounter++) + "$$ediok");
                 if (os.isCode32()) {
                     os.writePrefix(X86Constants.FS_PREFIX);
                     os.writeCMP_MEM(this.STATICS, offset);
