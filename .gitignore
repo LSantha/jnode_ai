@@ -14,3 +14,4 @@ classlib-src.jar.bz2
 classlib.pack.gz
 
 /.metadata
+/.idea/
