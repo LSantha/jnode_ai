@@ -1,6 +1,6 @@
 # Welcome to JNode!
 
-[![Build Status](https://travis-ci.org/jnode/jnode.svg?branch=master)](https://travis-ci.org/jnode/jnode)
+[![Java CI](https://github.com/LSantha/jnode_ai/actions/workflows/ant.yml/badge.svg)](https://github.com/LSantha/jnode_ai/actions/workflows/ant.yml)
 
 In this file, you find the instructions needed to setup a JNode development environment.
 
