@@ -21,8 +21,31 @@ jobs:
       with:
         java-version: '8'
         distribution: 'zulu'
+    - name: Install system dependencies
+      run: sudo apt-get update && sudo apt-get install -y nasm qemu-system-x86
     - name: Build and run tests
       run: |
-        ./build.sh cd-x86-lite
+        ./build.sh clean -Dbuild.properties.file=../.github/qemu/jnode.properties cd-x86-lite regression-tests
         ./test.sh all
-        ./build.sh regression-tests
+    - name: Run QEMU Boot Test
+      run: |
+        echo "Starting JNode in QEMU"
+        rm -f /tmp/com1.txt
+        touch /tmp/com1.txt
+        qemu-system-x86_64 -cdrom ./all/build/cdroms/jnode-x86-lite.iso -m 1024 -M pc -cpu pentium -boot once=d,menu=off -net none -serial file:/tmp/com1.txt -display none &
+        qemu_pid=$!
+        sleep 1
+        
+        tail -f /tmp/com1.txt &
+        tail_pid=$!
+        
+        # Wait for "System has finished" using a timeout so it doesn't hang indefinitely 
+        timeout 120s bash -c 'until grep -q -i "System has finished" /tmp/com1.txt; do sleep 1; done' || { 
+          echo "Boot failed or timed out!"
+          cat /tmp/com1.txt
+          kill $qemu_pid $tail_pid || true
+          exit 1
+        }
+        
+        echo "Successfully booted JNode!"
+        kill $qemu_pid $tail_pid || true
