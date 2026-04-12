@@ -266,15 +266,15 @@
 		<mkdir dir="${descriptors.dir}"/>
 		<mkdir dir="${plugins.dir}"/>
 		<mkdir dir="${initjars.dir}"/>
-		<property file="${root.dir}/all/lib/ftp.properties"/>
+		<property file="${root.dir}/all/lib/classlib.properties"/>
 		<!-- check for classlib update -->
 		<if>
 			<or>
 				<not>
-					<uptodate srcfile="${root.dir}/all/lib/ftp.properties" targetfile="${root.dir}/all/lib/classlib.pack.gz"/>
+					<uptodate srcfile="${root.dir}/all/lib/classlib.properties" targetfile="${root.dir}/all/lib/classlib.pack.gz"/>
 				</not>
 				<not>
-					<uptodate srcfile="${root.dir}/all/lib/ftp.properties" targetfile="${root.dir}/all/lib/classlib-src.jar.bz2"/>
+					<uptodate srcfile="${root.dir}/all/lib/classlib.properties" targetfile="${root.dir}/all/lib/classlib-src.jar.bz2"/>
 				</not>
 			</or>
 			<then>
@@ -286,11 +286,11 @@
 							<condition>
 								<or>
 									<not>
-										<uptodate srcfile="${root.dir}/all/lib/ftp.properties"
+										<uptodate srcfile="${root.dir}/all/lib/classlib.properties"
                                             targetfile="${root.dir}/all/lib/classlib.jar"/>
 									</not>
 									<not>
-										<uptodate srcfile="${root.dir}/all/lib/ftp.properties"
+										<uptodate srcfile="${root.dir}/all/lib/classlib.properties"
                                             targetfile="${root.dir}/all/lib/classlib-src.jar"/>
 									</not>
 								</or>
@@ -298,7 +298,7 @@
 						</fail>
 					</then>
 					<else>
-						<!-- classlib update from the FTP server -->
+						<!-- classlib update from the server -->
 						<delete file="${root.dir}/all/lib/classlib.pack.gz"/>
 						<delete file="${root.dir}/all/lib/classlib-src.jar.bz2"/>
 						<get src="${classlib.url}/classlib.pack.gz" dest="${root.dir}/all/lib/classlib.pack.gz"/>
