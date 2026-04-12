@@ -22,6 +22,8 @@ package org.jnode.test.fs.hfsplus;
 
 import java.io.File;
 import java.io.IOException;
+import java.util.ArrayList;
+import java.util.List;
 import org.jnode.driver.Device;
 import org.jnode.driver.block.FileDevice;
 import org.jnode.fs.hfsplus.HFSPlusParams;
@@ -35,12 +37,14 @@ import org.jnode.fs.service.FileSystemService;
 import org.jnode.test.support.TestUtils;
 import org.junit.Assert;
 import org.junit.Before;
+import org.junit.AfterClass;
 import org.junit.Test;
 
 public class HfsPlusFileSystemTest {
 
     private Device device;
     private FileSystemService fss;
+    private static final List<File> testFiles = new ArrayList<File>();
 
     @Before
     public void setUp() throws Exception {
@@ -129,7 +133,9 @@ public class HfsPlusFileSystemTest {
     @Test
     public void testReadDiskWithCompressedFiles() throws Exception {
 
-        device = new FileDevice(FileSystemTestUtils.getTestFile("test/fs/hfsplus/compressed.dd"), "r");
+        device = new FileDevice(
+            FileSystemTestUtils.getTestFileWithCleanup(
+                "test/fs/hfsplus/compressed.dd", testFiles), "r");
         HfsPlusFileSystemType type = fss.getFileSystemType(HfsPlusFileSystemType.ID);
         HfsPlusFileSystem fs = type.create(device, true);
 
@@ -158,7 +164,9 @@ public class HfsPlusFileSystemTest {
     public void testDiskWithIncorrectCompressedFileOnFile() throws Exception {
         // This HFS+ image was created under Linux and it seems like the 'quote.txt' file has the UF_COMPRESSED
         // flag set on it incorrectly
-        device = new FileDevice(FileSystemTestUtils.getTestFile("test/fs/hfsplus/wrong-compressed-flag.dd"), "r");
+        device = new FileDevice(
+            FileSystemTestUtils.getTestFileWithCleanup(
+                "test/fs/hfsplus/wrong-compressed-flag.dd", testFiles), "r");
         HfsPlusFileSystemType type = fss.getFileSystemType(HfsPlusFileSystemType.ID);
         HfsPlusFileSystem fs = type.create(device, true);
 
@@ -174,7 +182,9 @@ public class HfsPlusFileSystemTest {
 
     @Test
     public void testDiskCompressedHardlinks() throws Exception {
-        device = new FileDevice(FileSystemTestUtils.getTestFile("test/fs/hfsplus/compressed-hardlinks.dd"), "r");
+        device = new FileDevice(
+            FileSystemTestUtils.getTestFileWithCleanup(
+                "test/fs/hfsplus/compressed-hardlinks.dd", testFiles), "r");
         HfsPlusFileSystemType type = fss.getFileSystemType(HfsPlusFileSystemType.ID);
         HfsPlusFileSystem fs = type.create(device, true);
 
@@ -294,5 +304,10 @@ public class HfsPlusFileSystemTest {
         Device device = new FileDevice(file, "rw");
         return device;
 
+    }
+
+    @AfterClass
+    public static void cleanup() {
+        FileSystemTestUtils.cleanupTestFiles(testFiles);
     }
 }

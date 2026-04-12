@@ -26,6 +26,7 @@ import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
+import java.util.Collection;
 import java.util.zip.GZIPInputStream;
 import org.jnode.emu.plugin.model.DummyConfigurationElement;
 import org.jnode.emu.plugin.model.DummyExtension;
@@ -43,6 +44,8 @@ import static org.junit.Assert.assertTrue;
  */
 public class FileSystemTestUtils {
 
+    private static final File TEMP_DIR = new File(System.getProperty("java.io.tmpdir"), "jnode-test-fs");
+
     /**
      * Gets a file system test file.
      *
@@ -51,21 +54,36 @@ public class FileSystemTestUtils {
      * @throws IOException if an error occurs.
      */
     public static File getTestFile(String testFile) throws IOException {
-        File file = new File("fs/src/test/org/jnode/", testFile);
+        File sourceFile = new File("fs/src/test/org/jnode/", testFile);
+        File gzipFile = new File(sourceFile.getParent(), sourceFile.getName() + ".gz");
 
-        if (file.exists()) {
-            return file;
+        if (gzipFile.exists()) {
+            File tempFile = new File(TEMP_DIR, testFile);
+            explodeGzip(gzipFile, tempFile);
+            return tempFile;
         }
 
-        // Look for the gzip file.
-        File gzipFile = new File(file.getParent(), file.getName() + ".gz");
-        if (gzipFile.exists()) {
-            explodeGzip(gzipFile, file);
-            return file;
+        if (sourceFile.exists()) {
+            return sourceFile;
         }
 
         Assert.fail("Expected a gzipped file: " + gzipFile.getAbsolutePath());
         return null;
+    }
+
+    /**
+     * Gets a file system test file and registers it for cleanup.
+     * Call cleanupTestFiles() in @AfterClass to delete after tests.
+     *
+     * @param testFile the test file to get. E.g. "ntfs/test.ntfs".
+     * @return the file.
+     * @throws IOException if an error occurs.
+     */
+    public static File getTestFileWithCleanup(String testFile,
+            Collection<? super File> cleanupList) throws IOException {
+        File file = getTestFile(testFile);
+        cleanupList.add(file);
+        return file;
     }
 
     /**
@@ -76,11 +94,18 @@ public class FileSystemTestUtils {
      * @throws java.io.IOException if there was an error exploding the GZIP file.
      */
     private static synchronized void explodeGzip(File gzipFile, File outputFile) throws IOException {
-        File tempFile = new File(outputFile.getParentFile(), outputFile.getName() + ".tmp");
+        if (!TEMP_DIR.exists()) {
+            TEMP_DIR.mkdirs();
+        }
+
+        if (!outputFile.getParentFile().exists()) {
+            outputFile.getParentFile().mkdirs();
+        }
+
+        File tempFile = new File(TEMP_DIR, outputFile.getName() + ".tmp");
 
         if (!outputFile.exists() || gzipFile.lastModified() > outputFile.lastModified()) {
             if (outputFile.exists()) {
-                // Force deletion if it's out of date or the renameTo further down will fail.
                 Assert.assertTrue(outputFile.delete());
             }
 
@@ -99,6 +124,19 @@ public class FileSystemTestUtils {
             assertTrue(
                 String.format("Temp data file couldn't be renamed.\nOld name: %s\nNew name: %s", tempFile, outputFile),
                 tempFile.renameTo(outputFile));
+        }
+    }
+
+    /**
+     * Cleanup temporary test files.
+     *
+     * @param files the files to delete
+     */
+    public static void cleanupTestFiles(Collection<File> files) {
+        for (File file : files) {
+            if (file != null && file.exists()) {
+                file.delete();
+            }
         }
     }
 

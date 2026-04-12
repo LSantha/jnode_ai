@@ -20,6 +20,9 @@
  
 package org.jnode.test.fs.ntfs;
 
+import java.io.File;
+import java.util.ArrayList;
+import java.util.List;
 import org.jnode.driver.Device;
 import org.jnode.driver.block.FileDevice;
 import org.jnode.fs.FSFileSlackSpace;
@@ -32,12 +35,14 @@ import org.jnode.test.fs.DataStructureAsserts;
 import org.jnode.test.fs.FileSystemTestUtils;
 import org.junit.Assert;
 import org.junit.Before;
+import org.junit.AfterClass;
 import org.junit.Test;
 
 public class NTFSFileSystemTest {
 
     private Device device;
     private FileSystemService fss;
+    private static final List<File> testFiles = new ArrayList<File>();
 
     @Before
     public void setUp() throws Exception {
@@ -83,7 +88,9 @@ public class NTFSFileSystemTest {
     @Test
     public void testReadCompressedDisk() throws Exception {
 
-        device = new FileDevice(FileSystemTestUtils.getTestFile("test/fs/ntfs/compressed.dd"), "r");
+        device = new FileDevice(
+            FileSystemTestUtils.getTestFileWithCleanup(
+                "test/fs/ntfs/compressed.dd", testFiles), "r");
         NTFSFileSystemType type = fss.getFileSystemType(NTFSFileSystemType.ID);
         NTFSFileSystem fs = type.create(device, true);
 
@@ -219,7 +226,9 @@ public class NTFSFileSystemTest {
     @Test
     public void testLinks() throws Exception {
 
-        device = new FileDevice(FileSystemTestUtils.getTestFile("test/fs/ntfs/ntfs-links.dd"), "r");
+        device = new FileDevice(
+            FileSystemTestUtils.getTestFileWithCleanup(
+                "test/fs/ntfs/ntfs-links.dd", testFiles), "r");
         NTFSFileSystemType type = fss.getFileSystemType(NTFSFileSystemType.ID);
         NTFSFileSystem fs = type.create(device, true);
 
@@ -272,7 +281,9 @@ public class NTFSFileSystemTest {
     public void testFileSlackSpace() throws Exception {
 
         // Arrange
-        device = new FileDevice(FileSystemTestUtils.getTestFile("test/fs/ntfs/compressed.dd"), "r");
+        device = new FileDevice(
+            FileSystemTestUtils.getTestFileWithCleanup(
+                "test/fs/ntfs/compressed.dd", testFiles), "r");
         NTFSFileSystemType type = fss.getFileSystemType(NTFSFileSystemType.ID);
         NTFSFileSystem fs = type.create(device, true);
 
@@ -286,5 +297,10 @@ public class NTFSFileSystemTest {
         // Assert
         Assert.assertEquals("Wrong length", 650, slackSpace.length);
         Assert.assertEquals("Wrong MD5", "5f7aec79cc32e8a3a64732e4652b3e32", md5);
+    }
+
+    @AfterClass
+    public static void cleanup() {
+        FileSystemTestUtils.cleanupTestFiles(testFiles);
     }
 }
