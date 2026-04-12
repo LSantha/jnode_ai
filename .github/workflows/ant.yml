@@ -19,5 +19,6 @@ jobs:
     - uses: actions/setup-java@v4
       with:
         java-version: '8'
+        distribution: 'zulu'
     - name: Build with Ant
       run: ./build.sh cd-x86-lite
