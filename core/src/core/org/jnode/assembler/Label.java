@@ -57,6 +57,7 @@ public class Label extends VmAddress implements Comparable<Object> {
      * @return True if o is equal to this, false otherwise.
      * @see java.lang.Object#equals(Object)
      */
+    @Override
     public boolean equals(Object o) {
         if (o instanceof Label)
             return label.equals(((Label) o).label);
@@ -70,6 +71,7 @@ public class Label extends VmAddress implements Comparable<Object> {
      * @return The hashcode
      * @see java.lang.Object#hashCode()
      */
+    @Override
     public int hashCode() {
         return label.hashCode();
     }
@@ -81,6 +83,7 @@ public class Label extends VmAddress implements Comparable<Object> {
      * @return 0 if equal, less then 0 if this is less then o, greater then 0 otherwise
      * @see java.lang.Comparable#compareTo(Object)
      */
+    @Override
     public int compareTo(Object o) {
         if (o == null) {
             return -1;

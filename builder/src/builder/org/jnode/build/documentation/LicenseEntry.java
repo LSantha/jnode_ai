@@ -65,6 +65,7 @@ final class LicenseEntry implements Comparable<LicenseEntry> {
     /**
      * @see java.lang.Comparable#compareTo(T)
      */
+    @Override
     public int compareTo(LicenseEntry o) {
         int rc = name.compareTo(o.name);
         if (rc == 0) {
