@@ -8,7 +8,7 @@ on:
 
 jobs:
   opencode:
-    if: |      
+    if: |
       (contains(github.event.comment.body, ' /opencode') ||
       startsWith(github.event.comment.body, '/opencode')) &&
       (github.event.comment.author_association == 'COLLABORATOR' || 
@@ -31,4 +31,4 @@ jobs:
         env:
           OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY }}
         with:
-          model: opencode/glm-5-free
+          model: opencode/minimax-m2.5-free
