@@ -130,7 +130,7 @@ public abstract class AbstractPointerDriver extends AbstractInputDriver<PointerE
     /**
      * Send a given pointer event to the given listener.
      *
-     * @param listener the pointer listener to recieve the event
+     * @param listener the pointer listener to receive the event
      * @param event    the pointer event
      */
     @Override
