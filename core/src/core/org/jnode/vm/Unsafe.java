@@ -42,7 +42,7 @@ import org.vmmagic.unboxed.Offset;
 import org.vmmagic.unboxed.Word;
 
 /**
- * Class that allows directy hardware access.
+ * Class that allows direct hardware access.
  *
  * @author epr
  */
