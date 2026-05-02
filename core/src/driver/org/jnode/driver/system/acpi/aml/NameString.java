@@ -57,7 +57,7 @@ public class NameString implements Comparable {
         this.prefix = prefix;
     }
 
-    @Override
+@Override
     public int compareTo(Object o) {
         if (o instanceof NameString) {
             final NameString compared = (NameString) o;
@@ -74,7 +74,7 @@ public class NameString implements Comparable {
         return -1;
     }
 
-    @Override
+@Override
     public boolean equals(Object o) {
         if (o instanceof NameString) {
             NameString compared = (NameString) o;

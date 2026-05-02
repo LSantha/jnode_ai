@@ -39,7 +39,7 @@ public class PackageDirectory implements Comparable<Object> {
     /**
      * @see java.lang.Comparable#compareTo(java.lang.Object)
      */
-    @Override
+@Override
     public int compareTo(Object obj) {
         return packageFileName.compareTo(((PackageDirectory) obj).packageFileName);
     }
@@ -59,7 +59,7 @@ public class PackageDirectory implements Comparable<Object> {
     /**
      * @see java.lang.Object#equals(java.lang.Object)
      */
-    @Override
+@Override
     public boolean equals(Object obj) {
         if (obj instanceof PackageDirectory) {
             return ((PackageDirectory) obj).packageFileName.equals(packageFileName);
@@ -71,7 +71,7 @@ public class PackageDirectory implements Comparable<Object> {
     /**
      * @see java.lang.Object#hashCode()
      */
-    @Override
+@Override
     public int hashCode() {
         return packageFileName.hashCode();
     }
