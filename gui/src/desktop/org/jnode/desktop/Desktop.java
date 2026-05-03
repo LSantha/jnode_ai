@@ -52,9 +52,10 @@ public class Desktop implements Runnable {
 
     ControlBar controlBar;
 
-    /**
-     * @see java.lang.Runnable#run()
-     */
+/**
+      * @see java.lang.Runnable#run()
+      */
+    @Override
     public void run() {
         final ClassLoader cl = getClass().getClassLoader();
         final ExtensionPoint appsEP;

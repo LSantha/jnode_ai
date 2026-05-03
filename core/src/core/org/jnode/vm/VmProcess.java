@@ -230,6 +230,7 @@ public class VmProcess extends Process {
          *
          * @see java.lang.Runnable#run()
          */
+        @Override
         public void run() {
             try {
                 final Class<?> mainClass = Class.forName(mainClassName);
