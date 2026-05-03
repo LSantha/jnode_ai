@@ -204,6 +204,7 @@ public class NanoHTTPD {
 
         final ServerSocket ss = new ServerSocket(myTcpPort);
         Thread t = new Thread(new Runnable() {
+            @Override
             public void run() {
                 try {
                     while (true)
