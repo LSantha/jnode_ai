@@ -21,7 +21,7 @@
 package sun.java2d.loops;
 
 import java.awt.geom.AffineTransform;
-import java.awt.*;
+import java.awt.Composite;
 import sun.java2d.pipe.Region;
 import sun.java2d.SurfaceData;
 
