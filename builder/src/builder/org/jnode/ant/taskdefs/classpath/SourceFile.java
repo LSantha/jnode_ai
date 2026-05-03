@@ -44,6 +44,7 @@ final class SourceFile implements Comparable<Object> {
     /**
      * @see java.lang.Comparable#compareTo(java.lang.Object)
      */
+    @Override
     public int compareTo(Object obj) {
         return fileName.compareTo(((SourceFile) obj).fileName);
     }
@@ -85,6 +86,7 @@ final class SourceFile implements Comparable<Object> {
     /**
      * @see java.lang.Object#equals(java.lang.Object)
      */
+    @Override
     public boolean equals(Object obj) {
         if (obj instanceof SourceFile) {
             return ((SourceFile) obj).fileName.equals(fileName);
@@ -96,6 +98,7 @@ final class SourceFile implements Comparable<Object> {
     /**
      * @see java.lang.Object#hashCode()
      */
+    @Override
     public int hashCode() {
         return fileName.hashCode();
     }
