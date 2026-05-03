@@ -29,6 +29,7 @@ import org.jnode.install.cmdline.CommandLineInstaller;
  */
 public class Main implements Runnable {
 
+    @Override
     public void run() {
         System.out.println("JNode Installation");
         CommandLineInstaller.main();

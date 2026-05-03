@@ -2518,6 +2518,7 @@ public class Thinlet extends Container
 	 * A second thread is used to repeat value change events for scrollbar or spinbox
 	 * during the mouse is pressed, or to pop up tooltip
 	 */
+	@Override
 	public synchronized void run() {
 		while (timer == Thread.currentThread()) {
 			try {

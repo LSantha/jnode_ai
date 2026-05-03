@@ -72,9 +72,10 @@ public class Desktop implements Runnable {
     //todo abstract out this dependency in the future
     JNodeAwtContext desktopFrame;
 
-    /**
-     * @see Runnable#run()
-     */
+/**
+      * @see Runnable#run()
+      */
+    @Override
     public void run() {
         SwingUtilities.invokeLater(new Runnable() {
             public void run() {

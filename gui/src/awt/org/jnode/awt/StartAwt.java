@@ -34,6 +34,7 @@ public class StartAwt implements Runnable {
     /**
      * @see java.lang.Runnable#run()
      */
+    @Override
     public void run() {
         JNodeToolkit.startAwt();
     }
