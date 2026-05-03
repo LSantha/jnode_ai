@@ -20,7 +20,7 @@
  
 package sun.java2d.loops;
 
-import java.awt.*;
+import java.awt.Composite;
 import sun.java2d.SurfaceData;
 import sun.java2d.SunGraphics2D;
 

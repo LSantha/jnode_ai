@@ -22,7 +22,7 @@ package sun.java2d.loops;
 
 import sun.java2d.SurfaceData;
 import sun.java2d.pipe.Region;
-import java.awt.*;
+import java.awt.Composite;
 
 /**
  * @author Levente S\u00e1ntha
