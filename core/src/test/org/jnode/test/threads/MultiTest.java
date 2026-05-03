@@ -67,6 +67,7 @@ public class MultiTest {
         private int i = 0;
         private int number;
 
+        @Override
         public void run() {
             synchronized (MultiTest.class) {
                 number = threadCounter++;

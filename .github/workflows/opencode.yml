@@ -15,6 +15,9 @@ jobs:
        github.event.comment.author_association == 'MEMBER' || 
        github.event.comment.author_association == 'OWNER')
     runs-on: ubuntu-latest
+    env:
+      # This forces actions to use Node 24 and clears the warning
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
     permissions:
       id-token: write
       contents: write
@@ -25,10 +28,15 @@ jobs:
         uses: actions/checkout@v6
         with:
           persist-credentials: false
-
+      - name: Set up JDK 8
+        uses: actions/setup-java@v4
+        with:
+          java-version: '8'
+          distribution: 'zulu'
       - name: Run opencode
         uses: anomalyco/opencode/github@latest
         env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY }}
         with:
           model: opencode/minimax-m2.5-free
