@@ -245,7 +245,6 @@ public class TCPSocketImpl extends SocketImpl {
      * @see java.net.SocketImpl#sendUrgentData(int)
      */
     protected void sendUrgentData(int data) throws IOException {
-        // TODO Auto-generated method stub
 
     }
 
@@ -253,7 +252,6 @@ public class TCPSocketImpl extends SocketImpl {
      * @see java.net.SocketOptions#setOption(int, java.lang.Object)
      */
     public void setOption(int option_id, Object val) throws SocketException {
-        // TODO Auto-generated method stub
 
     }
 

@@ -64,7 +64,6 @@ public class JNodeGraphicsConfiguration extends GraphicsConfiguration {
      * @see java.awt.GraphicsConfiguration#createCompatibleVolatileImage(int, int)
      */
     public VolatileImage createCompatibleVolatileImage(int w, int h) {
-        // TODO Auto-generated method stub
         return null;
     }
 
@@ -96,7 +95,6 @@ public class JNodeGraphicsConfiguration extends GraphicsConfiguration {
      * @see java.awt.GraphicsConfiguration#getDefaultTransform()
      */
     public AffineTransform getDefaultTransform() {
-        // TODO Auto-generated method stub
         return null;
     }
 
@@ -111,7 +109,6 @@ public class JNodeGraphicsConfiguration extends GraphicsConfiguration {
      * @see java.awt.GraphicsConfiguration#getNormalizingTransform()
      */
     public AffineTransform getNormalizingTransform() {
-        // TODO Auto-generated method stub
         return null;
     }
 
@@ -128,7 +125,6 @@ public class JNodeGraphicsConfiguration extends GraphicsConfiguration {
 
     @Override
     public VolatileImage createCompatibleVolatileImage(int width, int height, int transparency) {
-        // TODO Auto-generated method stub
         return null;
     }
 }

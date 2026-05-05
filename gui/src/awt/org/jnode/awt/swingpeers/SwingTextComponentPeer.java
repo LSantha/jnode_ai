@@ -46,7 +46,6 @@ abstract class SwingTextComponentPeer<awtT extends TextComponent, peerT extends 
      * @see java.awt.peer.TextComponentPeer#filterEvents(long)
      */
     public long filterEvents(long filter) {
-        // TODO Auto-generated method stub
         return 0;
     }
 
@@ -69,7 +68,6 @@ abstract class SwingTextComponentPeer<awtT extends TextComponent, peerT extends 
      * @see java.awt.peer.TextComponentPeer#getIndexAtPoint(int, int)
      */
     public int getIndexAtPoint(int x, int y) {
-        // TODO Auto-generated method stub
         return 0;
     }
 

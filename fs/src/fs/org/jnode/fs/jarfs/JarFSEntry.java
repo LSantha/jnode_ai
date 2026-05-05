@@ -67,7 +67,6 @@ public final class JarFSEntry implements FSEntry {
     }
 
     public FSDirectory getParent() {
-        // TODO Auto-generated method stub
         return null;
     }
 
@@ -92,17 +91,14 @@ public final class JarFSEntry implements FSEntry {
     }
 
     public FSFile getFile() throws IOException {
-        // TODO Auto-generated method stub
         return null;
     }
 
     public FSDirectory getDirectory() throws IOException {
-        // TODO Auto-generated method stub
         return null;
     }
 
     public FSAccessRights getAccessRights() throws IOException {
-        // TODO Auto-generated method stub
         return null;
     }
 

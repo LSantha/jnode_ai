@@ -49,7 +49,6 @@ final class SwingScrollPanePeer extends
      * @see java.awt.peer.ScrollPanePeer#childResized(int, int)
      */
     public void childResized(int width, int height) {
-        // TODO Auto-generated method stub
 
     }
 
@@ -57,7 +56,6 @@ final class SwingScrollPanePeer extends
      * @see java.awt.peer.ScrollPanePeer#getHScrollbarHeight()
      */
     public int getHScrollbarHeight() {
-        // TODO Auto-generated method stub
         return 0;
     }
 
@@ -65,7 +63,6 @@ final class SwingScrollPanePeer extends
      * @see java.awt.peer.ScrollPanePeer#getVScrollbarWidth()
      */
     public int getVScrollbarWidth() {
-        // TODO Auto-generated method stub
         return 0;
     }
 
@@ -73,7 +70,6 @@ final class SwingScrollPanePeer extends
      * @see java.awt.peer.ScrollPanePeer#setScrollPosition(int, int)
      */
     public void setScrollPosition(int h, int v) {
-        // TODO Auto-generated method stub
 
     }
 
@@ -82,7 +78,6 @@ final class SwingScrollPanePeer extends
      *      int)
      */
     public void setUnitIncrement(Adjustable item, int inc) {
-        // TODO Auto-generated method stub
 
     }
 
@@ -90,7 +85,6 @@ final class SwingScrollPanePeer extends
      * @see java.awt.peer.ScrollPanePeer#setValue(java.awt.Adjustable, int)
      */
     public void setValue(Adjustable item, int value) {
-        // TODO Auto-generated method stub
 
     }
 

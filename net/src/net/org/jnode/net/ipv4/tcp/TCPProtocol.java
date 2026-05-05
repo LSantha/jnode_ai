@@ -208,7 +208,6 @@ public class TCPProtocol implements IPv4Protocol, IPv4Constants, TCPConstants {
      * @see org.jnode.net.ipv4.IPv4Protocol#receiveError(org.jnode.net.SocketBuffer)
      */
     public void receiveError(SocketBuffer skbuf) throws SocketException {
-        // TODO Auto-generated method stub
 
     }
 

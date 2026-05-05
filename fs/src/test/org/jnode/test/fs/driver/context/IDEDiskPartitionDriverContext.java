@@ -32,7 +32,6 @@ public class IDEDiskPartitionDriverContext extends BlockDeviceAPIContext {
     public void init(TestConfig config, MockObjectTestCase testCase) throws Exception {
         super.init(config, testCase);
 
-        // TODO Auto-generated method stub
 
     }
 //  TODO: create context

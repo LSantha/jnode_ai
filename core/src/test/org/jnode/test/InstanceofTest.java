@@ -36,7 +36,6 @@ public class InstanceofTest {
                 }
             }
         }
-        // TODO Auto-generated method stub
 
     }
 

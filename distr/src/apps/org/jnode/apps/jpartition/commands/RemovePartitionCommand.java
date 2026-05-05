@@ -45,7 +45,6 @@ public class RemovePartitionCommand extends BasePartitionCommand {
      */
     @Override
     protected final void doExecute(Context context) throws CommandException {
-        // TODO Auto-generated method stub
     }
 
     /**

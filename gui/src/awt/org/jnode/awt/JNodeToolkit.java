@@ -151,7 +151,6 @@ public abstract class JNodeToolkit extends ClasspathToolkit implements FrameBuff
      */
     @Override
     public EmbeddedWindowPeer createEmbeddedWindow(EmbeddedWindow w) {
-        // TODO Auto-generated method stub
         return null;
     }
 
@@ -581,7 +580,6 @@ public abstract class JNodeToolkit extends ClasspathToolkit implements FrameBuff
      *      java.util.Properties)
      */
     public PrintJob getPrintJob(Frame frame, String title, Properties props) {
-        // TODO Auto-generated method stub
         return null;
     }
 
@@ -590,7 +588,6 @@ public abstract class JNodeToolkit extends ClasspathToolkit implements FrameBuff
      * @see java.awt.Toolkit#getScreenResolution()
      */
     public int getScreenResolution() {
-        // TODO Auto-generated method stub
         return 0;
     }
 
@@ -988,7 +985,6 @@ public abstract class JNodeToolkit extends ClasspathToolkit implements FrameBuff
      */
     @SuppressWarnings("unchecked")
     public Map mapInputMethodHighlight(InputMethodHighlight highlight) {
-        // TODO Auto-generated method stub
         return null;
     }
 
@@ -1026,7 +1022,6 @@ public abstract class JNodeToolkit extends ClasspathToolkit implements FrameBuff
      * @see java.awt.Toolkit#sync()
      */
     public void sync() {
-        // TODO Auto-generated method stub
 
     }
 

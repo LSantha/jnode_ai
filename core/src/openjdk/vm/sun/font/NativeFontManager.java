@@ -82,49 +82,41 @@ class NativeFontManager {
 
                     @Override
                     Float getCharMetrics(char ch) {
-                        // TODO Auto-generated method stub
                         return new Float(10, 10);
                     }
 
                     @Override
                     float getCodePointAdvance(int cp) {
-                        // TODO Auto-generated method stub
                         return 0;
                     }
 
                     @Override
                     StrikeMetrics getFontMetrics() {
-                        // TODO Auto-generated method stub
                         return new StrikeMetrics();
                     }
 
                     @Override
                     float getGlyphAdvance(int glyphCode) {
-                        // TODO Auto-generated method stub
                         return 0;
                     }
 
                     @Override
                     void getGlyphImageBounds(int glyphcode, Float pt, Rectangle result) {
-                        // TODO Auto-generated method stub
                         result.setBounds((int) pt.getX(), (int) pt.getY(), 10, 10);
                     }
 
                     @Override
                     long getGlyphImagePtr(int glyphcode) {
-                        // TODO Auto-generated method stub
                         return 0;
                     }
 
                     @Override
                     void getGlyphImagePtrs(int[] glyphCodes, long[] images, int len) {
-                        // TODO Auto-generated method stub
                         
                     }
 
                     @Override
                     Float getGlyphMetrics(int glyphcode) {
-                        // TODO Auto-generated method stub
                         return new Float(10, 10);
                     }
 
@@ -135,13 +127,11 @@ class NativeFontManager {
 
                     @Override
                     java.awt.geom.Rectangle2D.Float getGlyphOutlineBounds(int glyphCode) {
-                        // TODO Auto-generated method stub
                         return new java.awt.geom.Rectangle2D.Float(0, 0, 10, 10);
                     }
 
                     @Override
                     GeneralPath getGlyphVectorOutline(int[] glyphs, float x, float y) {
-                        // TODO Auto-generated method stub
                         GeneralPath path = getGlyphOutline(glyphs[0], x, y);
                         
                         for(int i = 1; i < glyphs.length; i++) {
@@ -153,7 +143,6 @@ class NativeFontManager {
 
                     @Override
                     public int getNumGlyphs() {
-                        // TODO Auto-generated method stub
                         return 0;
                     }
                     
@@ -168,25 +157,21 @@ class NativeFontManager {
 
                     @Override
                     public void charsToGlyphs(int count, char[] unicodes, int[] glyphs) {
-                        // TODO Auto-generated method stub
                         
                     }
 
                     @Override
                     public void charsToGlyphs(int count, int[] unicodes, int[] glyphs) {
-                        // TODO Auto-generated method stub
                         
                     }
 
                     @Override
                     public boolean charsToGlyphsNS(int count, char[] unicodes, int[] glyphs) {
-                        // TODO Auto-generated method stub
                         return false;
                     }
 
                     @Override
                     public int getNumGlyphs() {
-                        // TODO Auto-generated method stub
                         return 0;
                     }
                     

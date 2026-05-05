@@ -64,7 +64,6 @@ public class BufferedImageGraphics2D extends SurfaceGraphics2D {
      * @see java.awt.Graphics2D#getDeviceConfiguration()
      */
     public GraphicsConfiguration getDeviceConfiguration() {
-        // TODO Auto-generated method stub
         return null;
     }
 

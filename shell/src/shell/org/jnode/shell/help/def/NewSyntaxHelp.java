@@ -129,7 +129,6 @@ public class NewSyntaxHelp extends TextHelpBase implements EnhancedHelp {
 
     @Override
     public void details(PrintWriter pw) {
-        // TODO Auto-generated method stub
 
     }
 
