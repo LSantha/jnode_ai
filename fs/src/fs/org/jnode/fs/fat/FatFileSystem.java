@@ -174,7 +174,6 @@ public class FatFileSystem extends AbstractFileSystem<FatRootEntry> {
      */
     protected FSFile createFile(FSEntry entry) throws IOException {
 
-        // TODO Auto-generated method stub
         return null;
     }
 
@@ -182,7 +181,6 @@ public class FatFileSystem extends AbstractFileSystem<FatRootEntry> {
      *
      */
     protected FSDirectory createDirectory(FSEntry entry) throws IOException {
-        // TODO Auto-generated method stub
         return null;
     }
 
@@ -190,7 +188,6 @@ public class FatFileSystem extends AbstractFileSystem<FatRootEntry> {
      *
      */
     protected FatRootEntry createRootEntry() throws IOException {
-        // TODO Auto-generated method stub
         return null;
     }
 

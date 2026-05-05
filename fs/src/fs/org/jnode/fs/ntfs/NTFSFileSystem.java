@@ -126,14 +126,12 @@ public class NTFSFileSystem extends AbstractFileSystem<FSEntry> {
      * Flush all data.
      */
     public void flush() throws IOException {
-        // TODO Auto-generated method stub
     }
 
     /**
      *
      */
     protected FSFile createFile(FSEntry entry) throws IOException {
-        // TODO Auto-generated method stub
         return null;
     }
 
@@ -141,7 +139,6 @@ public class NTFSFileSystem extends AbstractFileSystem<FSEntry> {
      *
      */
     protected FSDirectory createDirectory(FSEntry entry) throws IOException {
-        // TODO Auto-generated method stub
         return null;
     }
 
@@ -149,7 +146,6 @@ public class NTFSFileSystem extends AbstractFileSystem<FSEntry> {
      *
      */
     protected NTFSEntry createRootEntry() throws IOException {
-        // TODO Auto-generated method stub
         return null;
     }
 

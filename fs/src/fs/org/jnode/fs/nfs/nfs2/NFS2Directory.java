@@ -274,7 +274,6 @@ public class NFS2Directory extends NFS2Object implements FSDirectory {
     }
 
     public void flush() throws IOException {
-        // TODO Auto-generated method stub
     }
 
     public void remove(String name) throws IOException {

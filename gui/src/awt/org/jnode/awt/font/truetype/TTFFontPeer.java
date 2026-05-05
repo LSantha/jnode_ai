@@ -128,7 +128,6 @@ public class TTFFontPeer extends JNodeFontPeer<TTFontProvider, TTFFont> {
 
     @Override
     public int getNumGlyphs(Font font) {
-        // TODO Auto-generated method stub
         return 0;
     }
 

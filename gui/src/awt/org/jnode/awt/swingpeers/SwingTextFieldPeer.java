@@ -84,7 +84,6 @@ final class SwingTextFieldPeer extends
      * @see java.awt.peer.TextFieldPeer#setEchoCharacter(char)
      */
     public void setEchoCharacter(char echo_char) {
-        // TODO Auto-generated method stub
 
     }
 

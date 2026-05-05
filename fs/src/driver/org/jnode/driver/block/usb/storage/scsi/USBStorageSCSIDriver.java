@@ -108,7 +108,6 @@ public class USBStorageSCSIDriver extends Driver
     }
 
     public PartitionTableEntry getPartitionTableEntry() {
-        // TODO Auto-generated method stub
         return null;
     }
 
@@ -126,22 +125,18 @@ public class USBStorageSCSIDriver extends Driver
     }
 
     public void write(long devOffset, ByteBuffer src) throws IOException {
-        // TODO Auto-generated method stub
 
     }
 
     public void flush() throws IOException {
-        // TODO Auto-generated method stub
 
     }
 
     public void requestCompleted(USBRequest request) {
-        // TODO Auto-generated method stub
 
     }
 
     public void requestFailed(USBRequest request) {
-        // TODO Auto-generated method stub
 
     }
 
@@ -205,7 +200,6 @@ public class USBStorageSCSIDriver extends Driver
     }
 
     public void lock() throws IOException {
-        // TODO Auto-generated method stub
 
     }
 
@@ -214,7 +208,6 @@ public class USBStorageSCSIDriver extends Driver
     }
 
     public void eject() throws IOException {
-        // TODO Auto-generated method stub
 
     }
 

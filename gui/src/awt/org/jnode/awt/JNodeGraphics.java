@@ -85,7 +85,6 @@ public class JNodeGraphics extends AbstractSurfaceGraphics {
      * @see java.awt.Graphics2D#getDeviceConfiguration()
      */
     public GraphicsConfiguration getDeviceConfiguration() {
-        // TODO Auto-generated method stub
         return null;
     }
 

@@ -157,7 +157,6 @@ public class DummyPluginDescriptor implements PluginDescriptor {
     }
 
     public void removeListener(PluginDescriptorListener listener) {
-        // TODO Auto-generated method stub
 
     }
 

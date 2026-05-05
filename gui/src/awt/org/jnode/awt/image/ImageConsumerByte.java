@@ -69,7 +69,6 @@ public class ImageConsumerByte extends AbstractMemoryImageConsumer {
      * @see java.awt.image.ImageConsumer#setPixels(int, int, int, int, java.awt.image.ColorModel, byte[], int, int)
      */
     public void setPixels(int x, int y, int w, int h, ColorModel model, byte[] pixels, int offset, int scansize) {
-        // TODO Auto-generated method stub
 
     }
 
@@ -85,7 +84,6 @@ public class ImageConsumerByte extends AbstractMemoryImageConsumer {
      * @see java.awt.image.ImageConsumer#setPixels(int, int, int, int, java.awt.image.ColorModel, int[], int, int)
      */
     public void setPixels(int x, int y, int w, int h, ColorModel model, int[] pixels, int offset, int scansize) {
-        // TODO Auto-generated method stub
 
     }
 

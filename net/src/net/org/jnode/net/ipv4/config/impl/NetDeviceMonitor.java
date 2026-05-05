@@ -74,7 +74,6 @@ final class NetDeviceMonitor implements DeviceListener {
      * @see org.jnode.driver.DeviceListener#deviceStop(org.jnode.driver.Device)
      */
     public void deviceStop(Device device) {
-        // TODO Auto-generated method stub
 
     }
     

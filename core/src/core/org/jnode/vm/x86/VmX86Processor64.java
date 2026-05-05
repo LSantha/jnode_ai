@@ -61,17 +61,14 @@ public final class VmX86Processor64 extends VmX86Processor {
 
     protected Address setupBootCode(ResourceManager rm, GDT gdt)
         throws ResourceNotFreeException {
-        // TODO Auto-generated method stub
         return null;
     }
 
     protected void setupGDT(GDT gdt) {
-        // TODO Auto-generated method stub
 
     }
 
     protected void setupUserStack(byte[] userStack) {
-        // TODO Auto-generated method stub
 
     }
 }

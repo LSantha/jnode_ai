@@ -48,12 +48,10 @@ final class FPCompilerSSE extends FPCompiler {
     }
 
     void compare(boolean gt, int type, Label curInstrLabel) {
-        // TODO Auto-generated method stub
 
     }
 
     void convert(int fromType, int toType) {
-        // TODO Auto-generated method stub
 
     }
 
@@ -62,7 +60,6 @@ final class FPCompilerSSE extends FPCompiler {
     }
 
     void fpaload(int type) {
-        // TODO Auto-generated method stub
 
     }
 
@@ -71,7 +68,6 @@ final class FPCompilerSSE extends FPCompiler {
     }
 
     void neg(int type) {
-        // TODO Auto-generated method stub
 
     }
 

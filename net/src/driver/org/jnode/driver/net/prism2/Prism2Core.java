@@ -488,7 +488,6 @@ final class Prism2Core extends WirelessDeviceCore implements Prism2Constants,
      * @see org.jnode.driver.net.wireless.spi.WirelessDeviceCore#setESSID(java.lang.String)
      */
     protected void setESSID(String essid) throws DriverException {
-        // TODO Auto-generated method stub
 
     }
 
@@ -496,7 +495,6 @@ final class Prism2Core extends WirelessDeviceCore implements Prism2Constants,
      * @see org.jnode.driver.net.wireless.spi.WirelessDeviceCore#startScan()
      */
     public void startScan() {
-        // TODO Auto-generated method stub
 
     }
 

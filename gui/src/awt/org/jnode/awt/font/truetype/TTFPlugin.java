@@ -42,7 +42,6 @@ public class TTFPlugin extends Plugin {
      * @throws PluginException
      */
     protected void startPlugin() throws PluginException {
-        // TODO Auto-generated method stub
 
     }
 
@@ -52,7 +51,6 @@ public class TTFPlugin extends Plugin {
      * @throws PluginException
      */
     protected void stopPlugin() throws PluginException {
-        // TODO Auto-generated method stub
 
     }
 }

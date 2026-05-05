@@ -97,7 +97,6 @@ public class X86TextAssembler extends X86Assembler implements X86Operation {
         }
 
         public void addUnresolvedLink(int offset, int patchSize) {
-            // TODO Auto-generated method stub
 
         }
 

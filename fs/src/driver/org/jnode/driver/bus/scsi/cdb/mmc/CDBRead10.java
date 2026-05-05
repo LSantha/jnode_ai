@@ -45,7 +45,6 @@ public class CDBRead10 extends CDB {
 
     @Override
     public int getDataTransfertCount() {
-        // TODO Auto-generated method stub
         return 0;
     }
 

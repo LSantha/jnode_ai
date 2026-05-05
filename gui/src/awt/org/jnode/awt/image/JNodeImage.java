@@ -83,7 +83,6 @@ public class JNodeImage extends Image {
      * @see java.awt.Image#flush()
      */
     public void flush() {
-        // TODO Auto-generated method stub
 
     }
 

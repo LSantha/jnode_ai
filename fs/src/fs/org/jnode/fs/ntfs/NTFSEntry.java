@@ -156,7 +156,6 @@ public class NTFSEntry implements FSEntry, FSEntryCreated, FSEntryLastChanged, F
      * @see org.jnode.fs.FSEntry#getParent()
      */
     public FSDirectory getParent() {
-        // TODO Auto-generated method stub
         return null;
     }
 
@@ -222,7 +221,6 @@ public class NTFSEntry implements FSEntry, FSEntryCreated, FSEntryLastChanged, F
      * @see org.jnode.fs.FSEntry#setName(java.lang.String)
      */
     public void setName(String newName) {
-        // TODO Auto-generated method stub
 
     }
 
@@ -278,7 +276,6 @@ public class NTFSEntry implements FSEntry, FSEntryCreated, FSEntryLastChanged, F
      * @see org.jnode.fs.FSEntry#getAccessRights()
      */
     public FSAccessRights getAccessRights() {
-        // TODO Auto-generated method stub
         return null;
     }
 
@@ -286,7 +283,6 @@ public class NTFSEntry implements FSEntry, FSEntryCreated, FSEntryLastChanged, F
      * @see org.jnode.fs.FSObject#isValid()
      */
     public boolean isValid() {
-        // TODO Auto-generated method stub
         return true;
     }
 
