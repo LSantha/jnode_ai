@@ -43,7 +43,17 @@ package gnu.classpath.jdwp;
 
 import gnu.classpath.jdwp.exception.InvalidClassException;
 import gnu.classpath.jdwp.exception.InvalidObjectException;
-import gnu.classpath.jdwp.id.*;
+import gnu.classpath.jdwp.id.ArrayId;
+import gnu.classpath.jdwp.id.ArrayReferenceTypeId;
+import gnu.classpath.jdwp.id.ClassLoaderId;
+import gnu.classpath.jdwp.id.ClassObjectId;
+import gnu.classpath.jdwp.id.ClassReferenceTypeId;
+import gnu.classpath.jdwp.id.InterfaceReferenceTypeId;
+import gnu.classpath.jdwp.id.ObjectId;
+import gnu.classpath.jdwp.id.ReferenceTypeId;
+import gnu.classpath.jdwp.id.StringId;
+import gnu.classpath.jdwp.id.ThreadGroupId;
+import gnu.classpath.jdwp.id.ThreadId;
 
 import java.lang.ref.Reference;
 import java.lang.ref.ReferenceQueue;
