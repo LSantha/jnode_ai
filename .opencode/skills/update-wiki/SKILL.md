@@ -1,3 +1,12 @@
+---
+name: update-wiki
+description: Documentation maintenance for JNode. Use this skill when creating or updating "Spoke" pages in the .wiki directory, ensuring Hub/Spoke architecture, strict index sorting, and remote verification.
+license: MIT
+metadata:
+  version: 1.1.0
+  author: Antigravity
+---
+
 # Skill: Update JNode Wiki with New Concept
 
 This skill defines the mandatory workflow for creating a new "Spoke" page in the JNode AI Wiki.
@@ -52,4 +61,4 @@ This skill defines the mandatory workflow for creating a new "Spoke" page in the
 ## Negative Constraints
 - **NEVER** use subdirectories in `.wiki/`. Keep it flat.
 - **NEVER** rely on OpenCode auto-push for the wiki. It only works for the main repo.
-- **NEVER** skip the Index update. The index is the agent's primary navigation tool.
+- **NEVER** skip the Index or Glossary updates.
