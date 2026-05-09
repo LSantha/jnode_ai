@@ -168,4 +168,4 @@ When updating the wiki (whether as an LLM agent or human contributor):
 2. Update `index.md` — all four tables if applicable
 3. Add an entry to `Changelog.md` with the date and a brief description
 4. Verify all `[[wiki-links]]` in your changes resolve to existing pages
-5. Commit and push: `cd .wiki && git add . && git commit -m "<description>" && git push`
+5. Commit and push: `cd .wiki && git add . && git commit -m "<description>" && git push`. **IMPORTANT**: You must manually run `git push` inside the `.wiki` directory. Do NOT rely on the OpenCode Action infrastructure to auto-push this, because `.wiki` is a separate git repository and the auto-push will fail.
