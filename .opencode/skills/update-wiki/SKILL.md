@@ -46,9 +46,9 @@ This skill defines the mandatory workflow for creating a new "Spoke" page in the
 
 ### 3. Linking phase
 - **Hub Link**: Identify the parent Hub page (e.g., `[[Architecture]]`, `[[Shell-Commands]]`) and add a link to the new page.
-- **Index Update**: Add a new row to **all four tables** in `.wiki/index.md`.
-    1. **Pages Table**: Alphabetical.
-    2. **Concepts → Pages**: **MANDATORY**: Add a row for the **Page Name** itself AND any discovered **Technical Terms** (e.g., "TIB", "IMT").
+- **Index Update**: Add or update rows in **all four tables** in `.wiki/index.md`.
+    1. **Pages Table**: Add the new page in alphabetical order.
+    2. **Concepts → Pages**: **MANDATORY**: Add a row for the **Page Name** itself. If the concept already exists (e.g., pointing to `[[Glossary]]`), **UPDATE** it to point to your new Spoke page. Also add any discovered **Technical Terms**.
     3. **Source Path → Pages**: Map the directory path to the new page.
     4. **Task Routing**: Add the page to relevant developer tasks.
 - **Glossary Update**: If you introduced or deeply explained a new project-specific term (e.g., "TIB", "IMT", "Proclet"), add a 1-sentence definition to `.wiki/Glossary.md`.
