@@ -16,6 +16,8 @@ jobs:
       issues: write
       actions: read
     steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
       - name: Process Orchestration
         env:
           GH_TOKEN: ${{ secrets.GH_PAT || secrets.GITHUB_TOKEN }}
