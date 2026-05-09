@@ -10,6 +10,7 @@ This skill defines the mandatory workflow for creating a new "Spoke" page in the
 
 ### 1. Research phase
 - Locate the primary source code for the concept.
+- **Broaden Search**: Search for related "Helper", "Manager", "Layout", or "Constants" classes (e.g., if researching `ObjectLayout`, also look for `TIBLayout`).
 - Identify:
     - Package names and key classes.
     - Architectural patterns (e.g., how it plugs into the kernel).
@@ -29,11 +30,12 @@ This skill defines the mandatory workflow for creating a new "Spoke" page in the
 
 ### 3. Linking phase
 - **Hub Link**: Identify the parent Hub page (e.g., `[[Architecture]]`, `[[Shell-Commands]]`) and add a link to the new page.
-- **Index Update**: Add a new row to **all four tables** in `.wiki/index.md`:
+- **Index Update**: Add a new row to **all four tables** in `.wiki/index.md`.
     1. **Pages Table**: Alphabetical.
-    2. **Concepts → Pages**: Add the Concept Name AND any discovered sub-terms (e.g., "TIB").
+    2. **Concepts → Pages**: **MANDATORY**: Add a row for the **Page Name** itself AND any discovered **Technical Terms** (e.g., "TIB", "IMT").
     3. **Source Path → Pages**: Map the directory path to the new page.
     4. **Task Routing**: Add the page to relevant developer tasks.
+- **Strict Sorting**: You MUST maintain A-Z alphabetical order in all tables. Re-verify the sort order of the entire table after your insertion.
 
 ### 4. Persistence phase (CRITICAL)
 - **Manual Push**: You MUST run the following commands in the `.wiki` directory:
