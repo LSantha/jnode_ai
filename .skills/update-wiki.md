@@ -35,6 +35,7 @@ This skill defines the mandatory workflow for creating a new "Spoke" page in the
     2. **Concepts → Pages**: **MANDATORY**: Add a row for the **Page Name** itself AND any discovered **Technical Terms** (e.g., "TIB", "IMT").
     3. **Source Path → Pages**: Map the directory path to the new page.
     4. **Task Routing**: Add the page to relevant developer tasks.
+- **Glossary Update**: If you introduced or deeply explained a new project-specific term (e.g., "TIB", "IMT", "Proclet"), add a 1-sentence definition to `.wiki/Glossary.md`.
 - **Strict Sorting**: You MUST maintain A-Z alphabetical order in all tables. Re-verify the sort order of the entire table after your insertion.
 
 ### 4. Persistence phase (CRITICAL)
