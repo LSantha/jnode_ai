@@ -39,6 +39,15 @@ jobs:
           STATUS=$(echo "$BODY" | grep "Status:" | cut -d':' -f2 | xargs)
           CURRENT=$(echo "$BODY" | grep "Current:" | cut -d':' -f2 | xargs | tr -d '#')
 
+          # Guard: Only process workflow_run if it matches the CURRENT task
+          if [ "$EVENT_NAME" == "workflow_run" ]; then
+            RUN_TITLE="${{ github.event.workflow_run.display_title }}"
+            if [[ "$RUN_TITLE" != *"$CURRENT"* ]]; then
+              echo "Workflow run '$RUN_TITLE' does not match current task #$CURRENT. Skipping."
+              exit 0
+            fi
+          fi
+
           # If not IN_PROGRESS, only allow manual trigger to start
           if [ "$STATUS" != "IN_PROGRESS" ] && [ "$EVENT_NAME" != "issue_comment" ]; then
             echo "Status is $STATUS. Waiting for manual /orchestrate command."
