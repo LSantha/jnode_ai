@@ -55,14 +55,14 @@ jobs:
               echo "Last run failed/timed out/cancelled. Retry count: $NEW_RETRIES"
               
               if [ $NEW_RETRIES -ge 3 ]; then
-                echo "Maximum retries reached for #$CURRENT. Stopping orchestrator."
-                BODY=$(echo "$BODY" | sed "s/Status: .*/Status: FAILED (Review #$CURRENT)/")
-                gh issue edit $ORCHESTRATOR_ISSUE --body "$BODY"
-                gh issue comment $ORCHESTRATOR_ISSUE --body "⚠️ Orchestrator stopped: Issue #$CURRENT failed 3 times. Please review the logs and restart by setting status back to IN_PROGRESS and posting /orchestrate."
-                exit 0
+                echo "Maximum retries reached for #$CURRENT. Skipping and moving to next."
+                BODY=$(echo "$BODY" | sed "s/- \[ \] #$CURRENT/- [FAIL] #$CURRENT/")
+                # Reset retry count for the next task
+                BODY=$(echo "$BODY" | sed "s/Retries: .*/Retries: 0/")
+                gh issue comment $ORCHESTRATOR_ISSUE --body "⚠️ Issue #$CURRENT failed 3 times and has been skipped. Moving to the next task."
+              else
+                BODY=$(echo "$BODY" | sed "s/Retries: .*/Retries: $NEW_RETRIES/")
               fi
-              
-              BODY=$(echo "$BODY" | sed "s/Retries: .*/Retries: $NEW_RETRIES/")
             fi
           fi
 
