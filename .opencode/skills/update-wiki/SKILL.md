@@ -17,6 +17,13 @@ This skill defines the mandatory workflow for creating a new "Spoke" page in the
 
 ## Workflow
 
+### 0. Initialization (CRITICAL)
+- **Check for .wiki**: If the `.wiki/` directory is missing or is NOT a git repository (check for `.wiki/.git`), you MUST run:
+  ```bash
+  git clone git@github.com:LSantha/jnode_ai.wiki.git .wiki
+  ```
+- **DO NOT** simply `mkdir .wiki`. It MUST be a clone of the remote repository.
+
 ### 1. Research phase
 - Locate the primary source code for the concept.
 - **Broaden Search**: Search for related "Helper", "Manager", "Layout", or "Constants" classes (e.g., if researching `ObjectLayout`, also look for `TIBLayout`).
