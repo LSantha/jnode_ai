@@ -42,8 +42,9 @@ jobs:
           # Guard: Only process workflow_run if it matches the CURRENT task
           if [ "$EVENT_NAME" == "workflow_run" ]; then
             RUN_TITLE="${{ github.event.workflow_run.display_title }}"
-            if [[ "$RUN_TITLE" != *"$CURRENT"* ]]; then
-              echo "Workflow run '$RUN_TITLE' does not match current task #$CURRENT. Skipping."
+            ISSUE_TITLE=$(gh issue view $CURRENT --json title --jq '.title')
+            if [[ "$RUN_TITLE" != "$ISSUE_TITLE" ]]; then
+              echo "Workflow run '$RUN_TITLE' does not match current task #$CURRENT title '$ISSUE_TITLE'. Skipping."
               exit 0
             fi
           fi
