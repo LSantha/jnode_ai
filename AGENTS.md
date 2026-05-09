@@ -63,7 +63,8 @@ JNode is a Java operating system with custom JVM. ~3,300 Java files, 25 assembly
 
 ## Documentation
 
-- **Wiki**: https://github.com/LSantha/jnode_ai/wiki
-- **Local clone**: `.wiki/` directory (gitignored, separate git repo)
+- **Wiki Repository**: `https://github.com/LSantha/jnode_ai.wiki.git`
+- **Initialization**: The wiki is a separate, gitignored repository. If the `.wiki/` directory is missing, you MUST run:
+  `git clone git@github.com:LSantha/jnode_ai.wiki.git .wiki`
 - **Wiki schema**: See `WIKI_SCHEMA.md` for structure and maintenance rules
 - **LLM agents**: Read `.wiki/index.md` first to locate relevant wiki pages for your task
