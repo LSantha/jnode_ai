@@ -119,7 +119,9 @@ Maps project-specific terms and concepts to their defining wiki page.
 | Related | Comma-separated `[[wiki-links]]` to pages that reference this concept |
 
 **Rules:**
-- When a new concept is introduced or explained in a wiki page, add it here
+- Every Spoke page name MUST have a corresponding row in this table (e.g., if you create `[[VFS]]`, add "VFS" as a concept).
+- Any significant technical terms introduced or explained in a page (e.g., "TIB", "IMT") should also have their own rows.
+- When a new concept is introduced or explained in a wiki page, add it here.
 - "Defined In" = points directly to the dedicated **Spoke page** (e.g., `[[DeviceManager]]`) if it exists, or to `[[Glossary]]` for minor terms.
 - "Related" = points "up" to the parent **Hub page** (e.g., `[[Driver-Framework]]`) and to sibling concepts.
 - Keep alphabetically sorted by concept name
