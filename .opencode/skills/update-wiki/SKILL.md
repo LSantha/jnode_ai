@@ -65,7 +65,15 @@ This skill defines the mandatory workflow for creating a new "Spoke" page in the
 - **Verification**: Run `git ls-remote origin refs/heads/master` to ensure the commit is on the server.
 - **Reporting**: Provide the direct URL to the new page in your final response: `https://github.com/LSantha/jnode_ai/wiki/[Concept-Name]`
 
+### 5. Completion (MANDATORY)
+- **Close the Issue**: Once the push is verified and the URL is provided, you MUST close the issue. Use the command:
+  ```bash
+  gh issue close [Issue-Number]
+  ```
+- **Verification**: The orchestrator will only consider this task finished if the issue is in the **CLOSED** state.
+
 ## Negative Constraints
 - **NEVER** use subdirectories in `.wiki/`. Keep it flat.
 - **NEVER** rely on OpenCode auto-push for the wiki. It only works for the main repo.
 - **NEVER** skip the Index or Glossary updates.
+- **NEVER** finish without closing the issue.

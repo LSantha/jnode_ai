@@ -45,11 +45,16 @@ jobs:
 
           # 3. Handle Workflow Completion
           if [ "$EVENT_NAME" == "workflow_run" ]; then
-            if [ "$CONCLUSION" == "success" ]; then
-              echo "Task #$CURRENT succeeded. Marking as complete."
+            ISSUE_STATE=$(gh issue view $CURRENT --json state --jq '.state')
+            if [ "$CONCLUSION" == "success" ] && [ "$ISSUE_STATE" == "CLOSED" ]; then
+              echo "Task #$CURRENT succeeded and issue is CLOSED. Marking as complete."
               BODY=$(echo "$BODY" | sed "s/- \[ \] #$CURRENT/- [x] #$CURRENT/")
               BODY=$(echo "$BODY" | sed "s/Retries: .*/Retries: 0/")
             else
+              if [ "$ISSUE_STATE" != "CLOSED" ]; then
+                echo "Task #$CURRENT workflow succeeded but issue is still OPEN (Proof of work failed)."
+              fi
+              
               RETRIES=$(echo "$BODY" | grep "Retries:" | cut -d':' -f2 | xargs)
               NEW_RETRIES=$((RETRIES + 1))
               echo "Task #$CURRENT failed/cancelled ($CONCLUSION). Attempt: $NEW_RETRIES"
