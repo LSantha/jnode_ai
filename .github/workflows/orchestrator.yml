@@ -1,0 +1,74 @@
+name: Wiki Orchestrator
+on:
+  issue_comment:
+    types: [created]
+  workflow_run:
+    workflows: ["opencode"]
+    types: [completed]
+
+jobs:
+  orchestrate:
+    if: |
+      (github.event_name == 'issue_comment' && startsWith(github.event.comment.body, '/orchestrate')) ||
+      (github.event_name == 'workflow_run')
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+      actions: read
+    steps:
+      - name: Orchestration Logic
+        env:
+          GH_TOKEN: ${{ secrets.GH_PAT || secrets.GITHUB_TOKEN }}
+          EVENT_NAME: ${{ github.event_name }}
+          CONCLUSION: ${{ github.event.workflow_run.conclusion }}
+        run: |
+          # 1. Find the Master Orchestrator Issue
+          ORCHESTRATOR_ISSUE=$(gh issue list --label "kind/orchestrator" --state open --limit 1 --json number --jq '.[0].number')
+          
+          if [ -z "$ORCHESTRATOR_ISSUE" ]; then
+            echo "No orchestrator issue found with label 'kind/orchestrator'. Skipping."
+            exit 0
+          fi
+
+          echo "Found Orchestrator Issue: #$ORCHESTRATOR_ISSUE"
+
+          # 2. Get the current state
+          BODY=$(gh issue view $ORCHESTRATOR_ISSUE --json body --jq '.body')
+          STATUS=$(echo "$BODY" | grep "Status:" | cut -d':' -f2 | xargs)
+          CURRENT=$(echo "$BODY" | grep "Current:" | cut -d':' -f2 | xargs | tr -d '#')
+
+          if [ "$STATUS" != "IN_PROGRESS" ] && [ "$EVENT_NAME" != "issue_comment" ]; then
+            echo "Orchestrator is not in IN_PROGRESS status. Skipping."
+            exit 0
+          fi
+
+          # 3. Handle Workflow Completion
+          if [ "$EVENT_NAME" == "workflow_run" ]; then
+            if [ "$CONCLUSION" == "success" ]; then
+              echo "Last run was successful. Marking #$CURRENT as complete."
+              BODY=$(echo "$BODY" | sed "s/- \[ \] #$CURRENT/- [x] #$CURRENT/")
+            else
+              echo "Last run failed. We will re-trigger #$CURRENT."
+              # You could add logic here to stop after N failures
+            fi
+          fi
+
+          # 4. Find the next task
+          NEXT_TASK=$(echo "$BODY" | grep -m 1 "- \[ \] #" | grep -o "#[0-9]*" | tr -d '#')
+
+          if [ -z "$NEXT_TASK" ]; then
+            echo "All tasks completed!"
+            BODY=$(echo "$BODY" | sed "s/Status: .*/Status: COMPLETED/")
+            gh issue edit $ORCHESTRATOR_ISSUE --body "$BODY"
+            gh issue comment $ORCHESTRATOR_ISSUE --body "✅ All wiki documentation tasks have been completed."
+            exit 0
+          fi
+
+          # 5. Update the issue and trigger next
+          BODY=$(echo "$BODY" | sed "s/Status: .*/Status: IN_PROGRESS/")
+          BODY=$(echo "$BODY" | sed "s/Current: .*/Current: #$NEXT_TASK/")
+          
+          gh issue edit $ORCHESTRATOR_ISSUE --body "$BODY"
+          gh issue comment $NEXT_TASK --body "/oc Please continue the wiki backlog. Follow the 'update-wiki' skill."
+          
+          echo "Triggered next task: #$NEXT_TASK"
