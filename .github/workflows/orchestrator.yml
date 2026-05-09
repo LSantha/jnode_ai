@@ -47,9 +47,22 @@ jobs:
             if [ "$CONCLUSION" == "success" ]; then
               echo "Last run was successful. Marking #$CURRENT as complete."
               BODY=$(echo "$BODY" | sed "s/- \[ \] #$CURRENT/- [x] #$CURRENT/")
+              # Reset retry count for the next task
+              BODY=$(echo "$BODY" | sed "s/Retries: .*/Retries: 0/")
             else
-              echo "Last run failed. We will re-trigger #$CURRENT."
-              # You could add logic here to stop after N failures
+              RETRIES=$(echo "$BODY" | grep "Retries:" | cut -d':' -f2 | xargs)
+              NEW_RETRIES=$((RETRIES + 1))
+              echo "Last run failed/timed out/cancelled. Retry count: $NEW_RETRIES"
+              
+              if [ $NEW_RETRIES -ge 3 ]; then
+                echo "Maximum retries reached for #$CURRENT. Stopping orchestrator."
+                BODY=$(echo "$BODY" | sed "s/Status: .*/Status: FAILED (Review #$CURRENT)/")
+                gh issue edit $ORCHESTRATOR_ISSUE --body "$BODY"
+                gh issue comment $ORCHESTRATOR_ISSUE --body "⚠️ Orchestrator stopped: Issue #$CURRENT failed 3 times. Please review the logs and restart by setting status back to IN_PROGRESS and posting /orchestrate."
+                exit 0
+              fi
+              
+              BODY=$(echo "$BODY" | sed "s/Retries: .*/Retries: $NEW_RETRIES/")
             fi
           fi
 
