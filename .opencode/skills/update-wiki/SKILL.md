@@ -46,6 +46,9 @@ This skill defines the mandatory workflow for creating a new "Spoke" page in the
 
 ### 3. Linking phase
 - **Hub Link**: Identify the parent Hub page (e.g., `[[Architecture]]`, `[[Shell-Commands]]`) and add a link to the new page.
+- **Changelog Update**: Append a new entry to `.wiki/Changelog.md`. 
+    - **CRITICAL**: Use the **current date** (YYYY-MM-DD). If the date has changed, create a new `## YYYY-MM-DD` header at the top of the list.
+    - Follow the format: `- **[Action] [Page Name]** — [Short description of work].`
 - **Index Update**: Add or update rows in **all four tables** in `.wiki/index.md`.
     1. **Pages Table**: Add the new page in alphabetical order.
     2. **Concepts → Pages**: **MANDATORY**: Add a row for the **Page Name** itself. If the concept already exists (e.g., pointing to `[[Glossary]]`), **UPDATE** it to point to your new Spoke page. Also add any discovered **Technical Terms**.
