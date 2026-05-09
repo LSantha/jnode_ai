@@ -71,7 +71,7 @@ jobs:
           fi
 
           # 4. Find the next task
-          NEXT_TASK=$(echo "$BODY" | grep -m 1 "- \[ \] #" | grep -o "#[0-9]*" | tr -d '#')
+          NEXT_TASK=$(echo "$BODY" | grep -m 1 "- \[ \] .* #" | grep -o "#[0-9]*" | head -n 1 | tr -d '#' || true)
 
           if [ -z "$NEXT_TASK" ]; then
             echo "All tasks processed."
