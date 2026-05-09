@@ -1,4 +1,4 @@
-name: Wiki Orchestrator
+name: Task Orchestrator
 on:
   issue_comment:
     types: [created]
@@ -16,7 +16,7 @@ jobs:
       issues: write
       actions: read
     steps:
-      - name: Orchestration Logic
+      - name: Process Orchestration
         env:
           GH_TOKEN: ${{ secrets.GH_PAT || secrets.GITHUB_TOKEN }}
           EVENT_NAME: ${{ github.event_name }}
@@ -30,36 +30,35 @@ jobs:
             exit 0
           fi
 
-          echo "Found Orchestrator Issue: #$ORCHESTRATOR_ISSUE"
+          echo "Managing Orchestrator Issue: #$ORCHESTRATOR_ISSUE"
 
           # 2. Get the current state
           BODY=$(gh issue view $ORCHESTRATOR_ISSUE --json body --jq '.body')
           STATUS=$(echo "$BODY" | grep "Status:" | cut -d':' -f2 | xargs)
           CURRENT=$(echo "$BODY" | grep "Current:" | cut -d':' -f2 | xargs | tr -d '#')
 
+          # If not IN_PROGRESS, only allow manual trigger to start
           if [ "$STATUS" != "IN_PROGRESS" ] && [ "$EVENT_NAME" != "issue_comment" ]; then
-            echo "Orchestrator is not in IN_PROGRESS status. Skipping."
+            echo "Status is $STATUS. Waiting for manual /orchestrate command."
             exit 0
           fi
 
           # 3. Handle Workflow Completion
           if [ "$EVENT_NAME" == "workflow_run" ]; then
             if [ "$CONCLUSION" == "success" ]; then
-              echo "Last run was successful. Marking #$CURRENT as complete."
+              echo "Task #$CURRENT succeeded. Marking as complete."
               BODY=$(echo "$BODY" | sed "s/- \[ \] #$CURRENT/- [x] #$CURRENT/")
-              # Reset retry count for the next task
               BODY=$(echo "$BODY" | sed "s/Retries: .*/Retries: 0/")
             else
               RETRIES=$(echo "$BODY" | grep "Retries:" | cut -d':' -f2 | xargs)
               NEW_RETRIES=$((RETRIES + 1))
-              echo "Last run failed/timed out/cancelled. Retry count: $NEW_RETRIES"
+              echo "Task #$CURRENT failed/cancelled ($CONCLUSION). Attempt: $NEW_RETRIES"
               
               if [ $NEW_RETRIES -ge 3 ]; then
-                echo "Maximum retries reached for #$CURRENT. Skipping and moving to next."
+                echo "Max retries reached for #$CURRENT. Marking as failed and moving to next."
                 BODY=$(echo "$BODY" | sed "s/- \[ \] #$CURRENT/- [FAIL] #$CURRENT/")
-                # Reset retry count for the next task
                 BODY=$(echo "$BODY" | sed "s/Retries: .*/Retries: 0/")
-                gh issue comment $ORCHESTRATOR_ISSUE --body "⚠️ Issue #$CURRENT failed 3 times and has been skipped. Moving to the next task."
+                gh issue comment $ORCHESTRATOR_ISSUE --body "⚠️ Task #$CURRENT reached maximum retries and was skipped."
               else
                 BODY=$(echo "$BODY" | sed "s/Retries: .*/Retries: $NEW_RETRIES/")
               fi
@@ -70,18 +69,18 @@ jobs:
           NEXT_TASK=$(echo "$BODY" | grep -m 1 "- \[ \] #" | grep -o "#[0-9]*" | tr -d '#')
 
           if [ -z "$NEXT_TASK" ]; then
-            echo "All tasks completed!"
+            echo "All tasks processed."
             BODY=$(echo "$BODY" | sed "s/Status: .*/Status: COMPLETED/")
             gh issue edit $ORCHESTRATOR_ISSUE --body "$BODY"
-            gh issue comment $ORCHESTRATOR_ISSUE --body "✅ All wiki documentation tasks have been completed."
+            gh issue comment $ORCHESTRATOR_ISSUE --body "✅ All tasks in the queue have been processed."
             exit 0
           fi
 
-          # 5. Update the issue and trigger next
+          # 5. Update state and trigger next agent
           BODY=$(echo "$BODY" | sed "s/Status: .*/Status: IN_PROGRESS/")
           BODY=$(echo "$BODY" | sed "s/Current: .*/Current: #$NEXT_TASK/")
           
           gh issue edit $ORCHESTRATOR_ISSUE --body "$BODY"
-          gh issue comment $NEXT_TASK --body "/oc Please continue the wiki backlog. Follow the 'update-wiki' skill."
+          gh issue comment $NEXT_TASK --body "/oc Please proceed with this task."
           
-          echo "Triggered next task: #$NEXT_TASK"
+          echo "Orchestrated next task: #$NEXT_TASK"
