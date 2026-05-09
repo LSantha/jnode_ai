@@ -40,7 +40,18 @@ exception statement from your version. */
 package gnu.classpath.jdwp.event;
 
 import gnu.classpath.jdwp.JdwpConstants;
-import gnu.classpath.jdwp.event.filters.*;
+import gnu.classpath.jdwp.event.filters.ClassExcludeFilter;
+import gnu.classpath.jdwp.event.filters.ClassMatchFilter;
+import gnu.classpath.jdwp.event.filters.ClassOnlyFilter;
+import gnu.classpath.jdwp.event.filters.ConditionalFilter;
+import gnu.classpath.jdwp.event.filters.CountFilter;
+import gnu.classpath.jdwp.event.filters.ExceptionOnlyFilter;
+import gnu.classpath.jdwp.event.filters.FieldOnlyFilter;
+import gnu.classpath.jdwp.event.filters.IEventFilter;
+import gnu.classpath.jdwp.event.filters.InstanceOnlyFilter;
+import gnu.classpath.jdwp.event.filters.LocationOnlyFilter;
+import gnu.classpath.jdwp.event.filters.StepFilter;
+import gnu.classpath.jdwp.event.filters.ThreadOnlyFilter;
 import gnu.classpath.jdwp.exception.JdwpIllegalArgumentException;
 import java.util.Collection;
 import java.util.Iterator;

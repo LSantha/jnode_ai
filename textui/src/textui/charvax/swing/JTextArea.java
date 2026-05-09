@@ -19,7 +19,13 @@
 
 package charvax.swing;
 
-import charva.awt.*;
+import charva.awt.Component;
+import charva.awt.Dimension;
+import charva.awt.Insets;
+import charvax.swing.JViewport;
+import charva.awt.Point;
+import charva.awt.Scrollable;
+import charva.awt.Toolkit;
 import charva.awt.event.KeyEvent;
 import charva.awt.event.MouseEvent;
 import charva.awt.event.ScrollEvent;
