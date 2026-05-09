@@ -66,5 +66,7 @@ JNode is a Java operating system with custom JVM. ~3,300 Java files, 25 assembly
 - **Wiki Repository**: `https://github.com/LSantha/jnode_ai.wiki.git`
 - **Initialization**: The wiki is a separate, gitignored repository. If the `.wiki/` directory is missing, you MUST run:
   `git clone git@github.com:LSantha/jnode_ai.wiki.git .wiki`
+- **Persistence Rule**: Any changes made to the `.wiki/` directory MUST be manually pushed using `git push` from inside that directory. The OpenCode auto-push mechanism DOES NOT cover the `.wiki` folder.
+- **Reporting**: After a successful push, always provide the URL to the updated wiki page in your final issue comment.
 - **Wiki schema**: See `WIKI_SCHEMA.md` for structure and maintenance rules
 - **LLM agents**: Read `.wiki/index.md` first to locate relevant wiki pages for your task
