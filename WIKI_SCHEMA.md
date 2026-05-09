@@ -17,6 +17,14 @@ The wiki lives in `.wiki/` (a gitignored clone of `git@github.com:LSantha/jnode_
 5. **Index first** — Always update `index.md` when adding/modifying/deleting pages.
 6. **Maintain the log** — Every significant wiki update should be noted in `[[Changelog]]`.
 
+## Hub and Spoke Architecture
+
+To adhere to the "Atomic pages" principle without bloating documents, the wiki uses a Hub and Spoke model:
+
+1. **Hub Pages (Subsystems):** Broad, high-level pages (e.g., `Driver-Framework.md`, `Filesystem-Layer.md`) that provide an overview of a subsystem. They act as a table of contents and heavily link out to Spoke pages rather than explaining deep technical minutiae.
+2. **Spoke Pages (Concepts):** Atomic, dedicated pages for specific, dense architectural concepts (e.g., `DeviceManager.md`, `VFS.md`, `SocketBuffer.md`). These pages dive deep into classes, methods, data flows, and gotchas for that single piece of the puzzle.
+3. **Minor Concepts:** Terms that only require a sentence or two of explanation should be placed in `Glossary.md` rather than getting a dedicated Spoke page.
+
 ## Page Structure Template
 
 Every wiki page should follow this structure:
@@ -112,8 +120,8 @@ Maps project-specific terms and concepts to their defining wiki page.
 
 **Rules:**
 - When a new concept is introduced or explained in a wiki page, add it here
-- "Defined In" = the ONE page that gives the primary, authoritative explanation
-- "Related" = pages that reference or depend on this concept (can be multiple)
+- "Defined In" = points directly to the dedicated **Spoke page** (e.g., `[[DeviceManager]]`) if it exists, or to `[[Glossary]]` for minor terms.
+- "Related" = points "up" to the parent **Hub page** (e.g., `[[Driver-Framework]]`) and to sibling concepts.
 - Keep alphabetically sorted by concept name
 - When renaming or merging wiki pages, update all references in this table
 
