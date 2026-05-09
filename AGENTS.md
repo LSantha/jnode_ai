@@ -60,3 +60,10 @@ JNode is a Java operating system with custom JVM. ~3,300 Java files, 25 assembly
 - `all/conf/default-plugin-list.xml` - Default plugins
 - `all/conf/full-plugin-list.xml` - Full plugin set
 - `jnode.properties` - Build configuration
+
+## Documentation
+
+- **Wiki**: https://github.com/LSantha/jnode_ai/wiki
+- **Local clone**: `.wiki/` directory (gitignored, separate git repo)
+- **Wiki schema**: See `WIKI_SCHEMA.md` for structure and maintenance rules
+- **LLM agents**: Read `.wiki/index.md` first to locate relevant wiki pages for your task
