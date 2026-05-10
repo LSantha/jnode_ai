@@ -174,22 +174,17 @@ public class NativeTest {
 //            BootableArrayList quads = irg.getQuadList();
 //            int n = quads.size();
 //            BootableHashMap liveVariables = new BootableHashMap();
-//
 //            for (int i=0; i<n; i+=1) {
 //                System.out.println(quads.get(i));
 //            }
-//
 //            for (int i=0; i<n; i+=1) {
 //                Quad quad = (Quad) quads.get(i);
 //                quad.doPass2(liveVariables);
 //            }
-//
 //            for (int i=0; i<n; i+=1) {
 //                System.out.println(quads.get(i));
 //            }
-//
 //            System.out.println(liveVariables);
-//
 //            Collection lv = liveVariables.values();
 //            n = lv.size();
 //            LiveRange[] liveRanges = new LiveRange[n];
@@ -204,14 +199,11 @@ public class NativeTest {
 //            LinearScanAllocator lsa = new LinearScanAllocator(liveRanges);
 //            lsa.allocate();
 //            System.out.println(Arrays.asList(liveRanges));
-//
 //            x86cg.setArgumentVariables(irg.getVariables(), irg.getNoArgs());
 //            System.out.println(Arrays.asList(liveRanges));
 //            x86cg.setSpilledVariables(lsa.getSpilledVariables());
 //            x86cg.emitHeader();
-//
 //            n = quads.size();
-//
 //            for (int i=0; i<n; i+=1) {
 //                Quad quad = (Quad) quads.get(i);
 //                if (!quad.isDeadCode()) {

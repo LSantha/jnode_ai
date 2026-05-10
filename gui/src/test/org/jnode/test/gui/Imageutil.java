@@ -29,7 +29,6 @@ public class Imageutil {
 //        Image img1 = Toolkit.getDefaultToolkit().getImage( file );
 //        javax.swing.ImageIcon ic = new javax.swing.ImageIcon(file);
 //        Image img1 = ic.getImage();
-//
 //        return img1;
 //    }
 }

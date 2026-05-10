@@ -20,7 +20,6 @@
  
 package org.jnode.linker;
 
-//
 // ---- Section Header ---
 // typedef struct
 // {
@@ -35,7 +34,6 @@ package org.jnode.linker;
 // Elf32_Word sh_addralign; /* Section alignment */
 // Elf32_Word sh_entsize; /* Entry size if section holds table */
 // } Elf32_Shdr;
-//
 
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;

@@ -248,7 +248,6 @@ public abstract class AbstractFontProvider<F extends Font, FD> implements FontPr
 //        }
 //        fontsLoaded = true;
 //    }
-//
 //    private final void loadFont(String resName) {
 //        try {
 //            final ClassLoader cl = Thread.currentThread().getContextClassLoader();

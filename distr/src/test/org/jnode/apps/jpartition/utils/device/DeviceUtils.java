@@ -95,9 +95,7 @@ public class DeviceUtils {
         
 //        if (!coreInitialized && !OsUtils.isJNode()) {
 //            // We are not running in JNode, emulate a JNode environment.
-//
 //            InitialNaming.setNameSpace(new BasicNameSpace());
-//
 //            // Build a plugin descriptor that is sufficient for the FileSystemPlugin to
 //            // configure file system types for testing.
 //            DummyPluginDescriptor desc = new DummyPluginDescriptor(true);
@@ -110,7 +108,6 @@ public class DeviceUtils {
 //                extension.addElement(element);
 //                ep.addExtension(extension);
 //            }
-//
 //            FileSystemService fss = new FileSystemPlugin(desc);
 //            try {
 //                InitialNaming.bind(FileSystemService.class, fss);

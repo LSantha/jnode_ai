@@ -179,7 +179,6 @@ public class IRTest {
 
 
 //        X86CodeGenerator x86cg = null;//new X86CodeGenerator(os, code.getLength());
-//
 //        generateCode(os, code, x86cg);
     }
 
@@ -271,11 +270,9 @@ public class IRTest {
 //        System.out.println(Arrays.asList(liveRanges));
 //        LinearScanAllocator lsa = new LinearScanAllocator(liveRanges);
 //        lsa.allocate();
-//
 //        x86cg.setArgumentVariables(irg.getVariables(), irg.getNoArgs());
 //        x86cg.setSpilledVariables(lsa.getSpilledVariables());
 //        x86cg.emitHeader();
-//
 //        n = quads.size();
 //        for (int i=0; i<n; i+=1) {
 //            Quad quad = (Quad) quads.get(i);

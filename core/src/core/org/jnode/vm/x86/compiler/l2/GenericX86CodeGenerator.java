@@ -3834,7 +3834,6 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
 ////        helper.reset();
 ////        helper.setMethod(method);
 //        // this.startOffset = os.getLength();
-//
 //        this.startOffset = stackFrame.emitHeader();
     }
 
@@ -4420,12 +4419,10 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
             }
 
 //            // It is an interface, do it the hard way
-//
 //            // Load reference
 //            final RefItem ref = vstack.popRef();
 //            ref.load(eContext);
 //            final GPR refr = ref.getRegister();
-//
 //            // Allocate tmp registers
 //            final GPR classr = (GPR) L1AHelper.requestRegister(eContext,
 //                JvmType.REFERENCE, false);
@@ -4434,34 +4431,25 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
 //            final GPR tmpr = (GPR) L1AHelper.requestRegister(eContext,
 //                JvmType.REFERENCE, false);
 //            final Label curInstrLabel = currentLabel;
-//
 //            /* Objectref is already on the stack */
 //            writeResolveAndLoadClassToReg(classRef, classr);
 //            stackFrame.getHelper().writeClassInitialize(curInstrLabel, classr, tmpr, resolvedType);
-//
 //            final Label trueLabel = new Label(curInstrLabel + "io-true");
 //            final Label endLabel = new Label(curInstrLabel + "io-end");
-//
 //            /* Is instanceof? */
 //            instanceOf(refr, classr, tmpr, cntr, trueLabel, false, currentLabel);
-//
 //            final IntItem result = (IntItem) L1AHelper.requestWordRegister(eContext, JvmType.INT, false);
 //            final GPR resultr = result.getRegister();
-//
 //            /* Not instanceof */
 //            // TODO: use setcc instead of jumps
 //            os.writeXOR(resultr, resultr);
 //            os.writeJMP(endLabel);
-//
 //            os.setObjectRef(trueLabel);
 //            os.writeMOV_Const(resultr, 1);
-//
 //            // Push result
 //            os.setObjectRef(endLabel);
 //            ref.release(eContext);
-//
 //            vstack.push(result);
-//
 //            // Release
 //            pool.release(classr);
 //            pool.release(tmpr);

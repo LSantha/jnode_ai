@@ -20,8 +20,6 @@
  
 package org.jnode.linker;
 
-//
-//
 // typedef struct elf32_hdr{
 // EI_NIDENT = 16;
 // char e_ident[EI_NIDENT]; : e_ident[0...3] = '\x7f' "ELF" であること

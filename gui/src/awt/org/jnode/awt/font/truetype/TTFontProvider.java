@@ -84,7 +84,6 @@ public class TTFontProvider extends AbstractFontProvider<TTFFont, TTFFontData> {
     public TTFFontPeer createFontPeer(String name, Map<?, ?> attrs) {
         //TODO implement me
 //        TTFFontPeer peer = null;
-//
 //        List<BDFFontContainer> datas = getUserFontDatas();
 //        for (BDFFontContainer container : datas) {
 //            if (match(container, name, attrs)) {
@@ -93,14 +92,12 @@ public class TTFontProvider extends AbstractFontProvider<TTFFont, TTFFontData> {
 //                break;
 //            }
 //        }
-//        
 //        for (BDFFontContainer container : getContainers()) {
 //            if (match(container, name, attrs)) {
 //                peer = new TTFFontPeer(this, name, attrs);
 //                break;
 //            }
 //        }
-//        
 //        return peer;
         
         return new TTFFontPeer(this, name, attrs);
