@@ -39,13 +39,23 @@ jobs:
           STATUS=$(echo "$BODY" | grep "Status:" | cut -d':' -f2 | xargs)
           CURRENT=$(echo "$BODY" | grep "Current:" | cut -d':' -f2 | xargs | tr -d '#')
 
-          # Guard: Only process workflow_run if it matches the CURRENT task
+          # Extract task number from completed workflow run (for parallel execution support)
           if [ "$EVENT_NAME" == "workflow_run" ]; then
             RUN_TITLE="${{ github.event.workflow_run.display_title }}"
-            ISSUE_TITLE=$(gh issue view $CURRENT --json title --jq '.title')
-            if [[ "$RUN_TITLE" != "$ISSUE_TITLE" ]]; then
-              echo "Workflow run '$RUN_TITLE' does not match current task #$CURRENT title '$ISSUE_TITLE'. Skipping."
-              exit 0
+            COMPLETED_TASK=$(echo "$RUN_TITLE" | grep -o "#[0-9]*" | grep -o "[0-9]*" | head -1)
+            echo "Workflow completed for task #$COMPLETED_TASK"
+            
+            # Check if the completed task is now closed
+            if [ -n "$COMPLETED_TASK" ]; then
+              COMPLETED_STATE=$(gh issue view $COMPLETED_TASK --json state --jq '.state')
+              if [ "$COMPLETED_STATE" == "CLOSED" ]; then
+                echo "Task #$COMPLETED_TASK is CLOSED - marking as complete"
+                BODY=$(echo "$BODY" | sed "s/- \[ \] #$COMPLETED_TASK/- [x] #$COMPLETED_TASK/")
+                BODY=$(echo "$BODY" | sed "s/Retries: .*/Retries: 0/")
+              elif [ "$CONCLUSION" != "success" ]; then
+                echo "Task #$COMPLETED_TASK failed or was cancelled ($CONCLUSION)"
+                BODY=$(echo "$BODY" | sed "s/- \[ \] #$COMPLETED_TASK/- [FAIL] #$COMPLETED_TASK/")
+              fi
             fi
           fi
 
@@ -53,33 +63,6 @@ jobs:
           if [ "$STATUS" != "IN_PROGRESS" ] && [ "$EVENT_NAME" != "issue_comment" ]; then
             echo "Status is $STATUS. Waiting for manual /orchestrate command."
             exit 0
-          fi
-
-          # 3. Handle Workflow Completion
-          if [ "$EVENT_NAME" == "workflow_run" ]; then
-            ISSUE_STATE=$(gh issue view $CURRENT --json state --jq '.state')
-            if [ "$CONCLUSION" == "success" ] && [ "$ISSUE_STATE" == "CLOSED" ]; then
-              echo "Task #$CURRENT succeeded and issue is CLOSED. Marking as complete."
-              BODY=$(echo "$BODY" | sed "s/- \[ \] #$CURRENT/- [x] #$CURRENT/")
-              BODY=$(echo "$BODY" | sed "s/Retries: .*/Retries: 0/")
-            else
-              if [ "$ISSUE_STATE" != "CLOSED" ]; then
-                echo "Task #$CURRENT workflow succeeded but issue is still OPEN (Proof of work failed)."
-              fi
-              
-              RETRIES=$(echo "$BODY" | grep "Retries:" | cut -d':' -f2 | xargs)
-              NEW_RETRIES=$((RETRIES + 1))
-              echo "Task #$CURRENT failed/cancelled ($CONCLUSION). Attempt: $NEW_RETRIES"
-              
-              if [ $NEW_RETRIES -ge 3 ]; then
-                echo "Max retries reached for #$CURRENT. Marking as failed and moving to next."
-                BODY=$(echo "$BODY" | sed "s/- \[ \] #$CURRENT/- [FAIL] #$CURRENT/")
-                BODY=$(echo "$BODY" | sed "s/Retries: .*/Retries: 0/")
-                gh issue comment $ORCHESTRATOR_ISSUE --body "⚠️ Task #$CURRENT reached maximum retries and was skipped."
-              else
-                BODY=$(echo "$BODY" | sed "s/Retries: .*/Retries: $NEW_RETRIES/")
-              fi
-            fi
           fi
 
           # 4. Find the next task
