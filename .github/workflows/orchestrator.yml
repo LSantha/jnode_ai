@@ -39,51 +39,58 @@ jobs:
           STATUS=$(echo "$BODY" | grep "Status:" | cut -d':' -f2 | xargs)
           CURRENT=$(echo "$BODY" | grep "Current:" | cut -d':' -f2 | xargs | tr -d '#')
 
-          # Extract task number from completed workflow run (for parallel execution support)
-          if [ "$EVENT_NAME" == "workflow_run" ]; then
+          # Only process if triggered by /orchestrate command (manual start)
+          if [ "$EVENT_NAME" == "issue_comment" ]; then
+            echo "Manual trigger - starting orchestration"
+          else
+            # For workflow_run: ONLY process if it matches CURRENT task (sequential processing)
             RUN_TITLE="${{ github.event.workflow_run.display_title }}"
-            echo "Workflow completed: $RUN_TITLE"
+            ISSUE_TITLE=$(gh issue view $CURRENT --json title --jq '.title')
             
-            # Find the issue number by matching title
-            COMPLETED_TASK=$(gh issue list --state all --search "$RUN_TITLE" --limit 1 --json number --jq '.[0].number')
-            echo "Found completed task: #$COMPLETED_TASK"
+            if [[ "$RUN_TITLE" != "$ISSUE_TITLE" ]]; then
+              echo "Workflow '$RUN_TITLE' does not match current task #$CURRENT ('$ISSUE_TITLE'). Waiting for current task to complete."
+              exit 0
+            fi
             
-            # Check if the completed task is now closed
-            if [ -n "$COMPLETED_TASK" ] && [ "$COMPLETED_TASK" != "null" ]; then
-              COMPLETED_STATE=$(gh issue view $COMPLETED_TASK --json state --jq '.state')
-              if [ "$COMPLETED_STATE" == "CLOSED" ]; then
-                echo "Task #$COMPLETED_TASK is CLOSED - marking as complete"
-                BODY=$(echo "$BODY" | sed "s/- \[ \] #$COMPLETED_TASK/- [x] #$COMPLETED_TASK/")
-                BODY=$(echo "$BODY" | sed "s/Retries: .*/Retries: 0/")
-              elif [ "$CONCLUSION" != "success" ]; then
-                echo "Task #$COMPLETED_TASK failed or was cancelled ($CONCLUSION)"
-                BODY=$(echo "$BODY" | sed "s/- \[ \] #$COMPLETED_TASK/- [FAIL] #$COMPLETED_TASK/")
+            # Current task completed - check result
+            ISSUE_STATE=$(gh issue view $CURRENT --json state --jq '.state')
+            if [ "$CONCLUSION" == "success" ] && [ "$ISSUE_STATE" == "CLOSED" ]; then
+              echo "Task #$CURRENT succeeded - marking as complete"
+              BODY=$(echo "$BODY" | sed "s/- \[ \] #$CURRENT/- [x] #$CURRENT/")
+              BODY=$(echo "$BODY" | sed "s/Retries: .*/Retries: 0/")
+            else
+              if [ "$ISSUE_STATE" != "CLOSED" ]; then
+                echo "Task #$CURRENT completed but issue is still OPEN (work not done)"
+              else
+                echo "Task #$CURRENT failed ($CONCLUSION)"
               fi
+              BODY=$(echo "$BODY" | sed "s/- \[ \] #$CURRENT/- [FAIL] #$CURRENT/")
+              BODY=$(echo "$BODY" | sed "s/Retries: .*/Retries: 0/")
             fi
           fi
 
-          # If not IN_PROGRESS, only allow manual trigger to start
-          if [ "$STATUS" != "IN_PROGRESS" ] && [ "$EVENT_NAME" != "issue_comment" ]; then
-            echo "Status is $STATUS. Waiting for manual /orchestrate command."
-            exit 0
+          # If not IN_PROGRESS, start fresh
+          if [ "$STATUS" != "IN_PROGRESS" ]; then
+            BODY=$(echo "$BODY" | sed "s/Status: .*/Status: IN_PROGRESS/")
           fi
 
-          # 4. Find the next task
+          # 3. Find the next task (first unchecked task)
           NEXT_TASK=$(echo "$BODY" | grep -m 1 -- "- \[ \] .*#[0-9]\+" | grep -o "#[0-9]\+" | head -n 1 | tr -d '#' || true)
 
           if [ -z "$NEXT_TASK" ]; then
             echo "All tasks processed."
             BODY=$(echo "$BODY" | sed "s/Status: .*/Status: COMPLETED/")
+            BODY=$(echo "$BODY" | sed "s/Current: .*/Current: -/")
             gh issue edit $ORCHESTRATOR_ISSUE --body "$BODY"
             gh issue comment $ORCHESTRATOR_ISSUE --body "✅ All tasks in the queue have been processed."
             exit 0
           fi
 
-          # 5. Update state and trigger next agent
-          BODY=$(echo "$BODY" | sed "s/Status: .*/Status: IN_PROGRESS/")
+          # 4. Update state and trigger next task (sequential - only one at a time)
           BODY=$(echo "$BODY" | sed "s/Current: .*/Current: #$NEXT_TASK/")
+          BODY=$(echo "$BODY" | sed "s/Retries: .*/Retries: 0/")
           
           gh issue edit $ORCHESTRATOR_ISSUE --body "$BODY"
           gh issue comment $NEXT_TASK --body "/oc Please proceed with this task."
           
-          echo "Orchestrated next task: #$NEXT_TASK"
+          echo "Orchestrated next task: #$NEXT_TASK (sequential execution)"
