@@ -42,11 +42,14 @@ jobs:
           # Extract task number from completed workflow run (for parallel execution support)
           if [ "$EVENT_NAME" == "workflow_run" ]; then
             RUN_TITLE="${{ github.event.workflow_run.display_title }}"
-            COMPLETED_TASK=$(echo "$RUN_TITLE" | grep -o "#[0-9]*" | grep -o "[0-9]*" | head -1)
-            echo "Workflow completed for task #$COMPLETED_TASK"
+            echo "Workflow completed: $RUN_TITLE"
+            
+            # Find the issue number by matching title
+            COMPLETED_TASK=$(gh issue list --state all --search "$RUN_TITLE" --limit 1 --json number --jq '.[0].number')
+            echo "Found completed task: #$COMPLETED_TASK"
             
             # Check if the completed task is now closed
-            if [ -n "$COMPLETED_TASK" ]; then
+            if [ -n "$COMPLETED_TASK" ] && [ "$COMPLETED_TASK" != "null" ]; then
               COMPLETED_STATE=$(gh issue view $COMPLETED_TASK --json state --jq '.state')
               if [ "$COMPLETED_STATE" == "CLOSED" ]; then
                 echo "Task #$COMPLETED_TASK is CLOSED - marking as complete"
