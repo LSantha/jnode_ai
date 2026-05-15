@@ -70,4 +70,14 @@ JNode is a Java operating system with custom JVM. ~3,300 Java files, 25 assembly
 - **Reporting**: After a successful push, always provide the URL to the updated wiki page in your final issue comment.
 - **Wiki schema**: See `WIKI_SCHEMA.md` for structure and maintenance rules
 - **Skills**: Check the `.opencode/skills/` directory for specialized workflows (e.g., `update-wiki.md`).
-- **LLM agents**: Read `.wiki/index.md` first to locate relevant wiki pages for your task
+- **LLM agents**: follow the Wiki Knowledge Retrieval Protocol to locate relevant wiki pages for your task
+
+### Wiki Knowledge Retrieval Protocol
+You have access to a Karpathy-style wiki. This consists of highly compressed, factual, and interlinked markdown files. Follow these strict rules to query and use it efficiently:
+
+*   **Greedy Keyword Search:** Run initial searches using single, high-density keywords rather than natural language questions.
+*   **Follow Markdown Links:** If a retrieved page contains file links (e.g., `[[topic-b]]`), proactively read those linked files to gather complete context.
+*   **Prioritize Code Blocks:** Treat syntax examples and raw code snippets within the wiki as the definitive ground truth for implementation.
+*   **Exact Terminology:** Reuse the exact variable names, directory paths, and technical terms found in the wiki. Do not paraphrase.
+*   **No Structural Assumptions:** The wiki is flat and fluid. Do not assume a hierarchical folder structure unless explicitly documented.
+*   **Synthesize, Don't Exploded:** Match the wiki's tone. Provide dense, factual answers. Eliminate conversational filler and introductory fluff.
