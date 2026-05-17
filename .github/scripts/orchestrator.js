@@ -197,8 +197,8 @@ module.exports = async ({ github, context, core }) => {
       // Fetch conclusion
       const conclusion = context.payload.workflow_run.conclusion;
       
-      // 1. Ignore non-definitive skipped or cancelled runs
-      if (conclusion === 'skipped' || conclusion === 'cancelled') {
+      // 1. Ignore non-definitive skipped runs
+      if (conclusion === 'skipped') {
         core.info(`Workflow run completed with conclusion "${conclusion}". Ignoring.`);
         return;
       }
