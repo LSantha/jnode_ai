@@ -194,25 +194,40 @@ module.exports = async ({ github, context, core }) => {
         return;
       }
 
-      // Fetch the display title of the completed workflow run
-      const runTitle = context.payload.workflow_run.display_title;
+      // Fetch conclusion
+      const conclusion = context.payload.workflow_run.conclusion;
       
-      // Fetch current task issue details to get the title
+      // 1. Ignore non-definitive skipped or cancelled runs
+      if (conclusion === 'skipped' || conclusion === 'cancelled') {
+        core.info(`Workflow run completed with conclusion "${conclusion}". Ignoring.`);
+        return;
+      }
+
+      // Fetch the display title of the completed workflow run
+      const runTitle = context.payload.workflow_run.display_title || '';
+      
+      // Extract issue number from display title (e.g. "Review #415: Review Thinlet.java")
+      const match = runTitle.match(/Review #(\d+)/);
+      if (!match) {
+        core.info(`Workflow run display title "${runTitle}" does not contain expected "Review #[number]" format. Skipping.`);
+        return;
+      }
+      
+      const runIssueNumber = parseInt(match[1], 10);
+      core.info(`Extracted completed Task #${runIssueNumber} from workflow run title: "${runTitle}"`);
+
+      // Issue ID mismatch protection (strict sequential validation guard)
+      if (runIssueNumber !== state.current_task) {
+        core.info(`Workflow run for Task #${runIssueNumber} does not match current active task #${state.current_task}. Waiting for current task.`);
+        return;
+      }
+
+      // Fetch current task issue details
       const currentIssue = await github.rest.issues.get({
         owner: context.repo.owner,
         repo: context.repo.repo,
         issue_number: state.current_task
       });
-      const issueTitle = currentIssue.data.title;
-
-      // Title mismatch protection (strict sequential validation guard)
-      if (runTitle !== issueTitle) {
-        core.info(`Workflow run display title "${runTitle}" does not match current task title "${issueTitle}". Waiting for current task.`);
-        return;
-      }
-
-      // Check success conditions (workflow conclusion = success, and issue is CLOSED)
-      const conclusion = context.payload.workflow_run.conclusion;
       const isIssueClosed = currentIssue.data.state === 'closed';
 
       if (conclusion === 'success' && isIssueClosed) {
