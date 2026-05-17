@@ -30,6 +30,10 @@ jobs:
         uses: actions/checkout@v6
         with:
           persist-credentials: false
+      - name: Clone wiki
+        run: gh repo clone LSantha/jnode_ai.wiki .wiki
+        env:
+          GH_TOKEN: ${{ secrets.GH_PAT }}
       - name: Set up JDK 8
         uses: actions/setup-java@v4
         with:
