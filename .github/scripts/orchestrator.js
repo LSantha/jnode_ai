@@ -160,6 +160,26 @@ module.exports = async ({ github, context, core }) => {
       core.info(`Initialized State: ${JSON.stringify(state)}`);
     }
 
+    // 2.5. Self-Healing Guard: If current task is already closed, mark it as success and advance
+    if (state.current_task) {
+      try {
+        const currentIssue = await github.rest.issues.get({
+          owner: context.repo.owner,
+          repo: context.repo.repo,
+          issue_number: state.current_task
+        });
+        if (currentIssue.data.state === 'closed') {
+          core.info(`Self-Healing Guard: Task #${state.current_task} is ALREADY closed on GitHub! Advancing queue.`);
+          state.completed.push(state.current_task);
+          state.history.push({ event: 'task_success', task: state.current_task, timestamp: new Date().toISOString() });
+          state.current_task = null;
+          state.retries = 0;
+        }
+      } catch (err) {
+        core.warning(`Failed to fetch status for active task #${state.current_task}: ${err.message}`);
+      }
+    }
+
     // 3. Process Event
     if (context.eventName === 'issue_comment') {
       core.info("Manual trigger via comment detected.");
