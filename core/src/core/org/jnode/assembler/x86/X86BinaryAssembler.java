@@ -624,7 +624,6 @@ public class X86BinaryAssembler extends X86Assembler implements X86Operation {
                 }
             }
         }
-        System.out.println("getUnresolvedObjectsRefs: count=" + result.size());
         return result;
     }
 
@@ -2272,8 +2271,8 @@ public class X86BinaryAssembler extends X86Assembler implements X86Operation {
             } else {
                 try {
                     throw new IllegalArgumentException("Invalid jump distance: " + (ref.getOffset() - shortOffset));
-                } catch (UnresolvedObjectRefException rex) {
-                    throw new RuntimeException(rex);
+                } catch (UnresolvedObjectRefException ex) {
+                    throw new RuntimeException(ex);
                 }
             }
         } else {
@@ -2463,58 +2462,8 @@ public class X86BinaryAssembler extends X86Assembler implements X86Operation {
     public final void writeLEA(GPR dstReg, GPR srcReg, int disp) {
         testSize(dstReg, mode.getSize());
         testSize(srcReg, mode.getSize());
-        //write1bOpcodeModRM(0x8d, dstReg.getSize(), srcReg, disp, dstReg.getNr());
-
-        //TODO review
-        //private final void write1bOpcodeModRM(int opcode, int operandSize, GPR rm, int disp, int reg)
-        if (true) {
-            int opcode = 0x8d;
-            int operandSize = dstReg.getSize();
-            GPR rm = srcReg;
-            int reg = dstReg.getNr();
-
-            writeModRMRREXPrefix(operandSize, rm, reg);
-            write8(opcode);
-
-
-            //writeModRM(rm.getNr() & 7, disp, reg & 7);
-        }
-
-        //private final void writeModRM(int rm, int disp, int reg) {
-
-        int rm = srcReg.getNr() & 7;
-        int reg = dstReg.getNr() & 7;
-        if ((rm < 0) || (rm > 7)) {
-            throw new IllegalArgumentException("rm");
-        }
-        if ((reg < 0) || (reg > 7)) {
-            throw new IllegalArgumentException("reg");
-        }
-        if (rm == X86Register.ESP.getNr()) {
-            if (disp == 0 && false) { //TODO review
-                write8(0x00 | (reg << 3) | rm);
-                write8(0x24);
-            } else if (isByte(disp)) {
-                write8(0x40 | (reg << 3) | rm);
-                write8(0x24);
-                write8(disp);
-            } else {
-                write8(0x80 | (reg << 3) | rm);
-                write8(0x24);
-                write32(disp);
-            }
-        } else {
-            if ((disp == 0) && (rm != X86Register.EBP.getNr()) && false) { //TODO review
-                write8(0x00 | (reg << 3) | rm);
-            } else if (isByte(disp)) {
-                write8(0x40 | (reg << 3) | rm);
-                write8(disp);
-            } else {
-                write8(0x80 | (reg << 3) | rm);
-                write32(disp);
-            }
-        }
-        //}
+        writeModRMRREXPrefix(dstReg.getSize(), srcReg, dstReg.getNr());
+        write8(0x8d);
     }
 
     /**
