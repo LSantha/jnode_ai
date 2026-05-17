@@ -31,10 +31,11 @@ import org.jnode.shell.AbstractCommand;
 import org.jnode.shell.CommandShell;
 import org.jnode.shell.ShellException;
 import org.jnode.shell.syntax.Argument;
+import org.jnode.shell.syntax.DeviceArgument;
 import org.jnode.shell.syntax.FlagArgument;
 import org.jnode.shell.syntax.IntegerArgument;
-import org.jnode.shell.syntax.StringArgument;
 import org.jnode.driver.serial.console.SerialAgentConsole;
+import org.jnode.driver.console.CompletionInfo;
 
 /**
  * Shell command to start an interactive JNode command shell on a serial port.
@@ -69,13 +70,24 @@ public class SerialConsoleCommand extends AbstractCommand {
     private static final int DEFAULT_BAUD = 115200;
     private static final String DEFAULT_PORT = "serial0";
 
-    private final StringArgument ARG_PORT = new StringArgument(
+    private final DeviceArgument ARG_PORT = new DeviceArgument(
         "port", Argument.OPTIONAL,
-        "the serial port device name (default: serial0)");
+        "the serial port device name (default: serial1)",
+        SerialPortAPI.class);
 
     private final IntegerArgument ARG_BAUD = new IntegerArgument(
         "baud", Argument.OPTIONAL,
-        "the baud rate (default: 115200). Supported: 115200, 57600, 38400, 19200, 9600, 4800, 2400, 1200");
+        "the baud rate (default: 115200). Supported: 115200, 57600, 38400, 19200, 9600, 4800, 2400, 1200") {
+        @Override
+        public void doComplete(CompletionInfo completions, String partial, int flags) {
+            final String[] rates = {"115200", "57600", "38400", "19200", "9600", "4800", "2400", "1200"};
+            for (String rate : rates) {
+                if (rate.startsWith(partial)) {
+                    completions.addCompletion(rate);
+                }
+            }
+        }
+    };
 
     private final FlagArgument ARG_AGENT = new FlagArgument(
         "agent", Argument.OPTIONAL,
@@ -95,7 +107,7 @@ public class SerialConsoleCommand extends AbstractCommand {
         final PrintWriter out = getOutput().getPrintWriter();
         final PrintWriter err = getError().getPrintWriter();
 
-        final String portName = ARG_PORT.isSet() ? ARG_PORT.getValue() : DEFAULT_PORT;
+        final String portName = ARG_PORT.isSet() ? ARG_PORT.getValue().getId() : DEFAULT_PORT;
         final int baudRate = ARG_BAUD.isSet() ? ARG_BAUD.getValue() : DEFAULT_BAUD;
 
         // Validate and convert baud rate to divisor
