@@ -172,8 +172,26 @@ module.exports = async ({ github, context, core }) => {
           core.info(`Self-Healing Guard: Task #${state.current_task} is ALREADY closed on GitHub! Advancing queue.`);
           state.completed.push(state.current_task);
           state.history.push({ event: 'task_success', task: state.current_task, timestamp: new Date().toISOString() });
-          state.current_task = null;
-          state.retries = 0;
+          
+          // Advance to the next task immediately
+          if (state.queue.length > 0) {
+            state.current_task = state.queue.shift();
+            state.retries = 0;
+            state.history.push({ event: 'start_task', task: state.current_task, timestamp: new Date().toISOString() });
+            await triggerTask(state.current_task);
+          } else {
+            state.current_task = null;
+            state.retries = 0;
+            state.status = 'COMPLETED';
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: masterIssueNumber,
+              body: "✅ All tasks in the queue have been processed."
+            });
+          }
+          await updateMasterIssue(masterIssueNumber, state);
+          return; // Exit fully since we transitioned state successfully!
         }
       } catch (err) {
         core.warning(`Failed to fetch status for active task #${state.current_task}: ${err.message}`);
