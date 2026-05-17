@@ -1,4 +1,9 @@
 name: Task Orchestrator
+
+concurrency:
+  group: orchestrator-concurrency
+  cancel-in-progress: false
+
 on:
   issue_comment:
     types: [created]
