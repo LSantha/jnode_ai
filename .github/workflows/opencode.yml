@@ -46,3 +46,9 @@ jobs:
           OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY }}
         with:
           model: opencode/minimax-m2.5-free
+
+      - name: Close issue
+        if: success() && contains(github.event.issue.title, 'Review ')
+        run: gh issue close ${{ github.event.issue.number }} -R ${{ github.repository }}
+        env:
+          GH_TOKEN: ${{ secrets.GH_PAT }}
