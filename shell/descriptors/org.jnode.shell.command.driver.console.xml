@@ -28,6 +28,7 @@
 
   <requires>
     <import plugin="org.jnode.driver.console.core"/>
+    <import plugin="org.jnode.driver.serial.console"/>
     <import plugin="org.jnode.shell.help"/>
   </requires>
 
@@ -40,6 +41,7 @@
   <extension point="org.jnode.shell.aliases">
     <alias name="console" class="org.jnode.shell.command.driver.console.ConsoleCommand"/>
     <alias name="clear" class="org.jnode.shell.command.driver.console.ClearConsoleCommand"/>
+    <alias name="serialconsole" class="org.jnode.shell.command.driver.console.SerialConsoleCommand"/>
   </extension>
   
   <extension point="org.jnode.shell.syntaxes">
@@ -54,6 +56,14 @@
       </sequence>
       <option argLabel="test" shortName="t" longName="test" description="Start a raw text console (test)"/>
     </syntax>
+    <syntax alias="serialconsole">
+      <empty description="Start a serial console on serial0 at 115200 baud"/>
+      <sequence description="Start a serial console with options">
+        <optional><option argLabel="port" shortName="p" longName="port"/></optional>
+        <optional><option argLabel="baud" shortName="b" longName="baud"/></optional>
+        <optional><option argLabel="agent" shortName="a" longName="agent"/></optional>
+      </sequence>
+    </syntax>
   </extension>
 
   <extension point="org.jnode.security.permissions">
@@ -64,5 +74,6 @@
     <permission class="java.net.SocketPermission" name="*" actions="resolve,listen,connect"/>
     <permission class="java.net.SocketPermission" name="*:0-" actions="connect,resolve,listen"/>
     <permission class="java.util.PropertyPermission" name="*" actions="read,write"/>
+    <permission class="org.jnode.system.resource.ResourcePermission" name="ioports"/>
   </extension>
 </plugin>

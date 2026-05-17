@@ -61,6 +61,7 @@ public abstract class AbstractPcBufferTextScreen extends AbstractPcTextScreen {
     @Override
     public final void copyContent(int srcOffset, int destOffset, int length) {
         System.arraycopy(buffer, srcOffset, buffer, destOffset, length);
+        sync(destOffset, length);
     }
 
     /**

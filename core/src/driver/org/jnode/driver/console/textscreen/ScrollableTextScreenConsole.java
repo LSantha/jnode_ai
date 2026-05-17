@@ -52,9 +52,7 @@ public class ScrollableTextScreenConsole extends TextScreenConsole implements Sc
     public void scrollUp(int rows) {
         final ScrollableTextScreen screen = getScrollableTextScreen();
         screen.scrollUp(rows);
-
-        final int length = rows * screen.getWidth();
-        screen.sync(screen.getHeight() * screen.getWidth() - length, length);
+        screen.sync(0, screen.getHeight() * screen.getWidth());
     }
 
     /**
@@ -65,7 +63,7 @@ public class ScrollableTextScreenConsole extends TextScreenConsole implements Sc
     public void scrollDown(int rows) {
         final ScrollableTextScreen screen = getScrollableTextScreen();
         screen.scrollDown(rows);
-        screen.sync(0, rows * screen.getWidth());
+        screen.sync(0, screen.getHeight() * screen.getWidth());
     }
 
     /**

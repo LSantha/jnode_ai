@@ -82,6 +82,13 @@ public interface SerialPortAPI extends CharacterDeviceAPI {
     public void configure(int divisor);
 
     /**
+     * Check whether data is available for reading without blocking.
+     *
+     * @return true if at least one byte is available for immediate reading.
+     */
+    public boolean isDataAvailable();
+
+    /**
      * This method is not part of the final serial port API.
      * <p/>
      * Receive a single byte from the serial port. This method blocks until a

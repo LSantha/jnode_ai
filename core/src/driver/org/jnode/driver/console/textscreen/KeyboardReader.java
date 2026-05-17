@@ -64,6 +64,7 @@ public class KeyboardReader extends Reader
     implements FocusListener, ConsoleStream {
 
     private boolean eof;
+    private boolean echo = true;
 
     private char[] buffer;
     private int pos;
@@ -143,6 +144,24 @@ public class KeyboardReader extends Reader
     public void clearSoftEOF() {
         eof = false;
     }
+
+    /**
+     * Set the echo mode.
+     * 
+     * @param echo if true, characters are echoed to the console.
+     */
+    public void setEcho(boolean echo) {
+        this.echo = echo;
+    }
+
+    /**
+     * Is the echo mode enabled?
+     * 
+     * @return true if echo is enabled.
+     */
+    public boolean isEcho() {
+        return echo;
+    }
     
     /**
      * Get a snapshot of the reader's key event bindings.
@@ -196,8 +215,10 @@ public class KeyboardReader extends Reader
                 case KR_ENTER:
                     // Append event character to the line and commit.
                     currentLine.moveEnd();
-                    refreshCurrentLine();
-                    out.write('\n');
+                    if (echo) {
+                        refreshCurrentLine();
+                        out.write('\n');
+                    }
                     currentLine.appendChar(event.getKeyChar());
                     breakChar = true;
                     historyIndex = -1;
@@ -208,8 +229,10 @@ public class KeyboardReader extends Reader
                         if (currentLine.complete(completer)) {
                             currentLine.start(true);
                         }
-                        out.write(currentPrompt);
-                        refreshCurrentLine();
+                        if (echo) {
+                            out.write(currentPrompt);
+                            refreshCurrentLine();
+                        }
                     }
                     break;
                 case KR_HELP:
@@ -218,25 +241,33 @@ public class KeyboardReader extends Reader
                         if (currentLine.help(completer)) {
                             currentLine.start(true);
                         }
-                        out.write(currentPrompt);
-                        refreshCurrentLine();
+                        if (echo) {
+                            out.write(currentPrompt);
+                            refreshCurrentLine();
+                        }
                     }
                     break;
                 case KR_SOFT_EOF:
                     // Set soft EOF status and commit
                     currentLine.moveEnd();
-                    refreshCurrentLine();
-                    out.write('\n');
+                    if (echo) {
+                        refreshCurrentLine();
+                        out.write('\n');
+                    }
                     eof = true;
                     breakChar = true;
                     break;
                 case KR_KILL_LINE:
                     // Kill the current input line (and clear the screen)
-                    this.console.clear();
-                    this.console.setCursor(0, 0);
-                    out.write(currentPrompt);
+                    if (echo) {
+                        this.console.clear();
+                        this.console.setCursor(0, 0);
+                        out.write(currentPrompt);
+                    }
                     currentLine.start();
-                    refreshCurrentLine();
+                    if (echo) {
+                        refreshCurrentLine();
+                    }
                     break;
                 case KR_INSERT:
                     // Insert event's character
@@ -323,7 +354,9 @@ public class KeyboardReader extends Reader
     }
 
     private void refreshCurrentLine() throws IOException {
-        currentLine.refreshCurrentLine();
+        if (echo) {
+            currentLine.refreshCurrentLine();
+        }
     }
 
     private boolean fillBuffer() throws IOException {

@@ -128,20 +128,48 @@ public class SerialPortDriver extends Driver implements SerialPortAPI,
         configure(divisor, 8, false, false, false);
     }
 
-    public int readSingle() {
-        // should detect overruns, maybe parity errors, framing errors, and
-        // breaks.
+    public boolean isDataAvailable() {
+        // LSR (Line Status Register) bit 0 = Data Ready
+        return (port.inPortByte(basePort + 5) & 1) != 0;
+    }
 
-        // FIXME: busy waiting for a bit block to arrive
-        while ((port.inPortByte(basePort + 5) & 1) == 0)
-            ;
+    /**
+     * Wait until the Line Status Register satisfies the given condition.
+     * Uses a spin-yield-sleep escalation to avoid burning CPU while
+     * remaining responsive to fast UART turnarounds.
+     *
+     * @param mask     bitmask to apply to the LSR value.
+     * @param expected the expected result after masking.
+     * @return true if the condition was met, false if interrupted.
+     */
+    private boolean waitForLSR(int mask, int expected) {
+        int spinCount = 0;
+        while ((port.inPortByte(basePort + 5) & mask) != expected) {
+            if (Thread.currentThread().isInterrupted()) return false;
+            if (++spinCount > 100) {
+                try {
+                    Thread.sleep(1);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    return false;
+                }
+            } else {
+                Thread.yield();
+            }
+        }
+        return true;
+    }
+
+    public int readSingle() {
+        // should detect overruns, maybe parity errors, framing errors, and breaks.
+        // LSR bit 0 = Data Ready
+        if (!waitForLSR(1, 1)) return -1;
         return port.inPortByte(basePort);
     }
 
     public void writeSingle(int value) {
-        // FIXME: busy waiting for the transmitter buffer to be empty
-        while ((port.inPortByte(basePort + 5) & 32) == 0)
-            ;
+        // LSR bit 5 = Transmitter Holding Register Empty
+        if (!waitForLSR(32, 32)) return;
         port.outPortByte(basePort, value);
     }
 
@@ -150,10 +178,8 @@ public class SerialPortDriver extends Driver implements SerialPortAPI,
      * the hardware buffers, but no waiting data from the input channel.
      */
     private void flushHardware() {
-        // FIXME: busy waiting for the holding and shift registers to be empty
-        int b;
-        do
-            b = port.inPortByte(basePort + 5); while ((b & 96) != 96);
+        // LSR bits 5+6 = THR Empty + Transmitter Empty
+        waitForLSR(96, 96);
     }
 
     public void flush() {
