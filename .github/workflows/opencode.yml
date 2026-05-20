@@ -45,7 +45,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GH_PAT }}
           OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY }}
         with:
-          model: opencode/minimax-m2.5-free
+          model: openai/gpt-4o
 
       - name: Close issue
         if: success() && contains(github.event.issue.title, 'Review ')
