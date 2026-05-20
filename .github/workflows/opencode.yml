@@ -16,7 +16,7 @@ jobs:
        github.event.comment.author_association == 'MEMBER' || 
        github.event.comment.author_association == 'OWNER')
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 30
     env:
       # This forces actions to use Node 24 and clears the warning
       FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
