@@ -46,7 +46,7 @@ import org.jnode.vm.VmSystem;
  */
 public class Log4jConfigurePlugin extends Plugin {
 
-    public static final String LAYOUT = "%-5p [%c{1}]: %m%n";
+    public static final String LAYOUT = "%d{ABSOLUTE} %-5p [%c{1}]: %m%n";
 
     /**
      * @param descriptor
