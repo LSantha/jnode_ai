@@ -20,6 +20,7 @@
 
 package org.jnode.shell.command.driver.console;
 
+import org.apache.log4j.Logger;
 import org.jnode.driver.DeviceUtils;
 import org.jnode.driver.console.TextConsole;
 import org.jnode.driver.serial.SerialPortAPI;
@@ -39,6 +40,7 @@ import org.jnode.shell.ShellException;
  */
 public class SerialConsolePlugin extends Plugin {
 
+    private static final Logger log = Logger.getLogger(SerialConsolePlugin.class);
     private static final String DEFAULT_PORT = "serial1";
     private static final int DEFAULT_BAUD_DIVISOR = 1; // 115200 baud
 
@@ -77,6 +79,7 @@ public class SerialConsolePlugin extends Plugin {
             consoleThread = new Thread(commandShell, "serial-console");
             consoleThread.setDaemon(true);
             consoleThread.start();
+            log.info("Serial console available on " + DEFAULT_PORT + " at 115200 baud");
         } catch (ShellException e) {
             throw new PluginException("Failed to start serial command shell", e);
         }
