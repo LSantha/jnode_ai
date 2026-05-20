@@ -39,6 +39,15 @@ jobs:
         with:
           java-version: '8'
           distribution: 'zulu'
+      - name: Cache ISO build
+        id: cache-iso
+        uses: actions/cache@v4
+        with:
+          path: all/build/cdroms/jnode-x86-lite.iso
+          key: jnode-iso-${{ hashFiles('**/*.java', '**/build.xml', 'build.sh') }}
+      - name: Build ISO
+        if: steps.cache-iso.outputs.cache-hit != 'true'
+        run: sh build.sh cd-x86-lite
       - name: Run opencode
         uses: anomalyco/opencode/github@latest
         env:
