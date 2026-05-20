@@ -4,7 +4,7 @@ timeout 5
 
 # ---------------------------
 title JNode (default)
-kernel (hd0,0)/jnode32.gz mp=no
+kernel (hd0,0)/jnode32.gz mp=no kdb lkd
 module (hd0,0)/default.jgz
 
 # ---------------------------
