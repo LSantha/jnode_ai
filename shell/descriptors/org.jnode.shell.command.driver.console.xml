@@ -22,6 +22,7 @@
 
 <plugin id="org.jnode.shell.command.driver.console"
         name="JNode console driver commands"
+        class="org.jnode.shell.command.driver.console.SerialConsolePlugin"
         version="@VERSION@"
         license-name="lgpl"
         provider-name="JNode.org">
@@ -43,7 +44,7 @@
     <alias name="clear" class="org.jnode.shell.command.driver.console.ClearConsoleCommand"/>
     <alias name="serialconsole" class="org.jnode.shell.command.driver.console.SerialConsoleCommand"/>
   </extension>
-  
+
   <extension point="org.jnode.shell.syntaxes">
     <syntax alias="clear">
       <empty description="Clear the console"/>
