@@ -54,7 +54,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GH_PAT }}
           OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY }}
         with:
-          model: opencode/qwen3.6-plus-free
+          model: opencode/deepseek-v4-flash-free
 
       - name: Close issue
         if: success() && contains(github.event.issue.title, 'Review ')
