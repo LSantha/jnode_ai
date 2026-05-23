@@ -46,6 +46,7 @@ qemu-system-x86_64 \
   -serial file:/tmp/qemu_serial.log \
   -serial unix:/tmp/jnode.serial2,server,nowait \
   -no-reboot \
+  -display none \
   </dev/null >/dev/null 2>&1 & true
 ```
 
@@ -57,6 +58,7 @@ qemu-system-x86_64 \
 | `-serial file:...` | UART1 → KDB boot log file |
 | `-serial unix:...` | UART2 → Unix socket for interactive console |
 | `-no-reboot` | Stop on crash instead of rebooting |
+| `-display none` | Disable graphical window (required for headless/CI environments) |
 
 ### Approach B — Full (advanced)
 
@@ -73,6 +75,7 @@ qemu-system-x86_64 \
   -serial chardev:com1 \
   -serial unix:/tmp/jnode.serial2,server,nowait \
   -no-reboot \
+  -display none \
   </dev/null >/dev/null 2>&1 & true
 ```
 
