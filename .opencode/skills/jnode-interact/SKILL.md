@@ -24,7 +24,18 @@ Use this skill when you need to:
 
 ## QEMU Setup
 
-### Start QEMU headless
+Two approaches, choose based on need:
+
+| Approach | Log | Console | KDB | Use case |
+|---|---|---|---|---|
+| **Simple (default)** | ✅ file | ✅ unix | ❌ | 90% of cases — testing, debugging, CI |
+| **Full (advanced)** | ✅ logfile | ✅ unix | ✅ interactive | Complex debug — thread queues, stack traces, KDB probing |
+
+**CRITICAL:** The `& true` at the end of the QEMU command is required. Without it, the bash tool may timeout and kill QEMU. Always use this pattern.
+
+### Approach A — Simple (default)
+
+Boot log + serial console. No interactive KDB. Use this for most tasks.
 
 ```bash
 qemu-system-x86_64 \
@@ -38,9 +49,7 @@ qemu-system-x86_64 \
   </dev/null >/dev/null 2>&1 & true
 ```
 
-**CRITICAL:** The `& true` at the end is required. This ensures the command returns immediately without hanging. Without `true`, the bash tool may timeout and kill QEMU.
-
-**Parameters explained:**
+**Parameters (Approach A):**
 | Parameter | Purpose |
 |---|---|---|
 | `-machine accel=kvm:tcg` | KVM acceleration with TCG fallback |
@@ -49,7 +58,82 @@ qemu-system-x86_64 \
 | `-serial unix:...` | UART2 → Unix socket for interactive console |
 | `-no-reboot` | Stop on crash instead of rebooting |
 
-**GitHub Actions notes:**
+### Approach B — Full (advanced)
+
+Adds interactive KDB debugger alongside boot log and serial console. Use when you need to inspect threads, queues, or probe internal VM state at runtime.
+
+```bash
+rm -f /tmp/qemu_serial.log /tmp/jnode.serial2 /tmp/jnode.kdb
+qemu-system-x86_64 \
+  -machine accel=kvm:tcg \
+  -m 1024 \
+  -name "JNode x86" \
+  -cdrom all/build/cdroms/jnode-x86-lite.iso \
+  -chardev socket,id=com1,path=/tmp/jnode.kdb,server=on,wait=off,logfile=/tmp/qemu_serial.log \
+  -serial chardev:com1 \
+  -serial unix:/tmp/jnode.serial2,server,nowait \
+  -no-reboot \
+  </dev/null >/dev/null 2>&1 & true
+```
+
+**What changed vs simple:**
+| Change | Reason |
+|---|---|
+| `-chardev socket,...,logfile=...` | Single chardev does double duty: Unix socket for KDB interaction + file for boot log |
+| `-serial chardev:com1` | Maps UART1 to the chardev instead of a plain file |
+| `rm -f` prior sockets | Chardev socket path must not exist before QEMU starts (unlike `-serial unix:`) |
+
+**KDB commands (send to the socket):**
+```
+?   Help                    w   Print waiting threads
+t   Print current thread    W   Stack traces of waiting threads
+q   Print thread queues     p   Ping
+r   Stack traces of ready   l   Show Load/Compile queue
+v   Verify thread
+```
+
+### Testing KDB interactively
+
+After boot, connect to the KDB socket, send `?`, and read the response:
+
+```bash
+python3 -c "
+import socket, time, select
+s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+s.settimeout(5)
+s.connect('/tmp/jnode.kdb')
+s.send(b'?\n')
+time.sleep(0.5)
+s.setblocking(False)
+buf = b''
+while True:
+    r, _, _ = select.select([s], [], [], 1.0)
+    if s in r: d = s.recv(4096)
+    else: break
+    if not d: break
+    buf += d
+print(buf.decode(errors='replace'))
+s.close()
+"
+```
+
+Expected output (~218 bytes):
+```
+Commands:
+l   Show Load/Compile queue
+p   Ping
+q   Print thread queues
+r   Print stacktraces of ready-queue
+t   Print current thread
+v   Verify thread
+w   Print waiting threads
+W   Print stacktraces of waiting threads
+```
+
+The same pattern works for any KDB command — open a connection, send `cmd\n`, read response, close. Each connection is independent; no persistent reader is needed.
+
+### GitHub Actions notes
+
 - Runners have KVM available at `/dev/kvm`
 - Use `accel=kvm:tcg` for KVM with TCG fallback
 - No display needed — QEMU runs headless by default when no `-display` is specified
@@ -272,6 +356,21 @@ Only one client can connect to the serial pipe at a time. Make sure no other ter
 
 ### Commands return no output
 The shell might not be fully initialized yet. Wait a few more seconds after the socket appears. The `[JNODE_AGENT_READY]` prompt confirms readiness.
+
+### KDB socket "Resource temporarily unavailable"
+This means another client is already connected to the KDB socket. The chardev (`server,nowait`) accepts only **one client at a time**. Close the existing connection first. Each KDB command can be a fresh connect-send-disconnect cycle — no persistent reader is needed.
+
+### KDB returns empty response after boot
+Normal behavior. KDB is a boot-time debugger; some commands may return empty after the system is fully running. The `?` help command should always work. If `?` also returns empty, verify QEMU started with Approach B (check for `-chardev` in the process command line).
+
+### KDB blocks boot (system freezes before startup)
+If `wait=on` was used instead of `wait=off`, QEMU will wait for a client to connect to the KDB socket before booting. Verify your command uses `wait=off`. No persistent reader is needed — KDB does not block with `wait=off`.
+
+### Chardev socket path must not exist
+Unlike `-serial unix:server,nowait` (which creates/reuses the socket file), the `-chardev socket,path=...` option will **fail** if the socket file already exists. Always `rm -f /tmp/jnode.kdb` before starting QEMU with Approach B.
+
+### Serial console stops working after switching from Approach A to B
+If the serial console produces no output with Approach B despite `SerialConsolePlugin` starting successfully, the most likely cause is a stale socket file from the previous QEMU instance. Clean up: `rm -f /tmp/jnode.serial2 /tmp/jnode_com2`.
 
 ### Serial console not auto-starting
 Verify `SerialConsolePlugin` is in the plugin list:
