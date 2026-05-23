@@ -24,6 +24,12 @@ Use this skill when you need to:
 
 ## QEMU Setup
 
+**Always use the startup script.** Running the raw `qemu-system-x86_64` command inline may hang because the agent's shell tool does not reliably handle backgrounding with `& true`. The script in `scripts/start_qemu.sh` handles this correctly.
+
+```bash
+bash .opencode/skills/jnode-interact/scripts/start_qemu.sh [simple|full] [iso-path]
+```
+
 Two approaches, choose based on need:
 
 | Approach | Log | Console | KDB | Use case |
@@ -31,7 +37,7 @@ Two approaches, choose based on need:
 | **Simple (default)** | ✅ file | ✅ unix | ❌ | 90% of cases — testing, debugging, CI |
 | **Full (advanced)** | ✅ logfile | ✅ unix | ✅ interactive | Complex debug — thread queues, stack traces, KDB probing |
 
-**CRITICAL:** The `& true` at the end of the QEMU command is required. Without it, the bash tool may timeout and kill QEMU. Always use this pattern.
+**CRITICAL:** The `& true` at the end of the QEMU command is required. Without it, the bash tool may timeout and kill QEMU. Always use this pattern. The `start_qemu.sh` script already includes it.
 
 ### Approach A — Simple (default)
 
