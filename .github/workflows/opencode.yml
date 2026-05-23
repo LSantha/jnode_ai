@@ -39,6 +39,8 @@ jobs:
         with:
           java-version: '8'
           distribution: 'zulu'
+      - name: Install QEMU
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq qemu-system-x86 socat
       - name: Cache ISO build
         id: cache-iso
         uses: actions/cache@v4
