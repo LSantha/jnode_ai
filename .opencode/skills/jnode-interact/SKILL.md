@@ -67,22 +67,13 @@ bash start_qemu.sh simple all/build/cdroms/jnode-x86-lite.iso 4
 
 ### Approach A — Simple (default)
 
-Boot log + serial console. No interactive KDB. Use this for most tasks.
+Boot log + serial console. No interactive KDB. Use for most tasks.
 
 ```bash
-qemu-system-x86_64 \
-  -machine accel=kvm:tcg \
-  -m 1024 \
-  -name "JNode x86" \
-  -cdrom all/build/cdroms/jnode-x86-lite.iso \
-  -serial file:/tmp/qemu_serial.log \
-  -serial unix:/tmp/jnode.serial2,server,nowait \
-  -no-reboot \
-  -display none \
-  </dev/null >/dev/null 2>&1 & true
+bash .opencode/skills/jnode-interact/scripts/start_qemu.sh simple
 ```
 
-**Parameters (Approach A):**
+**Parameters:**
 | Parameter | Purpose |
 |---|---|---|
 | `-machine accel=kvm:tcg` | KVM acceleration with TCG fallback |
@@ -97,18 +88,7 @@ qemu-system-x86_64 \
 Adds interactive KDB debugger alongside boot log and serial console. Use when you need to inspect threads, queues, or probe internal VM state at runtime.
 
 ```bash
-rm -f /tmp/qemu_serial.log /tmp/jnode.serial2 /tmp/jnode.kdb
-qemu-system-x86_64 \
-  -machine accel=kvm:tcg \
-  -m 1024 \
-  -name "JNode x86" \
-  -cdrom all/build/cdroms/jnode-x86-lite.iso \
-  -chardev socket,id=com1,path=/tmp/jnode.kdb,server=on,wait=off,logfile=/tmp/qemu_serial.log \
-  -serial chardev:com1 \
-  -serial unix:/tmp/jnode.serial2,server,nowait \
-  -no-reboot \
-  -display none \
-  </dev/null >/dev/null 2>&1 & true
+bash .opencode/skills/jnode-interact/scripts/start_qemu.sh full
 ```
 
 **What changed vs simple:**
