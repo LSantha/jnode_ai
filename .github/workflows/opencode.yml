@@ -41,6 +41,8 @@ jobs:
           distribution: 'zulu'
       - name: Install QEMU
         run: sudo apt-get update -qq && sudo apt-get install -y -qq qemu-system-x86 socat
+      - name: Prepare jnode.properties
+        run: cp ../.github/qemu/jnode.properties .
       - name: Cache ISO build
         id: cache-iso
         uses: actions/cache@v4
@@ -49,7 +51,7 @@ jobs:
           key: jnode-iso-${{ hashFiles('**/*.java', '**/build.xml', 'build.sh') }}
       - name: Build ISO
         if: steps.cache-iso.outputs.cache-hit != 'true'
-        run: cp ../.github/qemu/jnode.properties . && sh build.sh cd-x86-lite
+        run: sh build.sh cd-x86-lite
       - name: Run opencode
         uses: anomalyco/opencode/github@latest
         env:
