@@ -40,21 +40,19 @@ def send_cmd(sock, cmd):
     
     # Read response - wait longer for ping/wget
     buf = b""
-    start = time.time()
     while True:
         try:
-            sock.settimeout(1.0)
+            sock.settimeout(2.0)
             r = sock.recv(4096)
             if r:
                 buf += r
-                # For ping, wait until statistics
-                if b'Packet statistics' in buf or b'Exception' in buf:
-                    time.sleep(0.2)
+                # For ping, wait for final statistics
+                if b'Packet statistics' in buf:
+                    time.sleep(0.3)
                     break
             else:
                 break
         except socket.timeout:
-            # No more data
             break
     
     # Output
