@@ -49,7 +49,7 @@ jobs:
           key: jnode-iso-${{ hashFiles('**/*.java', '**/build.xml', 'build.sh') }}
       - name: Build ISO
         if: steps.cache-iso.outputs.cache-hit != 'true'
-        run: sh build.sh -Dbuild.properties.file=../.github/qemu/jnode.properties cd-x86-lite
+        run: cp ../.github/qemu/jnode.properties . && sh build.sh cd-x86-lite
       - name: Run opencode
         uses: anomalyco/opencode/github@latest
         env:
