@@ -10,12 +10,14 @@ module /default.jgz
 
 # ---------------------------
 title JNode (all plugins)
-kernel /jnode32.gz mp=no
+serial --unit=0 --speed=115200 --word=8 --parity=no --stop=1
+kernel /jnode32.gz mp=no kdb lkd
 module /full.jgz
 
 # ---------------------------
 title JNode (minimal shell)
-kernel /jnode32.gz mp=no
+serial --unit=0 --speed=115200 --word=8 --parity=no --stop=1
+kernel /jnode32.gz mp=no kdb lkd
 module /shell.jgz
 
 # ---------------------------
@@ -26,7 +28,8 @@ module /shell.jgz
 
 # ---------------------------
 title JNode (all plugins) (VESA mode)
-kernel /jnode32.gz mp=no fb
+serial --unit=0 --speed=115200 --word=8 --parity=no --stop=1
+kernel /jnode32.gz mp=no fb kdb lkd
 vbematch 800 600 32
 module /full.jgz
 
@@ -77,7 +80,8 @@ module /full.jgz
 
 # ---------------------------
 title JNode tests (all plugins + tests)
-kernel /jnode32.gz mp=no
+serial --unit=0 --speed=115200 --word=8 --parity=no --stop=1
+kernel /jnode32.gz mp=no kdb lkd
 module /tests.jgz
 
 # ---------------------------
@@ -101,5 +105,6 @@ module /tests.jgz
 # ---------------------------
 title JNode via dhcp (all plugins)
 dhcp
-kernel (nd)/jnode32.gz mp=no
+serial --unit=0 --speed=115200 --word=8 --parity=no --stop=1
+kernel (nd)/jnode32.gz mp=no kdb lkd
 module (nd)/full.jgz

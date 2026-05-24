@@ -27,7 +27,7 @@ Use this skill when you need to:
 **Always use the startup script.** Running the raw `qemu-system-x86_64` command inline may hang because the agent's shell tool does not reliably handle backgrounding with `& true`. The script in `scripts/start_qemu.sh` handles this correctly.
 
 ```bash
-bash .opencode/skills/jnode-interact/scripts/start_qemu.sh [simple|full] [iso-path]
+bash .opencode/skills/jnode-interact/scripts/start_qemu.sh [simple|full] [iso-path] [entry]
 ```
 
 Two approaches, choose based on need:
@@ -38,6 +38,32 @@ Two approaches, choose based on need:
 | **Full (advanced)** | ✅ logfile | ✅ unix | ✅ interactive | Complex debug — thread queues, stack traces, KDB probing |
 
 **CRITICAL:** The `& true` at the end of the QEMU command is required. Without it, the bash tool may timeout and kill QEMU. Always use this pattern. The `start_qemu.sh` script already includes it.
+
+### Boot Entry Selection
+
+The 3rd argument `[entry]` selects a GRUB boot menu entry (0-5). Default is 0.
+
+| Entry | GRUB Title | Flags | Serial Log |
+|-------|------------|-------|------------|
+| 0 | JNode (default) | `kdb lkd` | ✅ Boot + Log4j |
+| 1 | JNode (all plugins) | `kdb lkd` | ✅ Boot + Log4j |
+| 2 | JNode (minimal shell) | `kdb lkd` | ✅ Boot + Log4j |
+| 3 | JNode (all plugins, VESA) | `fb kdb lkd` | ✅ Boot + Log4j |
+| 4 | JNode tests (+ tests plugin) | `kdb lkd` | ✅ Boot + Log4j |
+| 5 | JNode via dhcp (all plugins) | `kdb lkd` | ✅ Boot + Log4j |
+
+All entries include the `kdb lkd` kernel flags for serial boot logging.
+
+**How it works:** When `entry > 0`, the script adds `-monitor unix:/tmp/qemu_monitor.sock,server,nowait` to QEMU, waits for the monitor socket, then sends `N×DOWN + ENTER` keystrokes via `socat` to select the GRUB entry within the 5-second timeout window.
+
+**Examples:**
+```bash
+# Boot all plugins (for javac, ant, full plugin set)
+bash start_qemu.sh simple all/build/cdroms/jnode-x86-lite.iso 1
+
+# Boot tests (for running test suites)
+bash start_qemu.sh simple all/build/cdroms/jnode-x86-lite.iso 4
+```
 
 ### Approach A — Simple (default)
 
@@ -148,14 +174,11 @@ The same pattern works for any KDB command — open a connection, send `cmd\n`, 
 - No display needed — QEMU runs headless by default when no `-display` is specified
 - The serial console (UART2) is the primary interaction method
 
-### Add `lkd` boot flag for full serial logging
+### `lkd` boot flag for full serial logging
 
-Edit `all/conf/x86/menu-cdrom.lst` to include `lkd` alongside `kdb`:
-```
-kernel /jnode32.gz mp=no kdb lkd
-```
+All active GRUB entries now include the `kdb lkd` flags in `all/conf/x86/menu-cdrom.lst`, so serial boot logging works for every entry.
 
-The `lkd` flag adds an `UnsafeDebugAppender` to Log4j, routing ALL Log4j output to the KDB serial port (UART1). Without it, logging switches to a VGA virtual console after `Log4jConfigurePlugin` starts, and the serial log stops growing.
+The `lkd` flag adds an `UnsafeDebugAppender` to Log4j, routing ALL Log4j output to the KDB serial port (UART1). Without it, logging switches to a VGA virtual console after `Log4jConfigurePlugin` starts, and the serial log stops growing early.
 
 ### Build before testing
 
@@ -171,7 +194,7 @@ sh build.sh cd-x86-lite
 wc -l /tmp/qemu_serial.log
 ```
 
-A successful boot with `lkd` produces **~190 lines**. The log stops growing once boot completes because the system is idle — this is normal, not a freeze.
+All GRUB entries now include the `kdb lkd` flags, so a successful boot produces **~190 lines** regardless of entry selection. The log stops growing once boot completes — this is normal, not a freeze.
 
 Key markers:
 - `Starting JNode` — Java entry point reached
@@ -184,26 +207,24 @@ Key markers:
 ### Check for serial console readiness
 
 The safest way to detect when the serial console is ready:
-
 ```bash
 grep "Serial console available" /tmp/qemu_serial.log
 ```
 
-When `SerialConsolePlugin` starts, it logs:
+Output:
 ```
 INFO  [SerialConsolePlugin]: Serial console available on serial1 at 115200 baud
 ```
 
-This confirms the shell is ready to accept commands.
-
 ### Verify the shell is responsive
 
+This works regardless of which entry was selected:
 ```bash
 ln -sf /tmp/jnode.serial2 /tmp/jnode_com2
 python3 .opencode/skills/jnode-interact/scripts/jnode_agent_cmd.py "date"
 ```
 
-Output should include `[JNODE_AGENT_READY]` prompt.
+If the shell is ready, output includes `[JNODE_AGENT_READY]` prompt. If not, wait a few more seconds and retry. Non-default entries may take longer to initialize the shell.
 
 ## Serial Console (Automatic)
 
