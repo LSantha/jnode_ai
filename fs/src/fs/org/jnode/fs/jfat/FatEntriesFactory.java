@@ -43,7 +43,12 @@ public class FatEntriesFactory {
                 entry = null;
                 return false;
             } catch (IOException ex) {
-                log.debug("cannot read entry " + i);
+                log.debug("cannot read entry " + i + ": " + ex.getMessage());
+                // Check if this is a chain termination error (free/invalid cluster)
+                if (ex.getMessage() != null && (ex.getMessage().contains("free entry") || ex.getMessage().contains("circular"))) {
+                    entry = null;
+                    return false;
+                }
                 i++;
                 continue;
             }

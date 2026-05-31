@@ -133,32 +133,41 @@ public class BootSector {
     private void compute() {
         RootDirSectors = ((BPB_RootEntCnt * 32) + (BPB_BytsPerSec - 1)) / BPB_BytsPerSec;
 
+        // FAT32 detection: RootEntCnt==0 and FATSz16==0 are definitive per Microsoft FAT spec
+        // Some mkfs.fat implementations set TotSec16 with actual value and TotSec32=0
+        boolean isFat32 = (BPB_RootEntCnt == 0 && BPB_FATSz16 == 0);
+
         if (BPB_FATSz16 != 0)
             FATSz = BPB_FATSz16;
         else
             FATSz = BPB_FATSz32;
 
-        if (isFat32()) {
-            FirstDataSector = BPB_RsvdSecCnt + (BPB_NumFATs * FATSz) + RootDirSectors;
-        } else {
-            FirstDataSector = BPB_RsvdSecCnt + (BPB_NumFATs * FATSz);
-        }
-
-        if (BPB_TotSec16 != 0)
-            TotSec = BPB_TotSec16;
-        else
-            TotSec = BPB_TotSec32;
-
-        DataSec = TotSec - (BPB_RsvdSecCnt + (BPB_NumFATs * FATSz) + RootDirSectors);
-
-        CountOfClusters = DataSec / BPB_SecPerClus;
-
-        if (CountOfClusters < SZFAT12)
-            type = IFAT12;
-        else if (CountOfClusters < SZFAT16)
-            type = IFAT16;
-        else
+        // For FAT32, RootDirSectors is 0 (root dir stored in cluster), so don't add it
+        if (isFat32) {
             type = IFAT32;
+            FirstDataSector = BPB_RsvdSecCnt + (BPB_NumFATs * FATSz);
+            TotSec = (BPB_TotSec32 != 0) ? BPB_TotSec32 : BPB_TotSec16;
+            DataSec = TotSec - FirstDataSector;
+            CountOfClusters = DataSec / BPB_SecPerClus;
+        } else {
+            if (BPB_TotSec16 != 0)
+                TotSec = BPB_TotSec16;
+            else
+                TotSec = BPB_TotSec32;
+
+            FirstDataSector = BPB_RsvdSecCnt + (BPB_NumFATs * FATSz) + RootDirSectors;
+
+            DataSec = TotSec - (BPB_RsvdSecCnt + (BPB_NumFATs * FATSz) + RootDirSectors);
+
+            CountOfClusters = DataSec / BPB_SecPerClus;
+
+            if (CountOfClusters < SZFAT12)
+                type = IFAT12;
+            else if (CountOfClusters < SZFAT16)
+                type = IFAT16;
+            else
+                type = IFAT32;
+        }
     }
 
     private void decode() {

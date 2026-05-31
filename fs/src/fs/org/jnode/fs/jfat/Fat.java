@@ -120,7 +120,7 @@ public abstract class Fat {
     }
 
     public final long getLast(int fatnum) {
-        return getLast(fatnum) + offset(size() - 1);
+        return getFirst(fatnum) + offset(size() - 1);
     }
 
     protected final long position(int fatnum, int index) throws IOException {
