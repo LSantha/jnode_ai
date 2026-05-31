@@ -26,6 +26,7 @@ import java.io.PrintWriter;
 import org.jnode.shell.AbstractCommand;
 import org.jnode.shell.syntax.Argument;
 import org.jnode.shell.syntax.FileArgument;
+import org.jnode.shell.syntax.FlagArgument;
 
 /**
  * @author Guillaume BINET (gbin@users.sourceforge.net)
@@ -34,16 +35,19 @@ import org.jnode.shell.syntax.FileArgument;
 public class MkdirCommand extends AbstractCommand {
 
     private static final String help_dir = "the directory to create";
+    private static final String help_parents = "if set, create parent directories as needed";
     private static final String help_super = "Create a new directory";
     private static final String fmt_exists = "%s already exists%n";
     private static final String err_cant_create = "Cannot create directory";
     
     private final FileArgument argDir;
+    private final FlagArgument argParents;
 
     public MkdirCommand() {
         super(help_super);
-        argDir = new FileArgument("directory", Argument.MANDATORY | Argument.NONEXISTENT, help_dir);
-        registerArguments(argDir);
+        argDir = new FileArgument("directory", Argument.MANDATORY, help_dir);
+        argParents = new FlagArgument("parents", Argument.OPTIONAL, help_parents);
+        registerArguments(argDir, argParents);
     }
 
     public static void main(String[] args) throws Exception {
@@ -53,13 +57,20 @@ public class MkdirCommand extends AbstractCommand {
     public void execute() {
         File dir = argDir.getValue();
         PrintWriter err = getError().getPrintWriter();
-        if (dir.exists()) {
-            err.format(fmt_exists, dir);
-            exit(1);
-        }
-        if (!dir.mkdir()) {
-            err.println(err_cant_create);
-            exit(1);
+        if (argParents.isSet()) {
+            if (!dir.mkdirs()) {
+                err.println(err_cant_create);
+                exit(1);
+            }
+        } else {
+            if (dir.exists()) {
+                err.format(fmt_exists, dir);
+                exit(1);
+            }
+            if (!dir.mkdir()) {
+                err.println(err_cant_create);
+                exit(1);
+            }
         }
     }
 }
