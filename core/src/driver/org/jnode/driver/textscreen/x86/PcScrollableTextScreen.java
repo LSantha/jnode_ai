@@ -57,16 +57,17 @@ class PcScrollableTextScreen extends PcBufferTextScreen implements
      */
     @Override
     public void ensureVisible(int row, boolean sync) {
+        boolean needsSync = false;
         if (row < ofsY) {
             ofsY = row;
-            if (sync) {
-                sync(0, getHeight() * getWidth());
-            }
+            needsSync = true;
         } else if (row >= ofsY + parentHeight) {
-            ofsY = (row - parentHeight) + 1;
-            if (sync) {
-                sync(0, getHeight() * getWidth());
-            }
+            ofsY = row - parentHeight + 1;
+            needsSync = true;
+        }
+        ofsY = Math.max(0, Math.min(ofsY, Math.max(0, getHeight() - parentHeight)));
+        if (sync && needsSync) {
+            sync(0, getHeight() * getWidth());
         }
     }
 
