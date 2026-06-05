@@ -202,7 +202,7 @@ public class IDEDiskDriver extends Driver
     protected void transfer(long devOffset, ByteBuffer buf, boolean isWrite) throws IOException {
 //        int bufOffset = 0;
         int length = buf.remaining();
-        if (length < SECTOR_SIZE) {
+        if (length < SECTOR_SIZE && log.isDebugEnabled()) {
             log.debug("Transfer length=" + length + (isWrite ? " Wr " : " Rd "));
         }
 
@@ -232,8 +232,10 @@ public class IDEDiskDriver extends Driver
                 new IDEWriteSectorsCommand(primary, master, is48bit, partLbaStart, partSectorCount, buf) :
                 new IDEReadSectorsCommand(primary, master, is48bit, partLbaStart, partSectorCount, buf);
             try {
-                log.debug("bus.exAndWt" + (isWrite ? "W" : "R") + " dev=" + dev.getId() + " start=" + partLbaStart +
-                    " sectors=" + partSectorCount + " len=" + partLength);
+                if (log.isDebugEnabled()) {
+                    log.debug("bus.exAndWt" + (isWrite ? "W" : "R") + " dev=" + dev.getId() + " start=" + partLbaStart +
+                        " sectors=" + partSectorCount + " len=" + partLength);
+                }
                 bus.executeAndWait(cmd, IDE_DATA_XFER_TIMEOUT);
             } catch (InterruptedException ex) {
                 throw new IOException("IDE " + errorSource + " interrupted", ex);

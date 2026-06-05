@@ -26,12 +26,14 @@ import java.util.Map;
 
 public class FatTable {
     private final Map<FatKey, FatEntry> table = new HashMap<FatKey, FatEntry>();
+    private final FatKey lookupKey = new FatKey();
 
     public FatTable() {
     }
 
     public FatEntry get(String name) {
-        return table.get(new FatKey(name));
+        lookupKey.setKey(name);
+        return table.get(lookupKey);
     }
 
     public FatEntry put(FatEntry entry) {
@@ -44,12 +46,12 @@ public class FatTable {
     }
 
     public FatEntry remove(FatEntry entry) {
-        FatKey key = new FatKey(entry.getName());
+        lookupKey.setKey(entry.getName());
 
-        if (!table.containsKey(key))
+        if (!table.containsKey(lookupKey))
             throw new IllegalArgumentException("shouldn't happen");
 
-        return table.remove(key);
+        return table.remove(lookupKey);
     }
 
     public FatEntry put(String name, FatEntry entry) {
@@ -98,18 +100,38 @@ public class FatTable {
     }
 
     private class FatKey {
-        private final String key;
+        private String key;
+        private int hash;
 
         private FatKey(String value) {
             this.key = value;
+            this.hash = computeHash(value);
+        }
+
+        private FatKey() {
+            this.key = "";
+            this.hash = 0;
+        }
+
+        private void setKey(String value) {
+            this.key = value;
+            this.hash = computeHash(value);
         }
 
         private String getKey() {
             return key;
         }
 
+        private int computeHash(String s) {
+            int h = 0;
+            for (int i = 0; i < s.length(); i++) {
+                h = 31 * h + Character.toLowerCase(Character.toUpperCase(s.charAt(i)));
+            }
+            return h;
+        }
+
         public int hashCode() {
-            return FatUtils.toIgnoreCase(key).hashCode();
+            return hash;
         }
 
         public boolean equals(Object anObject) {

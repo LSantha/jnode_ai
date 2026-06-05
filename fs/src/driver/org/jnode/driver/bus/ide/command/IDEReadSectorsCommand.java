@@ -57,11 +57,11 @@ public class IDEReadSectorsCommand extends IDERWSectorsCommand {
 
         // Read data
         for (int i = 0; i < sectorCount; i++) {
-            log.debug("RDSect pw " + i);
+            if (log.isDebugEnabled()) log.debug("RDSect pw " + i);
             if (!pollWait(io, false))
                 return;
             // Read sector
-            log.debug("RDSect trf " + i);
+            if (log.isDebugEnabled()) log.debug("RDSect trf " + i);
             transferOneSector(ide, io);
         }
 

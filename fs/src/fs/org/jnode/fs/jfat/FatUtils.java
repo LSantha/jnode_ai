@@ -82,6 +82,10 @@ public class FatUtils {
 
         cal.setTimeInMillis(checkDateTime(javaDateTime));
 
+        return encodeTime(cal);
+    }
+
+    public static int encodeTime(Calendar cal) {
         return 2048 * cal.get(Calendar.HOUR_OF_DAY) + 32 * cal.get(Calendar.MINUTE) + cal.get(Calendar.SECOND) / 2;
     }
 
@@ -90,6 +94,10 @@ public class FatUtils {
 
         cal.setTimeInMillis(checkDateTime(javaDateTime));
 
+        return encodeDate(cal);
+    }
+
+    public static int encodeDate(Calendar cal) {
         return 512 * (cal.get(Calendar.YEAR) - 1980) + 32 * (cal.get(Calendar.MONTH) + 1) + cal.get(Calendar.DATE);
     }
 

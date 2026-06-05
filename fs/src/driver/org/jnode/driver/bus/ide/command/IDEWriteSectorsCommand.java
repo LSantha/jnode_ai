@@ -62,11 +62,11 @@ public class IDEWriteSectorsCommand extends IDERWSectorsCommand {
 
         // Send data
         for (int i = 0; i < sectorCount; i++) {
-            log.debug("WRSect pw " + i);
+            if (log.isDebugEnabled()) log.debug("WRSect pw " + i);
             if (!pollWait(io, false))
                 return;
             // Transfer sector
-            log.debug("WRSect trf " + i);
+            if (log.isDebugEnabled()) log.debug("WRSect trf " + i);
             transferOneSector(ide, io);
         }
 

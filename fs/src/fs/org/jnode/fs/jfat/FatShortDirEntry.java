@@ -23,6 +23,7 @@ package org.jnode.fs.jfat;
 import java.io.IOException;
 import java.nio.charset.CharacterCodingException;
 import java.util.Arrays;
+import java.util.Calendar;
 import org.apache.log4j.Logger;
 import org.jnode.util.NumberUtils;
 
@@ -120,11 +121,8 @@ public class FatShortDirEntry extends FatDirEntry {
     protected void decodeBase() {
         String baseName;
 
-        byte[] basebuf = new byte[8];
-        System.arraycopy(lName, 0, basebuf, 0, 8);
-
         try {
-            baseName = getFatFileSystem().getCodePage().newDecoder().decode(basebuf);
+            baseName = getFatFileSystem().getCodePage().newDecoder().decode(lName, 0, 8);
         } catch (CharacterCodingException ex) {
             log.debug("CharacterCodingException: CodePage error");
             log.debug("go on with standard decoding");
@@ -140,11 +138,8 @@ public class FatShortDirEntry extends FatDirEntry {
     protected void decodeExt() {
         String extName;
 
-        byte[] extbuf = new byte[3];
-        System.arraycopy(lName, 8, extbuf, 0, 3);
-
         try {
-            extName = getFatFileSystem().getCodePage().newDecoder().decode(extbuf);
+            extName = getFatFileSystem().getCodePage().newDecoder().decode(lName, 8, 3);
         } catch (CharacterCodingException ex) {
             log.debug("CharacterCodingException: CodePage error");
             log.debug("go on with standard decoding");
@@ -186,8 +181,10 @@ public class FatShortDirEntry extends FatDirEntry {
     }
 
     private void encodeCreated() {
-        lCrtDate = FatUtils.encodeDate(created);
-        lCrtTime = FatUtils.encodeTime(created);
+        Calendar cal = Calendar.getInstance();
+        cal.setTimeInMillis(FatUtils.checkDateTime(created));
+        lCrtDate = FatUtils.encodeDate(cal);
+        lCrtTime = FatUtils.encodeTime(cal);
         /*
          * GVT???: this have to be tested against a real M$ OS how the Tenth is
          * actually handled at entry creation? for now just avoid to store the
@@ -207,7 +204,9 @@ public class FatShortDirEntry extends FatDirEntry {
     }
 
     private void encodeAccessed() {
-        lLstAccDate = FatUtils.encodeDate(accessed);
+        Calendar cal = Calendar.getInstance();
+        cal.setTimeInMillis(FatUtils.checkDateTime(accessed));
+        lLstAccDate = FatUtils.encodeDate(cal);
         entry.setUInt16(18, lLstAccDate);
     }
 
@@ -219,8 +218,10 @@ public class FatShortDirEntry extends FatDirEntry {
     }
 
     private void encodeModified() {
-        lWrtDate = FatUtils.encodeDate(modified);
-        lWrtTime = FatUtils.encodeTime(modified);
+        Calendar cal = Calendar.getInstance();
+        cal.setTimeInMillis(FatUtils.checkDateTime(modified));
+        lWrtDate = FatUtils.encodeDate(cal);
+        lWrtTime = FatUtils.encodeTime(cal);
 
         entry.setUInt16(22, lWrtTime);
         entry.setUInt16(24, lWrtDate);

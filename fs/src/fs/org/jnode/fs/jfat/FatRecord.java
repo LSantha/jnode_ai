@@ -36,7 +36,7 @@ public class FatRecord {
 
     public FatRecord() {
         init();
-        longEntries = new Vector<FatLongDirEntry>(MAXLONGENTRIES);
+        longEntries = new Vector<FatLongDirEntry>(0);
     }
 
     public FatRecord(FatDirectory parent, FatName name) throws IOException {

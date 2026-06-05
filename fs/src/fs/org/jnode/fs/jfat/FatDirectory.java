@@ -8,16 +8,16 @@
  * by the Free Software Foundation; either version 2.1 of the License, or
  * (at your option) any later version.
  *
- * This library is distributed in the hope that it will be useful, but 
+ * This library is distributed in the hope that it will be useful, but
  * WITHOUT ANY WARRANTY; without even the implied warranty of MERCHANTABILITY
- * or FITNESS FOR A PARTICULAR PURPOSE. See the GNU Lesser General Public 
+ * or FITNESS FOR A PARTICULAR PURPOSE. See the GNU Lesser General Public
  * License for more details.
  *
  * You should have received a copy of the GNU Lesser General Public License
- * along with this library; If not, write to the Free Software Foundation, Inc., 
+ * along with this library; If not, write to the Free Software Foundation, Inc.,
  * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
  */
- 
+
 package org.jnode.fs.jfat;
 
 import java.io.FileNotFoundException;
@@ -39,6 +39,13 @@ public class FatDirectory extends FatEntry implements FSDirectory, FSDirectoryId
      * The map of ID -> entry.
      */
     private final Map<String, FatEntry> idMap = new HashMap<String, FatEntry>();
+
+    /**
+     * Cluster-level read buffer for directory entries. Avoids reading 32 bytes at a time.
+     * A 4KB cluster holds 128 entries, so we read 128 entries per disk I/O instead of 1.
+     */
+    private byte[] entryClusterBuffer;
+    private int entryClusterIndex = -1;
 
     /*
      * for root directory
@@ -80,8 +87,19 @@ public class FatDirectory extends FatEntry implements FSDirectory, FSDirectoryId
      * but how would you call it?
      */
     public FatDirEntry getFatDirEntry(int index, boolean allowDeleted) throws IOException {
-        FatMarshal entry = new FatMarshal(FatDirEntry.LENGTH);
-        getChain().read(index * entry.length(), entry.getByteBuffer());
+        final int entrySize = FatDirEntry.LENGTH;
+        final int clusterSize = getFatFileSystem().getClusterSize();
+        final int entriesPerCluster = clusterSize / entrySize;
+        final int clusterIndex = index / entriesPerCluster;
+        final int offsetInCluster = (index % entriesPerCluster) * entrySize;
+
+        if (entryClusterBuffer == null || entryClusterIndex != clusterIndex) {
+            entryClusterBuffer = getChain().readClusterData(clusterIndex);
+            entryClusterIndex = clusterIndex;
+        }
+
+        FatMarshal entry = new FatMarshal(entrySize);
+        System.arraycopy(entryClusterBuffer, offsetInCluster, entry.getArray(), 0, entrySize);
         return createDirEntry(entry, index, allowDeleted);
     }
 
@@ -160,6 +178,8 @@ public class FatDirectory extends FatEntry implements FSDirectory, FSDirectoryId
      */
     public void setFatDirEntry(FatDirEntry entry) throws IOException {
         getChain().write(entry.getIndex() * entry.length(), entry.getByteBuffer());
+        entryClusterBuffer = null;
+        entryClusterIndex = -1;
     }
 
     public FatDirEntry[] getFatFreeEntries(int n) throws IOException {
@@ -175,15 +195,27 @@ public class FatDirectory extends FatEntry implements FSDirectory, FSDirectoryId
             } catch (NoSuchElementException ex) {
                 if (index > MAXENTRIES)
                     throw new IOException("Directory is full");
+
                 getChain().allocateAndClear(1);
-                // restart the search, fixes infinite loop
-                // TODO review it for a better solution
                 i = 0;
                 index = 0;
                 continue;
+            } catch (IOException ex) {
+                if (ex.getCause() instanceof NoSuchElementException) {
+                    if (index > MAXENTRIES)
+                        throw new IOException("Directory is full");
+
+                    getChain().allocateAndClear(1);
+                    i = 0;
+                    index = 0;
+                    continue;
+                }
+                throw ex;
             }
 
-            if (entry.isFreeDirEntry() || entry.isLastDirEntry()) {
+            boolean isFree = entry.isFreeDirEntry();
+            boolean isEod = entry.isLastDirEntry();
+            if (isFree || isEod) {
                 entries[i] = entry;
                 i++;
             } else {
@@ -307,7 +339,11 @@ public class FatDirectory extends FatEntry implements FSDirectory, FSDirectoryId
     }
 
     public boolean collide(String name) {
-        return !(getEntryByName(name) == null);
+        if (children.get(name) != null) {
+            return true;
+        }
+        boolean result = !(getEntryByName(name) == null);
+        return result;
     }
 
     public boolean isEmpty() {

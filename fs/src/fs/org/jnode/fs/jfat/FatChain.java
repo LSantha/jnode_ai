@@ -104,9 +104,19 @@ public class FatChain {
         /*
          * not cheap: we have to follow the whole chain to get the last cluster
          * value
+         * 
+         * special case: a chain with one cluster at EOF
+         * the iterator starts at that cluster and hasNext() returns false
+         * so we need to check the head cluster separately
          */
-        for (ChainIterator i = listIterator(0); i.hasNext(); last = i.next())
-            ;
+        ChainIterator i = listIterator(0);
+        int address = i.getCluster(0);
+        if (address != 0 && fat.isEofChain(fat.get(address))) {
+            last = address;
+        } else {
+            for (; i.hasNext(); last = i.next())
+                ;
+        }
 
         return last;
     }
@@ -217,12 +227,24 @@ public class FatChain {
         }
 
         //
-        fat.rewindFree();
+        // Set the free-cluster hint to one past the last allocated cluster
+        // so the next allocation scan starts in the right area.
         //
-        for (i = last; i < fat.size(); i++) {
+        boolean foundNext = false;
+        for (i = last + 1; i < fat.size(); i++) {
             if (fat.isFreeEntry(i)) {
                 fat.setLastFree(i);
+                foundNext = true;
                 break;
+            }
+        }
+        if (!foundNext) {
+            for (i = fat.firstCluster(); i <= last; i++) {
+                if (fat.isFreeEntry(i)) {
+                    fat.setLastFree(i);
+                    foundNext = true;
+                    break;
+                }
             }
         }
 
@@ -258,13 +280,17 @@ public class FatChain {
             if (dolog)
                 mylog(first + ":" + last);
 
-            if (first != 0)
+            if (first != 0) {
                 fat.set(first, last);
-            else {
+                fat.flush();
+            } else {
                 if (dolog)
                     mylog("allocate chain");
                 setStartCluster(last);
             }
+            // Always reset iterator and position so subsequent reads start fresh
+            iterator.reset();
+            position.setPosition(0);
         } finally {
             fat.flush();
         }
@@ -494,6 +520,22 @@ public class FatChain {
          * not cheap: we have to follow the whole chain to know the chain length
          */
         return size() * fat.getClusterSize();
+    }
+
+    /**
+     * Read an entire cluster's worth of data from the chain.
+     * The clusterIndex is the 0-based index within the chain (not the physical cluster number).
+     *
+     * @param clusterIndex the index of the cluster within this chain (0-based)
+     * @return byte array containing the cluster data
+     * @throws IOException if the read fails
+     */
+    public byte[] readClusterData(int clusterIndex) throws IOException {
+        int clusterSize = fat.getClusterSize();
+        byte[] data = new byte[clusterSize];
+        long offset = (long) clusterIndex * clusterSize;
+        read(offset, ByteBuffer.wrap(data));
+        return data;
     }
 
     public String toString() {
