@@ -1,5 +1,5 @@
 name: opencode
-run-name: "Review #${{ github.event.issue.number }}: ${{ github.event.issue.title }}"
+run-name: "Issue #${{ github.event.issue.number }} — ${{ github.event.issue.title }}"
 
 on:
   issue_comment:

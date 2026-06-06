@@ -263,10 +263,10 @@ module.exports = async ({ github, context, core }) => {
       // Fetch the display title of the completed workflow run
       const runTitle = context.payload.workflow_run.display_title || '';
       
-      // Extract issue number from display title (e.g. "Review #415: Review Thinlet.java")
-      const match = runTitle.match(/Review #(\d+)/);
+      // Extract issue number from display title (e.g. "Issue #469 — Add SIMD-accelerated...")
+      const match = runTitle.match(/Issue #(\d+)/);
       if (!match) {
-        core.info(`Workflow run display title "${runTitle}" does not contain expected "Review #[number]" format. Skipping.`);
+        core.info(`Workflow run display title "${runTitle}" does not contain expected "Issue #[number]" format. Skipping.`);
         return;
       }
       
