@@ -87,16 +87,19 @@ If multiple signals conflict, precedence is: **verb > label > issue-body shape**
 
 ```
 parse(comment.body):
-  if startsWith("/oc fix ")             -> code-fix
-  if startsWith("/oc review ")          -> code-review
-  if startsWith("/oc investigate ")     -> investigation
-  if startsWith("/oc explain ")         -> investigation
-  if startsWith("/oc wiki ")            -> wiki-doc     (load update-wiki)
-  if startsWith("/oc triage ")          -> triage
-  if startsWith("/oc chore ")           -> chore
-  if startsWith("/oc test ")            -> test
-  if startsWith("/oc Please proceed")   -> bot-of-bots
-  if startsWith("/oc ")                 -> look at issue labels; fall through to heuristic
+  verb = first whitespace-separated token after "/oc "
+  switch(verb):
+    "fix"         -> code-fix
+    "review"      -> code-review
+    "investigate" -> investigation
+    "explain"     -> investigation
+    "wiki"        -> wiki-doc     (load update-wiki)
+    "triage"      -> triage
+    "chore"       -> chore
+    "test"        -> test
+    "Please"      -> bot-of-bots  (matches "/oc Please proceed with this task.")
+    ""            -> no-trigger (comment is exactly "/oc" with no verb)
+    <unknown>     -> fall through to heuristic(issue)
 
 heuristic(issue):
   if issue.pull_request                -> code-review
@@ -106,6 +109,8 @@ heuristic(issue):
   if issue.body is a question          -> investigation
   default                              -> code-fix (smallest patch that compiles)
 ```
+
+The verb is taken from the first whitespace-separated token after `/oc `, so both `/oc wiki` and `/oc wiki update the homepage` dispatch to `wiki-doc`. The bare `/oc` (no verb) is **not** a valid trigger — `opencode.yml` requires a trailing space.
 
 ## 3. The protocol (seven steps, every kind)
 
