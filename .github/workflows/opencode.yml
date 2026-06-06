@@ -53,6 +53,7 @@ jobs:
         if: steps.cache-iso.outputs.cache-hit != 'true'
         run: sh build.sh cd-x86-lite
       - name: Run opencode
+        id: run_agent
         uses: anomalyco/opencode/github@latest
         env:
           GITHUB_TOKEN: ${{ secrets.GH_PAT }}
@@ -61,36 +62,12 @@ jobs:
           model: opencode/deepseek-v4-flash-free
 
       - name: Apply agent/* label and close if work-product is the comment
-        if: success()
+        if: success() || failure()
         env:
-          GH_TOKEN: ${{ secrets.GH_PAT }}
-          NUMBER: ${{ github.event.issue.number }}
-          IS_PR: ${{ github.event.issue.pull_request != null }}
-        run: |
-          LABELS=$(gh api "repos/${{ github.repository }}/issues/$NUMBER" --jq '.labels[].name' || true)
-
-          EXISTING_AGENT=$(echo "$LABELS" | grep -E '^agent/(done|investigated|skip|needs-info|blocked|failed)$' || true)
-          if [ -n "$EXISTING_AGENT" ]; then
-            AGENT="$EXISTING_AGENT"
-          else
-            case "$LABELS" in
-              *kind/investigate*) AGENT=agent/investigated ;;
-              *kind/question*)    AGENT=agent/investigated ;;
-              *kind/triage*)      AGENT=agent/done ;;
-              *kind/wiki*)        AGENT=agent/done ;;
-              *kind/review*)      AGENT=agent/done ;;
-              *kind/chore*|*kind/bug*|*kind/feature*|*kind/test*)
-                                 AGENT=agent/done ;;
-              *)                  AGENT=agent/done ;;
-            esac
-          fi
-
-          gh issue edit "$NUMBER" --add-label "$AGENT" || true
-          gh issue edit "$NUMBER" --remove-label "agent/in-progress" || true
-
-          if [ "$IS_PR" != "true" ]; then
-            case "$LABELS" in
-              *kind/investigate*|*kind/question*|*kind/triage*|*kind/wiki*)
-                gh issue close "$NUMBER" || true ;;
-            esac
-          fi
+          PREV_CONCLUSION: ${{ steps.run_agent.outcome }}
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GH_PAT || secrets.GITHUB_TOKEN }}
+          script: |
+            const postStep = require('./.github/scripts/opencode-post-step.js');
+            await postStep({ github, context, core });
