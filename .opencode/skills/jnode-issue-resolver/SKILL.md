@@ -125,7 +125,7 @@ The verb is the first non-whitespace token after `/oc `, so `/oc wiki`, `/oc wik
 3. **Work** — read → patch → build (`sh build.sh cd-x86-lite`) → focused test (`cd <subproject> && ant test`).
 4. **Self-check** — see §6.
 5. **Report** — see §5.
-6. **Mark state** — apply the right `agent/*` label, remove `agent/in-progress`.
+6. **Mark state** — apply the right `agent/*` label, remove `agent/in-progress`. The orchestrator listens for the `agent/done` / `agent/investigated` / `agent/skip` / `agent/blocked` / `agent/needs-info` label as a completion signal — so this step is what unblocks the next task in a batch.
 7. **Handoff** — if you are the orchestrator's `current_task`, do **not** edit the master issue's hidden JSON. The orchestrator listens to your `workflow_run` `success` event and will mark you complete; a `failure` triggers a retry (max 3).
 
 ## 4. Build & test loop (JNode-specific)
@@ -204,7 +204,7 @@ One comment only. Markdown:
 <!-- If reusable knowledge was found, the agent SHOULD also create a wiki spoke (load update-wiki) and link it here. -->
 ```
 
-Do **not** open a PR. Apply `agent/investigated` and leave the issue open for the human to act.
+Do **not** open a PR. Apply `agent/investigated` **and close the issue** — the comment is the work product. The orchestrator listens for the `agent/investigated` label and treats it as a completion signal.
 
 ### 5.4 `triage` comment
 

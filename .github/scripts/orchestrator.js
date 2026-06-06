@@ -171,7 +171,8 @@ module.exports = async ({ github, context, core }) => {
       core.info(`Initialized State: ${JSON.stringify(state)}`);
     }
 
-    // 2.5. Self-Healing Guard: If current task is already closed, mark it as success and advance
+    // 2.5. Self-Healing Guard: If current task is already done, mark it as success and advance
+    // "Done" = issue closed OR has one of the agent completion labels
     if (state.current_task) {
       try {
         const currentIssue = await github.rest.issues.get({
@@ -179,8 +180,15 @@ module.exports = async ({ github, context, core }) => {
           repo: context.repo.repo,
           issue_number: state.current_task
         });
-        if (currentIssue.data.state === 'closed') {
-          core.info(`Self-Healing Guard: Task #${state.current_task} is ALREADY closed on GitHub! Advancing queue.`);
+        const sgLabels = (currentIssue.data.labels || []).map(l => (typeof l === 'string') ? l : l.name);
+        const sgCompletionLabels = ['agent/done', 'agent/investigated', 'agent/skip', 'agent/blocked', 'agent/needs-info'];
+        const sgHasLabel = sgCompletionLabels.some(l => sgLabels.includes(l));
+        const sgIsDone = currentIssue.data.state === 'closed' || sgHasLabel;
+        if (sgIsDone) {
+          const reason = currentIssue.data.state === 'closed'
+            ? 'ALREADY closed on GitHub'
+            : `has completion label (${sgCompletionLabels.find(l => sgLabels.includes(l))})`;
+          core.info(`Self-Healing Guard: Task #${state.current_task} ${reason}! Advancing queue.`);
           state.completed.push(state.current_task);
           state.history.push({ event: 'task_success', task: state.current_task, timestamp: new Date().toISOString() });
           
@@ -278,15 +286,19 @@ module.exports = async ({ github, context, core }) => {
         issue_number: state.current_task
       });
       const isIssueClosed = currentIssue.data.state === 'closed';
+      const issueLabels = (currentIssue.data.labels || []).map(l => (typeof l === 'string') ? l : l.name);
+      const completionLabels = ['agent/done', 'agent/investigated', 'agent/skip', 'agent/blocked', 'agent/needs-info'];
+      const hasCompletionLabel = completionLabels.some(l => issueLabels.includes(l));
+      const isComplete = isIssueClosed || hasCompletionLabel;
 
-      if (conclusion === 'success' && isIssueClosed) {
+      if (conclusion === 'success' && isComplete) {
         core.info(`Task #${state.current_task} succeeded and is verified closed!`);
         state.completed.push(state.current_task);
         state.history.push({ event: 'task_success', task: state.current_task, timestamp: new Date().toISOString() });
         state.current_task = null;
         state.retries = 0;
       } else {
-        core.warning(`Task #${state.current_task} failed validation (Conclusion: ${conclusion}, Closed: ${isIssueClosed}).`);
+        core.warning(`Task #${state.current_task} failed validation (Conclusion: ${conclusion}, Closed: ${isIssueClosed}, Completion label: ${hasCompletionLabel}).`);
         state.retries += 1;
         
         if (state.retries >= 3) {
