@@ -69,16 +69,21 @@ jobs:
         run: |
           LABELS=$(gh api "repos/${{ github.repository }}/issues/$NUMBER" --jq '.labels[].name' || true)
 
-          case "$LABELS" in
-            *kind/investigate*) AGENT=agent/investigated ;;
-            *kind/question*)    AGENT=agent/investigated ;;
-            *kind/triage*)      AGENT=agent/done ;;
-            *kind/wiki*)        AGENT=agent/done ;;
-            *kind/review*)      AGENT=agent/done ;;
-            *kind/chore*|*kind/bug*|*kind/feature*|*kind/test*)
-                               AGENT=agent/done ;;
-            *)                  AGENT=agent/done ;;
-          esac
+          EXISTING_AGENT=$(echo "$LABELS" | grep -E '^agent/(done|investigated|skip|needs-info|blocked|failed)$' || true)
+          if [ -n "$EXISTING_AGENT" ]; then
+            AGENT="$EXISTING_AGENT"
+          else
+            case "$LABELS" in
+              *kind/investigate*) AGENT=agent/investigated ;;
+              *kind/question*)    AGENT=agent/investigated ;;
+              *kind/triage*)      AGENT=agent/done ;;
+              *kind/wiki*)        AGENT=agent/done ;;
+              *kind/review*)      AGENT=agent/done ;;
+              *kind/chore*|*kind/bug*|*kind/feature*|*kind/test*)
+                                 AGENT=agent/done ;;
+              *)                  AGENT=agent/done ;;
+            esac
+          fi
 
           gh issue edit "$NUMBER" --add-label "$AGENT" || true
           gh issue edit "$NUMBER" --remove-label "agent/in-progress" || true

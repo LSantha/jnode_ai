@@ -118,6 +118,33 @@ heuristic(issue):
 
 The verb is the first non-whitespace token after `/oc `, so `/oc wiki`, `/oc wiki update the homepage`, and even `/oc  wiki` (double-space) all dispatch to `wiki-doc`. The bare `/oc` (no verb) is **not** a valid trigger — `opencode.yml` requires a trailing space. Routing is case-sensitive to match the workflow's `startsWith` / `contains` checks.
 
+## 2.5. Pre-flight: scan §8 BEFORE step 1 of the protocol
+
+Before posting the ack comment, before reading any code, before running any build, **scan the issue/PR body against the anti-patterns in §8**. This is a hard gate.
+
+1. Read the issue/PR body. If a comment context, also read the parent issue.
+2. For each anti-pattern in §8, does the request match? (Examples below.)
+3. If any match:
+   - Post a **single** refusal comment using the format in §11.5. Do not read code. Do not run builds. Do not create a branch.
+   - Apply `agent/skip` (out of scope) or `agent/needs-info` (unclear) via the workflow's auto-label step in `.github/workflows/opencode.yml` (it maps `kind/*` → `agent/*` on success).
+   - The issue will be auto-closed by the workflow if `kind` is `investigate`/`question`/`triage`/`wiki`. For `kind/chore`/`bug`/`feature`/`test`/`review`, the issue stays open (the human can rephrase).
+4. If no match, proceed to §3 normally.
+
+**Common matches:**
+
+| Issue says… | Anti-pattern | Refusal label |
+|---|---|---|
+| "modify / use / port to / rewrite in `core/src/native/x86/*.asm`" | §8 #2 (ASM touch) | `agent/skip` |
+| "make the kernel faster", "speed up boot", "use SIMD" — with no profile, no repro | §8 #2 + speculation | `agent/needs-info` |
+| "fix `<real bug>` by changing `kernel.asm` / `jnode.asm`" | §8 #2 (Java-side fix, not ASM) | `agent/skip` |
+| "rebuild the FS driver in a new way" / "rewrite CLI parser" (> 500 lines, looks like refactor) | §7 (skip big refactors) | `agent/needs-info` |
+| "the bug is in the JIT" with no stack trace, no failing test | §8 #2 + unclear | `agent/needs-info` |
+| "add `<unverified feature>` to the kernel" | §8 #2 (speculative feature) | `agent/skip` |
+
+The refusal is a hard wall: do **not** read code, do **not** run `git grep`, do **not** make a branch, do **not** try to "see how hard the change would be". The point is to refuse fast (under 5 minutes) so the orchestrator can advance and the human can rephrase.
+
+If you find yourself past 5 minutes still "looking into it", you have failed the pre-flight. Post a refusal, label as `agent/needs-info`, exit.
+
 ## 3. The protocol (seven steps, every kind)
 
 1. **Acknowledge** — post the short ack comment, apply `agent/in-progress`.
@@ -232,6 +259,26 @@ Delegate fully to the `update-wiki` skill, then post a one-liner with the page U
 
 (Reminder from `AGENTS.md`: wiki push is manual, run `cd .wiki && git push` after committing.)
 
+### 5.6 `refusal` (pre-flight gate §2.5)
+
+When the request matches an anti-pattern in §8, post a single refusal comment and exit. The workflow's auto-label step will apply `agent/skip` or `agent/needs-info` based on the kind/* label.
+
+```markdown
+## 🤖 Refusal — out of scope (or needs more info)
+
+- **Anti-pattern:** <quote the §8 item that matches, e.g. "Modify `core/src/native/x86/*.asm` for a Java-side bug">
+- **Why this matches:** <one sentence pointing at the file/action in the request>
+- **What I did not do:** read code, run builds, create a branch.
+- **Suggested next step for the human:**
+  - <bullet 1: rephrase, e.g. "describe the Java-level bug; the kernel.asm fix is the wrong layer">
+  - <bullet 2: provide evidence, e.g. "attach a stack trace / repro / profile showing the bottleneck">
+  - <bullet 3: or close this issue and file a more specific one>
+
+The issue is **not** closed (it stays open for the human to rephrase, except for `kind/investigate`/`question`/`triage`/`wiki` which auto-close via the workflow).
+```
+
+Apply label `agent/skip` (definitively out of scope) or `agent/needs-info` (unclear) via the workflow's auto-label step. Do **not** open a PR, do **not** create a branch, do **not** run `git grep` "just to see".
+
 ## 6. Self-check (run before every PR)
 
 - [ ] Java 1.6 only (no `->`, no `::`, no `<>`, no multi-catch, no try-with-resources, no `java.util.Objects`, no `java.nio.file`).
@@ -258,13 +305,16 @@ Delegate fully to the `update-wiki` skill, then post a one-liner with the page U
 
 ## 8. Anti-patterns (do not)
 
-- ❌ Open a PR that contains AI-slop comments (`// This function does X`, `// TODO: optimize`, `// Added by AI`).
-- ❌ Open a "fixed typo" PR stacked on top of a real fix; split them.
-- ❌ Modify `core/src/native/x86/*.asm` or the JNasm assembler for a Java-side bug.
-- ❌ Change `jnode.properties` (CI injects `.github/qemu/jnode.properties`).
-- ❌ Invent a wiki page that is not backed by source code. Load `update-wiki` and follow its protocol.
-- ❌ Close an issue when the task is unclear; apply `agent/needs-info` and ask 3–5 specific questions instead.
-- ❌ Reimplement `filesystem-debug` / `jnode-interact` / `update-wiki` inline. Load them on demand.
+These are **hard walls**. If a request matches any of them, follow §2.5 (pre-flight) and post a refusal using §5.6. Do not try to "see how hard the change would be" first.
+
+- ❌ **AI-slop PR comments** — never open a PR with `// This function does X`, `// TODO: optimize`, `// Added by AI`, or any comment that just narrates the code.
+- ❌ **Stacked typo fix** — never open a "fixed typo" PR on top of a real fix; split them.
+- ❌ **`core/src/native/x86/*.asm` touch** — never modify the kernel/JVM assembly or the JNasm assembler for a Java-side bug, for speculative optimization, or for a feature request with no profile. Java-side bugs get a Java-side fix. ASM is reserved for confirmed kernel-internal bugs with a stack trace. (§2.5 example 1, 2, 3.)
+- ❌ **`jnode.properties` edits** — never change `jnode.properties`; CI injects `.github/qemu/jnode.properties`.
+- ❌ **Wiki fabrication** — never invent a wiki page that is not backed by source code. Load `update-wiki` and follow its protocol.
+- ❌ **Closing unclear issues** — never close an issue when the task is unclear; apply `agent/needs-info` and ask 3–5 specific questions instead.
+- ❌ **Reimplementing existing skills** — never reimplement `filesystem-debug` / `jnode-interact` / `update-wiki` inline. Load them on demand.
+- ❌ **Speculative optimization** — never optimize based on "I think this is slow" or "this could be faster". Require a profile, a benchmark, or a stack trace pointing at the bottleneck.
 - ❌ Rerun the full `sh build.sh tests` when a focused `cd <subproject> && ant test` would do.
 
 ## 9. Orchestrator awareness
@@ -335,6 +385,10 @@ node .github/scripts/sync-labels.js
 rg -n "->|::" <changed.java>                       # Java 1.6 violations
 rg -n "TODO|FIXME|XXX" <changed.java>              # leftover markers
 file <changed.java>                                # encoding must be ASCII
+
+# Refusal (pre-flight §2.5)
+gh issue edit <N> --add-label "agent/skip"          # or "agent/needs-info"
+# then post the §5.6 refusal comment
 ```
 
 ## Related pages / files
