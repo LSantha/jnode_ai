@@ -65,6 +65,7 @@ public class SuiteCommand extends AbstractCommand {
     /**
      * Execute this command
      */
+    @Override
     public void execute() {
         TestManager mgr = TestManager.getInstance();
         if (FLAG_LIST.isSet()) {
