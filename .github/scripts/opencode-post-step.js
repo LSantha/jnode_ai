@@ -38,6 +38,20 @@ function isInvestigationReport(body) {
   return /## 🤖 Investigation Report/i.test(body);
 }
 
+function isAgentHeading(body) {
+  return body && (isRefusalComment(body) || isNeedsInfoComment(body) || isInvestigationReport(body));
+}
+
+function findLatestAgentComment(comments) {
+  for (let i = comments.length - 1; i >= 0; i--) {
+    const c = comments[i];
+    if (c.body && isAgentHeading(c.body)) {
+      return c.body;
+    }
+  }
+  return '';
+}
+
 function decideAgentLabel({ existing, conclusion, latestComment, labels, isPR }) {
   if (existing) {
     return { label: existing, reason: 'existing agent/* label respected' };
@@ -98,10 +112,7 @@ module.exports = async ({ github, context, core }) => {
     const comments = await github.paginate(github.rest.issues.listComments, {
       owner, repo, issue_number: number, per_page: 100,
     });
-    const agentComments = comments.filter(c => c.user && /^opencode-agent(\[bot\])?$/.test(c.user.login));
-    if (agentComments.length > 0) {
-      latestComment = agentComments[agentComments.length - 1].body || '';
-    }
+    latestComment = findLatestAgentComment(comments);
   } catch (err) {
     core.warning('Could not fetch comments: ' + err.message);
   }
