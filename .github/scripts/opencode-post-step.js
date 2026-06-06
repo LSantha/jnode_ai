@@ -54,8 +54,8 @@ function decideAgentLabel({ existing, conclusion, latestComment, labels, isPR })
   if (isPR) {
     return { label: 'agent/done', reason: 'PR context' };
   }
-  if (isInvestigationKind(labels) && isInvestigationReport(latestComment)) {
-    return { label: 'agent/investigated', reason: 'investigation report posted' };
+  if (isInvestigationReport(latestComment)) {
+    return { label: 'agent/investigated', reason: 'investigation report heading detected (verb-override)' };
   }
   if (isInvestigationKind(labels)) {
     return { label: 'agent/investigated', reason: 'investigation kind, comment absent' };
@@ -63,9 +63,12 @@ function decideAgentLabel({ existing, conclusion, latestComment, labels, isPR })
   return { label: 'agent/done', reason: 'default for non-investigation kinds' };
 }
 
-function shouldClose({ isPR, labels, agentLabel }) {
+function shouldClose({ isPR, latestComment, labels, agentLabel }) {
   if (isPR) return false;
   if (agentLabel !== 'agent/investigated') return false;
+  if (isInvestigationReport(latestComment)) {
+    return true;
+  }
   return CLOSE_KINDS.some(k => labels.includes(k));
 }
 
@@ -128,7 +131,7 @@ module.exports = async ({ github, context, core }) => {
     });
   } catch (_) { }
 
-  if (shouldClose({ isPR, labels, agentLabel: decision.label })) {
+  if (shouldClose({ isPR, latestComment, labels, agentLabel: decision.label })) {
     if (issueState === 'closed') {
       core.info('Issue is already closed; skipping close call');
     } else {
