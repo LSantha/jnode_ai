@@ -43,6 +43,7 @@ public class CpuIDCommand extends AbstractCommand {
     /**
      * Execute this command
      */
+    @Override
     public void execute() {
         final VmProcessor cpu = VmProcessor.current();
         PrintWriter out = getOutput().getPrintWriter();

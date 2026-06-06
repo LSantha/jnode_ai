@@ -44,6 +44,7 @@ public class NamespaceCommand extends AbstractCommand {
     /**
      * Execute this command
      */
+    @Override
     public void execute() throws Exception {
         PrintWriter out = getOutput().getPrintWriter();
         Set<Class< ? >> names = InitialNaming.nameSet();

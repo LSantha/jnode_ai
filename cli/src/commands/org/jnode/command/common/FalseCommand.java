@@ -42,6 +42,7 @@ public class FalseCommand extends AbstractCommand {
     /**
      * Execute the command
      */
+    @Override
     public void execute() throws Exception {
         exit(1);
     }

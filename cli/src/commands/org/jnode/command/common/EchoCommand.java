@@ -52,6 +52,7 @@ public class EchoCommand extends AbstractCommand {
     /**
      * Execute the command
      */
+    @Override
     public void execute() throws Exception {
         PrintWriter out = getOutput().getPrintWriter();
         String[] words = argWords.getValues();
