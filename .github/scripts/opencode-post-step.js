@@ -95,6 +95,11 @@ module.exports = async ({ github, context, core }) => {
     });
     const agentComments = comments.filter(c => c.user && c.user.login === 'opencode-agent');
     core.info('Found ' + comments.length + ' comments, ' + agentComments.length + ' from opencode-agent');
+    if (comments.length > 0) {
+      core.info('First comment user: ' + JSON.stringify(comments[0].user));
+      const logins = [...new Set(comments.map(c => c.user ? c.user.login : 'null'))];
+      core.info('Distinct user.logins: ' + logins.join(','));
+    }
     if (agentComments.length > 0) {
       const last = agentComments[agentComments.length - 1];
       core.info('Latest agent comment by: ' + (last.user ? last.user.login : '?'));
