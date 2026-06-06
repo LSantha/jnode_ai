@@ -110,8 +110,19 @@ module.exports = async ({ github, context, core }) => {
       try {
         state = JSON.parse(jsonMatch[1]);
         core.info("Successfully loaded existing state from JSON.");
+
+        state.status = (typeof state.status === 'string') ? state.status : 'IDLE';
+        state.current_task = (state.current_task != null) ? Number(state.current_task)
+          : (state.current != null) ? Number(state.current) : null;
+        state.queue = Array.isArray(state.queue) ? state.queue.map(Number) : [];
+        state.completed = Array.isArray(state.completed) ? state.completed.map(Number)
+          : (Array.isArray(state.done) ? state.done.map(Number) : []);
+        state.failed = Array.isArray(state.failed) ? state.failed.map(Number) : [];
+        state.retries = (typeof state.retries === 'number') ? state.retries : 0;
+        state.history = Array.isArray(state.history) ? state.history : [];
       } catch (e) {
         core.warning("Failed to parse hidden JSON block. Re-initializing from Markdown. Error: " + e.message);
+        state = null;
       }
     }
 
