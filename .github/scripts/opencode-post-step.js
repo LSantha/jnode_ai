@@ -3,7 +3,7 @@
  * the issue if the work product is the comment (not a PR).
  *
  * Triggered by: .github/workflows/opencode.yml (the "Apply agent/* label" step)
- * Reads:  github.event.issue, github.event.comment, PREV_CONCLUSION env var
+ * Reads:  context.payload.issue, context.payload.comment, PREV_CONCLUSION env var
  * Writes: agent/* label, removes agent/in-progress, optionally closes the issue
  *
  * Idempotent: respects an existing agent/* label; safe to re-run.
@@ -16,7 +16,7 @@ const AGENT_COMPLETION_RE = /^agent\/(done|investigated|skip|needs-info|blocked|
 const CLOSE_KINDS = ['kind/investigate', 'kind/question'];
 
 function isPRContext(context) {
-  return !!(context.event.issue && context.event.issue.pull_request);
+  return !!(context.payload.issue && context.payload.issue.pull_request);
 }
 
 function isInvestigationKind(labels) {
@@ -70,7 +70,7 @@ function shouldClose({ isPR, labels, agentLabel }) {
 }
 
 module.exports = async ({ github, context, core }) => {
-  const number = context.event.issue.number;
+  const number = context.payload.issue.number;
   const isPR = isPRContext(context);
   const { owner, repo } = context.repo;
   const conclusion = process.env.PREV_CONCLUSION || 'success';
