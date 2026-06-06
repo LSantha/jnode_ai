@@ -51,6 +51,7 @@ public class TestCommand extends AbstractCommand {
      * 
      * @throws ClassNotFoundException 
      */
+    @Override
     public void execute() {
         try {
             Class<?> clazz = ARG_CLASS.getValueAsClass();

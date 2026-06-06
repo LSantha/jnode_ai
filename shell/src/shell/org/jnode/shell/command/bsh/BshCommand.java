@@ -56,6 +56,7 @@ public class BshCommand extends AbstractCommand {
         new BshCommand().execute(args);
     }
 
+    @Override
     public void execute() throws Exception {
         Interpreter bsh = null;
         Object ret;
