@@ -69,7 +69,7 @@ JNode is a Java operating system with custom JVM. ~3,300 Java files, 25 assembly
 - **Persistence Rule**: Any changes made to the `.wiki/` directory MUST be manually pushed using `git push` from inside that directory. The OpenCode auto-push mechanism DOES NOT cover the `.wiki` folder.
 - **Reporting**: After a successful push, always provide the URL to the updated wiki page in your final issue comment.
 - **Wiki schema**: See `WIKI_SCHEMA.md` for structure and maintenance rules
-- **Skills**: Check the `.opencode/skills/` directory for specialized workflows (e.g., `update-wiki.md`).
+- **Skills**: Check the `.opencode/skills/` directory. Each skill auto-loads when its `description:` matches the current task — `jnode-issue-resolver` for issue/PR work woken by `.github/workflows/opencode.yml`, `filesystem-debug` for filesystem bug diagnosis, `jnode-interact` for QEMU boot testing, `update-wiki` for wiki spoke pages. Each is also invokable on demand by name.
 - **LLM agents**: follow the Wiki Knowledge Retrieval Protocol to locate relevant wiki pages for your task
 
 ### Wiki Knowledge Retrieval Protocol
