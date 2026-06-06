@@ -118,8 +118,6 @@ heuristic(issue):
 
 The verb is the first non-whitespace token after `/oc `, so `/oc wiki`, `/oc wiki update the homepage`, and even `/oc  wiki` (double-space) all dispatch to `wiki-doc`. The bare `/oc` (no verb) is **not** a valid trigger — `opencode.yml` requires a trailing space. Routing is case-sensitive to match the workflow's `startsWith` / `contains` checks.
 
-The reference implementation lives at `test/route.test.js` and is exercised by 24 synthetic cases.
-
 ## 3. The protocol (seven steps, every kind)
 
 1. **Acknowledge** — post the short ack comment, apply `agent/in-progress`.
