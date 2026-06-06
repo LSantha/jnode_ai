@@ -78,15 +78,17 @@ module.exports = async ({ github, context, core }) => {
   core.info('Post-step for #' + number + ' (isPR=' + isPR + ', conclusion=' + conclusion + ')');
 
   let labels = [];
+  let issueState = 'open';
   try {
     const { data: issue } = await github.rest.issues.get({
       owner, repo, issue_number: number,
     });
     labels = (issue.labels || []).map(l => (typeof l === 'string') ? l : l.name);
+    issueState = issue.state || 'open';
   } catch (err) {
     core.warning('Could not fetch labels: ' + err.message);
   }
-  core.info('Labels: ' + (labels.join(', ') || '(none)'));
+  core.info('Labels: ' + (labels.join(', ') || '(none)') + ' (state=' + issueState + ')');
 
   let latestComment = '';
   try {
@@ -127,13 +129,17 @@ module.exports = async ({ github, context, core }) => {
   } catch (_) { }
 
   if (shouldClose({ isPR, labels, agentLabel: decision.label })) {
-    try {
-      await github.rest.issues.update({
-        owner, repo, issue_number: number, state: 'closed',
-      });
-      core.info('Closed #' + number);
-    } catch (err) {
-      core.warning('Failed to close: ' + err.message);
+    if (issueState === 'closed') {
+      core.info('Issue is already closed; skipping close call');
+    } else {
+      try {
+        await github.rest.issues.update({
+          owner, repo, issue_number: number, state: 'closed',
+        });
+        core.info('Closed #' + number);
+      } catch (err) {
+        core.warning('Failed to close: ' + err.message);
+      }
     }
   } else {
     core.info('Not closing #' + number);
