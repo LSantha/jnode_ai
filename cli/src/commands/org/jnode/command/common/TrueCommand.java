@@ -42,6 +42,7 @@ public class TrueCommand extends AbstractCommand {
     /**
      * Execute the command
      */
+    @Override
     public void execute() throws Exception {
     }
 }

@@ -48,6 +48,7 @@ public class SleepCommand extends AbstractCommand {
         new SleepCommand().execute(args);
     }
 
+    @Override
     public void execute() throws Exception {
         Integer seconds = argSeconds.getValue();
         if (seconds > 0) {
