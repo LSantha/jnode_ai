@@ -94,8 +94,12 @@ module.exports = async ({ github, context, core }) => {
       owner, repo, issue_number: number, per_page: 100,
     });
     const agentComments = comments.filter(c => c.user && c.user.login === 'opencode-agent');
+    core.info('Found ' + comments.length + ' comments, ' + agentComments.length + ' from opencode-agent');
     if (agentComments.length > 0) {
-      latestComment = agentComments[agentComments.length - 1].body || '';
+      const last = agentComments[agentComments.length - 1];
+      core.info('Latest agent comment by: ' + (last.user ? last.user.login : '?'));
+      latestComment = last.body || '';
+      core.info('Latest comment preview: ' + latestComment.slice(0, 80).replace(/\n/g, ' '));
     }
   } catch (err) {
     core.warning('Could not fetch comments: ' + err.message);
