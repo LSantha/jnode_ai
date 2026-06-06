@@ -124,11 +124,10 @@ Before posting the ack comment, before reading any code, before running any buil
 
 1. Read the issue/PR body. If a comment context, also read the parent issue.
 2. For each anti-pattern in §8, does the request match? (Examples below.)
-3. If any match:
-   - Post a **single** refusal comment using the format in §11.5. Do not read code. Do not run builds. Do not create a branch.
-   - Apply `agent/skip` (out of scope) or `agent/needs-info` (unclear) via the workflow's auto-label step in `.github/workflows/opencode.yml` (it maps `kind/*` → `agent/*` on success).
-   - The issue will be auto-closed by the workflow if `kind` is `investigate`/`question`/`triage`/`wiki`. For `kind/chore`/`bug`/`feature`/`test`/`review`, the issue stays open (the human can rephrase).
-4. If no match, proceed to §3 normally.
+  3. If any match:
+    - Post a **single** refusal comment using the format in §11.5. Do not read code. Do not run builds. Do not create a branch. Do **not** call `gh issue edit` to apply a completion label — the workflow's post-step (`.github/scripts/opencode-post-step.js`) detects the `## 🤖 Refusal` heading in your comment and applies `agent/skip` (or `agent/needs-info` for triage-style comments) automatically.
+    - The issue will be auto-closed by the workflow if `kind` is `investigate`/`question`. For `kind/chore`/`bug`/`feature`/`test`/`review`, the issue stays open (the human can rephrase).
+  4. If no match, proceed to §3 normally.
 
 **Common matches:**
 
@@ -147,12 +146,12 @@ If you find yourself past 5 minutes still "looking into it", you have failed the
 
 ## 3. The protocol (seven steps, every kind)
 
-1. **Acknowledge** — post the short ack comment, apply `agent/in-progress`.
+1. **Acknowledge** — post the short ack comment, apply `agent/in-progress` so concurrent runs and humans see motion.
 2. **Plan** — write a checklist in the issue as a follow-up comment (≤ 8 bullets). Human can `/oc stop` to abort.
 3. **Work** — read → patch → build (`sh build.sh cd-x86-lite`) → focused test (`cd <subproject> && ant test`).
 4. **Self-check** — see §6.
-5. **Report** — see §5.
-6. **Mark state** — apply the right `agent/*` label, remove `agent/in-progress`. The orchestrator listens for the `agent/done` / `agent/investigated` / `agent/skip` / `agent/blocked` / `agent/needs-info` label as a completion signal — so this step is what unblocks the next task in a batch.
+5. **Report** — see §5. The report is the work product: a PR, a single investigation comment, a wiki spoke + URL one-liner, or a refusal comment.
+6. **Mark state** — done for you by the workflow post-step (`.github/scripts/opencode-post-step.js`). It inspects your latest comment, decides between `agent/skip` / `agent/needs-info` / `agent/investigated` / `agent/done` / `agent/failed`, applies it, and removes `agent/in-progress`. Do **not** call `gh issue edit` to set a completion label or to close the issue — that is the workflow's job. (Reason: the orchestrator listens for the `agent/*` label as a completion signal, and the workflow derives the right label from the comment text, so the agent does not need to know the issue number or risk getting it wrong.)
 7. **Handoff** — if you are the orchestrator's `current_task`, do **not** edit the master issue's hidden JSON. The orchestrator listens to your `workflow_run` `success` event and will mark you complete; a `failure` triggers a retry (max 3).
 
 ## 4. Build & test loop (JNode-specific)
@@ -231,7 +230,7 @@ One comment only. Markdown:
 <!-- If reusable knowledge was found, the agent SHOULD also create a wiki spoke (load update-wiki) and link it here. -->
 ```
 
-Do **not** open a PR. Apply `agent/investigated` **and close the issue** — the comment is the work product. The orchestrator listens for the `agent/investigated` label and treats it as a completion signal.
+Do **not** open a PR. The workflow post-step will detect the `## 🤖 Investigation Report` heading, apply `agent/investigated`, and close the issue — the comment is the work product. Do **not** call `gh issue edit` or `gh issue close` yourself.
 
 ### 5.4 `triage` comment
 
@@ -277,7 +276,7 @@ When the request matches an anti-pattern in §8, post a single refusal comment a
 The issue is **not** closed (it stays open for the human to rephrase, except for `kind/investigate`/`question`/`triage`/`wiki` which auto-close via the workflow).
 ```
 
-Apply label `agent/skip` (definitively out of scope) or `agent/needs-info` (unclear) via the workflow's auto-label step. Do **not** open a PR, do **not** create a branch, do **not** run `git grep` "just to see".
+The workflow post-step will detect the `## 🤖 Refusal` heading and apply `agent/skip` (or `agent/needs-info` for triage-style comments). Do **not** call `gh issue edit` to set the label or close the issue yourself. Do **not** open a PR, do **not** create a branch, do **not** run `git grep` "just to see".
 
 ## 6. Self-check (run before every PR)
 
@@ -371,8 +370,7 @@ cd <subproject> && ant test        # focused
 
 # Issue / PR
 gh issue view <N> --comments
-gh issue edit <N> --add-label "agent/in-progress"
-gh issue close <N> -R "$REPO"
+gh issue edit <N> --add-label "agent/in-progress"   # on ack (step 1)
 gh pr review <N> --request-changes -b "..."
 
 # Wiki
@@ -386,9 +384,7 @@ rg -n "->|::" <changed.java>                       # Java 1.6 violations
 rg -n "TODO|FIXME|XXX" <changed.java>              # leftover markers
 file <changed.java>                                # encoding must be ASCII
 
-# Refusal (pre-flight §2.5)
-gh issue edit <N> --add-label "agent/skip"          # or "agent/needs-info"
-# then post the §5.6 refusal comment
+# Refusal (pre-flight §2.5) — the workflow applies the label; you only post the comment
 ```
 
 ## Related pages / files
@@ -396,6 +392,7 @@ gh issue edit <N> --add-label "agent/skip"          # or "agent/needs-info"
 - `.github/workflows/opencode.yml` — the workflow that wakes you up
 - `.github/workflows/orchestrator.yml` — the orchestrator
 - `.github/scripts/orchestrator.js` — the orchestrator's state machine
+- `.github/scripts/opencode-post-step.js` — the post-step that applies `agent/*` labels and closes the issue (this skill, §3 step 6)
 - `.github/scripts/sync-labels.js` — the label-bootstrap script (this skill, §10)
 - `.opencode/skills/filesystem-debug/SKILL.md`
 - `.opencode/skills/jnode-interact/SKILL.md`
