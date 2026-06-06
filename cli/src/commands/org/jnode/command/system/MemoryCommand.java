@@ -47,6 +47,7 @@ public class MemoryCommand extends AbstractCommand {
     /**
      * Execute this command
      */
+    @Override
     public void execute() throws Exception {
         PrintWriter out = getOutput().getPrintWriter();
         final Runtime rt = Runtime.getRuntime();

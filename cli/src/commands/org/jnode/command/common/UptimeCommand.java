@@ -44,6 +44,7 @@ public class UptimeCommand extends AbstractCommand {
     /**
      * @throws Exception if something happens
      */
+    @Override
     public void execute() throws Exception {
         PrintWriter out = getOutput().getPrintWriter();
         long ut_secs = VmSystem.currentKernelMillis() / 1000;

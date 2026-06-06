@@ -43,6 +43,7 @@ public class ExitCommand extends AbstractCommand {
     /**
      * Execute this command
      */
+    @Override
     public void execute() throws Exception {
         ShellManager sm = InitialNaming.lookup(ShellManager.NAME);
         ((CommandShell) sm.getCurrentShell()).exit();
