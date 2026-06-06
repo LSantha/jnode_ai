@@ -87,7 +87,13 @@ If multiple signals conflict, precedence is: **verb > label > issue-body shape**
 
 ```
 parse(comment.body):
-  verb = first whitespace-separated token after "/oc "
+  if !startsWith(body, "/oc "):
+    idx = indexOf(body, " /oc ")            // opencode.yml also allows embedded "/oc "
+    if idx < 0: return "no-trigger"
+    body = body.slice(idx + 1)              // drop the leading space
+  tail = body.slice(4)                      // drop "/oc "
+  m = tail.match(/^\s*(\S+)/)               // first non-whitespace token (handles "/oc  fix", "/oc\tfix")
+  verb = m ? m[1] : ""
   switch(verb):
     "fix"         -> code-fix
     "review"      -> code-review
@@ -110,7 +116,9 @@ heuristic(issue):
   default                              -> code-fix (smallest patch that compiles)
 ```
 
-The verb is taken from the first whitespace-separated token after `/oc `, so both `/oc wiki` and `/oc wiki update the homepage` dispatch to `wiki-doc`. The bare `/oc` (no verb) is **not** a valid trigger — `opencode.yml` requires a trailing space.
+The verb is the first non-whitespace token after `/oc `, so `/oc wiki`, `/oc wiki update the homepage`, and even `/oc  wiki` (double-space) all dispatch to `wiki-doc`. The bare `/oc` (no verb) is **not** a valid trigger — `opencode.yml` requires a trailing space. Routing is case-sensitive to match the workflow's `startsWith` / `contains` checks.
+
+The reference implementation lives at `test/route.test.js` and is exercised by 24 synthetic cases.
 
 ## 3. The protocol (seven steps, every kind)
 
