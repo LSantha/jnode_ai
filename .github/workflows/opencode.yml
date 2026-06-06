@@ -60,8 +60,32 @@ jobs:
         with:
           model: opencode/deepseek-v4-flash-free
 
-      - name: Close issue
-        if: success() && contains(github.event.issue.title, 'Review ')
-        run: gh issue close ${{ github.event.issue.number }} -R ${{ github.repository }}
+      - name: Apply agent/* label and close if work-product is the comment
+        if: success()
         env:
           GH_TOKEN: ${{ secrets.GH_PAT }}
+          NUMBER: ${{ github.event.issue.number }}
+          IS_PR: ${{ github.event.issue.pull_request != null }}
+        run: |
+          LABELS=$(gh api "repos/${{ github.repository }}/issues/$NUMBER" --jq '.labels[].name' || true)
+
+          case "$LABELS" in
+            *kind/investigate*) AGENT=agent/investigated ;;
+            *kind/question*)    AGENT=agent/investigated ;;
+            *kind/triage*)      AGENT=agent/done ;;
+            *kind/wiki*)        AGENT=agent/done ;;
+            *kind/review*)      AGENT=agent/done ;;
+            *kind/chore*|*kind/bug*|*kind/feature*|*kind/test*)
+                               AGENT=agent/done ;;
+            *)                  AGENT=agent/done ;;
+          esac
+
+          gh issue edit "$NUMBER" --add-label "$AGENT" || true
+          gh issue edit "$NUMBER" --remove-label "agent/in-progress" || true
+
+          if [ "$IS_PR" != "true" ]; then
+            case "$LABELS" in
+              *kind/investigate*|*kind/question*|*kind/triage*|*kind/wiki*)
+                gh issue close "$NUMBER" || true ;;
+            esac
+          fi
