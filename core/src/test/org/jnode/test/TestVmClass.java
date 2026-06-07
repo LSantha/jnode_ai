@@ -38,7 +38,6 @@ import org.junit.Ignore;
  * 
  * @author epr
  */
-// FIXME
 @Ignore
 public class TestVmClass {
 
