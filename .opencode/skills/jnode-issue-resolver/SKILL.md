@@ -153,6 +153,7 @@ If you find yourself past 5 minutes still "looking into it", you have failed the
    - If the request needs >15 steps, post a `## 🤖 Investigation Report` with `**Confidence:** low` and a "Suggested next step" that says "I read N files but the answer is in <area I haven't looked at>. A human with more context can finish this in one session."
 4. **Self-check** — see §6.
 5. **Report** — see §5. The report is the work product: a PR, a single investigation comment, a wiki spoke + URL one-liner, or a refusal comment.
+   - **Honest reporting.** Only claim what you actually did. **Before saying "pushed"**, verify with `git -C <repo> log -1` that the new commit is there. **Before saying "PR opened"**, verify with `gh pr view <N>` that it exists. **Before saying "investigation complete"**, verify your report is posted on the issue. If a step failed, say so — never invent a fake success report (see §8 fabrication anti-pattern).
 6. **Mark state** — done for you by the workflow post-step (`.github/scripts/opencode-post-step.js`). It inspects your latest comment, decides between `agent/skip` / `agent/needs-info` / `agent/investigated` / `agent/done` / `agent/failed`, applies it, and removes `agent/in-progress`. Do **not** call `gh issue edit` to set a completion label or to close the issue — that is the workflow's job. (Reason: the orchestrator listens for the `agent/*` label as a completion signal, and the workflow derives the right label from the comment text, so the agent does not need to know the issue number or risk getting it wrong.)
 7. **Handoff** — if you are the orchestrator's `current_task`, do **not** edit the master issue's hidden JSON. The orchestrator listens to your `workflow_run` `success` event and will mark you complete; a `failure` triggers a retry (max 3).
 
@@ -293,6 +294,7 @@ The workflow post-step will detect the `## 🤖 Refusal` heading and apply `agen
 - [ ] Focused test suite passes: `cd <subproject> && ant test`.
 - [ ] ISO still builds if `core/` changed: `sh build.sh cd-x86-lite`.
 - [ ] No secrets, tokens, or absolute paths in the diff.
+- [ ] **Every claim in the report is verifiable.** "PR opened" → `gh pr view <N>` returns the PR. "Wiki pushed" → `git -C .wiki log -1` shows the new commit. "Investigation complete" → the report is visible on the issue. If any check fails, rewrite the report — do not post a fabricated success message.
 
 ## 7. Idempotency & safety
 
@@ -313,6 +315,7 @@ These are **hard walls**. If a request matches any of them, follow §2.5 (pre-fl
 - ❌ **`core/src/native/x86/*.asm` touch** — never modify the kernel/JVM assembly or the JNasm assembler for a Java-side bug, for speculative optimization, or for a feature request with no profile. Java-side bugs get a Java-side fix. ASM is reserved for confirmed kernel-internal bugs with a stack trace. (§2.5 example 1, 2, 3.)
 - ❌ **`jnode.properties` edits** — never change `jnode.properties`; CI injects `.github/qemu/jnode.properties`.
 - ❌ **Wiki fabrication** — never invent a wiki page that is not backed by source code. Load `update-wiki` and follow its protocol.
+- ❌ **Fabricated completion reports** — never claim a step is done unless you actually saw its output. **Before saying "pushed"**, the wiki push command must have returned 0 with the new commit hash visible. **Before saying "PR opened"**, `gh pr create` must have returned a PR URL. **Before saying "investigation complete"**, the report must be on the issue. If you have not run a step, say "I did not run X" — do not invent a fake report of having run it. (Observed in #479: the agent claimed to have rewritten `.wiki/Boot-Sequence.md` from 118 to 280 lines; the file was unchanged.)
 - ❌ **Closing unclear issues** — never close an issue when the task is unclear; apply `agent/needs-info` and ask 3–5 specific questions instead.
 - ❌ **Reimplementing existing skills** — never reimplement `filesystem-debug` / `jnode-interact` / `update-wiki` inline. Load them on demand.
 - ❌ **Speculative optimization** — never optimize based on "I think this is slow" or "this could be faster". Require a profile, a benchmark, or a stack trace pointing at the bottleneck.
