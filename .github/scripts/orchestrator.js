@@ -334,10 +334,10 @@ module.exports = async ({ github, context, core }) => {
       // Fetch the display title of the completed workflow run
       const runTitle = context.payload.workflow_run.display_title || '';
       
-      // Extract issue number from display title (e.g. "Issue #469 — Add SIMD-accelerated...")
-      const match = runTitle.match(/Issue #(\d+)/);
+      // Extract issue/PR number from display title (e.g. "Issue #469 — ..." or "PR Review #471 — ...")
+      const match = runTitle.match(/(?:Issue|PR Review) #(\d+)/);
       if (!match) {
-        core.info(`Workflow run display title "${runTitle}" does not contain expected "Issue #[number]" format. Skipping.`);
+        core.info(`Workflow run display title "${runTitle}" does not contain expected "Issue #[number]" or "PR Review #[number]" format. Skipping.`);
         return;
       }
       
