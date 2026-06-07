@@ -53,11 +53,11 @@ function findLatestAgentComment(comments) {
 }
 
 function decideAgentLabel({ existing, conclusion, latestComment, labels, isPR }) {
-  if (existing) {
-    return { label: existing, reason: 'existing agent/* label respected' };
-  }
   if (conclusion === 'failure' || conclusion === 'cancelled') {
     return { label: 'agent/failed', reason: 'run concluded: ' + conclusion };
+  }
+  if (existing && existing !== 'agent/failed') {
+    return { label: existing, reason: 'existing agent/* label respected' };
   }
   if (isRefusalComment(latestComment)) {
     return { label: 'agent/skip', reason: 'refusal detected in comment' };
