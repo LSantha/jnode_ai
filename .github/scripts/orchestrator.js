@@ -41,18 +41,26 @@ module.exports = async ({ github, context, core }) => {
 ### 📋 Queue List
 `;
 
-    // Render the checkbox list
+    // Build status map (taskNum -> {box, emoji, label})
+    const statusMap = new Map();
     for (const t of state.completed) {
-      markdown += `- [x] #${t} ✅ *(Succeeded)*\n`;
+      statusMap.set(t, { box: 'x', emoji: '✅', label: 'Succeeded' });
     }
     if (state.current_task) {
-      markdown += `- [ ] #${state.current_task} ⏳ *(In Progress, Attempt ${state.retries + 1}/3)*\n`;
+      statusMap.set(state.current_task, { box: ' ', emoji: '⏳', label: `In Progress, Attempt ${state.retries + 1}/3` });
     }
     for (const t of state.failed) {
-      markdown += `- [FAIL] #${t} ❌ *(Failed all attempts)*\n`;
+      statusMap.set(t, { box: 'FAIL', emoji: '❌', label: 'Failed all attempts' });
     }
     for (const t of state.queue) {
-      markdown += `- [ ] #${t}\n`;
+      statusMap.set(t, { box: ' ', emoji: '📋', label: 'Queued' });
+    }
+
+    // Render in original order (state.order), not status-grouped order
+    for (const taskNum of state.order) {
+      const info = statusMap.get(taskNum);
+      if (!info) continue;
+      markdown += `- [${info.box}] #${taskNum} ${info.emoji} *(${info.label})*\n`;
     }
 
     // Append state JSON as hidden comment
@@ -156,6 +164,18 @@ module.exports = async ({ github, context, core }) => {
         state.failed = Array.isArray(state.failed) ? state.failed.map(Number) : [];
         state.retries = (typeof state.retries === 'number') ? state.retries : 0;
         state.history = Array.isArray(state.history) ? state.history : [];
+        state.order = Array.isArray(state.order) ? state.order.map(Number) : [];
+
+        // Migration: if state.order is empty (older state), build from status-grouped
+        // arrays. Order will be in status-grouped order, not original — but stable.
+        if (state.order.length === 0) {
+          const order = [];
+          for (const t of state.completed) order.push(t);
+          if (state.current_task) order.push(state.current_task);
+          for (const t of state.failed) order.push(t);
+          for (const t of state.queue) order.push(t);
+          state.order = order;
+        }
       } catch (e) {
         core.warning("Failed to parse hidden JSON block. Re-initializing from Markdown. Error: " + e.message);
         state = null;
@@ -169,7 +189,8 @@ module.exports = async ({ github, context, core }) => {
       const queue = [];
       const completed = [];
       const failed = [];
-      
+      const order = [];
+
       let currentTask = null;
       const currentMatch = body.match(/Current:\s*(?:#)?(\d+|-)/i);
       if (currentMatch && currentMatch[1] !== '-') {
@@ -182,6 +203,7 @@ module.exports = async ({ github, context, core }) => {
         if (match) {
           const statusChar = match[1].trim().toLowerCase();
           const taskNum = parseInt(match[2], 10);
+          order.push(taskNum);
           if (statusChar === 'x') {
             completed.push(taskNum);
           } else if (statusChar === 'fail') {
@@ -202,7 +224,8 @@ module.exports = async ({ github, context, core }) => {
         completed,
         failed,
         retries: 0,
-        history: []
+        history: [],
+        order
       };
       core.info(`Initialized State: ${JSON.stringify(state)}`);
     }
