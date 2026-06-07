@@ -10,17 +10,26 @@ module.exports = async ({ github, context, core }) => {
     });
   }
 
+  // Helper to render a 20-char ASCII progress bar
+  function renderBar(percent) {
+    const barLength = 20;
+    const filledLength = Math.round((percent / 100) * barLength);
+    const emptyLength = barLength - filledLength;
+    return `\`[${'='.repeat(filledLength)}${'>'.repeat(filledLength > 0 && emptyLength > 0 ? 1 : 0)}${'.'.repeat(Math.max(0, emptyLength - (filledLength > 0 && emptyLength > 0 ? 1 : 0)))}]\` ${percent}%`;
+  }
+
   // Helper to update the master issue description and JSON state
   async function updateMasterIssue(issueNumber, state) {
     const totalTasks = state.queue.length + state.completed.length + state.failed.length + (state.current_task ? 1 : 0);
     const completedCount = state.completed.length;
-    const progressPercent = totalTasks > 0 ? Math.round((completedCount / totalTasks) * 100) : 0;
-    
-    // Beautiful Progress Bar
-    const barLength = 20;
-    const filledLength = Math.round((progressPercent / 100) * barLength);
-    const emptyLength = barLength - filledLength;
-    const progressBar = `\`[${'='.repeat(filledLength)}${'>'.repeat(filledLength > 0 && emptyLength > 0 ? 1 : 0)}${'.'.repeat(Math.max(0, emptyLength - (filledLength > 0 && emptyLength > 0 ? 1 : 0)))}]\` ${progressPercent}%`;
+    const failedCount = state.failed.length;
+    const handledCount = completedCount + failedCount;
+
+    const progressPercent = totalTasks > 0 ? Math.round((handledCount / totalTasks) * 100) : 0;
+    const successPercent = totalTasks > 0 ? Math.round((completedCount / totalTasks) * 100) : 0;
+
+    const progressBar = renderBar(progressPercent);
+    const successBar = renderBar(successPercent);
 
     let currentTaskInfo = '-';
     if (state.current_task) {
@@ -35,7 +44,8 @@ module.exports = async ({ github, context, core }) => {
 | Metric | Details |
 | --- | --- |
 | **Status** | ${state.status} |
-| **Progress** | ${progressBar} (${completedCount}/${totalTasks} completed) |
+| **Progress** | ${progressBar} (${handledCount}/${totalTasks} handled) |
+| **Success** | ${successBar} (${completedCount}/${totalTasks} succeeded) |
 | **Current Task** | ${currentTaskInfo} |
 
 ### 📋 Queue List
