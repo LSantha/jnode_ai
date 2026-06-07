@@ -1,5 +1,5 @@
 name: opencode
-run-name: opencode agent
+run-name: ${{ github.event_name == 'pull_request_review_comment' && format('PR Review #{0} - {1}', github.event.pull_request.number, github.event.pull_request.title) || format('Issue #{0} - {1}', github.event.issue.number, github.event.issue.title) }}
 
 on:
   issue_comment:
