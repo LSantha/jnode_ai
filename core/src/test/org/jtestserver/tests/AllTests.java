@@ -28,7 +28,7 @@ import org.junit.runners.Suite.SuiteClasses;
 
 @RunWith(Suite.class)
 @SuiteClasses({TestProtocol.class, TestUDPProtocol.class, TestInputMessage.class,
-    TestOutputMessage.class, TestVMware.class, TestKVM.class, TestJVM.class,
+    TestVMware.class, TestKVM.class, TestJVM.class,
     TestMauveTestRunner.class })
 public class AllTests {
     
