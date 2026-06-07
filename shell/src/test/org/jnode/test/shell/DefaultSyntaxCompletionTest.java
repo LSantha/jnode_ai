@@ -50,7 +50,6 @@ import org.junit.Test;
  *
  * @author crawley@jnode.org
  */
-// FIXME
 @Ignore
 public class DefaultSyntaxCompletionTest {
 
