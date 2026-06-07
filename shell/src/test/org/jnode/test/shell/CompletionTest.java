@@ -54,7 +54,6 @@ import static org.jnode.test.shell.CompletionHelper.checkCompletions;
  *
  * @author crawley@jnode.org
  */
-// FIXME
 @Ignore
 public class CompletionTest {
 
