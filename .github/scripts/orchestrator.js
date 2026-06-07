@@ -67,6 +67,42 @@ module.exports = async ({ github, context, core }) => {
     });
   }
 
+  // Helper to close the master issue when status becomes COMPLETED
+  async function closeMasterIfDone(issueNumber, state) {
+    if (state.status !== 'COMPLETED') return;
+    try {
+      const issue = await github.rest.issues.get({
+        owner: context.repo.owner,
+        repo: context.repo.repo,
+        issue_number: issueNumber
+      });
+      if (issue.data.state === 'closed') {
+        core.info(`Master issue #${issueNumber} already closed.`);
+        return;
+      }
+      try {
+        await github.rest.issues.addLabels({
+          owner: context.repo.owner,
+          repo: context.repo.repo,
+          issue_number: issueNumber,
+          labels: ['agent/done']
+        });
+      } catch (err) {
+        core.warning(`Failed to add agent/done label to #${issueNumber}: ${err.message}`);
+      }
+      await github.rest.issues.update({
+        owner: context.repo.owner,
+        repo: context.repo.repo,
+        issue_number: issueNumber,
+        state: 'closed',
+        state_reason: 'completed'
+      });
+      core.info(`Master issue #${issueNumber} closed (status: COMPLETED).`);
+    } catch (err) {
+      core.warning(`Failed to close master issue #${issueNumber}: ${err.message}`);
+    }
+  }
+
   // 1. Find the Master Orchestrator Issue
   const issues = await github.rest.issues.listForRepo({
     owner: context.repo.owner,
@@ -210,6 +246,7 @@ module.exports = async ({ github, context, core }) => {
             });
           }
           await updateMasterIssue(masterIssueNumber, state);
+          await closeMasterIfDone(masterIssueNumber, state);
           return; // Exit fully since we transitioned state successfully!
         }
       } catch (err) {
@@ -242,6 +279,7 @@ module.exports = async ({ github, context, core }) => {
       }
 
       await updateMasterIssue(masterIssueNumber, state);
+      await closeMasterIfDone(masterIssueNumber, state);
 
     } else if (context.eventName === 'workflow_run') {
       core.info("Workflow run completion trigger detected.");
@@ -334,6 +372,7 @@ module.exports = async ({ github, context, core }) => {
       }
 
       await updateMasterIssue(masterIssueNumber, state);
+      await closeMasterIfDone(masterIssueNumber, state);
     }
 
   } finally {
