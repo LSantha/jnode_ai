@@ -60,6 +60,7 @@ jobs:
           OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY }}
         with:
           model: opencode/nemotron-3-ultra-free
+          variant: high
 
       - name: Apply agent/* label and close if work-product is the comment
         if: success() || failure() || cancelled()
