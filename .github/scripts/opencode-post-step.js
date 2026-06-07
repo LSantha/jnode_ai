@@ -30,7 +30,7 @@ function isRefusalComment(body) {
 
 function isNeedsInfoComment(body) {
   if (!body) return false;
-  return /needs more info|## 🤖 Triage|needs the following|@\w+/i.test(body);
+  return /needs more info|## 🤖 Triage|needs the following/i.test(body);
 }
 
 function isInvestigationReport(body) {
