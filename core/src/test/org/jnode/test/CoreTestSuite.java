@@ -35,6 +35,8 @@ import org.junit.runners.Suite.SuiteClasses;
 @SuiteClasses({
     NumberUtilsTest.class,
     VersionTest.class,
+    SignatureTest.class,
+    ForEachTest.class,
 }
 )
 public class CoreTestSuite {
