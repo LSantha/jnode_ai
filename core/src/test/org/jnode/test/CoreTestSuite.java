@@ -36,6 +36,7 @@ import org.junit.runners.Suite.SuiteClasses;
     NumberUtilsTest.class,
     VersionTest.class,
     TryFinallyTest.class,
+    VarArgsTest.class,
 }
 )
 public class CoreTestSuite {
