@@ -58,7 +58,6 @@ public class JNodeImageGraphics extends AbstractGraphics {
      * @see java.awt.Graphics#copyArea(int, int, int, int, int, int)
      */
     public void copyArea(int x, int y, int width, int height, int dx, int dy) {
-        // TODO Auto-generated method stub
 
     }
 
@@ -75,7 +74,6 @@ public class JNodeImageGraphics extends AbstractGraphics {
      * @see java.awt.Graphics2D#draw(java.awt.Shape)
      */
     public void draw(Shape shape) {
-        // TODO Auto-generated method stub
 
     }
 
@@ -84,7 +82,6 @@ public class JNodeImageGraphics extends AbstractGraphics {
      * @see java.awt.Graphics2D#fill(java.awt.Shape)
      */
     public void fill(Shape shape) {
-        // TODO Auto-generated method stub
 
     }
 
@@ -93,7 +90,6 @@ public class JNodeImageGraphics extends AbstractGraphics {
      * @see java.awt.Graphics2D#getDeviceConfiguration()
      */
     public GraphicsConfiguration getDeviceConfiguration() {
-        // TODO Auto-generated method stub
         return null;
     }
 

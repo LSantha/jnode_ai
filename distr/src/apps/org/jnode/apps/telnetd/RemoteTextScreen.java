@@ -84,7 +84,6 @@ public class RemoteTextScreen extends AbstractPcTextScreen {
      * {@inheritDoc}
      */
     public void copyTo(TextScreen dst, int offset, int length) {
-        // TODO Auto-generated method stub
 
     }
 

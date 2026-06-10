@@ -87,7 +87,6 @@ final class DesktopFramePeer extends JNodeGenericPeer<SwingToolkit, DesktopFrame
      * @see java.awt.peer.FramePeer#getState()
      */
     public int getState() {
-        // TODO Auto-generated method stub
         return 0;
     }
 
@@ -95,7 +94,6 @@ final class DesktopFramePeer extends JNodeGenericPeer<SwingToolkit, DesktopFrame
      * @see java.awt.peer.FramePeer#setIconImage(java.awt.Image)
      */
     public void setIconImage(Image image) {
-        // TODO Auto-generated method stub
 
     }
 
@@ -116,7 +114,6 @@ final class DesktopFramePeer extends JNodeGenericPeer<SwingToolkit, DesktopFrame
      * @see java.awt.peer.FramePeer#setResizable(boolean)
      */
     public void setResizable(boolean resizable) {
-        // TODO Auto-generated method stub
 
     }
 
@@ -124,7 +121,6 @@ final class DesktopFramePeer extends JNodeGenericPeer<SwingToolkit, DesktopFrame
      * @see java.awt.peer.FramePeer#setState(int)
      */
     public void setState(int state) {
-        // TODO Auto-generated method stub
 
     }
 
@@ -132,7 +128,6 @@ final class DesktopFramePeer extends JNodeGenericPeer<SwingToolkit, DesktopFrame
      * @see java.awt.peer.FramePeer#setTitle(java.lang.String)
      */
     public void setTitle(String title) {
-        // TODO Auto-generated method stub
 
     }
 
@@ -140,7 +135,6 @@ final class DesktopFramePeer extends JNodeGenericPeer<SwingToolkit, DesktopFrame
      * @see java.awt.peer.WindowPeer#toBack()
      */
     public void toBack() {
-        // TODO Auto-generated method stub
 
     }
 
@@ -148,7 +142,6 @@ final class DesktopFramePeer extends JNodeGenericPeer<SwingToolkit, DesktopFrame
      * @see java.awt.peer.WindowPeer#toFront()
      */
     public void toFront() {
-        // TODO Auto-generated method stub
 
     }
 
@@ -156,7 +149,6 @@ final class DesktopFramePeer extends JNodeGenericPeer<SwingToolkit, DesktopFrame
      * @see java.awt.peer.ContainerPeer#beginLayout()
      */
     public void beginLayout() {
-        // TODO Auto-generated method stub
 
     }
 
@@ -164,7 +156,6 @@ final class DesktopFramePeer extends JNodeGenericPeer<SwingToolkit, DesktopFrame
      * @see java.awt.peer.ContainerPeer#beginValidate()
      */
     public void beginValidate() {
-        // TODO Auto-generated method stub
 
     }
 
@@ -172,7 +163,6 @@ final class DesktopFramePeer extends JNodeGenericPeer<SwingToolkit, DesktopFrame
      * @see java.awt.peer.ContainerPeer#endLayout()
      */
     public void endLayout() {
-        // TODO Auto-generated method stub
 
     }
 
@@ -180,7 +170,6 @@ final class DesktopFramePeer extends JNodeGenericPeer<SwingToolkit, DesktopFrame
      * @see java.awt.peer.ContainerPeer#endValidate()
      */
     public void endValidate() {
-        // TODO Auto-generated method stub
 
     }
 
@@ -205,7 +194,6 @@ final class DesktopFramePeer extends JNodeGenericPeer<SwingToolkit, DesktopFrame
      * @see java.awt.peer.ContainerPeer#isPaintPending()
      */
     public boolean isPaintPending() {
-        // TODO Auto-generated method stub
         return false;
     }
 
@@ -213,7 +201,6 @@ final class DesktopFramePeer extends JNodeGenericPeer<SwingToolkit, DesktopFrame
      * @see java.awt.peer.ComponentPeer#canDetermineObscurity()
      */
     public boolean canDetermineObscurity() {
-        // TODO Auto-generated method stub
         return false;
     }
 
@@ -229,7 +216,6 @@ final class DesktopFramePeer extends JNodeGenericPeer<SwingToolkit, DesktopFrame
      * @see java.awt.peer.ComponentPeer#coalescePaintEvent(java.awt.event.PaintEvent)
      */
     public void coalescePaintEvent(PaintEvent e) {
-        // TODO Auto-generated method stub
 
     }
 
@@ -239,7 +225,6 @@ final class DesktopFramePeer extends JNodeGenericPeer<SwingToolkit, DesktopFrame
      */
     public void createBuffers(int x, BufferCapabilities capabilities)
         throws AWTException {
-        // TODO Auto-generated method stub
 
     }
 
@@ -288,7 +273,6 @@ final class DesktopFramePeer extends JNodeGenericPeer<SwingToolkit, DesktopFrame
      * @see java.awt.peer.ComponentPeer#flip(java.awt.BufferCapabilities.FlipContents)
      */
     public void flip(FlipContents contents) {
-        // TODO Auto-generated method stub
 
     }
 
@@ -296,7 +280,6 @@ final class DesktopFramePeer extends JNodeGenericPeer<SwingToolkit, DesktopFrame
      * @see java.awt.peer.ComponentPeer#getBackBuffer()
      */
     public Image getBackBuffer() {
-        // TODO Auto-generated method stub
         return null;
     }
 
@@ -390,7 +373,6 @@ final class DesktopFramePeer extends JNodeGenericPeer<SwingToolkit, DesktopFrame
      * @see java.awt.peer.ComponentPeer#handlesWheelScrolling()
      */
     public boolean handlesWheelScrolling() {
-        // TODO Auto-generated method stub
         return false;
     }
 
@@ -412,7 +394,6 @@ final class DesktopFramePeer extends JNodeGenericPeer<SwingToolkit, DesktopFrame
      * @see java.awt.peer.ComponentPeer#isObscured()
      */
     public boolean isObscured() {
-        // TODO Auto-generated method stub
         return false;
     }
 
@@ -428,7 +409,6 @@ final class DesktopFramePeer extends JNodeGenericPeer<SwingToolkit, DesktopFrame
      */
     public void paint(Graphics graphics) {
         log.debug("Paint");
-        // TODO Auto-generated method stub
 
     }
 
@@ -452,7 +432,6 @@ final class DesktopFramePeer extends JNodeGenericPeer<SwingToolkit, DesktopFrame
      * @see java.awt.peer.ComponentPeer#print(java.awt.Graphics)
      */
     public void print(Graphics graphics) {
-        // TODO Auto-generated method stub
 
     }
 
@@ -491,7 +470,6 @@ final class DesktopFramePeer extends JNodeGenericPeer<SwingToolkit, DesktopFrame
      * @see java.awt.peer.ComponentPeer#reshape(int, int, int, int)
      */
     public void reshape(int x, int y, int width, int height) {
-        // TODO Auto-generated method stub
 
     }
 
@@ -499,7 +477,6 @@ final class DesktopFramePeer extends JNodeGenericPeer<SwingToolkit, DesktopFrame
      * @see java.awt.peer.ComponentPeer#setBackground(java.awt.Color)
      */
     public void setBackground(Color color) {
-        // TODO Auto-generated method stub
 
     }
 
@@ -507,7 +484,6 @@ final class DesktopFramePeer extends JNodeGenericPeer<SwingToolkit, DesktopFrame
      * @see java.awt.peer.ComponentPeer#setBounds(int, int, int, int)
      */
     public void setBounds(int x, int y, int width, int height) {
-        // TODO Auto-generated method stub
 
     }
 
@@ -515,7 +491,6 @@ final class DesktopFramePeer extends JNodeGenericPeer<SwingToolkit, DesktopFrame
      * @see java.awt.peer.ComponentPeer#setCursor(java.awt.Cursor)
      */
     public void setCursor(Cursor cursor) {
-        // TODO Auto-generated method stub
 
     }
 
@@ -523,7 +498,6 @@ final class DesktopFramePeer extends JNodeGenericPeer<SwingToolkit, DesktopFrame
      * @see java.awt.peer.ComponentPeer#setEnabled(boolean)
      */
     public void setEnabled(boolean enabled) {
-        // TODO Auto-generated method stub
 
     }
 
@@ -531,7 +505,6 @@ final class DesktopFramePeer extends JNodeGenericPeer<SwingToolkit, DesktopFrame
      * @see java.awt.peer.ComponentPeer#setEventMask(long)
      */
     public void setEventMask(long mask) {
-        // TODO Auto-generated method stub
 
     }
 
@@ -539,7 +512,6 @@ final class DesktopFramePeer extends JNodeGenericPeer<SwingToolkit, DesktopFrame
      * @see java.awt.peer.ComponentPeer#setFont(java.awt.Font)
      */
     public void setFont(Font font) {
-        // TODO Auto-generated method stub
 
     }
 
@@ -547,7 +519,6 @@ final class DesktopFramePeer extends JNodeGenericPeer<SwingToolkit, DesktopFrame
      * @see java.awt.peer.ComponentPeer#setForeground(java.awt.Color)
      */
     public void setForeground(Color color) {
-        // TODO Auto-generated method stub
 
     }
 
@@ -571,7 +542,6 @@ final class DesktopFramePeer extends JNodeGenericPeer<SwingToolkit, DesktopFrame
      * @see java.awt.peer.ComponentPeer#updateCursorImmediately()
      */
     public void updateCursorImmediately() {
-        // TODO Auto-generated method stub
 
     }
 

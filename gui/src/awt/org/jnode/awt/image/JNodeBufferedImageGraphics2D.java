@@ -77,7 +77,6 @@ public class JNodeBufferedImageGraphics2D extends AbstractSurfaceGraphics2D {
      * @see java.awt.Graphics2D#getDeviceConfiguration()
      */
     public GraphicsConfiguration getDeviceConfiguration() {
-        // TODO Auto-generated method stub
         return null;
     }
 

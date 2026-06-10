@@ -97,7 +97,6 @@ final class VirtualDirEntry implements FSEntry, FSDirectory, FSEntryCreated, FSE
      * @see org.jnode.fs.FSEntry#getAccessRights()
      */
     public FSAccessRights getAccessRights() throws IOException {
-        // TODO Auto-generated method stub
         return null;
     }
 

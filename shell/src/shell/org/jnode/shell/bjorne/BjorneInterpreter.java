@@ -187,7 +187,6 @@ public class BjorneInterpreter implements CommandInterpreter {
     
     @Override
     public synchronized boolean help(CommandShell shell, String partial, PrintWriter pw) throws ShellException {
-        // TODO Auto-generated method stub
         return false;
     }
 

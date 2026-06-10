@@ -62,7 +62,6 @@ public class PhiAssignQuad<T> extends AssignQuad<T> {
     }
 
     public int getLHSLiveAddress() {
-        // TODO Auto-generated method stub
         return 0;
     }
 
@@ -93,7 +92,6 @@ public class PhiAssignQuad<T> extends AssignQuad<T> {
     }
 
     public void generateCode(CodeGenerator cg) {
-        // TODO Auto-generated method stub
 
     }
 

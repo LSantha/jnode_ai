@@ -218,7 +218,6 @@ public abstract class BaseMmtkHeapManager extends VmHeapManager implements
     }
 
     public boolean isLowOnMemory() {
-        // TODO Auto-generated method stub
         return false;
     }
 

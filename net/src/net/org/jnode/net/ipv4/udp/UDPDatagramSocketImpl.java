@@ -70,7 +70,6 @@ public class UDPDatagramSocketImpl extends AbstractDatagramSocketImpl implements
      * @see java.net.DatagramSocketImpl#getTTL()
      */
     protected byte getTTL() throws IOException {
-        // TODO Auto-generated method stub
         return 0;
     }
 
@@ -115,7 +114,6 @@ public class UDPDatagramSocketImpl extends AbstractDatagramSocketImpl implements
      * @see java.net.DatagramSocketImpl#setTTL(byte)
      */
     protected void setTTL(byte ttl) throws IOException {
-        // TODO Auto-generated method stub
 
     }
 }

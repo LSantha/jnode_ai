@@ -239,7 +239,6 @@ final class FileHandleImpl implements VMFileHandle {
     }
 
     public void unlock(long pos, long len) {
-        // TODO Auto-generated method stub
     }
 
     public int read() throws IOException {
@@ -260,12 +259,10 @@ final class FileHandleImpl implements VMFileHandle {
     }
 
     public boolean lock() {
-        // TODO Auto-generated method stub
         return true;
     }
 
     public MappedByteBuffer mapImpl(char mode, long position, int size) {
-        // TODO Auto-generated method stub
         return null;
     }
 }

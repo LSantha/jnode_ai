@@ -130,7 +130,6 @@ public class ListCommandNode extends CommandNode implements Completable {
     
     @Override
     public void complete(CompletionInfo completions, CommandShell shell) throws CompletionException {
-        // TODO Auto-generated method stub
 
     }
 }

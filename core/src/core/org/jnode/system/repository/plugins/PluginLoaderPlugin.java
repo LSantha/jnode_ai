@@ -79,7 +79,6 @@ public final class PluginLoaderPlugin extends RepositoryPlugin {
     @Override
     protected void providerAdded(SystemRepositoryProvider[] providers,
                                  SystemRepositoryProvider provider) {
-        // TODO Auto-generated method stub
         super.providerAdded(providers, provider);
     }
 
@@ -91,7 +90,6 @@ public final class PluginLoaderPlugin extends RepositoryPlugin {
     @Override
     protected void providerRemoved(SystemRepositoryProvider[] providers,
                                    SystemRepositoryProvider provider) {
-        // TODO Auto-generated method stub
         super.providerRemoved(providers, provider);
     }
 
@@ -146,7 +144,6 @@ public final class PluginLoaderPlugin extends RepositoryPlugin {
             for (SystemRepositoryProvider prov : pluginProviders) {
                 //todo empty ?
             }
-            // TODO Auto-generated method stub
             return null;
         }
     }

@@ -57,7 +57,6 @@ public class TestInputMessage {
         @Override
         public Client<Object, ? extends Protocol<Object>> createClient(InetAddress serverIp,
                 int serverPort) throws ProtocolException {
-            // TODO Auto-generated method stub
             return null;
         }
 
@@ -67,7 +66,6 @@ public class TestInputMessage {
         @Override
         public Server<Object, ? extends Protocol<Object>> createServer(int localPort)
             throws ProtocolException {
-            // TODO Auto-generated method stub
             return null;
         }
         

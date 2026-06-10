@@ -198,7 +198,6 @@ public abstract class AbstractDatagramSocketImpl extends DatagramSocketImpl impl
      * @see java.net.DatagramSocketImpl#join(java.net.InetAddress)
      */
     protected void join(InetAddress inetaddr) throws IOException {
-        // TODO Auto-generated method stub
     }
 
     /**
@@ -206,14 +205,12 @@ public abstract class AbstractDatagramSocketImpl extends DatagramSocketImpl impl
      *      java.net.NetworkInterface)
      */
     protected void joinGroup(SocketAddress mcastaddr, NetworkInterface netIf) throws IOException {
-        // TODO Auto-generated method stub
     }
 
     /**
      * @see java.net.DatagramSocketImpl#leave(java.net.InetAddress)
      */
     protected void leave(InetAddress inetaddr) throws IOException {
-        // TODO Auto-generated method stub
     }
 
     /**
@@ -221,14 +218,12 @@ public abstract class AbstractDatagramSocketImpl extends DatagramSocketImpl impl
      *      java.net.NetworkInterface)
      */
     protected void leaveGroup(SocketAddress mcastaddr, NetworkInterface netIf) throws IOException {
-        // TODO Auto-generated method stub
     }
 
     /**
      * @see java.net.DatagramSocketImpl#peek(java.net.InetAddress)
      */
     protected int peek(InetAddress i) throws IOException {
-        // TODO Auto-generated method stub
         return 0;
     }
 

@@ -95,7 +95,6 @@ public class NTFSFile implements FSFile, FSFileSlackSpace, FSFileStreams {
      * @see org.jnode.fs.FSFile#setLength(long)
      */
     public void setLength(long length) {
-        // TODO Auto-generated method stub
 
     }
 
@@ -118,7 +117,6 @@ public class NTFSFile implements FSFile, FSFileSlackSpace, FSFileStreams {
      */
     // public void write(long fileOffset, byte[] src, int off, int len) {
     public void write(long fileOffset, ByteBuffer src) {
-        // TODO Auto-generated method stub
 
     }
 

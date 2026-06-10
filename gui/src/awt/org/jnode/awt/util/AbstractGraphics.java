@@ -112,7 +112,6 @@ public abstract class AbstractGraphics extends Graphics2D {
      * @see java.awt.Graphics2D#addRenderingHints(java.util.Map)
      */
     public void addRenderingHints(Map<?, ?> hints) {
-        // TODO Auto-generated method stub
 
     }
 
@@ -153,7 +152,6 @@ public abstract class AbstractGraphics extends Graphics2D {
      */
     public boolean drawImage(Image image, AffineTransform xform,
                              ImageObserver obs) {
-        // TODO Auto-generated method stub
         return false;
     }
 
@@ -164,7 +162,6 @@ public abstract class AbstractGraphics extends Graphics2D {
      *      java.awt.geom.AffineTransform)
      */
     public void drawRenderableImage(RenderableImage image, AffineTransform xform) {
-        // TODO Auto-generated method stub
 
     }
 
@@ -175,7 +172,6 @@ public abstract class AbstractGraphics extends Graphics2D {
      *      java.awt.geom.AffineTransform)
      */
     public void drawRenderedImage(RenderedImage image, AffineTransform xform) {
-        // TODO Auto-generated method stub
 
     }
 
@@ -188,7 +184,6 @@ public abstract class AbstractGraphics extends Graphics2D {
      */
     public void drawString(AttributedCharacterIterator iterator, float x,
                            float y) {
-        // TODO Auto-generated method stub
 
     }
 
@@ -255,7 +250,6 @@ public abstract class AbstractGraphics extends Graphics2D {
      * @see java.awt.Graphics2D#getRenderingHint(java.awt.RenderingHints.Key)
      */
     public Object getRenderingHint(Key hintKey) {
-        // TODO Auto-generated method stub
         return null;
     }
 
@@ -264,7 +258,6 @@ public abstract class AbstractGraphics extends Graphics2D {
      * @see java.awt.Graphics2D#getRenderingHints()
      */
     public RenderingHints getRenderingHints() {
-        // TODO Auto-generated method stub
         return null;
     }
 
@@ -292,7 +285,6 @@ public abstract class AbstractGraphics extends Graphics2D {
      * @see java.awt.Graphics2D#hit(java.awt.Rectangle, java.awt.Shape, boolean)
      */
     public boolean hit(Rectangle rect, Shape text, boolean onStroke) {
-        // TODO Auto-generated method stub
         return false;
     }
 
@@ -357,7 +349,6 @@ public abstract class AbstractGraphics extends Graphics2D {
      *      java.lang.Object)
      */
     public void setRenderingHint(Key hintKey, Object hintValue) {
-        // TODO Auto-generated method stub
 
     }
 
@@ -366,7 +357,6 @@ public abstract class AbstractGraphics extends Graphics2D {
      * @see java.awt.Graphics2D#setRenderingHints(java.util.Map)
      */
     public void setRenderingHints(Map<?, ?> hints) {
-        // TODO Auto-generated method stub
 
     }
 
@@ -532,7 +522,6 @@ public abstract class AbstractGraphics extends Graphics2D {
      */
     public boolean drawImage(Image image, int x, int y, Color bgcolor,
                              ImageObserver observer) {
-        // TODO Auto-generated method stub
         return false;
     }
 
@@ -546,7 +535,6 @@ public abstract class AbstractGraphics extends Graphics2D {
      *      java.awt.image.ImageObserver)
      */
     public boolean drawImage(Image image, int x, int y, ImageObserver observer) {
-        // TODO Auto-generated method stub
         return false;
     }
 
@@ -564,7 +552,6 @@ public abstract class AbstractGraphics extends Graphics2D {
      */
     public boolean drawImage(Image image, int x, int y, int width, int height,
                              Color bgcolor, ImageObserver observer) {
-        // TODO Auto-generated method stub
         return false;
     }
 
@@ -581,7 +568,6 @@ public abstract class AbstractGraphics extends Graphics2D {
      */
     public boolean drawImage(Image image, int x, int y, int width, int height,
                              ImageObserver observer) {
-        // TODO Auto-generated method stub
         return false;
     }
 
@@ -604,7 +590,6 @@ public abstract class AbstractGraphics extends Graphics2D {
     public boolean drawImage(Image image, int dx1, int dy1, int dx2, int dy2,
                              int sx1, int sy1, int sx2, int sy2, Color bgcolor,
                              ImageObserver observer) {
-        // TODO Auto-generated method stub
         return false;
     }
 
@@ -625,7 +610,6 @@ public abstract class AbstractGraphics extends Graphics2D {
      */
     public boolean drawImage(Image image, int dx1, int dy1, int dx2, int dy2,
                              int sx1, int sy1, int sx2, int sy2, ImageObserver observer) {
-        // TODO Auto-generated method stub
         return false;
     }
 
@@ -890,7 +874,6 @@ public abstract class AbstractGraphics extends Graphics2D {
      *      float, float)
      */
     public void drawGlyphVector(GlyphVector g, float x, float y) {
-        // TODO Auto-generated method stub
 
     }
 

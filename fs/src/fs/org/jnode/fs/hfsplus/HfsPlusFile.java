@@ -77,7 +77,6 @@ public class HfsPlusFile implements FSFile, FSFileSlackSpace, FSFileStreams {
 
     @Override
     public void setLength(final long length) throws IOException {
-        // TODO Auto-generated method stub
     }
 
     @Override
@@ -95,7 +94,6 @@ public class HfsPlusFile implements FSFile, FSFileSlackSpace, FSFileStreams {
 
     @Override
     public void write(final long fileOffset, final ByteBuffer src) throws IOException {
-        // TODO Auto-generated method stub
 
     }
 

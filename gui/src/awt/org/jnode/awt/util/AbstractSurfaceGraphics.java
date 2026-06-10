@@ -306,7 +306,6 @@ public abstract class AbstractSurfaceGraphics extends AbstractGraphics {
      */
     public final boolean drawImage(Image image, AffineTransform xform, ImageObserver obs) {
         log.debug("JnodeGraphics: drawImage");
-        // TODO Auto-generated method stub
         return false;
     }
 
@@ -326,7 +325,6 @@ public abstract class AbstractSurfaceGraphics extends AbstractGraphics {
      * @see java.awt.Graphics2D#drawRenderedImage(java.awt.image.RenderedImage, java.awt.geom.AffineTransform)
      */
     public final void drawRenderedImage(RenderedImage image, AffineTransform xform) {
-        // TODO Auto-generated method stub
 
     }
 

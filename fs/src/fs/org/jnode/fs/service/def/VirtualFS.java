@@ -56,7 +56,6 @@ final class VirtualFS implements FileSystem<VirtualDirEntry> {
      * @see org.jnode.fs.FileSystem#close()
      */
     public void close() throws IOException {
-        // TODO Auto-generated method stub
     }
 
     /**
