@@ -26,7 +26,8 @@ import org.junit.runner.RunWith;
 import org.junit.runners.Suite;
 
 @RunWith(Suite.class)
-@Suite.SuiteClasses({ARPHeaderTest.class, //
+@Suite.SuiteClasses({SocketBufferTest.class, //
+    ARPHeaderTest.class, //
     EthernetAddressTest.class })
 public class AllTests {
 }

@@ -37,7 +37,7 @@
         <junit showoutput="off" printsummary="on" fork="on" haltonfailure="on">
             <classpath refid="cp-test"/>
             <formatter type="xml"/>
-            <test name="org.jnode.test.AllTests" todir="${basedir}/build/reports/junit"/>
+            <test name="org.jnode.net.AllTests" todir="${basedir}/build/reports/junit"/>
         </junit>
     </target>
 

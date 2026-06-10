@@ -409,8 +409,8 @@ public class SocketBuffer {
             // First byte is within my data, second is not
             final int b0 = get(index + 0);
             final int b1 = get(index + 1);
-            final int b2 = get(index + 1);
-            final int b3 = get(index + 1);
+            final int b2 = get(index + 2);
+            final int b3 = get(index + 3);
             return (b0 << 24) | (b1 << 16) | (b2 << 8) | b3;
         }
     }
