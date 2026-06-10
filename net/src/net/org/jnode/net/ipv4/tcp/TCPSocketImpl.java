@@ -46,6 +46,11 @@ public class TCPSocketImpl extends SocketImpl {
     private final TCPProtocol protocol;
 
     /**
+     * Socket read timeout in milliseconds. 0 means disabled.
+     */
+    private int timeout;
+
+    /**
      * The control block
      */
     private TCPControlBlock controlBlock;
@@ -203,8 +208,7 @@ public class TCPSocketImpl extends SocketImpl {
             case SocketOptions.SO_SNDBUF:
                 return controlBlock.getSendBufferSize();
             case SocketOptions.SO_TIMEOUT:
-                // todo implement it, 0 means disabled
-                return 0;
+                return timeout;
             default:
                 throw new SocketException("Option " + option_id +
                     " is not recognised or not implemented");
@@ -252,9 +256,34 @@ public class TCPSocketImpl extends SocketImpl {
     /**
      * @see java.net.SocketOptions#setOption(int, java.lang.Object)
      */
-    public void setOption(int option_id, Object val) throws SocketException {
-        // TODO Auto-generated method stub
+    public synchronized void setOption(int option_id, Object val) throws SocketException {
+        try {
+            switch (option_id) {
+                case SocketOptions.SO_TIMEOUT:
+                    final int newTimeout = ((Integer) val).intValue();
+                    if (newTimeout < 0) {
+                        throw new IllegalArgumentException("Negative timeout");
+                    }
+                    timeout = newTimeout;
+                    break;
+                case SocketOptions.SO_RCVBUF:
+                case SocketOptions.SO_SNDBUF:
+                case SocketOptions.SO_REUSEADDR:
+                    break;
+                default:
+                    throw new SocketException("Option " + option_id +
+                        " is not recognised or not implemented");
+            }
+        } catch (ClassCastException ex) {
+            throw (SocketException) new SocketException("Invalid option type").initCause(ex);
+        }
+    }
 
+    /**
+     * @return The socket read timeout in milliseconds.
+     */
+    public int getReadTimeout() {
+        return timeout;
     }
 
     /**

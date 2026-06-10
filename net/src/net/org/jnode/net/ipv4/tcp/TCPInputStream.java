@@ -89,7 +89,7 @@ public class TCPInputStream extends InputStream {
         if (closed) {
             return -1;
         } else {
-            return controlBlock.appRead(b, off, len);
+            return controlBlock.appRead(b, off, len, impl.getReadTimeout());
         }
     }
 

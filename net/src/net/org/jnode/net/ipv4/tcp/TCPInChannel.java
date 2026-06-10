@@ -20,7 +20,9 @@
  
 package org.jnode.net.ipv4.tcp;
 
+import java.io.IOException;
 import java.net.SocketException;
+import java.net.SocketTimeoutException;
 import java.util.LinkedList;
 
 import org.apache.log4j.Logger;
@@ -204,6 +206,52 @@ public class TCPInChannel {
                 wait();
             } catch (InterruptedException ex) {
                 // Ignore
+            }
+        }
+        if (controlBlock.isReset()) {
+            throw new SocketException("Connection reset");
+        } else if (isEOF()) {
+            return -1;
+        } else {
+            return dataBuffer.read(dst, off, len);
+        }
+    }
+
+    /**
+     * Read data from the input buffer up to len bytes long. Block until there is data available
+     * or the timeout expires.
+     *
+     * @param dst
+     * @param off
+     * @param len
+     * @param timeout Timeout in milliseconds, 0 means disabled
+     * @return The number of bytes read
+     */
+    public synchronized int read(byte[] dst, int off, int len, int timeout) throws IOException {
+        if (timeout < 0) {
+            throw new IllegalArgumentException("Negative timeout");
+        }
+        if (len == 0) {
+            return 0;
+        }
+        final long start = System.currentTimeMillis();
+        while ((dataBuffer.getUsed() == 0) && !controlBlock.isReset() && !isEOF()) {
+            if (timeout > 0) {
+                final long elapsed = System.currentTimeMillis() - start;
+                if (elapsed >= timeout) {
+                    throw new SocketTimeoutException("Read timed out");
+                }
+                try {
+                    wait(timeout - elapsed);
+                } catch (InterruptedException ex) {
+                    // Ignore
+                }
+            } else {
+                try {
+                    wait();
+                } catch (InterruptedException ex) {
+                    // Ignore
+                }
             }
         }
         if (controlBlock.isReset()) {

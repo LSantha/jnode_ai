@@ -20,6 +20,7 @@
  
 package org.jnode.net.ipv4.tcp;
 
+import java.io.IOException;
 import java.net.ConnectException;
 import java.net.SocketException;
 import java.util.LinkedList;
@@ -823,6 +824,20 @@ public class TCPControlBlock extends IPv4ControlBlock implements TCPConstants {
      */
     public int appRead(byte[] dst, int off, int len) throws SocketException {
         return inChannel.read(dst, off, len);
+    }
+
+    /**
+     * Read data from the input buffer up to len bytes long. Block until there
+     * is data available or the timeout expires.
+     *
+     * @param dst
+     * @param off
+     * @param len
+     * @param timeout Timeout in milliseconds, 0 means disabled
+     * @return The number of bytes read
+     */
+    public int appRead(byte[] dst, int off, int len, int timeout) throws IOException {
+        return inChannel.read(dst, off, len, timeout);
     }
 
     /**

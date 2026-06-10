@@ -22,11 +22,13 @@ package org.jnode.net;
 
 import org.jnode.net.arp.ARPHeaderTest;
 import org.jnode.net.ethernet.EthernetAddressTest;
+import org.jnode.net.ipv4.tcp.TCPInChannelTest;
 import org.junit.runner.RunWith;
 import org.junit.runners.Suite;
 
 @RunWith(Suite.class)
 @Suite.SuiteClasses({SocketBufferTest.class, //
+    TCPInChannelTest.class, //
     ARPHeaderTest.class, //
     EthernetAddressTest.class })
 public class AllTests {
