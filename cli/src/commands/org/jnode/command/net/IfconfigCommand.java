@@ -30,6 +30,7 @@ import org.jnode.driver.DeviceManager;
 import org.jnode.driver.net.NetDeviceAPI;
 import org.jnode.driver.net.NetworkException;
 import org.jnode.naming.InitialNaming;
+import org.jnode.net.ProtocolAddressInfo;
 import org.jnode.net.ethernet.EthernetConstants;
 import org.jnode.net.ipv4.IPv4Address;
 import org.jnode.net.ipv4.config.IPv4ConfigurationService;
@@ -54,6 +55,8 @@ public class IfconfigCommand extends AbstractCommand {
     private static final String fmt_devices = "%s: MAC-Address %s MTU %s%n    %s%n";
     private static final String fmt_ip      = "IP address(es) for %s %s%n";
     private static final String fmt_set_ip  = "IP Address for %s set to %s%n";
+    private static final int CONFIG_WAIT_MS = 1000;
+    private static final int CONFIG_WAIT_INTERVAL_MS = 20;
     
     private final DeviceArgument argDevice;
     private final IPv4AddressArgument argIPAddress;
@@ -74,6 +77,7 @@ public class IfconfigCommand extends AbstractCommand {
     
     public void execute() throws NameNotFoundException, ApiNotFoundException, NetworkException {
         PrintWriter out = getOutput().getPrintWriter();
+        PrintWriter err = getError().getPrintWriter();
         if (!argDevice.isSet()) {
             // Print MAC address, MTU and IP address(es) for all network devices.
             final DeviceManager dm = InitialNaming.lookup(DeviceManager.NAME);
@@ -95,13 +99,31 @@ public class IfconfigCommand extends AbstractCommand {
                 final IPv4Address mask = argSubnetMask.getValue();
                 final IPv4ConfigurationService cfg = InitialNaming.lookup(IPv4ConfigurationService.NAME);
                 cfg.configureDeviceStatic(dev, ip, mask, true);
-
-                // FIXME ... this doesn't show the device's new address because the
-                // IPv4 ConfigurationServiceImpl calls processor.apply with the 
-                // waitUntilReady parameter == false.  (The comment in the code
-                // talks about avoiding deadlocks.)
-                out.format(fmt_set_ip, dev.getId(), api.getProtocolAddressInfo(EthernetConstants.ETH_P_IP));
+                ProtocolAddressInfo info = waitForProtocolAddressInfo(api, ip);
+                if (info == null) {
+                    err.format("IP Address for %s could not be confirmed as %s%n", dev.getId(), ip);
+                    exit(1);
+                }
+                out.format(fmt_set_ip, dev.getId(), info);
             }
         }
     }
+
+    private ProtocolAddressInfo waitForProtocolAddressInfo(NetDeviceAPI api, IPv4Address ip) {
+        final long deadline = System.currentTimeMillis() + CONFIG_WAIT_MS;
+        do {
+            final ProtocolAddressInfo info = api.getProtocolAddressInfo(EthernetConstants.ETH_P_IP);
+            if (info != null && info.contains(ip)) {
+                return info;
+            }
+            try {
+                Thread.sleep(CONFIG_WAIT_INTERVAL_MS);
+            } catch (InterruptedException ex) {
+                Thread.currentThread().interrupt();
+                break;
+            }
+        } while (System.currentTimeMillis() < deadline);
+        return null;
+    }
 }
+

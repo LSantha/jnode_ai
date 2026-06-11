@@ -33,6 +33,7 @@
       <import plugin="org.jnode.net.arp"/>
       <import plugin="org.jnode.net.ipv4"/>
       <import plugin="org.jnode.net.ipv4.config"/>
+      <import plugin="org.jnode.command.util"/>
       <import plugin="org.jnode.shell.help"/>
       <import plugin="org.jnode.util"/>
     </requires>

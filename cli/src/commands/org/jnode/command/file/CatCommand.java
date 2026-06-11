@@ -29,6 +29,7 @@ import java.io.PrintWriter;
 import java.io.Reader;
 import java.net.URL;
 
+import org.jnode.command.util.HttpUrlStream;
 import org.jnode.command.util.IOUtils;
 import org.jnode.shell.AbstractCommand;
 import org.jnode.shell.syntax.Argument;
@@ -102,6 +103,7 @@ public class CatCommand extends AbstractCommand {
     }
     
     private static final int BUFFER_SIZE = 8192;
+    private static final int URL_TIMEOUT = 30000;
     
     public static void main(String[] args) throws Exception {
         new CatCommand().execute(args);
@@ -129,17 +131,13 @@ public class CatCommand extends AbstractCommand {
             for (URL url : urls) {
                 InputStream is = null;
                 try {
-                    is = url.openStream();
+                    is = openUrlStream(url);
+                    IOUtils.copyStream(is, stdout, buffer);
                 } catch (IOException ex) {
                     err.format(ERR_URL, url, ex.getLocalizedMessage());
                     rc = 1;
-                }
-                if (is != null) {
-                    try {
-                        IOUtils.copyStream(is, stdout, buffer);
-                    } finally {
-                        IOUtils.close(is);
-                    }
+                } finally {
+                    IOUtils.close(is);
                 }
             }
             out.flush();
@@ -148,6 +146,10 @@ public class CatCommand extends AbstractCommand {
         
         // should not reach this
         throw new IllegalStateException("Nothing to process");
+    }
+
+    private InputStream openUrlStream(URL url) throws IOException {
+        return HttpUrlStream.openInputStream(url, URL_TIMEOUT);
     }
     
     private boolean handleFiles() {
@@ -258,8 +260,14 @@ public class CatCommand extends AbstractCommand {
     
     private void parseOptions() {
         files = argFile.getValues();
+        URL[] urls = argUrl.getValues();
         
-        if (files == null || files.length == 0) {
+        if (argUrls.isSet() && (urls == null || urls.length == 0)) {
+            err.format("No URLs specified%n");
+            exit(1);
+        }
+        
+        if ((files == null || files.length == 0) && (urls == null || urls.length == 0)) {
             files = new File[] {new File("-")};
         }
         

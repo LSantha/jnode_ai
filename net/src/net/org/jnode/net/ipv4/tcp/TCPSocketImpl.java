@@ -156,6 +156,9 @@ public class TCPSocketImpl extends SocketImpl {
      * @see java.net.SocketImpl#connect(java.net.SocketAddress, int)
      */
     protected void connect(SocketAddress address, int timeout) throws IOException {
+        if (timeout < 0) {
+            throw new IllegalArgumentException("connect timeout can not be negative");
+        }
         if (!(address instanceof InetSocketAddress)) {
             throw new IOException("InetSocketAddress expected");
         }
@@ -166,7 +169,7 @@ public class TCPSocketImpl extends SocketImpl {
         if (controlBlock == null) {
             bind(InetAddress.getLocalHost(), 0);
         }
-        controlBlock.appConnect(new IPv4Address(sa.getAddress()), sa.getPort());
+        controlBlock.appConnect(new IPv4Address(sa.getAddress()), sa.getPort(), timeout);
     }
 
     /**

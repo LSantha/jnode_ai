@@ -26,6 +26,7 @@ import java.io.InputStream;
 import java.io.PrintWriter;
 import java.net.URL;
 
+import org.jnode.command.util.HttpUrlStream;
 import org.jnode.shell.AbstractCommand;
 import org.jnode.shell.syntax.Argument;
 import org.jnode.shell.syntax.FlagArgument;
@@ -33,6 +34,7 @@ import org.jnode.shell.syntax.URLArgument;
 
 public class WgetCommand extends AbstractCommand {
     private static final int BUFFER_SIZE = 8192;
+    private static final int URL_TIMEOUT = 30000;
     
     private static final String help_debug = "if set, output debug information";
     private static final String help_url = "the source URL(s)";
@@ -116,7 +118,7 @@ public class WgetCommand extends AbstractCommand {
         InputStream is = null;
         FileOutputStream os = null;
         try {
-            is = url.openStream();
+            is = openUrlStream(url);
             os = new FileOutputStream(localFileName);
             byte[] buffer = new byte[BUFFER_SIZE];
             int numRead;
@@ -134,5 +136,9 @@ public class WgetCommand extends AbstractCommand {
                 os.close();
             }
         }
+    }
+
+    private InputStream openUrlStream(URL url) throws IOException {
+        return HttpUrlStream.openInputStream(url, URL_TIMEOUT);
     }
 }

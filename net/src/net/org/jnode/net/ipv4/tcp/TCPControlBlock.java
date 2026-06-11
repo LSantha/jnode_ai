@@ -674,18 +674,31 @@ public class TCPControlBlock extends IPv4ControlBlock implements TCPConstants {
      * @throws SocketException
      */
     public synchronized void appConnect(IPv4Address fAddr, int fPort) throws SocketException {
+        appConnect(fAddr, fPort, timeout);
+    }
+
+    public synchronized void appConnect(IPv4Address fAddr, int fPort, int connectTimeout)
+        throws SocketException {
         if (!isState(TCPS_CLOSED)) {
             throw new SocketException("Invalid connection state " + getStateName());
         }
         super.connect(getLocalAddress(), fAddr, fPort);
+        final long start = System.currentTimeMillis();
         for (int attempt = 0; attempt < TCP_MAXCONNECT; attempt++) {
+            long remaining = 0;
+            if (connectTimeout > 0) {
+                remaining = connectTimeout - (System.currentTimeMillis() - start);
+                if (remaining <= 0) {
+                    throw new ConnectException("Connection request timeout");
+                }
+            }
             try {
                 // Send the SYN
                 sendSYN();
                 // Update the state
                 setState(TCPS_SYN_SENT);
                 // Wait for an ESTABLISHED state
-                waitUntilState(TCPS_ESTABLISHED, timeout);
+                waitUntilState(TCPS_ESTABLISHED, remaining);
                 // Check for reset condition
                 if (isRefused()) {
                     throw new ConnectException("Connection refused");

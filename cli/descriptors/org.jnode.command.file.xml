@@ -71,7 +71,14 @@
   
   <extension point="org.jnode.shell.syntaxes">
     <syntax alias="cat">
-      <empty description="copy standard input to standard output"/>
+      <sequence description="fetch and concatenate urls to standard output">
+        <optionSet>
+          <option argLabel="urls" shortName="u" longName="urls"/>
+        </optionSet>
+        <repeat minCount="1">
+          <argument argLabel="url"/>
+        </repeat>
+      </sequence>
       <sequence description="concatenate files to standard output">
         <optionSet>
           <option argLabel="num-nonblank" shortName="b" longName="number-nonblank"/>
@@ -83,12 +90,7 @@
           <argument argLabel="file"/>
         </repeat>
       </sequence>
-      <sequence description="fetch and concatenate urls to standard output">
-        <option argLabel="urls" shortName="u" longName="urls"/>
-        <repeat minCount="1">
-          <argument argLabel="url"/>
-        </repeat>
-      </sequence>
+      <empty description="copy standard input to standard output"/>
     </syntax>
     <syntax alias="cd">
       <empty description="change the current directory to the 'user.home' directory"/>
