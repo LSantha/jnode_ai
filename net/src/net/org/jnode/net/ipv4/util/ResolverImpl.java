@@ -50,6 +50,9 @@ public class ResolverImpl implements Resolver {
     // FIXME ... this class looks like it is supposed to implement
     // the Singleton pattern. So how come the management methods
     // and a lot of the state is 'static'?
+    private static final int DNS_TIMEOUT_SECONDS = 5;
+    private static final int DNS_RETRIES = 1;
+
     private static ExtendedResolver resolver;
 
     private static Map<String, org.xbill.DNS.Resolver> resolvers;
@@ -111,6 +114,7 @@ public class ResolverImpl implements Resolver {
                     AccessController.doPrivileged(new PrivilegedExceptionAction<Object>() {
                         public Object run() throws Exception {
                             resolver = new ExtendedResolver(server);
+                            configureResolver(resolver);
                             Lookup.setDefaultResolver(resolver);
                             return null;
                         }
@@ -134,6 +138,7 @@ public class ResolverImpl implements Resolver {
             if (!resolvers.containsKey(key)) {
                 SimpleResolver simpleResolver = new SimpleResolver(key);
                 resolver.addResolver(simpleResolver);
+                configureResolver(resolver);
                 resolvers.put(key, simpleResolver);
             }
         } catch (UnknownHostException e) {
@@ -159,6 +164,11 @@ public class ResolverImpl implements Resolver {
                 resolver.deleteResolver(resolv);
             }
         }
+    }
+
+    private static void configureResolver(ExtendedResolver resolver) {
+        resolver.setTimeout(DNS_TIMEOUT_SECONDS);
+        resolver.setRetries(DNS_RETRIES);
     }
 
     /**
