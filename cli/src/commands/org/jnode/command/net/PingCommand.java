@@ -46,7 +46,7 @@ import org.jnode.shell.syntax.HostNameArgument;
  * @author JPG
  */
 public class PingCommand extends AbstractCommand implements ICMPListener {
-    
+
     private static final String help_host = "the target host";
     private static final String help_super = "Ping the specified host";
     private static final String fmt_unknown_host = "Unknown host: %s\n";
@@ -100,7 +100,7 @@ public class PingCommand extends AbstractCommand implements ICMPListener {
         icmpProtocol.addListener(this);
         try {
             int id_count = 0;
-            int seq_count = 0;
+            int seq_count = 1;
             while (this.count != 0) {
                 out.format(fmt_ping, dst, seq_count);
 
@@ -117,7 +117,9 @@ public class PingCommand extends AbstractCommand implements ICMPListener {
                         new Request(this.stat, this.timeout, System.currentTimeMillis(), id_count,
                                 seq_count);
                 registerRequest(r);
+
                 netLayer.transmit(netHeader, packet);
+                r.arm();
 
                 while (this.wait) {
                     long time = System.currentTimeMillis() - r.getTimestamp();
@@ -171,6 +173,7 @@ public class PingCommand extends AbstractCommand implements ICMPListener {
 
         long roundtrip = received - timestamp;
         gotResponse(timestamp, hdr1, hdr2, roundtrip);
+        r.cancelRequest();
     }
 
     private synchronized void gotResponse(long timestamp, IPv4Header hdr1, ICMPEchoHeader hdr2,
@@ -209,6 +212,7 @@ public class PingCommand extends AbstractCommand implements ICMPListener {
     class Request extends TimerTask {
         private Timer timer = new Timer();
         private boolean obsolete = false;
+        private boolean cancelled = false;
         private Statistics stat;
         private long timestamp;
         private int id, seq;
@@ -218,8 +222,12 @@ public class PingCommand extends AbstractCommand implements ICMPListener {
             this.timestamp = timestamp;
             this.id = id;
             this.seq = seq;
+        }
 
-            timer.schedule(this, timeout);
+        void arm() {
+            if (!cancelled) {
+                timer.schedule(this, timeout);
+            }
         }
 
         public void run() {
@@ -232,11 +240,17 @@ public class PingCommand extends AbstractCommand implements ICMPListener {
         synchronized boolean Obsolete() {
             if (!obsolete) {
                 this.obsolete = true;
+                this.cancelled = true;
                 this.timer.cancel();
                 return false;
             } else {
                 return true;
             }
+        }
+
+        void cancelRequest() {
+            this.cancelled = true;
+            this.timer.cancel();
         }
 
         long getTimestamp() {
@@ -274,7 +288,11 @@ public class PingCommand extends AbstractCommand implements ICMPListener {
 
         String getStatistics() {
             int packets = received + lost;
-            float avg = sum / packets;
+            if (received == 0) {
+                return String.format("%d packets transmitted, 0 packets received%n" +
+                        "round-trip min/avg/max = unavailable", packets);
+            }
+            float avg = sum / received;
             return String.format(fmt_get_stats, packets, received, min, avg, max);
         }
     }

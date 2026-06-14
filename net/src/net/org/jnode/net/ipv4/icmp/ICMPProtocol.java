@@ -116,9 +116,15 @@ public class ICMPProtocol implements IPv4Protocol, IPv4Constants, ICMPConstants,
                 return;
             }
 
+            final ICMPType type = hdr.getType();
+            if (type == null) {
+                log.debug("GOT unknown ICMP type " + hdr.getType() + ", code " + hdr.getCode());
+                return;
+            }
+
             // TODO Process ICMP messages
 
-            switch (hdr.getType()) {
+            switch (type) {
                 case ICMP_ECHO:
                     postReplyRequest(skbuf);
                     break;
@@ -126,7 +132,7 @@ public class ICMPProtocol implements IPv4Protocol, IPv4Constants, ICMPConstants,
                     notifyListeners(skbuf);
                     break;
                 default:
-                    log.debug("GOT ICMP type " + hdr.getType() + ", code " + hdr.getCode());
+                    log.debug("GOT ICMP type " + type + ", code " + hdr.getCode());
             }
         } catch (SocketException ex) {
             // TODO fix me

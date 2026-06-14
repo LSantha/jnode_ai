@@ -22,6 +22,7 @@ package org.jnode.net;
 
 import org.jnode.net.arp.ARPHeaderTest;
 import org.jnode.net.ethernet.EthernetAddressTest;
+import org.jnode.net.ipv4.icmp.ICMPTypeTest;
 import org.jnode.net.ipv4.tcp.TCPInChannelTest;
 import org.jnode.net.ipv4.tcp.TCPOutChannelTest;
 import org.junit.runner.RunWith;
@@ -31,6 +32,7 @@ import org.junit.runners.Suite;
 @Suite.SuiteClasses({SocketBufferTest.class, //
     TCPInChannelTest.class, //
     TCPOutChannelTest.class, //
+    ICMPTypeTest.class, //
     ARPHeaderTest.class, //
     EthernetAddressTest.class })
 public class AllTests {
