@@ -180,6 +180,14 @@ public class TCPOutChannel {
      */
     public synchronized void send(IPv4Header ipHdr, TCPHeader hdr, byte[] data, int offset,
                                   int length) throws SocketException {
+        send(ipHdr, hdr, data, offset, length, 0);
+    }
+
+    public synchronized void send(IPv4Header ipHdr, TCPHeader hdr, byte[] data, int offset,
+                                  int length, int timeout) throws SocketException {
+        if (timeout < 0) {
+            throw new IllegalArgumentException("Negative timeout");
+        }
         if (DEBUG) {
             log.debug("outChannel.send(ipHdr,hdr,data," + offset + ", " + length + ')');
         }
@@ -188,11 +196,24 @@ public class TCPOutChannel {
             throw new IllegalArgumentException("dataLength must be <= mss");
         }
         // Wait until there is space in the output buffer
+        final long start = System.currentTimeMillis();
         while ((length > dataBuffer.getFreeSize()) && !controlBlock.isReset()) {
-            try {
-                wait();
-            } catch (InterruptedException ex) {
-                // Ignore
+            if (timeout > 0) {
+                final long elapsed = System.currentTimeMillis() - start;
+                if (elapsed >= timeout) {
+                    throw new SocketException("Write timed out");
+                }
+                try {
+                    wait(timeout - elapsed);
+                } catch (InterruptedException ex) {
+                    // Ignore
+                }
+            } else {
+                try {
+                    wait();
+                } catch (InterruptedException ex) {
+                    // Ignore
+                }
             }
         }
         if (controlBlock.isReset()) {

@@ -739,7 +739,14 @@ public class TCPControlBlock extends IPv4ControlBlock implements TCPConstants {
     /**
      * Active close the connection by the application.
      */
-    public/* synchronized */void appClose() throws SocketException {
+    public void appClose() throws SocketException {
+        appClose(timeout);
+    }
+
+    public void appClose(int closeTimeout) throws SocketException {
+        if (closeTimeout < 0) {
+            throw new IllegalArgumentException("Negative timeout");
+        }
         if (DEBUG) {
             if (log.isDebugEnabled()) {
                 log.debug("active close state=" + getStateName());
@@ -765,7 +772,7 @@ public class TCPControlBlock extends IPv4ControlBlock implements TCPConstants {
                 case TCPS_CLOSE_WAIT:
                     sendFIN();
                     setState(TCPS_LAST_ACK);
-                    waitUntilState(TCPS_CLOSED, 0);
+                    waitUntilState(TCPS_CLOSED, closeTimeout);
                     break;
                 case TCPS_CLOSED:
                     // Ignore
@@ -792,6 +799,10 @@ public class TCPControlBlock extends IPv4ControlBlock implements TCPConstants {
      * @throws SocketException
      */
     public void appSendData(byte[] data, int offset, int length) throws SocketException {
+        appSendData(data, offset, length, timeout);
+    }
+
+    public void appSendData(byte[] data, int offset, int length, int timeout) throws SocketException {
         if (DEBUG) {
             log.debug("appSendData(data, " + offset + ", " + length + ')');
         }
@@ -812,7 +823,7 @@ public class TCPControlBlock extends IPv4ControlBlock implements TCPConstants {
             // Create the IP header
             final IPv4Header ipHdr = createOutgoingIPv4Header();
             // Send the chunk of data
-            outChannel.send(ipHdr, hdr, data, offset, chunk);
+            outChannel.send(ipHdr, hdr, data, offset, chunk, timeout);
             // Update length & offset
             offset += chunk;
             length -= chunk;
@@ -896,5 +907,16 @@ public class TCPControlBlock extends IPv4ControlBlock implements TCPConstants {
 
     public int getSendBufferSize() {
         return outChannel.getBufferSize();
+    }
+
+    public int getTimeout() {
+        return timeout;
+    }
+
+    public void setTimeout(int timeout) {
+        if (timeout < 0) {
+            throw new IllegalArgumentException("Negative timeout");
+        }
+        this.timeout = timeout;
     }
 }

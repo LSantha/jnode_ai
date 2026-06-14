@@ -37,7 +37,7 @@ import org.jnode.net.ipv4.IPv4Address;
 /**
  * @author epr
  */
-public class TCPSocketImpl extends SocketImpl {
+public class TCPSocketImpl extends SocketImpl implements TCPConstants {
     private static final boolean DEBUG = false;
 
     /**
@@ -140,7 +140,7 @@ public class TCPSocketImpl extends SocketImpl {
             os.close();
         }
         if (controlBlock != null) {
-            controlBlock.appClose();
+            controlBlock.appClose(getCloseTimeout());
             controlBlock = null;
         }
     }
@@ -287,6 +287,24 @@ public class TCPSocketImpl extends SocketImpl {
      */
     public int getReadTimeout() {
         return timeout;
+    }
+
+    public int getWriteTimeout() {
+        return getBlockingTimeout();
+    }
+
+    public int getCloseTimeout() {
+        return getBlockingTimeout();
+    }
+
+    private int getBlockingTimeout() {
+        if (timeout > 0) {
+            return timeout;
+        }
+        if (controlBlock != null) {
+            return controlBlock.getTimeout();
+        }
+        return TCP_DEFAULT_TIMEOUT;
     }
 
     /**

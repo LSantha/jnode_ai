@@ -75,7 +75,7 @@ public class TCPOutputStream extends OutputStream {
         if (closed) {
             throw new IOException("closed");
         } else {
-            controlBlock.appSendData(b, off, len);
+            controlBlock.appSendData(b, off, len, impl.getWriteTimeout());
         }
     }
 
