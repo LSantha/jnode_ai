@@ -39,6 +39,8 @@ public class TCPInChannel {
      */
     private static final Logger log = Logger.getLogger(TCPInChannel.class);
     
+    private static final int MAX_FUTURE_SEGMENTS = 64;
+
     /**
      * Segments that have been received, but are out of order
      */
@@ -98,26 +100,41 @@ public class TCPInChannel {
             return;
         }
 
-        if (hdr.isFlagFinishedSet()) {
-            finReceived = true;
+        if (seqNr > rcv_next) {
+            bufferFutureSegment(ipHdr, hdr, skbuf);
+            return;
         }
 
-        if (seqNr == rcv_next) {
-            // This segment is the first expected segment
-            if (processNextSegment(hdr, skbuf)) {
-                // See if we have the next segment already in the list
-                TCPInSegment seg;
-                while ((seg = findNextSegment()) != null) {
-                    // Next segment was in the list
-                    if (processNextSegment(seg.hdr, seg.skbuf)) {
-                        // Segment fully processed, remove it from the list
-                        futureSegments.remove(seg);
-                    } else {
-                        // No space left, stop sending data to application
-                        break;
-                    }
-                }
+        if (processNextSegment(hdr, skbuf)) {
+            drainFutureSegments();
+        }
+    }
+
+    private void bufferFutureSegment(IPv4Header ipHdr, TCPHeader hdr, SocketBuffer skbuf) {
+        if (hdr.getDataLength() == 0 && !hdr.isFlagFinishedSet() && !hdr.isFlagSynchronizeSet()) {
+            return;
+        }
+        if (findFutureSegment(hdr.getSequenceNr()) != null) {
+            log.debug("Ignoring duplicate future segment");
+            return;
+        }
+        if (futureSegments.size() >= MAX_FUTURE_SEGMENTS) {
+            log.debug("Dropping future segment because the future segment buffer is full");
+            return;
+        }
+        futureSegments.add(new TCPInSegment(ipHdr, hdr, skbuf));
+    }
+
+    private void drainFutureSegments() throws SocketException {
+        while (true) {
+            final TCPInSegment seg = findNextSegment();
+            if (seg == null) {
+                return;
             }
+            if (!processNextSegment(seg.hdr, seg.skbuf)) {
+                return;
+            }
+            futureSegments.remove(seg);
         }
     }
 
@@ -152,6 +169,9 @@ public class TCPInChannel {
             }
             final boolean fin = hdr.isFlagFinishedSet();
             final boolean syn = hdr.isFlagSynchronizeSet();
+            if (fin) {
+                finReceived = true;
+            }
             if (syn || fin) {
                 // SYN & FIN take up 1 seq-nr
                 rcv_next++;
@@ -165,6 +185,15 @@ public class TCPInChannel {
             // We've processed it fully
             return true;
         }
+    }
+
+    private TCPInSegment findFutureSegment(int seqNr) {
+        for (TCPInSegment seg : futureSegments) {
+            if (seg.getSeqNr() == seqNr) {
+                return seg;
+            }
+        }
+        return null;
     }
 
     /**

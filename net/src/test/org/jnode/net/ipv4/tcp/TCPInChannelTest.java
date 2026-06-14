@@ -25,13 +25,17 @@ import java.net.SocketException;
 import java.net.SocketOptions;
 import java.net.SocketTimeoutException;
 
+import org.jnode.net.SocketBuffer;
+import org.jnode.net.ipv4.IPv4Address;
+import org.jnode.net.ipv4.IPv4Constants;
+import org.jnode.net.ipv4.IPv4Header;
 import org.junit.Test;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertTrue;
 import static org.junit.Assert.fail;
 
-public class TCPInChannelTest {
+public class TCPInChannelTest implements TCPConstants {
 
     @Test
     public void testReadTimeout() throws Exception {
@@ -67,6 +71,47 @@ public class TCPInChannelTest {
     }
 
     @Test
+    public void testOutOfOrderSegmentsAreBuffered() throws Exception {
+        final TCPControlBlock cb = newControlBlockWithNoopOutChannel();
+        final TCPInChannel inChannel = new TCPInChannel(cb);
+        final IPv4Header ipHdr = newIpHeader(3);
+
+        inChannel.initISN(newHeader(99, 0));
+        inChannel.processData(ipHdr, newHeader(101, 2), newBuffer(new byte[] {2, 3}));
+
+        assertEquals(0, inChannel.available());
+
+        inChannel.processData(ipHdr, newHeader(100, 1), newBuffer(new byte[] {1}));
+
+        final byte[] dst = new byte[3];
+        assertEquals(3, inChannel.read(dst, 0, 3, 1000));
+        assertBytes(new byte[] {1, 2, 3}, dst);
+    }
+
+    @Test
+    public void testFutureFinIsNotMarkedReceivedUntilInOrder() throws Exception {
+        final TCPControlBlock cb = newControlBlockWithNoopOutChannel();
+        final TCPInChannel inChannel = new TCPInChannel(cb);
+        final IPv4Header ipHdr = newIpHeader(1);
+        final TCPHeader fin = newHeader(101, 0);
+        fin.setFlags(TCPF_FIN);
+
+        inChannel.initISN(newHeader(99, 0));
+        inChannel.processData(ipHdr, fin, newBuffer(new byte[0]));
+        assertFutureSegments(inChannel, 1);
+        inChannel.processData(ipHdr, newHeader(100, 1), newBuffer(new byte[] {1}));
+
+        assertFinReceived(inChannel);
+        assertFutureSegments(inChannel, 0);
+
+        assertEquals(1, inChannel.available());
+        final byte[] dst = new byte[1];
+        assertEquals(1, inChannel.read(dst, 0, 1, 10));
+        assertEquals(1, dst[0]);
+        assertEquals(-1, inChannel.read(dst, 0, 1, 10));
+    }
+
+    @Test
     public void testSocketTimeoutOption() throws SocketException {
         final TCPSocketImpl impl = new TCPSocketImpl(null);
 
@@ -80,6 +125,49 @@ public class TCPInChannelTest {
             fail("Expected IllegalArgumentException");
         } catch (IllegalArgumentException ex) {
             assertEquals(123, impl.getOption(SocketOptions.SO_TIMEOUT));
+        }
+    }
+
+    private TCPControlBlock newControlBlockWithNoopOutChannel() throws Exception {
+        final TCPControlBlock cb = new TCPControlBlock(null, null, null, 0);
+        final Field outChannelField = TCPControlBlock.class.getDeclaredField("outChannel");
+        outChannelField.setAccessible(true);
+        outChannelField.set(cb, new TCPOutChannel(null, cb, 0) {
+            @Override
+            public void send(IPv4Header ipHdr, TCPHeader hdr) throws SocketException {
+                // Ignore ACKs in this unit test.
+            }
+        });
+        return cb;
+    }
+
+    private IPv4Header newIpHeader(int dataLength) {
+        return new IPv4Header(0, 64, IPv4Constants.IPPROTO_TCP, new IPv4Address("127.0.0.1"), dataLength);
+    }
+
+    private TCPHeader newHeader(int seqNr, int dataLength) {
+        return new TCPHeader(1, 1, dataLength, seqNr, 0, 65535, 0);
+    }
+
+    private SocketBuffer newBuffer(byte[] data) {
+        return new SocketBuffer(data, 0, data.length);
+    }
+
+    private void assertFutureSegments(TCPInChannel inChannel, int expected) throws Exception {
+        final Field futureSegmentsField = TCPInChannel.class.getDeclaredField("futureSegments");
+        futureSegmentsField.setAccessible(true);
+        assertEquals(expected, ((java.util.List<?>) futureSegmentsField.get(inChannel)).size());
+    }
+
+    private void assertFinReceived(TCPInChannel inChannel) throws Exception {
+        final Field finReceivedField = TCPInChannel.class.getDeclaredField("finReceived");
+        finReceivedField.setAccessible(true);
+        assertEquals(Boolean.TRUE, finReceivedField.get(inChannel));
+    }
+
+    private void assertBytes(byte[] expected, byte[] actual) {
+        for (int i = 0; i < expected.length; i++) {
+            assertEquals(expected[i], actual[i]);
         }
     }
 }
