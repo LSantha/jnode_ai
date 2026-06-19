@@ -76,6 +76,12 @@ module.exports = async ({ github, context, core }) => {
     return !labels.includes('auto-merge');
   }
 
+  function isBotUser(user) {
+    return !!user && ((user.type || '').toLowerCase() === 'bot' ||
+      (user.login || '').includes('[bot]') ||
+      (user.login || '').startsWith('app/'));
+  }
+
   async function mergePR(prNumber) {
     core.info(`Merging PR #${prNumber}...`);
     const pr = await github.rest.pulls.get({
@@ -616,13 +622,8 @@ module.exports = async ({ github, context, core }) => {
       if (task.phase !== 'HUMAN_REVIEW') return;
       if (task.pr !== context.payload.pull_request.number) return;
       
-      let botLogin = '';
-      try {
-        const { data: user } = await github.rest.users.getAuthenticated();
-        botLogin = user.login;
-      } catch (err) {}
-      
-      if (context.payload.review.user.login === botLogin) {
+      const reviewer = context.payload.review.user || {};
+      if (isBotUser(reviewer)) {
         core.info("Ignoring review from bot identity.");
         return;
       }
