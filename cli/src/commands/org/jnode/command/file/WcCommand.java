@@ -248,7 +248,7 @@ public class WcCommand extends AbstractCommand {
      * @param value
      */
     private void print(PrintWriter printWriter, boolean first, int paddingSize, long value) {
-        StringBuffer sValue = new StringBuffer(paddingSize + 1);
+        StringBuilder sValue = new StringBuilder(paddingSize + 1);
 
         sValue.append(value);
         while (sValue.length() < paddingSize) {
