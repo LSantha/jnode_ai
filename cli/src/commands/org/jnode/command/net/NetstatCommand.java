@@ -76,7 +76,7 @@ public class NetstatCommand extends AbstractCommand {
             padOutput(out, padSize);
             out.print(str_none);
         } else {
-            StringBuffer buffer = new StringBuffer();
+            StringBuilder buffer = new StringBuilder();
             for (Statistic statistic : statistics) {
                 buffer.append(paddedString(padSize)).append(statistic.getName()).append(' ')
                     .append(statistic.getValue()).append("\n");
