@@ -10,7 +10,7 @@ function createMocks(eventName = 'issue_comment', commentBody = '/orchestrate') 
     error: (msg) => logs.error.push(msg)
   };
 
-  const calls = { getIssue: [], updateIssue: [], createComment: [], listComments: [], addLabels: [], removeLabel: [] };
+  const calls = { getIssue: [], updateIssue: [], createComment: [], listComments: [], addLabels: [], removeLabel: [], mergePR: [] };
   const updateIssueDetails = [];
   let masterIssueBody = `- [ ] #2\n- [ ] #3`;
   let currentTaskData = { labels: [], state: 'open' };
@@ -49,7 +49,9 @@ function createMocks(eventName = 'issue_comment', commentBody = '/orchestrate') 
         get: async () => {
           return { data: prData };
         },
-        merge: async () => {}
+        merge: async ({ pull_number }) => {
+          calls.mergePR.push(pull_number);
+        }
       },
       git: {
         deleteRef: async () => {}
@@ -68,6 +70,14 @@ function createMocks(eventName = 'issue_comment', commentBody = '/orchestrate') 
   } else if (eventName === 'workflow_run') {
     context.payload = {
       workflow_run: { id: 100, display_title: 'Issue #2 - Title', head_commit: { message: 'Issue #2 - Title' }, conclusion: 'success' }
+    };
+  } else if (eventName === 'pull_request_review') {
+    context.payload = {
+      pull_request: { number: 99 },
+      review: {
+        user: { login: 'LSantha', type: 'User' },
+        state: 'approved'
+      }
     };
   }
 
@@ -122,6 +132,29 @@ test('orchestrator.js test suite', async (t) => {
 
     assert.ok(calls.createComment.some(c => c.issue_number === 99 && c.body.includes('Agent review passed')));
     assert.ok(updateIssueDetails.some(u => u.issue_number === 1 && u.body.includes('HUMAN_REVIEW')));
+  });
+
+  await t.test('Human approved PR review advances to merge', async () => {
+    const { core, github, context, calls, setMasterBody } = createMocks('pull_request_review');
+
+    setMasterBody(`<!-- ORCHESTRATOR_STATE:\n{ "status": "IN_PROGRESS", "current_task": { "issue": 2, "pr": 99, "phase": "HUMAN_REVIEW", "turn": 0, "max_turns": 3, "retries": 0 }, "queue": [3], "completed": [], "failed": [], "order": [2, 3] }\n-->`);
+
+    await runOrchestrator({ github, context, core });
+
+    assert.deepStrictEqual(calls.mergePR, [99]);
+    assert.ok(calls.createComment.some(c => c.issue_number === 3 && c.body.includes('/oc Please proceed')));
+  });
+
+  await t.test('Bot PR review is ignored', async () => {
+    const { core, github, context, calls, setMasterBody } = createMocks('pull_request_review');
+    context.payload.review.user = { login: 'opencode-agent[bot]', type: 'Bot' };
+
+    setMasterBody(`<!-- ORCHESTRATOR_STATE:\n{ "status": "IN_PROGRESS", "current_task": { "issue": 2, "pr": 99, "phase": "HUMAN_REVIEW", "turn": 0, "max_turns": 3, "retries": 0 }, "queue": [3], "completed": [], "failed": [], "order": [2, 3] }\n-->`);
+
+    await runOrchestrator({ github, context, core });
+
+    assert.strictEqual(calls.mergePR.length, 0);
+    assert.strictEqual(calls.updateIssue.length, 0);
   });
 
   await t.test('Workflow run handles task failure (retries)', async () => {
