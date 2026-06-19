@@ -46,6 +46,10 @@ module.exports = async ({ github, context, core }) => {
     return null;
   }
 
+  function getReviewPrompt() {
+    return '/oc review\n\nYou are reviewing a pull request for the orchestrator. Your final line must be exactly one of:\nVerdict: approve\nVerdict: request-changes\n\nUse "Verdict: request-changes" if the PR needs code changes. Use "Verdict: approve" only if the PR is correct and ready for the next orchestrator phase.';
+  }
+
   async function getAgentReviewVerdict(prNumber) {
     const comments = await github.rest.issues.listComments({
       owner: context.repo.owner,
@@ -410,7 +414,7 @@ module.exports = async ({ github, context, core }) => {
         core.info(`Orchestrator already in progress. Retriggering current task #${getTaskIssueNumber(state.current_task)}`);
         const target = isMultiStepTask(state.current_task) && state.current_task.pr ? state.current_task.pr : getTaskIssueNumber(state.current_task);
         const msg = isMultiStepTask(state.current_task) && state.current_task.phase === 'FEEDBACK' ? "/oc fix Address review feedback." 
-                  : isMultiStepTask(state.current_task) && state.current_task.phase === 'REVIEW' ? "/oc review" 
+                  : isMultiStepTask(state.current_task) && state.current_task.phase === 'REVIEW' ? getReviewPrompt()
                   : "/oc Please proceed with this task.";
         await triggerTask(target, msg);
       }
@@ -491,7 +495,7 @@ module.exports = async ({ github, context, core }) => {
                   task.pr = foundPr;
                   task.phase = 'REVIEW';
                   task.retries = 0;
-                  await triggerTask(task.pr, "/oc review");
+                  await triggerTask(task.pr, getReviewPrompt());
                 } else {
                   // No PR found, treat as completed
                   state.completed.push(task.issue);
@@ -559,7 +563,7 @@ module.exports = async ({ github, context, core }) => {
               } else {
                 task.phase = 'REVIEW';
                 task.retries = 0;
-                await triggerTask(task.pr, "/oc review");
+                await triggerTask(task.pr, getReviewPrompt());
               }
             }
             break;
@@ -576,7 +580,7 @@ module.exports = async ({ github, context, core }) => {
             isDone = true;
           } else {
             const target = task.pr ? task.pr : task.issue;
-            const msg = task.phase === 'FEEDBACK' ? "/oc fix Address review feedback." : task.phase === 'REVIEW' ? "/oc review" : "/oc Please proceed with this task.";
+            const msg = task.phase === 'FEEDBACK' ? "/oc fix Address review feedback." : task.phase === 'REVIEW' ? getReviewPrompt() : "/oc Please proceed with this task.";
             await triggerTask(target, msg);
             await updateMasterIssue(masterIssueNumber, state);
             return;

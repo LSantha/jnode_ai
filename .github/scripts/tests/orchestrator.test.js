@@ -11,6 +11,7 @@ function createMocks(eventName = 'issue_comment', commentBody = '/orchestrate') 
   };
 
   const calls = { getIssue: [], updateIssue: [], createComment: [], listComments: [], addLabels: [], removeLabel: [] };
+  const updateIssueDetails = [];
   let masterIssueBody = `- [ ] #2\n- [ ] #3`;
   let currentTaskData = { labels: [], state: 'open' };
   let prData = { labels: [], state: 'open', head: { ref: 'opencode/issue2-fix' } };
@@ -26,6 +27,7 @@ function createMocks(eventName = 'issue_comment', commentBody = '/orchestrate') 
         },
         update: async ({ issue_number, body, state }) => {
           calls.updateIssue.push(issue_number);
+          updateIssueDetails.push({ issue_number, body, state });
           if (issue_number === 1 && body) masterIssueBody = body;
         },
         createComment: async ({ issue_number, body }) => {
@@ -69,7 +71,7 @@ function createMocks(eventName = 'issue_comment', commentBody = '/orchestrate') 
     };
   }
 
-  return { core, github, context, logs, calls, setMasterBody: (b) => masterIssueBody = b, setTaskData: (d) => currentTaskData = d };
+  return { core, github, context, logs, calls, updateIssueDetails, setMasterBody: (b) => masterIssueBody = b, setTaskData: (d) => currentTaskData = d };
 }
 
 test('orchestrator.js test suite', async (t) => {
@@ -105,6 +107,21 @@ test('orchestrator.js test suite', async (t) => {
     assert.strictEqual(calls.createComment.length, 1, 'Should trigger review phase');
     assert.strictEqual(calls.createComment[0].issue_number, 99, 'Triggers on PR #99');
     assert.ok(calls.createComment[0].body.includes('/oc review'));
+    assert.ok(calls.createComment[0].body.includes('Verdict: approve'));
+    assert.ok(calls.createComment[0].body.includes('Verdict: request-changes'));
+  });
+
+  await t.test('Review phase accepts explicit approve verdict', async () => {
+    const { core, github, context, calls, updateIssueDetails, setMasterBody, setTaskData } = createMocks('workflow_run');
+
+    setMasterBody(`<!-- ORCHESTRATOR_STATE:\n{ "status": "IN_PROGRESS", "current_task": { "issue": 2, "pr": 99, "phase": "REVIEW", "turn": 0, "max_turns": 3, "retries": 0 }, "queue": [3], "completed": [], "failed": [], "order": [2, 3] }\n-->`);
+    setTaskData({ labels: [], state: 'open' });
+    github.rest.issues.listComments = async () => ({ data: [{ body: 'Verdict: approve' }] });
+
+    await runOrchestrator({ github, context, core });
+
+    assert.ok(calls.createComment.some(c => c.issue_number === 99 && c.body.includes('Agent review passed')));
+    assert.ok(updateIssueDetails.some(u => u.issue_number === 1 && u.body.includes('HUMAN_REVIEW')));
   });
 
   await t.test('Workflow run handles task failure (retries)', async () => {

@@ -86,7 +86,7 @@ State lives in the master issue body as a hidden HTML comment:
 ### Phases
 
 - **DEV**: Initial agent run. Agent creates a PR. Transition to `REVIEW`.
-- **REVIEW**: Agent reviews the PR. If approved and no `auto-merge` label, transition to `HUMAN_REVIEW`. If `auto-merge`, transition to `MERGE`. If changes requested, transition to `FEEDBACK`.
+- **REVIEW**: Agent reviews the PR. The orchestrator posts `/oc review` with explicit instructions requiring the final line to be exactly `Verdict: approve` or `Verdict: request-changes`. If approved and no `auto-merge` label, transition to `HUMAN_REVIEW`. If `auto-merge`, transition to `MERGE`. If changes requested, transition to `FEEDBACK`.
 - **FEEDBACK**: Agent addresses review comments. Transition to `REVIEW`.
 - **HUMAN_REVIEW**: Orchestrator waits for native GitHub PR review from a human maintainer. Approval → `MERGE`, Request changes → `FEEDBACK`.
 - **MERGE**: Orchestrator squashes the PR and deletes the branch inline.
