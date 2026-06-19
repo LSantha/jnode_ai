@@ -33,7 +33,7 @@ JNode is a Java operating system with custom JVM. ~3,300 Java files, 25 assembly
 ## Running Tests
 
 - **All tests**: `sh build.sh tests` (from root)
-- **Per subproject**: `cd <subproject> && ant test`
+- **Per subproject JUnit**: `sh build.sh -f <subproject>/build-tests.xml all-junit`
 - **Framework**: JUnit 4.5, JMock, Mockito
 - **Test locations**: `<subproject>/src/test/` (390 test files total)
 
