@@ -56,20 +56,20 @@ function decideAgentLabel({ existing, conclusion, latestComment, labels, isPR })
   if (conclusion === 'failure' || conclusion === 'cancelled') {
     return { label: 'agent/failed', reason: 'run concluded: ' + conclusion };
   }
-  if (existing && existing !== 'agent/failed') {
-    return { label: existing, reason: 'existing agent/* label respected' };
-  }
   if (isRefusalComment(latestComment)) {
     return { label: 'agent/skip', reason: 'refusal detected in comment' };
   }
   if (isNeedsInfoComment(latestComment)) {
     return { label: 'agent/needs-info', reason: 'needs-info detected in comment' };
   }
-  if (isPR) {
-    return { label: 'agent/done', reason: 'PR context' };
-  }
   if (isInvestigationReport(latestComment)) {
     return { label: 'agent/investigated', reason: 'investigation report heading detected (verb-override)' };
+  }
+  if (existing && existing !== 'agent/failed') {
+    return { label: existing, reason: 'existing agent/* label respected' };
+  }
+  if (isPR) {
+    return { label: 'agent/done', reason: 'PR context' };
   }
   if (isInvestigationKind(labels)) {
     return { label: 'agent/investigated', reason: 'investigation kind, comment absent' };
@@ -126,6 +126,17 @@ module.exports = async ({ github, context, core }) => {
     isPR,
   });
   core.info('Decision: ' + decision.label + ' (' + decision.reason + ')');
+
+  if (existingAgent && existingAgent !== decision.label) {
+    try {
+      await github.rest.issues.removeLabel({
+        owner, repo, issue_number: number, name: existingAgent,
+      });
+      core.info('Removed old label: ' + existingAgent);
+    } catch (err) {
+      core.warning('Failed to remove old label: ' + err.message);
+    }
+  }
 
   try {
     await github.rest.issues.addLabels({

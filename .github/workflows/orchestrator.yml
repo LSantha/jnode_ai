@@ -10,15 +10,20 @@ on:
   workflow_run:
     workflows: ["opencode"]
     types: [completed]
+  pull_request_review:
+    types: [submitted]
 
 jobs:
   orchestrate:
     if: |
       (github.event_name == 'issue_comment' && startsWith(github.event.comment.body, '/orchestrate')) ||
-      (github.event_name == 'workflow_run')
+      (github.event_name == 'workflow_run') ||
+      (github.event_name == 'pull_request_review')
     runs-on: ubuntu-latest
     permissions:
       issues: write
+      pull-requests: write
+      contents: write
       actions: read
     steps:
       - name: Checkout repository

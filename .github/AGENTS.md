@@ -37,18 +37,23 @@ CI infrastructure, agent automation, and label conventions for JNode.
                   +--------------------+   /oc "Please proceed"   +-------------------------+
    /orchestrate->| orchestrator (js)  |------------------------->| next child task in queue |
                   +--------------------+                          +-------------------------+
+                            ^   |
+         pull_request_review|   | /oc review | /oc fix
+                            |   v
+                  +--------------------+
+                  |    PR feedback     |
+                  +--------------------+
 ```
 
 - **opencode** is the worker. It runs the agent once per trigger, posts a result, and exits.
-- **orchestrator** is the foreman. It holds a JSON state in the master issue body, picks the next child task from the queue, and triggers it by posting `/oc Please proceed with this task.` on the child issue.
-- `orchestrator.yml` listens for `workflow_run` from `opencode`. When a child finishes, the orchestrator advances the queue and triggers the next child via a comment (which loops back into opencode).
-- The trigger is one-way: orchestrator triggers opencode by comment; opencode does NOT call orchestrator.
+- **orchestrator** is the foreman. It holds a JSON state in the master issue body, picks the next child task from the queue, and tracks its phase (DEV, REVIEW, HUMAN_REVIEW, FEEDBACK, MERGE).
+- `orchestrator.yml` listens for `workflow_run` from `opencode` and `pull_request_review`. It advances the phase, loops back via `/oc fix` or `/oc review`, or merges the PR.
 
-A child task is "complete" in the orchestrator's eyes when EITHER:
+For single-step tasks, a child task is "complete" in the orchestrator's eyes when EITHER:
 - the child issue is closed on GitHub, OR
 - the child has one of: `agent/done`, `agent/investigated`, `agent/skip`, `agent/blocked`, `agent/needs-info`.
 
-The `agent/failed` label does NOT count as completion; it triggers a retry (max 3 attempts).
+For multi-step PR tasks, completion requires reaching the `MERGE` phase (or short-circuiting on skip labels).
 
 ## Orchestrator State Machine
 
@@ -57,7 +62,7 @@ State lives in the master issue body as a hidden HTML comment:
 ```html
 <!-- ORCHESTRATOR_STATE:
 { "status": "IDLE|IN_PROGRESS|COMPLETED",
-  "current_task": 487,
+  "current_task": { "issue": 487, "pr": null, "phase": "DEV", "turn": 0, "max_turns": 3, "retries": 0 },
   "queue": [488, 489],
   "completed": [485, 486],
   "failed": [],
@@ -70,13 +75,21 @@ State lives in the master issue body as a hidden HTML comment:
 | Field | Meaning |
 |-------|---------|
 | `status` | IDLE (initial) / IN_PROGRESS (after first trigger) / COMPLETED (queue empty) |
-| `current_task` | Task the agent is working on; `null` when idle |
+| `current_task` | Object representing task state, or task number (for older one-shot tasks) |
 | `queue` | Pending task numbers, in execution order |
-| `completed` | Tasks that finished with a completion label or were closed |
-| `failed` | Tasks that hit 3 retries without success |
+| `completed` | Tasks that finished completely (merged, or short-circuited) |
+| `failed` | Tasks that hit 3 retries without success, or max_turns |
 | `retries` | Attempt counter for `current_task`; resets on advance |
 | `history` | Append-only event log with ISO timestamps |
 | `order` | Original task order from the markdown checklist; rendered top-to-bottom in the status table |
+
+### Phases
+
+- **DEV**: Initial agent run. Agent creates a PR. Transition to `REVIEW`.
+- **REVIEW**: Agent reviews the PR. If approved and no `auto-merge` label, transition to `HUMAN_REVIEW`. If `auto-merge`, transition to `MERGE`. If changes requested, transition to `FEEDBACK`.
+- **FEEDBACK**: Agent addresses review comments. Transition to `REVIEW`.
+- **HUMAN_REVIEW**: Orchestrator waits for native GitHub PR review from a human maintainer. Approval → `MERGE`, Request changes → `FEEDBACK`.
+- **MERGE**: Orchestrator squashes the PR and deletes the branch inline.
 
 Initialization: on first run, the orchestrator parses the master issue's markdown checklist (`- [ ] #N`, `- [x] #N`, `- [FAIL] #N`) and builds initial state. Subsequent runs load from the hidden JSON block. If `state.order` is empty (older master), it is backfilled from status-grouped arrays.
 
@@ -160,3 +173,11 @@ node .github/scripts/sync-labels.js
 ```
 
 The `opencode-post-step.js` and `orchestrator.js` modules export a single async function taking `{ github, context, core }`. They are normally invoked from `actions/github-script@v7` and not run standalone.
+
+### Running tests
+
+Unit tests for the `.github/scripts/` logic use the native `node:test` framework (requires Node.js v18+). They do not require any external dependencies.
+
+```bash
+node --test .github/scripts/tests/
+```

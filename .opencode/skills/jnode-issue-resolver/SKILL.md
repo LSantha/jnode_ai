@@ -79,6 +79,7 @@ Plan: <one-line summary of next 3 steps>
 | `triage` | `/oc triage` | labels + checklist comment | no |
 | `chore` | `/oc chore`, or `kind/chore` (typo sweep, dead-code removal) | branch + PR | yes, on merge |
 | `test` | `/oc test`, or `kind/test` ("add a test for X") | branch + PR with tests | yes, on merge |
+| `feedback` | `/oc fix` on a PR when orchestrator phase is `FEEDBACK` | pushes commits to existing PR branch | no |
 | `bot-of-bots` | comment body is exactly `/oc Please proceed with this task.` (the orchestrator's signature) | acts as `code-fix` / `wiki-doc` / etc. per the source issue's labels | only on success |
 
 If multiple signals conflict, precedence is: **verb > label > issue-body shape**.
@@ -108,6 +109,8 @@ parse(comment.body):
     <unknown>     -> fall through to heuristic(issue)
 
 heuristic(issue):
+  if issue.pull_request && comment contains "Address review feedback"  -> feedback
+  if issue.pull_request && comment contains "Address human review feedback" -> feedback
   if issue.pull_request                -> code-review
   if has_label(kind/bug) || has_repro  -> code-fix
   if has_label(kind/investigate)       -> investigation
@@ -281,6 +284,16 @@ The issue is **not** closed (it stays open for the human to rephrase, except for
 
 The workflow post-step will detect the `## 🤖 Refusal` heading and apply `agent/skip` (or `agent/needs-info` for triage-style comments). Do **not** call `gh issue edit` to set the label or close the issue yourself. Do **not** open a PR, do **not** create a branch, do **not** run `git grep` "just to see".
 
+### 5.7 `feedback` (PR feedback)
+
+When handling review feedback on an existing PR:
+1. Read the inline review comments and the summary comment on the PR.
+2. Check out the existing PR branch (`opencode/issue<N>-*`).
+3. Make targeted fixes addressing each review finding.
+4. Run the self-check (§6) and focused tests.
+5. Push to the existing branch. **Do not open a new PR.**
+6. Post a comment summarizing what was addressed.
+
 ## 6. Self-check (run before every PR)
 
 - [ ] Java 1.6 only (no `->`, no `::`, no `<>`, no multi-catch, no try-with-resources, no `java.util.Objects`, no `java.nio.file`).
@@ -327,23 +340,27 @@ The orchestrator (`.github/workflows/orchestrator.yml` + `.github/scripts/orches
 
 ```
 <!-- ORCHESTRATOR_STATE:
-{ "status": "IN_PROGRESS", "current_task": <N>, "queue": [...], "completed": [...], "failed": [...], "retries": <0..3> }
+{ "status": "IN_PROGRESS", "current_task": { "issue": 123, "pr": 124, "phase": "DEV", "turn": 0, "max_turns": 3, "retries": 0 }, "queue": [...], "completed": [...], "failed": [...], "order": [...] }
 -->
 ```
 
+The orchestrator moves a task through phases: `DEV → REVIEW → HUMAN_REVIEW → MERGE`.
 When you are woken by a comment whose body is exactly:
 
 ```
 /oc Please proceed with this task.
 ```
 
-…you are the `current_task`. Rules:
+…you are in the `DEV` phase. Rules:
 
 - Do **not** edit the master issue body or the hidden JSON. The orchestrator owns that.
 - Do your work, push the branch / comment / wiki page as usual.
 - The orchestrator listens to `workflow_run` from `opencode`. Your `success` conclusion lets it mark you complete; a `failure` triggers a retry.
 - The orchestrator will post the next `/oc` for the next queued issue — you do not chain yourself.
-- If you are the last task, the orchestrator posts a "✅ All tasks processed" comment and flips its state to `COMPLETED`.
+
+When you are woken by `/oc review` on a PR, you are in the `REVIEW` phase. Submit your findings as inline comments and a summary with `Verdict: approve` or `Verdict: request-changes`. Do not merge the PR.
+
+When you are woken by `/oc fix Address review feedback.` on a PR, you are in the `FEEDBACK` phase. Read the review comments, fix the code, push to the existing branch. Do not open a new PR.
 
 If you are **not** the orchestrator's `current_task` (e.g., a human `/oc`'d the same issue out-of-band), just do the work normally. The orchestrator's self-healing guard will detect the issue is already closed and advance.
 
