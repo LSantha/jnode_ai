@@ -365,7 +365,7 @@ public class PageCommand extends AbstractCommand implements KeyboardListener {
      * @throws IOException
      */
     private String readLine(int ch) throws IOException {
-        StringBuffer sb = new StringBuffer();
+        StringBuilder sb = new StringBuilder();
         String line;
         do {
             sb.append((char) ch);
