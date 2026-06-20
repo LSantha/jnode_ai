@@ -28,6 +28,8 @@ import org.jnode.system.resource.MemoryResource;
  * @author Chris Cole
  */
 public class TxDescriptorRing extends DescriptorRing {
+    private static final int TX_DESCRIPTOR_RETRIES = 1000;
+
     /**
      * My logger
      */
@@ -56,6 +58,12 @@ public class TxDescriptorRing extends DescriptorRing {
     }
 
     public void transmit(SocketBuffer skbuf) {
+        int retries = TX_DESCRIPTOR_RETRIES;
+        while (!txDescriptors[currentDescriptor].isOwnerSelf() && retries-- > 0) {
+            for (int i = 0; i < 100; i++) {
+            }
+        }
+
         TxDescriptor des = txDescriptors[currentDescriptor];
         if (des.isOwnerSelf()) {
             des.transmit(skbuf);
