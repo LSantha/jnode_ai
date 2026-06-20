@@ -279,13 +279,13 @@ module.exports = async ({ github, context, core }) => {
         } else if (state.current != null && typeof state.current !== 'object') {
           state.current_task = Number(state.current);
         }
-        state.queue = Array.isArray(state.queue) ? state.queue.map(t => (typeof t === 'object' && t !== null) ? t : Number(t)) : [];
-        state.completed = Array.isArray(state.completed) ? state.completed.map(t => (typeof t === 'object' && t !== null) ? t : Number(t))
-          : (Array.isArray(state.done) ? state.done.map(t => (typeof t === 'object' && t !== null) ? t : Number(t)) : []);
-        state.failed = Array.isArray(state.failed) ? state.failed.map(t => (typeof t === 'object' && t !== null) ? t : Number(t)) : [];
+        state.queue = Array.isArray(state.queue) ? state.queue.map(Number) : [];
+        state.completed = Array.isArray(state.completed) ? state.completed.map(Number)
+          : (Array.isArray(state.done) ? state.done.map(Number) : []);
+        state.failed = Array.isArray(state.failed) ? state.failed.map(Number) : [];
         state.retries = (typeof state.retries === 'number') ? state.retries : 0;
         state.history = Array.isArray(state.history) ? state.history : [];
-        state.order = Array.isArray(state.order) ? state.order.map(t => (typeof t === 'object' && t !== null) ? t : Number(t)) : [];
+        state.order = Array.isArray(state.order) ? state.order.map(Number) : [];
 
         // Migration: if state.order is empty (older state), build from status-grouped
         // arrays. Order will be in status-grouped order, not original — but stable.
