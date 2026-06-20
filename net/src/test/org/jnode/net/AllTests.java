@@ -25,6 +25,7 @@ import org.jnode.net.ethernet.EthernetAddressTest;
 import org.jnode.net.ipv4.icmp.ICMPTypeTest;
 import org.jnode.net.ipv4.tcp.TCPInChannelTest;
 import org.jnode.net.ipv4.tcp.TCPOutChannelTest;
+import org.jnode.net.ipv4.util.ResolverImplTest;
 import org.junit.runner.RunWith;
 import org.junit.runners.Suite;
 
@@ -33,6 +34,7 @@ import org.junit.runners.Suite;
     TCPInChannelTest.class, //
     TCPOutChannelTest.class, //
     ICMPTypeTest.class, //
+    ResolverImplTest.class, //
     ARPHeaderTest.class, //
     EthernetAddressTest.class })
 public class AllTests {
