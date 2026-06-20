@@ -124,6 +124,7 @@ module.exports = async ({ github, context, core }) => {
 
     const progressPercent = totalTasks > 0 ? Math.round((handledCount / totalTasks) * 100) : 0;
     const successPercent = totalTasks > 0 ? Math.round((completedCount / totalTasks) * 100) : 0;
+    const successRate = handledCount > 0 ? Math.round((completedCount / handledCount) * 100) : 0;
 
     const progressBar = renderBar(progressPercent);
     const successBar = renderBar(successPercent);
@@ -149,6 +150,7 @@ module.exports = async ({ github, context, core }) => {
 | **Status** | ${state.status} |
 | **Progress** | ${progressBar} (${handledCount}/${totalTasks} handled) |
 | **Success** | ${successBar} (${completedCount}/${totalTasks} succeeded) |
+| **Success Rate** | ${successRate}% (${completedCount}/${handledCount} handled) |
 | **Current Task** | ${currentTaskInfo} |
 
 ### 📋 Queue List
