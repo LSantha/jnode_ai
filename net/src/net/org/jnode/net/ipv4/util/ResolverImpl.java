@@ -244,7 +244,23 @@ public class ResolverImpl implements Resolver {
             if ((answers == null) || (answers.length == 0)) {
                 throw new UnknownHostException("No DNS answer for " + hostname);
             }
-            return answers;
+            int answerCount = 0;
+            for (int i = 0; i < answers.length; i++) {
+                if (answers[i].getType() == Type.A) {
+                    answerCount++;
+                }
+            }
+            if (answerCount == 0) {
+                throw new UnknownHostException("No DNS A answer for " + hostname);
+            }
+            Record[] aAnswers = new Record[answerCount];
+            int index = 0;
+            for (int i = 0; i < answers.length; i++) {
+                if (answers[i].getType() == Type.A) {
+                    aAnswers[index++] = answers[i];
+                }
+            }
+            return aAnswers;
         } catch (TextParseException ex) {
             throw new UnknownHostException(hostname);
         } catch (IOException ex) {

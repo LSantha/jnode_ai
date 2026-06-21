@@ -66,8 +66,8 @@ public class LanceCore extends AbstractDeviceCore implements IRQHandler, LanceCo
 
     // This is the number of descriptors for the receive and transmit rings
     // Note: Valid numbers are 2^x where x is 0..8 (1, 2, 4, 8, 16, .., 512)
-    private static final int RX_DESCRIPTOR_LENGTH = 4;
-    private static final int TX_DESCRIPTOR_LENGTH = 4;
+    private static final int RX_DESCRIPTOR_LENGTH = 16;
+    private static final int TX_DESCRIPTOR_LENGTH = 16;
 
     /**
      * Device Driver

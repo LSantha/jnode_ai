@@ -245,8 +245,8 @@ python3 .opencode/skills/jnode-interact/scripts/jnode_agent_cmd.py \
 1. Connects to the Unix socket (`/tmp/jnode_com2` → `/tmp/jnode.serial2`)
 2. Clears any pending data from the buffer
 3. Sends each command followed by `\r\n`
-4. Reads response until timeout (1 second of silence)
-5. Prints output, strips trailing whitespace
+4. Streams output as it arrives — prints complete lines immediately
+5. Waits for either the prompt or 10 seconds of silence since last output
 
 ### Important: Single client only
 

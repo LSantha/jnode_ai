@@ -8,16 +8,16 @@
  * by the Free Software Foundation; either version 2.1 of the License, or
  * (at your option) any later version.
  *
- * This library is distributed in the hope that it will be useful, but 
+ * This library is distributed in the hope that it will be useful, but
  * WITHOUT ANY WARRANTY; without even the implied warranty of MERCHANTABILITY
- * or FITNESS FOR A PARTICULAR PURPOSE. See the GNU Lesser General Public 
+ * or FITNESS FOR A PARTICULAR PURPOSE. See the GNU Lesser General Public
  * License for more details.
  *
  * You should have received a copy of the GNU Lesser General Public License
- * along with this library; If not, write to the Free Software Foundation, Inc., 
+ * along with this library; If not, write to the Free Software Foundation, Inc.,
  * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
  */
- 
+
 package org.jnode.command.net;
 
 import java.io.PrintWriter;
@@ -55,7 +55,7 @@ public class PingCommand extends AbstractCommand implements ICMPListener {
     private static final String fmt_stats = "-> Packet statistics%n%s%n";
     private static final String fmt_get_stats = "%d packets transmitted, %d packets received%nround-trip min/avg/max" +
                                                 " = %d/%.3f/%dms";
-    
+
     // FIXME Some of the following could be command parameters ...
     private final Statistics stat = new Statistics();
     private boolean wait = true;
@@ -79,7 +79,7 @@ public class PingCommand extends AbstractCommand implements ICMPListener {
     public static void main(String[] args) throws Exception {
         new PingCommand().execute(args);
     }
-    
+
     public void execute() throws SocketException, InterruptedException {
         try {
             this.dst = new IPv4Address(argHost.getAsInetAddress());
@@ -88,7 +88,7 @@ public class PingCommand extends AbstractCommand implements ICMPListener {
             exit(1);
         }
         final PrintWriter out = getOutput().getPrintWriter();
-        
+
         final IPv4Header netHeader =
                 new IPv4Header(0, this.ttl, IPv4Constants.IPPROTO_ICMP, this.dst, 8);
         netHeader.setDontFragment(this.dontFragment);
@@ -122,14 +122,10 @@ public class PingCommand extends AbstractCommand implements ICMPListener {
                 r.arm();
 
                 while (this.wait) {
-                    long time = System.currentTimeMillis() - r.getTimestamp();
-                    if (time > this.interval) {
-                        this.wait = false;
-                    }
-                    Thread.sleep(500);
+                    Thread.sleep(Math.min(500, this.interval));
                     synchronized (this) {
                         if (response) {
-                            out.format(fmt_reply, 
+                            out.format(fmt_reply,
                                 dst.toString(), hdr1.getDataLength(), hdr1.getTtl(), hdr2.getSeqNumber(), roundt);
                             response = false;
                         }
@@ -139,16 +135,17 @@ public class PingCommand extends AbstractCommand implements ICMPListener {
                 seq_count++;
             }
 
-            while (!isEmpty()) {
-                Thread.sleep(100);
+            long cleanupDeadline = System.currentTimeMillis() + 100;
+            while (!isEmpty() && (System.currentTimeMillis() < cleanupDeadline)) {
+                Thread.sleep(10);
             }
         } finally {
             icmpProtocol.removeListener(this);
         }
-        
+
         out.format(fmt_stats, this.stat.getStatistics());
     }
-    
+
     private long match(int id, int seq, Request r) {
         if (r != null && id == r.getId()) {
             return r.getTimestamp();
@@ -231,10 +228,7 @@ public class PingCommand extends AbstractCommand implements ICMPListener {
         }
 
         public void run() {
-            if (!this.Obsolete()) {
-                stat.recordLost();
-                removeRequest(this.seq);
-            }
+            Obsolete();
         }
 
         synchronized boolean Obsolete() {
@@ -242,13 +236,16 @@ public class PingCommand extends AbstractCommand implements ICMPListener {
                 this.obsolete = true;
                 this.cancelled = true;
                 this.timer.cancel();
+                this.stat.recordLost();
+                removeRequest(this.seq);
+                wait = false;
                 return false;
             } else {
                 return true;
             }
         }
 
-        void cancelRequest() {
+        synchronized void cancelRequest() {
             this.cancelled = true;
             this.timer.cancel();
         }

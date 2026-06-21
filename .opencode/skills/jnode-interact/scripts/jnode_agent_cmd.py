@@ -11,16 +11,16 @@ import time
 import sys
 
 
-PROMPT = b'[JNODE_AGENT_READY]'
-PROMPT_TIMEOUT = 3.0
-CMD_TIMEOUT = 2.0
-
-
 def connect_serial():
     sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
     sock.settimeout(5)
     sock.connect('/tmp/jnode_com2')
     return sock
+
+
+PROMPT = b'[JNODE_AGENT_READY]'
+PROMPT_TIMEOUT = 3.0
+OUTPUT_TIMEOUT = 10.0
 
 
 def clear_buffer(sock):
@@ -33,7 +33,6 @@ def clear_buffer(sock):
                 break
         except socket.timeout:
             break
-    sock.settimeout(CMD_TIMEOUT)
 
 
 def wait_for_prompt(sock, timeout):
@@ -58,30 +57,49 @@ def wait_for_prompt(sock, timeout):
 
 
 def send_cmd(sock, cmd):
-    """Send command and read response."""
+    """Send command and stream response until prompt or output timeout."""
     clear_buffer(sock)
 
     sock.send(f"{cmd}\r\n".encode())
 
     buf = b""
+    last_output_time = time.time()
+    printed_up_to = 0
+
     while True:
         try:
-            sock.settimeout(CMD_TIMEOUT)
+            remaining = last_output_time + OUTPUT_TIMEOUT - time.time()
+            if remaining <= 0:
+                break
+            sock.settimeout(min(1.0, remaining))
             r = sock.recv(4096)
             if r:
                 buf += r
-                if b'Packet statistics' in buf:
-                    time.sleep(0.3)
+                last_output_time = time.time()
+
+                # Print new complete lines immediately
+                decoded = buf[printed_up_to:].decode(errors='replace')
+                lines = decoded.split('\n')
+                for line in lines[:-1]:
+                    stripped = line.strip()
+                    if stripped and PROMPT.decode() not in stripped:
+                        print(line)
+                printed_up_to = len(buf) - len(lines[-1].encode(errors='replace'))
+
+                if PROMPT in buf:
                     break
             else:
                 break
         except socket.timeout:
-            break
+            if time.time() - last_output_time >= OUTPUT_TIMEOUT:
+                break
 
-    output = buf.decode(errors='replace').rstrip()
-    if output:
-        for line in output.split('\n'):
-            if line.strip():
+    # Print any remaining buffer
+    if printed_up_to < len(buf):
+        remaining = buf[printed_up_to:].decode(errors='replace')
+        for line in remaining.split('\n'):
+            stripped = line.strip()
+            if stripped and PROMPT.decode() not in stripped:
                 print(line)
 
 
