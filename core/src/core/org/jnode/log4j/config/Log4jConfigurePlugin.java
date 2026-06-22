@@ -39,6 +39,7 @@ import org.jnode.plugin.Plugin;
 import org.jnode.plugin.PluginDescriptor;
 import org.jnode.plugin.PluginException;
 import org.jnode.util.WriterOutputStream;
+import org.jnode.vm.Unsafe;
 import org.jnode.vm.VmSystem;
 
 /**
@@ -94,11 +95,18 @@ public class Log4jConfigurePlugin extends Plugin {
                     root.removeAppender(appender);
                 }
             }
-            // lkd - bootloader flag sends logging data to Unsafe.debug()
+            // lkd - bootloader flag sends logging data to serial port
             if (VmSystem.getCmdLine().indexOf(" lkd") > 0) {
-                UnsafeDebugAppender kdbApp = new UnsafeDebugAppender(new PatternLayout(LAYOUT));
-                kdbApp.setThreshold(Level.DEBUG);
-                root.addAppender(kdbApp);
+                try {
+                    SerialAppender serialApp = new SerialAppender(new PatternLayout(LAYOUT));
+                    serialApp.setThreshold(Level.DEBUG);
+                    root.addAppender(serialApp);
+                } catch (Exception e) {
+                    Unsafe.debug("SerialAppender failed: " + e.toString() + "\n");
+                    UnsafeDebugAppender kdbApp = new UnsafeDebugAppender(new PatternLayout(LAYOUT));
+                    kdbApp.setThreshold(Level.DEBUG);
+                    root.addAppender(kdbApp);
+                }
             }
         } catch (NameNotFoundException ex) {
             root.error("ConsoleManager not found", ex);
