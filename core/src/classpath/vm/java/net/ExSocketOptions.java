@@ -37,4 +37,10 @@ public interface ExSocketOptions extends SocketOptions {
 	 */
 	public static final int SO_TRANSMIT_IF = 0xFFFF0001;
 
+	/**
+	 * Multicast interface (used by Classpath MulticastSocket).
+	 * This is option 31 in Classpath's SocketOptions extension.
+	 */
+	public static final int IP_MULTICAST_IF = 31;
+
 }

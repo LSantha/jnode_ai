@@ -130,8 +130,9 @@ public class IPv4Sender implements IPv4Constants, EthernetConstants {
             } catch (ApiNotFoundException ex) {
                 throw new NetworkException("Device is not a network device", ex);
             }
-            // The source address must have been set, check it
-            if (hdr.getSource() == null) {
+            // The source address must have been set, except for broadcasts
+            // (DHCP/BOOTP can work before IP address assignment)
+            if (hdr.getSource() == null && !hdr.getDestination().isBroadcast()) {
                 throw new NetworkException("The source address must have been set");
             }
             // Find the HW destination address

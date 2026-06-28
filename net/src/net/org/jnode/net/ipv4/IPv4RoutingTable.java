@@ -62,6 +62,16 @@ public class IPv4RoutingTable {
      * @param entry
      */
     public void add(IPv4Route entry) {
+        // Remove any existing route to the same destination via the same device before adding
+        for (IPv4Route r : entries.toArray(new IPv4Route[0])) {
+            if (r.getDestination().equals(entry.getDestination()) 
+                && (r.getGateway() == null) == (entry.getGateway() == null)
+                && (r.getGateway() == null || r.getGateway().equals(entry.getGateway()))
+                && r.getDevice() == entry.getDevice()) {
+                entries.remove(r);
+                break;
+            }
+        }
         entries.add(entry);
     }
 
@@ -103,12 +113,27 @@ public class IPv4RoutingTable {
                     }
                 }
                 // No direct host found, search through the networks
+                // Find all matching routes and prefer gateway routes
+                IPv4Route gatewayRoute = null;
+                IPv4Route directRoute = null;
                 for (IPv4Route r : entries) {
                     if (r.isNetwork() && r.isUp()) {
                         if (r.getDestination().matches(destination, r.getSubnetmask())) {
-                            return r;
+                            if (r.isGateway()) {
+                                gatewayRoute = r;
+                            } else {
+                                directRoute = r;
+                            }
                         }
                     }
+                }
+                // Prefer gateway routes over direct routes for non-local traffic
+                if (gatewayRoute != null) {
+                    return gatewayRoute;
+                }
+                // No gateway found, try direct network route
+                if (directRoute != null) {
+                    return directRoute;
                 }
 
                 // No network found, search for the default gateway

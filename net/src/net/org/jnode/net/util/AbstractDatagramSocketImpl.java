@@ -124,6 +124,7 @@ public abstract class AbstractDatagramSocketImpl extends DatagramSocketImpl impl
             case SO_SNDBUF:
                 return EthernetConstants.ETH_FRAME_LEN;
             case SO_TRANSMIT_IF:
+            case ExSocketOptions.IP_MULTICAST_IF:
                 return (device == null) ? null : NetworkInterface.getByName(device.getId());
             case SO_TIMEOUT:
                 return timeout;
@@ -174,6 +175,18 @@ public abstract class AbstractDatagramSocketImpl extends DatagramSocketImpl impl
                     break;
                 case SO_REUSEADDR:
                     // Ignored for now
+                    break;
+                case ExSocketOptions.IP_MULTICAST_IF:
+                    if (val == null) {
+                        device = null;
+                    } else {
+                        final NetworkInterface netIf = (NetworkInterface) val;
+                        try {
+                            device = DeviceUtils.getDevice(netIf.getName());
+                        } catch (DeviceNotFoundException ex) {
+                            throw new SocketException("Unknown networkinterface " + netIf.getName());
+                        }
+                    }
                     break;
                 default:
                     doSetOption(option_id, val);

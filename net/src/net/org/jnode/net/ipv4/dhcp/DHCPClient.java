@@ -107,16 +107,7 @@ public class DHCPClient extends AbstractDHCPClient {
         cfg.configureDeviceStatic(device, new IPv4Address(hdr
                 .getYourIPAddress()), null, false);
 
-        final IPv4Address serverAddr = new IPv4Address(hdr.getServerIPAddress());
-        final IPv4Address networkAddress = serverAddr.and(serverAddr.getDefaultSubnetmask());
-
-        if (hdr.getGatewayIPAddress().isAnyLocalAddress()) {
-            cfg.addRoute(serverAddr, null, device, false);
-            cfg.addRoute(networkAddress, null, device, false);
-        } else {
-            cfg.addRoute(networkAddress, new IPv4Address(hdr.getGatewayIPAddress()), device, false);
-        }
-
+        // Add default route via router if provided
         byte[] routerValue = msg.getOption(DHCPMessage.ROUTER_OPTION);
         if (routerValue != null && routerValue.length >= 4) {
             IPv4Address routerIP = new IPv4Address(routerValue, 0);

@@ -20,7 +20,6 @@
  
 package org.jnode.command.net;
 
-import java.io.PrintWriter;
 import java.net.InetAddress;
 import java.net.UnknownHostException;
 
@@ -35,6 +34,8 @@ import org.jnode.driver.net.NetworkException;
 import org.jnode.naming.InitialNaming;
 import org.jnode.net.ProtocolAddressInfo;
 import org.jnode.net.ethernet.EthernetConstants;
+import org.jnode.net.ipv4.IPv4Address;
+import org.jnode.net.ipv4.IPv4ProtocolAddressInfo;
 import org.jnode.net.ipv4.config.IPv4ConfigurationService;
 import org.jnode.shell.AbstractCommand;
 import org.jnode.shell.syntax.Argument;
@@ -48,8 +49,6 @@ public class DhcpCommand extends AbstractCommand {
 
     private static final String help_device  = "the network interface device to be configured";
     private static final String help_super   = "Configure a network interface using DHCP";
-    private static final String err_loopback = "The loopback network device is not bound to IP address 127.0.0.1%n" +
-                                               "Run 'ifconfig loopback 127.0.0.1 255.255.255.255' to fix this.%n";
     private static final String fmt_config   = "Configuring network device %s...%n";
     
     private final DeviceArgument argDevice;
@@ -68,21 +67,17 @@ public class DhcpCommand extends AbstractCommand {
         UnknownHostException, NetworkException {
         final Device dev = argDevice.getValue();
 
-        // The DHCP network configuration process will attempt to configure the DNS.  This will only work if
-        // the IP address 127.0.0.1 is bound to the loopback network interface.  And if there isn't, JNode's
-        // network layer is left in a state that will require a reboot to unjam it (AFAIK).  
-        //
-        // So, check that loopback is correctly bound ...
+        // Auto-configure loopback if needed (required for DNS configuration)
         Device loopback = (InitialNaming.lookup(DeviceManager.NAME)).getDevice("loopback");
         NetDeviceAPI api = loopback.getAPI(NetDeviceAPI.class);
         ProtocolAddressInfo info = api.getProtocolAddressInfo(EthernetConstants.ETH_P_IP);
         if (info == null || !info.contains(InetAddress.getByAddress(new byte[]{127, 0, 0, 1}))) {
-            PrintWriter err = getError().getPrintWriter();
-            err.format(err_loopback);
-            exit(1);
+            // Auto-configure loopback with 127.0.0.1/32 (standard loopback convention)
+            api.setProtocolAddressInfo(EthernetConstants.ETH_P_IP, 
+                new IPv4ProtocolAddressInfo(new IPv4Address("127.0.0.1"), new IPv4Address("255.255.255.255")));
         }
 
-        // Now it should be safe to do the DHCP configuration.
+        // Now do the DHCP configuration.
         getOutput().getPrintWriter().format(fmt_config, dev.getId());
         final IPv4ConfigurationService cfg = InitialNaming.lookup(IPv4ConfigurationService.NAME);
         cfg.configureDeviceDhcp(dev, true);
