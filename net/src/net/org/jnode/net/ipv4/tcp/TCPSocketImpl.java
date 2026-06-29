@@ -51,6 +51,11 @@ public class TCPSocketImpl extends SocketImpl implements TCPConstants {
     private int timeout;
 
     /**
+     * Reuse address flag
+     */
+    private boolean reuseAddress = false;
+
+    /**
      * The control block
      */
     private TCPControlBlock controlBlock;
@@ -126,7 +131,7 @@ public class TCPSocketImpl extends SocketImpl implements TCPConstants {
         if (host.isAnyLocalAddress()) {
             host = InetAddress.getLocalHost();
         }
-        controlBlock = protocol.bind(new IPv4Address(host), port);
+        controlBlock = protocol.bind(new IPv4Address(host), port, reuseAddress);
     }
 
     /**
@@ -271,7 +276,11 @@ public class TCPSocketImpl extends SocketImpl implements TCPConstants {
                     break;
                 case SocketOptions.SO_RCVBUF:
                 case SocketOptions.SO_SNDBUF:
+                    break;
                 case SocketOptions.SO_REUSEADDR:
+                    if (val != null) {
+                        reuseAddress = ((Boolean) val).booleanValue();
+                    }
                     break;
                 default:
                     throw new SocketException("Option " + option_id +

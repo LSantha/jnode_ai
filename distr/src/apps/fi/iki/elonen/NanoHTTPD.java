@@ -32,6 +32,7 @@ import java.io.OutputStream;
 import java.io.PrintWriter;
 import java.net.ServerSocket;
 import java.net.Socket;
+import java.net.InetSocketAddress;
 import java.net.URLEncoder;
 import java.util.Date;
 import java.util.Enumeration;
@@ -191,7 +192,7 @@ public class NanoHTTPD {
     static final String MIME_HTML = "text/html";
     static final String MIME_DEFAULT_BINARY = "application/octet-stream";
 
-    // ==================================================
+// ==================================================
     // Socket & server code
     // ==================================================
 
@@ -202,14 +203,27 @@ public class NanoHTTPD {
     public NanoHTTPD(int port) throws IOException {
         myTcpPort = port;
 
-        final ServerSocket ss = new ServerSocket(myTcpPort);
+        serverSocket = new ServerSocket();
+        serverSocket.setReuseAddress(true);
+        serverSocket.bind(new java.net.InetSocketAddress(myTcpPort));
         Thread t = new Thread(new Runnable() {
             @Override
             public void run() {
                 try {
-                    while (true)
-                        new HTTPSession(ss.accept());
-                } catch (IOException ioe) {
+                    while (running) {
+                        try {
+                            Socket s = serverSocket.accept();
+                            if (running) {
+                                new HTTPSession(s);
+                            } else {
+                                s.close();
+                            }
+                        } catch (IOException e) {
+                            // socket closed or stopped
+                            break;
+                        }
+                    }
+                } catch (Throwable t) {
                     //empty
                 }
             }
@@ -259,6 +273,8 @@ public class NanoHTTPD {
             System.in.read();
         } catch (Throwable t) {
             //empty
+        } finally {
+            nh.stopServer();
         }
     }
 
@@ -482,6 +498,19 @@ public class NanoHTTPD {
 
     private int myTcpPort;
     private File myFileDir;
+    private ServerSocket serverSocket;
+    private volatile boolean running = true;
+
+    public void stopServer() {
+        running = false;
+        if (serverSocket != null) {
+            try {
+                serverSocket.close();
+            } catch (IOException e) {
+                // ignore
+            }
+        }
+    }
 
     // ==================================================
     // File server code

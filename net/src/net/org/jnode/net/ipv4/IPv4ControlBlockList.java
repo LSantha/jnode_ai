@@ -68,12 +68,13 @@ public abstract class IPv4ControlBlockList {
      * 
      * @param lAddr
      * @param lPort
+     * @param reuseAddress if true, allow binding to already-used address
      * @return The created binding
      */
-    public synchronized IPv4ControlBlock bind(IPv4Address lAddr, int lPort) throws BindException {
+    public synchronized IPv4ControlBlock bind(IPv4Address lAddr, int lPort, boolean reuseAddress) throws BindException {
         if (lPort != 0) {
             // Specific local port
-            if (lookup(IPv4Address.ANY, 0, lAddr, lPort, true) != null) {
+            if (!reuseAddress && lookup(IPv4Address.ANY, 0, lAddr, lPort, true) != null) {
                 throw new BindException("Address already in use");
             }
         } else {
@@ -85,7 +86,7 @@ public abstract class IPv4ControlBlockList {
                         (lPort > IPv4Constants.IPPORT_USERRESERVED)) {
                     lPort = IPv4Constants.IPPORT_RESERVED;
                 }
-            } while (lookup(IPv4Address.ANY, 0, lAddr, lPort, true) != null);
+            } while (!reuseAddress && lookup(IPv4Address.ANY, 0, lAddr, lPort, true) != null);
             lastFreePort = lPort;
         }
         final IPv4ControlBlock cb = createControlBlock(null);

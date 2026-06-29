@@ -233,8 +233,8 @@ public class TCPProtocol implements IPv4Protocol, IPv4Constants, TCPConstants {
      * @param lAddr
      * @param lPort
      */
-    public TCPControlBlock bind(IPv4Address lAddr, int lPort) throws BindException {
-        return (TCPControlBlock) controlBlocks.bind(lAddr, lPort);
+    public TCPControlBlock bind(IPv4Address lAddr, int lPort, boolean reuseAddress) throws BindException {
+        return (TCPControlBlock) controlBlocks.bind(lAddr, lPort, reuseAddress);
     }
 
     /**

@@ -22,6 +22,7 @@ package org.jnode.apps.httpd;
 
 import java.io.File;
 import java.io.FileOutputStream;
+import java.io.IOException;
 import java.io.PrintWriter;
 import java.util.Properties;
 
@@ -29,14 +30,12 @@ import org.jnode.shell.AbstractCommand;
 
 import fi.iki.elonen.NanoHTTPD;
 
-/**
- * @author Martin Husted Hartvig (hagar@jnode.org)
- */
-
 public class NanoHTTPDCommand extends AbstractCommand {
+    private NanoHTTPD server;
+
     @Override
     public void execute() throws Exception {
-        File file = new File("/jnode/index.htm");  // ram disk is fat, so no long extension, I guess
+        File file = new File("/jnode/index.htm");
 
         if (!file.exists()) {
             PrintWriter printWriter = new PrintWriter(new FileOutputStream(file));
@@ -46,23 +45,25 @@ public class NanoHTTPDCommand extends AbstractCommand {
             printWriter.close();
         }
 
-        new NanoHTTPD(80) {
+        server = new NanoHTTPD(80) {
             public Response serve(String uri, String method, Properties header, Properties parms) {
                 return serveFile(uri, header, new File("/jnode"), true);
             }
-
         };
 
-        while (true) {
-            try {
-                Thread.sleep(250);
-            } catch (InterruptedException e) {
-                e.printStackTrace(getError().getPrintWriter());
+        System.out.println("HTTP server started on port 80. Hit Enter to stop.");
+        try {
+            while (System.in.read() != '\n') {
+                Thread.sleep(10);
+            }
+        } catch (IOException e) {
+            // ignore
+        } finally {
+            if (server != null) {
+                server.stopServer();
             }
         }
-
     }
-
 
     public static void main(String[] args) throws Exception {
         new NanoHTTPDCommand().execute(args);
