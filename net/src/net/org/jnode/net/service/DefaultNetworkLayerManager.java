@@ -153,7 +153,7 @@ public class DefaultNetworkLayerManager implements NetworkLayerManager,
                     pt.receive(skbuf, deviceAPI);
                 }
             } catch (NoSuchProtocolException ex) {
-                log.debug("No network layer handler for protocol 0x" + NumberUtils.hex(protoID, 4));
+                if (log.isDebugEnabled()) log.debug("No network layer handler for protocol 0x" + NumberUtils.hex(protoID, 4));
             }
         } catch (SocketException ex) {
             log.error("Cannot process packet", ex);

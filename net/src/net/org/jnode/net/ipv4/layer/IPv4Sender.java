@@ -212,7 +212,7 @@ public class IPv4Sender implements IPv4Constants, EthernetConstants {
         final IPv4Address dstAddr;
         if (hdr.getDestination().isBroadcast()) {
             return null;
-        } else if (route.isGateway()) {
+        } else if (route.isGateway() && !route.getGateway().isAny()) {
             dstAddr = route.getGateway();
         } else {
             dstAddr = hdr.getDestination();

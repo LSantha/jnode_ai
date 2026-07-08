@@ -718,10 +718,10 @@ public class TCPControlBlock extends IPv4ControlBlock implements TCPConstants {
     /**
      * Wait for an established connection.
      *
-     * @return The accepted connection
+     * @return The accepted connection, or null if the socket was closed
      */
     public synchronized TCPControlBlock appAccept() {
-        while (true) {
+        while (!isState(TCPS_CLOSED)) {
             if (!readyToAcceptList.isEmpty()) {
                 final TCPControlBlock child = (TCPControlBlock) readyToAcceptList.getFirst();
                 readyToAcceptList.remove(child);
@@ -730,10 +730,11 @@ public class TCPControlBlock extends IPv4ControlBlock implements TCPConstants {
                 try {
                     wait();
                 } catch (InterruptedException ex) {
-                    // Ignore
+                    // Ignore, but re-check CLOSED state
                 }
             }
         }
+        return null;
     }
 
     /**
@@ -869,6 +870,20 @@ public class TCPControlBlock extends IPv4ControlBlock implements TCPConstants {
      */
     public final int getState() {
         return this.curState;
+    }
+
+    /**
+     * @return true if this control block is in CLOSED state
+     */
+    public boolean isClosed() {
+        return this.curState == TCPS_CLOSED;
+    }
+
+    /**
+     * @return true if this control block is in LISTEN state
+     */
+    public boolean isListening() {
+        return this.curState == TCPS_LISTEN;
     }
 
     /**

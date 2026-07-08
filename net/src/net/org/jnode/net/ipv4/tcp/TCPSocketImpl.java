@@ -102,6 +102,9 @@ public class TCPSocketImpl extends SocketImpl implements TCPConstants {
             log.debug("accept: blocking");
         }
         impl.controlBlock = controlBlock.appAccept();
+        if (impl.controlBlock == null) {
+            throw new SocketException("Socket closed");
+        }
         if (DEBUG) {
             log.debug("accept: got one");
         }
@@ -128,10 +131,13 @@ public class TCPSocketImpl extends SocketImpl implements TCPConstants {
         if (controlBlock != null) {
             throw new IOException("Already bound");
         }
-        if (host.isAnyLocalAddress()) {
-            host = InetAddress.getLocalHost();
-        }
-        controlBlock = protocol.bind(new IPv4Address(host), port, reuseAddress);
+        // Keep 0.0.0.0 (ANY) to listen on all interfaces.
+        // Previously this replaced ANY with getLocalHost(), which in VM
+        // environments often resolves to 127.0.0.1, causing the listening
+        // socket to only match loopback traffic.
+        IPv4Address lAddr = host.isAnyLocalAddress() ?
+            IPv4Address.ANY : new IPv4Address(host);
+        controlBlock = protocol.bind(lAddr, port, reuseAddress);
     }
 
     /**

@@ -56,22 +56,22 @@ public class RxDescriptorRing extends DescriptorRing {
             //log.warn("Descriptor is not owned by the host");
             return null;
         } else if ((status & RxDescriptor.STATUS_ERR) != 0) {
-            log.warn("Error");
+            if (log.isDebugEnabled()) log.debug("Error");
             if ((status & RxDescriptor.STATUS_FRAM) != 0 &&
                     (status & RxDescriptor.STATUS_ENP) != 0 &&
                     (status & RxDescriptor.STATUS_OFLO) == 0) {
-                log.warn("Framming Error");
+                if (log.isDebugEnabled()) log.debug("Framming Error");
             }
             if ((status & RxDescriptor.STATUS_OFLO) != 0 && (status & RxDescriptor.STATUS_ENP) == 0) {
-                log.warn("Overflow Error");
+                if (log.isDebugEnabled()) log.debug("Overflow Error");
             }
             if ((status & RxDescriptor.STATUS_CRC) != 0 &&
                     (status & RxDescriptor.STATUS_ENP) != 0 &&
                     (status & RxDescriptor.STATUS_OFLO) == 0) {
-                log.warn("CRC Error");
+                if (log.isDebugEnabled()) log.debug("CRC Error");
             }
             if ((status & RxDescriptor.STATUS_BUFF) != 0) {
-                log.warn("Buffer Error");
+                if (log.isDebugEnabled()) log.debug("Buffer Error");
             }
             des.clearStatus();
             currentDescriptor = currentDescriptor + 1;

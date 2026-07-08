@@ -99,6 +99,25 @@ public class IPv4ControlBlock {
     }
 
     /**
+     * Check if this control block is closed.
+     * Subclasses should override to check actual state.
+     * @return true if closed
+     */
+    public boolean isClosed() {
+        return false;
+    }
+
+    /**
+     * Check if this control block is actively listening.
+     * Only LISTEN-state control blocks should block a new bind.
+     * Child control blocks in TIME_WAIT/FIN_WAIT etc. should not.
+     * @return true if in LISTEN state
+     */
+    public boolean isListening() {
+        return false;
+    }
+
+    /**
      * Match this control block against the given parameters
      * 
      * @param fAddr
@@ -205,7 +224,9 @@ public class IPv4ControlBlock {
      * Close any connection and remove from the control block list.
      */
     public synchronized void removeFromList() {
-        this.list.remove(this);
+        synchronized (list) {
+            list.remove(this);
+        }
     }
 
     /**

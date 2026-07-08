@@ -133,7 +133,7 @@ public class BOOTPHeader {
         this.hopCount = 0;
         this.transactionID = transactionID;
         this.secondsElapsed = secsElapsed;
-        this.flags = 0;
+        this.flags = 0x8000; // Broadcast flag per RFC 2131 Section 4.1.1
         this.clientIPAddress = clientIPAddress;
         this.yourIPAddress = null;
         this.serverIPAddress = null;

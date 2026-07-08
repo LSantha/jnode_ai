@@ -39,7 +39,9 @@ public enum ARPOperation {
 
     public static ARPOperation getType(int id) {
         for (ARPOperation t : ARPOperation.values()) {
-            return t;
+            if (t.id == id) {
+                return t;
+            }
         }
         return null;
     }

@@ -318,77 +318,77 @@ public class LanceCore extends AbstractDeviceCore implements IRQHandler, LanceCo
 
             // check if interrupt is due an error
             if ((csr0 & CSR0_ERR) != 0) {
-                log.debug("Error Interrupt");
+                if (log.isDebugEnabled()) log.debug("Error Interrupt");
 
                 // check if interrupt is due to Memory Error
                 if ((csr0 & CSR0_MERR) != 0) {
-                    log.debug("Memory Error");
+                    if (log.isDebugEnabled()) log.debug("Memory Error");
                 }
 
                 // check if interrupt is due to Missed Frame
                 if ((csr0 & CSR0_MISS) != 0) {
-                    log.debug("Missed Frame");
+                    if (log.isDebugEnabled()) log.debug("Missed Frame");
                 }
 
                 // check if interrupt is due to Collision Error
                 if ((csr0 & CSR0_CERR) != 0) {
-                    log.debug("Collision Error");
+                    if (log.isDebugEnabled()) log.debug("Collision Error");
                 }
 
                 // check if interrupt is due to a Bable transmitter time-out
                 if ((csr0 & CSR0_BABL) != 0) {
-                    log.debug("Bable transmitter time-out");
+                    if (log.isDebugEnabled()) log.debug("Bable transmitter time-out");
                 }
             }
 
             // check if interrupt is due to a Missed Frame Counter Overflow
             if ((csr4 & CSR4_MFCO) == CSR4_MFCO) {
-                log.debug("Missed Frame Counter Overflow");
+                if (log.isDebugEnabled()) log.debug("Missed Frame Counter Overflow");
             }
 
             // check if interrupt is due to a User Interrupt
             if ((csr4 & CSR4_UINT) == CSR4_UINT) {
-                log.debug("User Interrupt");
+                if (log.isDebugEnabled()) log.debug("User Interrupt");
             }
 
             // check if interrupt is due to a Receive Collision Counter Overflow
             if ((csr4 & CSR4_RCVCCO) == CSR4_RCVCCO) {
-                log.debug("Receive Collision Counter Overflow");
+                if (log.isDebugEnabled()) log.debug("Receive Collision Counter Overflow");
             }
 
             // check if interrupt is due to a Transmit Start
             if ((csr4 & CSR4_TXSTRT) == CSR4_TXSTRT) {
-                log.debug("Transmit Start");
+                if (log.isDebugEnabled()) log.debug("Transmit Start");
             }
 
             // check if interrupt is due to a Jabber Error
             if ((csr4 & CSR4_JAB) == CSR4_JAB) {
-                log.debug("Jabber Error");
+                if (log.isDebugEnabled()) log.debug("Jabber Error");
             }
 
             // check if interrupt is due to a Jabber Error
             if ((csr4 & CSR4_JAB) == CSR4_JAB) {
-                log.debug("Jabber Error");
+                if (log.isDebugEnabled()) log.debug("Jabber Error");
             }
 
             // check if interrupt is due to a System Interrupt
             if ((csr5 & CSR5_SINT) == CSR5_SINT) {
-                log.debug("System Interrupt");
+                if (log.isDebugEnabled()) log.debug("System Interrupt");
             }
 
             // check if interrupt is due to a Sleep Interrupt
             if ((csr5 & CSR5_SLPINT) == CSR5_SLPINT) {
-                log.debug("Sleep Interrupt");
+                if (log.isDebugEnabled()) log.debug("Sleep Interrupt");
             }
 
             // check if interrupt is due to a Excessive Deferral Interrupt
             if ((csr5 & CSR5_EXDINT) == CSR5_EXDINT) {
-                log.debug("Excessive Deferral Interrupt");
+                if (log.isDebugEnabled()) log.debug("Excessive Deferral Interrupt");
             }
 
             // check if interrupt is due to a Magic Packet Interrupt
             if ((csr5 & CSR5_MPINT) == CSR5_MPINT) {
-                log.debug("Magic Packet Interrupt");
+                if (log.isDebugEnabled()) log.debug("Magic Packet Interrupt");
             }
 
         }

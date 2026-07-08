@@ -26,6 +26,10 @@ import org.jnode.driver.ApiNotFoundException;
 import org.jnode.driver.Device;
 import org.jnode.driver.net.NetDeviceAPI;
 import org.jnode.driver.net.NetworkException;
+import org.jnode.net.HardwareAddress;
+import org.jnode.net.SocketBuffer;
+import org.jnode.net.arp.ARPHeader;
+import org.jnode.net.arp.ARPOperation;
 import org.jnode.net.ethernet.EthernetConstants;
 import org.jnode.net.ipv4.IPv4Address;
 import org.jnode.net.ipv4.IPv4ProtocolAddressInfo;
@@ -82,6 +86,27 @@ public class NetStaticDeviceConfig extends NetDeviceConfig {
         } else {
             addrInfo.add(address, netmask);
             addrInfo.setDefaultAddress(address, netmask);
+        }
+
+        sendGratuitousARP(api, address);
+    }
+
+    private void sendGratuitousARP(NetDeviceAPI api, IPv4Address ipAddr) {
+        try {
+            HardwareAddress srcHw = api.getAddress();
+            HardwareAddress bcastHw = srcHw.getDefaultBroadcastAddress();
+            ARPHeader hdr = new ARPHeader(
+                srcHw, ipAddr,
+                bcastHw, ipAddr,
+                ARPOperation.ARP_REQUEST,
+                srcHw.getType(), EthernetConstants.ETH_P_IP,
+                srcHw.getLength(), ipAddr.getLength());
+            SocketBuffer skbuf = new SocketBuffer();
+            skbuf.setProtocolID(EthernetConstants.ETH_P_ARP);
+            hdr.prefixTo(skbuf);
+            api.transmit(skbuf, bcastHw);
+        } catch (Exception e) {
+            // Best effort - don't fail IP configuration if ARP fails
         }
     }
 

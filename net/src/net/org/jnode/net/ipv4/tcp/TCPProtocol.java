@@ -193,7 +193,7 @@ public class TCPProtocol implements IPv4Protocol, IPv4Constants, TCPConstants {
                 // Port unreachable
                 if (ack && rst) {
                     // the source is also unreachable
-                    log.debug("Dropping segment due to: connection refused as the source is also unreachable");
+                    if (log.isDebugEnabled()) log.debug("Dropping segment due to: connection refused as the source is also unreachable");
                 } else {
                     processPortUnreachable(ipHdr, hdr);
                 }

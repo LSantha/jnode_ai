@@ -38,10 +38,9 @@ public class IPv4IfAddress {
 
         for (int i = 0; i <= 3; i++) {
             int a = ip[i] & subnet_mask[i];
-            int b = ip[i] ^ subnet_mask[i];
-            int c = ~b;
+            int b = (~subnet_mask[i]) & 0xFF;
             net[i] = (byte) a;
-            bcast[i] = (byte) c;
+            bcast[i] = (byte) (a | b);
         }
 
         this.net = new IPv4Address(net, 0);
@@ -54,7 +53,7 @@ public class IPv4IfAddress {
      * Tests if the given IP matches this interface
      */
     public boolean matches(IPv4Address other) {
-        return (address.equals(other) || broadcast.equals(other));
+        return (address.equals(other) || broadcast.equals(other) || other.isBroadcast());
     }
 
     /**

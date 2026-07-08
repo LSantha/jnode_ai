@@ -295,8 +295,12 @@ public class IPv4Address implements ProtocolAddress, Serializable {
      * Broadcast = hostID = -1
      */
     public boolean isBroadcast() {
+        // Check for limited broadcast (255.255.255.255)
+        final int b0 = address[0] & 0xFF;
+        final int b1 = address[1] & 0xFF;
+        final int b2 = address[2] & 0xFF;
         final int b3 = address[3] & 0xFF;
-        return (b3 == 0xFF);
+        return (b0 == 0xFF && b1 == 0xFF && b2 == 0xFF && b3 == 0xFF);
     }
 
     /**

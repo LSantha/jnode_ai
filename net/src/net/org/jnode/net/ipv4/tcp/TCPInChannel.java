@@ -96,7 +96,7 @@ public class TCPInChannel {
         // Check the seq-nr
         if (TCPUtils.SEQ_LT(seqNr, rcv_next)) {
             // Ignore segment, we've already got it
-            log.debug("Ignoring segment because we already got it");
+            if (log.isDebugEnabled()) log.debug("Ignoring segment because we already got it");
             return;
         }
 
@@ -115,11 +115,11 @@ public class TCPInChannel {
             return;
         }
         if (findFutureSegment(hdr.getSequenceNr()) != null) {
-            log.debug("Ignoring duplicate future segment");
+            if (log.isDebugEnabled()) log.debug("Ignoring duplicate future segment");
             return;
         }
         if (futureSegments.size() >= MAX_FUTURE_SEGMENTS) {
-            log.debug("Dropping future segment because the future segment buffer is full");
+            if (log.isDebugEnabled()) log.debug("Dropping future segment because the future segment buffer is full");
             return;
         }
         futureSegments.add(new TCPInSegment(ipHdr, hdr, skbuf));
@@ -158,7 +158,7 @@ public class TCPInChannel {
         final int dataLength = hdr.getDataLength();
         if (dataLength > dataBuffer.getFreeSize()) {
             // Not enough free space, ignore this segment, it will be retransmitted.
-            log.debug("nextSegment dropped due to lack of space");
+            if (log.isDebugEnabled()) log.debug("nextSegment dropped due to lack of space");
             return false;
         } else {
             // Enough space, save

@@ -44,7 +44,7 @@ public abstract class IPv4ControlBlockList {
      * @param allowWildcards
      * @return Null if no match, the best matching Control Block otherwise.
      */
-    public IPv4ControlBlock lookup(IPv4Address fAddr, int fPort, IPv4Address lAddr, int lPort,
+    public synchronized IPv4ControlBlock lookup(IPv4Address fAddr, int fPort, IPv4Address lAddr, int lPort,
             boolean allowWildcards) {
 
         IPv4ControlBlock bestcb = null;
@@ -73,9 +73,20 @@ public abstract class IPv4ControlBlockList {
      */
     public synchronized IPv4ControlBlock bind(IPv4Address lAddr, int lPort, boolean reuseAddress) throws BindException {
         if (lPort != 0) {
-            // Specific local port
-            if (!reuseAddress && lookup(IPv4Address.ANY, 0, lAddr, lPort, true) != null) {
-                throw new BindException("Address already in use");
+            // Specific local port - check for conflicts
+            IPv4ControlBlock existing = lookup(IPv4Address.ANY, 0, lAddr, lPort, true);
+            if (existing != null) {
+                if (existing.isClosed()) {
+                    // Remove stale closed control block
+                    list.remove(existing);
+                } else if (existing.isListening()) {
+                    // Another socket is actively listening on this port
+                    if (!reuseAddress) {
+                        throw new BindException("Address already in use");
+                    }
+                }
+                // Child control blocks in TIME_WAIT/FIN_WAIT etc. are ignored -
+                // they will clean up on their own and don't block rebinding.
             }
         } else {
             // Choose free port
@@ -122,7 +133,7 @@ public abstract class IPv4ControlBlockList {
      * Create an iterator over all entries
      * @return The iterator
      */
-    protected Iterator<IPv4ControlBlock> iterator() {
-        return list.iterator();
+    protected synchronized Iterator<IPv4ControlBlock> iterator() {
+        return new LinkedList<IPv4ControlBlock>(list).iterator();
     }
 }

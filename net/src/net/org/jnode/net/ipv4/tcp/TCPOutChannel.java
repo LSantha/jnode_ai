@@ -109,12 +109,12 @@ public class TCPOutChannel {
             return;
         } else if (!TCPUtils.SEQ_LT(snd_unack, ackNr)) {
             // snd_unack < ackNr violated
-            log.debug("snd_unack < ackNr violated");
+            if (log.isDebugEnabled()) log.debug("snd_unack < ackNr violated");
             return;
         }
         if (!TCPUtils.SEQ_LE(ackNr, snd_max)) {
             // ackNr <= snd_max violated
-            log.debug("ackNr <= snd_max violated");
+            if (log.isDebugEnabled()) log.debug("ackNr <= snd_max violated");
             return;
         }
 
@@ -123,15 +123,17 @@ public class TCPOutChannel {
         snd_unack = ackNr;
         // Remove data from the databuffer
         dataBuffer.pull(diff);
-        for (Iterator<TCPOutSegment> i = unackedSegments.iterator(); i.hasNext();) {
-            final TCPOutSegment seg = (TCPOutSegment) i.next();
-            final int seqNr = seg.getSeqNr();
-            if (TCPUtils.SEQ_LT(seqNr, ackNr)) {
-                // Remove the segment
-                i.remove();
-            } else {
-                // Adjust the dataOffset
-                seg.adjustDataOffset(diff);
+        synchronized (unackedSegments) {
+            for (Iterator<TCPOutSegment> i = unackedSegments.iterator(); i.hasNext();) {
+                final TCPOutSegment seg = (TCPOutSegment) i.next();
+                final int seqNr = seg.getSeqNr();
+                if (TCPUtils.SEQ_LT(seqNr, ackNr)) {
+                    // Remove the segment
+                    i.remove();
+                } else {
+                    // Adjust the dataOffset
+                    seg.adjustDataOffset(diff);
+                }
             }
         }
         // Notify any blocked threads
@@ -142,8 +144,12 @@ public class TCPOutChannel {
      * Process timeout handling
      */
     public void timeout() throws SocketException {
-        //allocation free looping
-        for (TCPOutSegment seg : unackedSegments) {
+        //synchronized to prevent ConcurrentModificationException
+        TCPOutSegment[] snapshot;
+        synchronized (unackedSegments) {
+            snapshot = unackedSegments.toArray(new TCPOutSegment[0]);
+        }
+        for (TCPOutSegment seg : snapshot) {
             seg.timeout(tcp);
         }
     }
@@ -253,7 +259,9 @@ public class TCPOutChannel {
             if (DEBUG) {
                 log.debug("Adding segment " + seg.getSeqNr() + " to unacklist");
             }
-            unackedSegments.add(seg);
+            synchronized (unackedSegments) {
+                unackedSegments.add(seg);
+            }
         }
     }
 
