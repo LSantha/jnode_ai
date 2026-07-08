@@ -8,31 +8,31 @@
  * by the Free Software Foundation; either version 2.1 of the License, or
  * (at your option) any later version.
  *
- * This library is distributed in the hope that it will be useful, but 
+ * This library is distributed in the hope that it will be useful, but
  * WITHOUT ANY WARRANTY; without even the implied warranty of MERCHANTABILITY
- * or FITNESS FOR A PARTICULAR PURPOSE. See the GNU Lesser General Public 
+ * or FITNESS FOR A PARTICULAR PURPOSE. See the GNU Lesser General Public
  * License for more details.
  *
  * You should have received a copy of the GNU Lesser General Public License
- * along with this library; If not, write to the Free Software Foundation, Inc., 
+ * along with this library; If not, write to the Free Software Foundation, Inc.,
  * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
  */
- 
+
 package gnu.classpath.jdwp;
 
 import gnu.classpath.jdwp.event.EventRequest;
+import gnu.classpath.jdwp.id.ObjectId;
+import gnu.classpath.jdwp.util.Location;
 import gnu.classpath.jdwp.util.MethodResult;
+import org.apache.log4j.Logger;
+
 import java.lang.reflect.Method;
 import java.nio.ByteBuffer;
 import java.security.ProtectionDomain;
 import java.util.ArrayList;
 import java.util.Iterator;
 import org.jnode.annotation.NoInline;
-import org.jnode.vm.BaseVmArchitecture;
-import org.jnode.vm.VmSystem;
-import org.jnode.vm.VmSystemClassLoader;
 import org.jnode.vm.classmgr.ClassDecoder;
-import org.jnode.vm.classmgr.VmByteCode;
 import org.jnode.vm.classmgr.VmClassLoader;
 import org.jnode.vm.classmgr.VmIsolatedStatics;
 import org.jnode.vm.classmgr.VmMethod;
@@ -40,12 +40,17 @@ import org.jnode.vm.classmgr.VmStaticsIterator;
 import org.jnode.vm.classmgr.VmType;
 import org.jnode.vm.facade.VmUtils;
 import org.jnode.vm.isolate.VmIsolate;
+import org.jnode.vm.scheduler.VmThread;
+
+import java.lang.reflect.Field;
 
 /**
  * User: lsantha
  * Date: 6/26/11 10:53 AM
  */
 public class JDIVirtualMachine {
+    private static final Logger log = Logger.getLogger(JDIVirtualMachine.class);
+
     @NoInline
     static boolean debug() {
         return false;
@@ -58,7 +63,7 @@ public class JDIVirtualMachine {
     static void suspendThread(Thread arg1) {
         //todo implement it
         if(debug())
-            System.out.println("NativeVMVirtualMachine.suspendThread()");
+            log.debug("NativeVMVirtualMachine.suspendThread()");
     }
     /**
      * @see gnu.classpath.jdwp.VMVirtualMachine#resumeThread(java.lang.Thread)
@@ -67,7 +72,7 @@ public class JDIVirtualMachine {
     static void resumeThread(Thread arg1) {
         //todo implement it
         if(debug())
-            System.out.println("NativeVMVirtualMachine.resumeThread()");
+            log.debug("NativeVMVirtualMachine.resumeThread()");
     }
     /**
      * @see gnu.classpath.jdwp.VMVirtualMachine#getSuspendCount(java.lang.Thread)
@@ -76,7 +81,7 @@ public class JDIVirtualMachine {
     static int getSuspendCount(Thread arg1) {
         //todo implement it
         if(debug())
-            System.out.println("NativeVMVirtualMachine.getSuspendCount()");
+            log.debug("NativeVMVirtualMachine.getSuspendCount()");
         return 0;
     }
     /**
@@ -84,10 +89,21 @@ public class JDIVirtualMachine {
      */
     @NoInline
     static int getAllLoadedClassesCount() {
-        //todo implement it
-        if(debug())
-            System.out.println("NativeVMVirtualMachine.getAllLoadedClassesCount()");
-        return 0;
+        int count = 0;
+        VmStaticsIterator iter = new VmStaticsIterator(VmUtils.getVm().getSharedStatics());
+        while (iter.hasNext()) {
+            iter.next();
+            count++;
+        }
+        Iterator<VmIsolatedStatics> isolated = VmIsolate.staticsIterator();
+        while (isolated.hasNext()) {
+            VmStaticsIterator isoIter = new VmStaticsIterator(isolated.next());
+            while (isoIter.hasNext()) {
+                isoIter.next();
+                count++;
+            }
+        }
+        return count;
     }
     /**
      * @see gnu.classpath.jdwp.VMVirtualMachine#getAllLoadedClasses()
@@ -95,26 +111,49 @@ public class JDIVirtualMachine {
     @NoInline
     static Iterator getAllLoadedClasses() {
         if(debug())
-            System.out.println("NativeVMVirtualMachine.getAllLoadedClasses()");
+            log.debug("NativeVMVirtualMachine.getAllLoadedClasses()");
         return new Iterator() {
             private VmStaticsIterator iter = new VmStaticsIterator(VmUtils.getVm().getSharedStatics());
             private Iterator<VmIsolatedStatics> isolated = VmIsolate.staticsIterator();
+            private Object pending;
 
             public boolean hasNext() {
-                if (iter.hasNext())
-                    return true;
-                else {
-                    while (isolated.hasNext()) {
-                        iter = new VmStaticsIterator(isolated.next());
-                        if (iter.hasNext())
+                if (pending != null) return true;
+                if (iter.hasNext()) {
+                    try {
+                        Class clazz = iter.next().asClass();
+                        if (clazz != null) {
+                            pending = clazz;
                             return true;
+                        }
+                    } catch (Exception e) {
+                        // Skip VmType that can't resolve to a Class
+                    }
+                }
+                while (isolated.hasNext()) {
+                    iter = new VmStaticsIterator(isolated.next());
+                    while (iter.hasNext()) {
+                        try {
+                            Class clazz = iter.next().asClass();
+                            if (clazz != null) {
+                                pending = clazz;
+                                return true;
+                            }
+                        } catch (Exception e) {
+                            // Skip VmType that can't resolve to a Class
+                        }
                     }
                 }
                 return false;
             }
 
             public Object next() {
-                return iter.next().asClass();
+                if (pending != null) {
+                    Object result = pending;
+                    pending = null;
+                    return result;
+                }
+                throw new java.util.NoSuchElementException();
             }
 
             public void remove() {
@@ -126,78 +165,224 @@ public class JDIVirtualMachine {
      * @see gnu.classpath.jdwp.VMVirtualMachine#getClassStatus(java.lang.Class)
      */
     @NoInline
-    static int getClassStatus(Class arg1) {
-        //todo implement it
-        if(debug())
-            System.out.println("NativeVMVirtualMachine.getClassStatus()");
-        return 0;
+    static int getClassStatus(Class clazz) {
+        if (clazz == null) return 0;
+        // JDWP class status flags:
+        // VERIFIED = 1, PREPARED = 2, INITIALIZED = 4, ERROR = 8
+        try {
+            VmType vmType = VmType.fromClass(clazz);
+            if (vmType == null) return 0;
+
+            int status = 0;
+            if (vmType.isVerified()) status |= 1;      // VERIFIED
+            // isPrepared() is package-private, skip it
+            if (vmType.isInitialized()) status |= 4;   // INITIALIZED
+            return status;
+        } catch (Exception e) {
+            return 0;
+        }
     }
     /**
      * @see gnu.classpath.jdwp.VMVirtualMachine#getAllClassMethods(java.lang.Class)
      */
     @NoInline
-    static VMMethod[] getAllClassMethods(Class arg1) {
-        //todo implement it
-        if(debug())
-            System.out.println("NativeVMVirtualMachine.getAllClassMethods()");
-        return null;
+    static VMMethod[] getAllClassMethods(Class clazz) {
+        if (clazz == null) return new VMMethod[0];
+        try {
+            VmType vmType = VmType.fromClass(clazz);
+            if (vmType == null) return new VMMethod[0];
+
+            int methodCount = vmType.getNoDeclaredMethods();
+            VMMethod[] methods = new VMMethod[methodCount];
+            for (int i = 0; i < methodCount; i++) {
+                VmMethod vmMethod = vmType.getDeclaredMethod(i);
+                // Use the method's hash code as the ID
+                methods[i] = new VMMethod(clazz, vmMethod.getMemberHashCode());
+            }
+            return methods;
+        } catch (Exception e) {
+            if (debug())
+                log.debug("NativeVMVirtualMachine.getAllClassMethods() error: " + e.getMessage());
+            return new VMMethod[0];
+        }
     }
     /**
      * @see gnu.classpath.jdwp.VMVirtualMachine#getClassMethod(java.lang.Class, long)
      */
     @NoInline
-    static VMMethod getClassMethod(Class arg1, long arg2) {
-        //todo implement it
-        if(debug())
-            System.out.println("NativeVMVirtualMachine.getClassMethod()");
-        return null;
+    static VMMethod getClassMethod(Class clazz, long methodId) {
+        if (clazz == null) return null;
+        try {
+            VmType vmType = VmType.fromClass(clazz);
+            if (vmType == null) return null;
+
+            // Search for method with matching hash code
+            int methodCount = vmType.getNoDeclaredMethods();
+            for (int i = 0; i < methodCount; i++) {
+                VmMethod vmMethod = vmType.getDeclaredMethod(i);
+                if (vmMethod.getMemberHashCode() == methodId) {
+                    return new VMMethod(clazz, methodId);
+                }
+            }
+            return null;
+        } catch (Exception e) {
+            if (debug())
+                log.debug("NativeVMVirtualMachine.getClassMethod() error: " + e.getMessage());
+            return null;
+        }
     }
     /**
      * @see gnu.classpath.jdwp.VMVirtualMachine#getFrames(java.lang.Thread, int, int)
      */
     @NoInline
-    static ArrayList getFrames(Thread arg1, int arg2, int arg3) {
-        //todo implement it
+    static ArrayList getFrames(Thread thread, int startFrame, int length) {
         if(debug())
-            System.out.println("NativeVMVirtualMachine.getFrame()");
-        return null;
+            log.debug("NativeVMVirtualMachine.getFrame()");
+
+        ArrayList frames = new ArrayList();
+        try {
+            StackTraceElement[] elements = thread.getStackTrace();
+            VMIdManager idm = VMIdManager.getDefault();
+            int count = 0;
+            for (int i = 0; i < elements.length && count < length; i++) {
+                if (i < startFrame) continue;
+                StackTraceElement elem = elements[i];
+                Class clazz = null;
+                try {
+                    clazz = Class.forName(elem.getClassName());
+                } catch (ClassNotFoundException e) {
+                    // skip frames we can't resolve
+                    continue;
+                }
+                VMMethod vmMethod = null;
+                try {
+                    java.lang.reflect.Method[] methods = clazz.getDeclaredMethods();
+                    for (int j = 0; j < methods.length; j++) {
+                        if (methods[j].getName().equals(elem.getMethodName())) {
+                            ObjectId methodId = idm.getObjectId(methods[j]);
+                            vmMethod = new VMMethod(clazz, methodId.getId());
+                            break;
+                        }
+                    }
+                } catch (Exception e) {
+                    // skip if we can't find the method
+                }
+                Location loc = vmMethod != null ? new Location(vmMethod, 0) : Location.getEmptyLocation();
+                VMFrame frame = new VMFrame();
+                // Use reflection to set the frame fields since VMFrame fields are private
+                // VMFrame just needs id and location
+                // The only way to set them is through the constructor or reflection
+                // Since VMFrame has no public constructor that takes id+location,
+                // we'll create it via the native path by setting fields via reflection
+                java.lang.reflect.Field idField = VMFrame.class.getDeclaredField("id");
+                idField.setAccessible(true);
+                idField.setLong(frame, i);
+                java.lang.reflect.Field locField = VMFrame.class.getDeclaredField("loc");
+                locField.setAccessible(true);
+                locField.set(frame, loc);
+                frames.add(frame);
+                count++;
+            }
+        } catch (Exception e) {
+            if (debug())
+                log.debug("getFrames error: " + e);
+        }
+        return frames;
     }
     /**
      * @see gnu.classpath.jdwp.VMVirtualMachine#getFrame(java.lang.Thread, java.nio.ByteBuffer)
      */
     @NoInline
-    static VMFrame getFrame(Thread arg1, ByteBuffer arg2) {
-        //todo implement it
+    static VMFrame getFrame(Thread thread, ByteBuffer bb) {
         if(debug())
-            System.out.println("NativeVMVirtualMachine.getFrame()");
+            log.debug("NativeVMVirtualMachine.getFrame()");
+
+        try {
+            long frameId = bb.getLong();
+            StackTraceElement[] elements = thread.getStackTrace();
+            if (frameId >= 0 && frameId < elements.length) {
+                StackTraceElement elem = elements[(int) frameId];
+                Class clazz = Class.forName(elem.getClassName());
+                VMMethod vmMethod = null;
+                java.lang.reflect.Method[] methods = clazz.getDeclaredMethods();
+                for (int j = 0; j < methods.length; j++) {
+                    if (methods[j].getName().equals(elem.getMethodName())) {
+                        VMIdManager idm = VMIdManager.getDefault();
+                        ObjectId methodId = idm.getObjectId(methods[j]);
+                        vmMethod = new VMMethod(clazz, methodId.getId());
+                        break;
+                    }
+                }
+                Location loc = vmMethod != null ? new Location(vmMethod, 0) : Location.getEmptyLocation();
+                VMFrame frame = new VMFrame();
+                java.lang.reflect.Field idField = VMFrame.class.getDeclaredField("id");
+                idField.setAccessible(true);
+                idField.setLong(frame, frameId);
+                java.lang.reflect.Field locField = VMFrame.class.getDeclaredField("loc");
+                locField.setAccessible(true);
+                locField.set(frame, loc);
+                return frame;
+            }
+        } catch (Exception e) {
+            if (debug())
+                log.debug("getFrame error: " + e);
+        }
         return null;
     }
     /**
      * @see gnu.classpath.jdwp.VMVirtualMachine#getFrameCount(java.lang.Thread)
      */
     @NoInline
-    static int getFrameCount(Thread arg1) {
-        //todo implement it
+    static int getFrameCount(Thread thread) {
         if(debug())
-            System.out.println("NativeVMVirtualMachine.getFrameCount()");
-        return 0;
+            log.debug("NativeVMVirtualMachine.getFrameCount()");
+
+        try {
+            StackTraceElement[] elements = thread.getStackTrace();
+            return elements.length;
+        } catch (Exception e) {
+            if (debug())
+                log.debug("getFrameCount error: " + e);
+            return 0;
+        }
     }
     /**
      * @see gnu.classpath.jdwp.VMVirtualMachine#getThreadStatus(java.lang.Thread)
      */
     @NoInline
     static int getThreadStatus(Thread thread) {
-        //todo implement it
         if(debug())
-            System.out.println("NativeVMVirtualMachine.getThreadStatus()");
+            log.debug("NativeVMVirtualMachine.getThreadStatus()");
 
-//        public static final int ZOMBIE = 0;
-//        public static final int RUNNING = 1;
-//        public static final int SLEEPING = 2;
-//        public static final int MONITOR = 3;
-//        public static final int WAIT = 4;
+        // JDWP thread status constants:
+        // ZOMBIE = 0, RUNNING = 1, SLEEPING = 2, MONITOR = 3, WAIT = 4
+        try {
+            // Access vmThread field via reflection (it's package-private in Thread)
+            Field vmThreadField = Thread.class.getDeclaredField("vmThread");
+            vmThreadField.setAccessible(true);
+            VmThread vmThread = (VmThread) vmThreadField.get(thread);
+            if (vmThread == null) return 0; // ZOMBIE
 
-        return 0;
+            // Use public boolean methods to determine state
+            if (!vmThread.isAlive()) {
+                return 0; // ZOMBIE
+            }
+            if (vmThread.isRunning() || vmThread.isYielding()) {
+                return 1; // RUNNING
+            }
+            if (vmThread.isWaiting()) {
+                // All waiting states map to WAIT (MONITOR vs WAIT distinction
+                // requires access to internal state which is package-private)
+                return 4; // WAIT
+            }
+            // Thread is alive but not running/yielding/waiting
+            // This covers ASLEEP and SUSPENDED states
+            return 2; // SLEEPING
+        } catch (Exception e) {
+            if (debug())
+                log.debug("getThreadStatus() error: " + e.getMessage());
+            return 1; // default to RUNNING
+        }
     }
     /**
      * @see gnu.classpath.jdwp.VMVirtualMachine#getLoadRequests(java.lang.ClassLoader)
@@ -206,8 +391,8 @@ public class JDIVirtualMachine {
     static ArrayList getLoadRequests(ClassLoader arg1) {
         //todo implement it
         if(debug())
-            System.out.println("NativeVMVirtualMachine.getLoadRequest()");
-        return null;
+            log.debug("NativeVMVirtualMachine.getLoadRequest()");
+        return new ArrayList();
     }
     /**
      * @see gnu.classpath.jdwp.VMVirtualMachine#executeMethod(java.lang.Object, java.lang.Thread, java.lang.Class, java.lang.reflect.Method, java.lang.Object[], boolean)
@@ -216,7 +401,7 @@ public class JDIVirtualMachine {
     static MethodResult executeMethod(Object arg1, Thread arg2, Class arg3, Method arg4, Object[] arg5, boolean arg6) {
         //todo implement it
         if(debug())
-            System.out.println("NativeVMVirtualMachine.executeMethod()");
+            log.debug("NativeVMVirtualMachine.executeMethod()");
         return null;
     }
     /**
@@ -226,7 +411,7 @@ public class JDIVirtualMachine {
     static String getSourceFile(Class arg1) {
         //todo implement it
         if(debug())
-            System.out.println("NativeVMVirtualMachine.getSourceFile()");
+            log.debug("NativeVMVirtualMachine.getSourceFile()");
         return null;
     }
     /**
@@ -236,7 +421,7 @@ public class JDIVirtualMachine {
     static void registerEvent(EventRequest arg1) {
         //todo implement it
         if(debug())
-            System.out.println("NativeVMVirtualMachine.registerEvent() " + arg1.getId() + " " + arg1.getEventKind() +
+            log.debug("NativeVMVirtualMachine.registerEvent() " + arg1.getId() + " " + arg1.getEventKind() +
                 " " + arg1.getSuspendPolicy() +  " " + arg1.getFilters());
     }
     /**
@@ -246,7 +431,7 @@ public class JDIVirtualMachine {
     static void unregisterEvent(EventRequest arg1) {
         //todo implement it
         if(debug())
-            System.out.println("NativeVMVirtualMachine.unregisterEvent()");
+            log.debug("NativeVMVirtualMachine.unregisterEvent()");
     }
     /**
      * @see gnu.classpath.jdwp.VMVirtualMachine#clearEvents(byte)
@@ -255,7 +440,7 @@ public class JDIVirtualMachine {
     static void clearEvents(byte arg1) {
         //todo implement it
         if(debug())
-            System.out.println("NativeVMVirtualMachine.clearEvents()");
+            log.debug("NativeVMVirtualMachine.clearEvents()");
     }
     /**
      * @see gnu.classpath.jdwp.VMVirtualMachine#redefineClass(Class, byte[])
@@ -263,7 +448,7 @@ public class JDIVirtualMachine {
     @NoInline
     static void redefineClass(Class oldClass, byte[] classData){
         if(debug())
-            System.out.println("NativeVMVirtualMachine.redefineClass()");
+            log.debug("NativeVMVirtualMachine.redefineClass()");
 
         String name = oldClass.getName();
         VmType old_type = VmType.fromClass(oldClass);
@@ -279,7 +464,7 @@ public class JDIVirtualMachine {
                 old_method.setBytecode(new_method.getBytecode());
                 old_method.resetOptLevel();
                 old_method.recompile();
-                System.out.println("Redefined method: " + old_method.getFullName());
+                log.info("Redefined method: " + old_method.getFullName());
             }
         }
     }

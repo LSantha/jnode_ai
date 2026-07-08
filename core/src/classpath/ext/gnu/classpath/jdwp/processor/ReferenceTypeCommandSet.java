@@ -56,6 +56,8 @@ import gnu.classpath.jdwp.util.Value;
 import java.io.DataOutputStream;
 import java.io.IOException;
 import java.lang.reflect.Field;
+import java.lang.reflect.Method;
+import java.lang.reflect.Modifier;
 import java.nio.ByteBuffer;
 
 /**
@@ -167,7 +169,7 @@ public class ReferenceTypeCommandSet
     ReferenceTypeId refId = idMan.readReferenceTypeId(bb);
     Class clazz = refId.getType();
 
-    Field[] fields = clazz.getFields();
+    Field[] fields = clazz.getDeclaredFields();
     os.writeInt(fields.length);
     for (int i = 0; i < fields.length; i++)
       {
@@ -182,18 +184,17 @@ public class ReferenceTypeCommandSet
   private void executeMethods(ByteBuffer bb, DataOutputStream os)
     throws JdwpException, IOException
   {
-    ClassReferenceTypeId refId
-      = (ClassReferenceTypeId) idMan.readReferenceTypeId(bb);
+    ReferenceTypeId refId = idMan.readReferenceTypeId(bb);
     Class clazz = refId.getType();
 
-    VMMethod[] methods = VMVirtualMachine.getAllClassMethods(clazz);
-    os.writeInt (methods.length);
+    Method[] methods = clazz.getDeclaredMethods();
+    os.writeInt(methods.length);
     for (int i = 0; i < methods.length; i++)
       {
-        VMMethod method = methods[i];
-        method.writeId(os);
+        Method method = methods[i];
+        idMan.getObjectId(method).write(os);
         JdwpString.writeString(os, method.getName());
-        JdwpString.writeString(os, method.getSignature());
+        JdwpString.writeString(os, Signature.computeMethodSignature(method));
         os.writeInt(method.getModifiers());
       }
   }

@@ -48,9 +48,10 @@ import gnu.classpath.jdwp.transport.JdwpConnection;
 import gnu.classpath.jdwp.transport.JdwpPacket;
 import gnu.classpath.jdwp.transport.JdwpReplyPacket;
 
+import org.apache.log4j.Logger;
+
 import java.io.ByteArrayOutputStream;
 import java.io.DataOutputStream;
-import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.security.PrivilegedAction;
 
@@ -65,12 +66,14 @@ import java.security.PrivilegedAction;
 public class PacketProcessor
   implements PrivilegedAction
 {
+  private static final Logger log = Logger.getLogger(PacketProcessor.class);
+
   // The connection to the debugger
   private JdwpConnection _connection;
-  
+
   // Shutdown this thread?
   private boolean _shutdown;
-  
+
   // A Mapping of the command set (Byte) to the specific CommandSet
   private CommandSet[] _sets;
 
@@ -79,7 +82,7 @@ public class PacketProcessor
 
   // Output stream around _outputBytes
   private DataOutputStream _os;
-  
+
   /**
    * Constructs a new <code>PacketProcessor</code> object
    * Connection must be validated before getting here!
@@ -90,8 +93,8 @@ public class PacketProcessor
   {
     _connection = con;
     _shutdown = false;
-    
-    // MAXIMUM is the value of the largest command set we may receive 
+
+    // MAXIMUM is the value of the largest command set we may receive
     _sets = new CommandSet[JdwpConstants.CommandSet.MAXIMUM + 1];
     _outputBytes = new ByteArrayOutputStream();
     _os = new DataOutputStream (_outputBytes);
@@ -130,7 +133,7 @@ public class PacketProcessor
     _sets[JdwpConstants.CommandSet.ClassObjectReference.CS_VALUE] =
       new ClassObjectReferenceCommandSet();
   }
-  
+
   /**
    * Main run routine for this thread. Will loop getting packets
    * from the connection and processing them.
@@ -140,23 +143,29 @@ public class PacketProcessor
     // Notify initialization thread (gnu.classpath.jdwp.Jdwp) that
     // the PacketProcessor thread is ready.
     Jdwp.getDefault().subcomponentInitialized ();
-	
+
     try
       {
         while (!_shutdown)
           {
-            _processOnePacket ();
+            JdwpPacket pkt = _connection.getPacket ();
+            if (pkt == null)
+              {
+                // getPacket returns null when shutdown or interrupted
+                break;
+              }
+            _processPacket (pkt);
           }
       }
     catch (Exception ex)
       {
-        ex.printStackTrace();
+        if (!_shutdown) {
+          log.warn("JDWP client disconnected: " + ex.getMessage());
+        }
       }
-    // Time to shutdown, tell Jdwp to shutdown
-    Jdwp.getDefault().shutdown();
     return null;
   }
-  
+
   /**
    * Shutdown the packet processor
    */
@@ -164,58 +173,59 @@ public class PacketProcessor
   {
     _shutdown = true;
   }
-  
-  // Helper function which actually does all the work of waiting
-  // for a packet and getting it processed.
-  private void _processOnePacket ()
-    throws IOException
+
+  // Process a single packet (called from run loop)
+  private void _processPacket (JdwpPacket pkt)
   {
-    JdwpPacket pkt = _connection.getPacket ();
-    
     if (!(pkt instanceof JdwpCommandPacket))
       {
-        // We're not supposed to get these from the debugger!
-        // Drop it on the floor
         return;
       }
-    
-    if (pkt != null)
+
+    JdwpCommandPacket commandPkt = (JdwpCommandPacket) pkt;
+    JdwpReplyPacket reply = new JdwpReplyPacket(commandPkt);
+
+    _outputBytes.reset();
+
+    ByteBuffer bb = ByteBuffer.wrap(commandPkt.getData());
+    byte command = commandPkt.getCommand();
+    byte commandSet = commandPkt.getCommandSet();
+
+    CommandSet set = null;
+    try
       {
-        JdwpCommandPacket commandPkt = (JdwpCommandPacket) pkt;
-        JdwpReplyPacket reply = new JdwpReplyPacket(commandPkt);
-        
-        // Reset our output stream
-        _outputBytes.reset();
-        
-        // Create a ByteBuffer around the command packet 
-        ByteBuffer bb = ByteBuffer.wrap(commandPkt.getData());
-        byte command = commandPkt.getCommand();
-        byte commandSet = commandPkt.getCommandSet();
-        
-        CommandSet set = null;
-        try
+        if (commandSet > 0 && commandSet < _sets.length)
           {
-            // There is no command set with value 0
-            if (commandSet > 0 && commandSet < _sets.length)
-              {
-                set = _sets[commandPkt.getCommandSet()];
-              }
-            if (set != null) 
-              {
-                _shutdown = set.runCommand(bb, _os, command);
-                reply.setData(_outputBytes.toByteArray());
-              }
-            else
-              {
-                // This command set wasn't in our tree
-                reply.setErrorCode(JdwpConstants.Error.NOT_IMPLEMENTED);
-              }
+            set = _sets[commandPkt.getCommandSet()];
           }
-          catch (JdwpException ex)
-            {
-            reply.setErrorCode(ex.getErrorCode ());
-            }
-          _connection.sendPacket (reply);
+        if (set != null)
+          {
+            _shutdown = set.runCommand(bb, _os, command);
+            reply.setData(_outputBytes.toByteArray());
+          }
+        else
+          {
+            reply.setErrorCode(JdwpConstants.Error.NOT_IMPLEMENTED);
+          }
+      }
+    catch (JdwpException ex)
+      {
+        reply.setErrorCode(ex.getErrorCode ());
+      }
+    catch (Exception ex)
+      {
+        log.warn("JDWP command processing error: " + ex.getMessage());
+        reply.setErrorCode(JdwpConstants.Error.INTERNAL);
+      }
+
+    try
+      {
+        _connection.sendPacket (reply);
+      }
+    catch (Exception ex)
+      {
+        log.warn("JDWP failed to send reply: " + ex.getMessage());
+        _shutdown = true;
       }
   }
 }

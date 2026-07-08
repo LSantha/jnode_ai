@@ -70,9 +70,12 @@
         </optional>
       </sequence>
     </syntax>
-    <syntax alias="debug">
-      <optional description="Run a JDWP listener to enable remote debugging">
-        <option argLabel="port" shortName="p"/>
+    <syntax alias="debug" description="Start or stop a JDWP remote debugger listener">
+      <optional>
+        <optionSet>
+          <option argLabel="port" shortName="p" longName="port"/>
+          <option argLabel="stop" shortName="s" longName="stop"/>
+        </optionSet>
       </optional>
     </syntax>
     <syntax alias="remoteout">

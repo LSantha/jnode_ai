@@ -28,7 +28,6 @@ permission to link this library with independent modules to produce an
 executable, regardless of the license terms of these independent
 modules, and to copy and distribute the resulting executable under
 terms of your choice, provided that you also meet, for each linked
-terms of your choice, provided that you also meet, for each linked
 independent module, the terms and conditions of the license of that
 module.  An independent module is a module which is not derived from
 or based on this library.  If you modify this library, you may extend
@@ -49,6 +48,8 @@ import gnu.classpath.jdwp.transport.JdwpConnection;
 import gnu.classpath.jdwp.transport.TransportException;
 import gnu.classpath.jdwp.transport.TransportFactory;
 
+import org.apache.log4j.Logger;
+
 import java.io.IOException;
 import java.security.AccessController;
 import java.util.HashMap;
@@ -64,6 +65,8 @@ import java.util.HashMap;
 public class Jdwp
   extends Thread
 {
+  private static final Logger log = Logger.getLogger(Jdwp.class);
+
   // The single instance of the back-end
   private static Jdwp _instance = null;
 
@@ -117,14 +120,14 @@ public class Jdwp
 
   /**
    * Get the thread group used by JDWP threads
-   * 
+   *
    * @return the thread group
    */
   public ThreadGroup getJdwpThreadGroup()
   {
     return _group;
   }
-  
+
   /**
    * Should the virtual machine suspend on startup?
    */
@@ -176,35 +179,83 @@ public class Jdwp
 
     //jnode
     public void waitToFinish(){
-        if(_ppThread != null)
+        if(_ppThread != null) {
             try{
-                _ppThread.join(0);
-            }catch (Exception e){
-                //
+                _ppThread.join();
+            }catch (InterruptedException e){
+                Thread.currentThread().interrupt();
             }
+        }
     }
 
   /**
    * Shutdown the JDWP back-end
-   *
-   * NOTE: This does not quite work properly. See notes in 
-   * run() on this subject (catch of InterruptedException).
    */
   public void shutdown ()
   {
     if (!_shutdown)
       {
-	_packetProcessor.shutdown ();
-	_ppThread.interrupt ();
-	_connection.shutdown ();
 	_shutdown = true;
 	isDebugging = false;
 
-	/* FIXME: probably need to check state of user's
-	   program -- if it is suspended, we need to either
-	   resume or kill them. */
+	// First shut down the connection (closes socket, wakes up blocked reads)
+	if (_connection != null)
+	  {
+	    try { _connection.shutdown (); } catch (Exception e) { }
+	  }
 
+	// Wake up the packet processor if it's waiting on getPacket()
+	if (_packetProcessor != null)
+	  {
+	    _packetProcessor.shutdown ();
+	  }
+	if (_ppThread != null)
+	  {
+	    _ppThread.interrupt ();
+	  }
+
+	// Wake up anyone waiting on _initLock (e.g., in run())
+	if (_initLock != null)
+	  {
+	    synchronized (_initLock)
+	      {
+		_initLock.notifyAll ();
+	      }
+	  }
+
+	// Interrupt ourselves
 	interrupt ();
+      }
+  }
+
+  /**
+   * Force kill all threads in the JDWP thread group.
+   * Called when normal shutdown doesn't work.
+   */
+  public void forceShutdown ()
+  {
+    shutdown ();
+
+    if (_group != null)
+      {
+	// Enumerate and interrupt all threads in the group
+	int count = _group.activeCount ();
+	Thread[] threads = new Thread[count + 10];
+	count = _group.enumerate (threads);
+	for (int i = 0; i < count; i++)
+	  {
+	    Thread t = threads[i];
+	    if (t != null && t.isAlive ())
+	      {
+		t.interrupt ();
+		try { t.join (500); } catch (InterruptedException e) { }
+		if (t.isAlive ())
+		  {
+		    // Last resort: stop (deprecated but necessary)
+		    try { t.stop (); } catch (Exception e) { }
+		  }
+	      }
+	  }
       }
   }
 
@@ -231,20 +282,20 @@ public class Jdwp
 	  {
 	    try
 	      {
-		System.out.println ("Jdwp.notify: sending event " + event);
-	  sendEvent (request, event);
+	        log.debug("Jdwp.notify: sending event " + event);
+	        sendEvent (request, event);
 		jdwp._enforceSuspendPolicy (request.getSuspendPolicy ());
 	      }
 	    catch (Exception e)
 	      {
-		/* Really not much we can do. For now, just print out
-		   a warning to the user. */
-		System.out.println ("Jdwp.notify: caught exception: " + e);
+		/* Really not much we can do. For now, just log a
+		   warning. */
+		log.warn("Jdwp.notify: caught exception: " + e, e);
 	      }
 	  }
       }
   }
-  
+
   /**
    * Sends the event to the debugger.
    *
@@ -314,22 +365,34 @@ public class Jdwp
 	   ready to start servicing the VM and debugger. */
 	synchronized (_initLock)
 	  {
-	    while (_initCount != 2)
-	      _initLock.wait ();
+	    int waitCount = 0;
+	    while (_initCount != 2 && !_shutdown && waitCount < 20)
+	      {
+		_initLock.wait (500);
+		waitCount++;
+	      }
+	    if (_initCount != 2)
+	      {
+		log.error("JDWP initialization timed out or shutdown (initCount=" + _initCount + ")");
+		_initLock = null;
+		isDebugging = false;
+		return;
+	      }
 	  }
 	_initLock = null;
       }
     catch (Throwable t)
       {
-	System.out.println ("Exception in JDWP back-end: " + t);
-	System.exit (1);
+	log.error("JDWP back-end initialization failed: " + t.getMessage(), t);
+	isDebugging = false;
+	return;
       }
 
     /* Force creation of the EventManager. If the event manager
        has not been created when isDebugging is set, it is possible
        that the VM will call Jdwp.notify (which uses EventManager)
-       while the EventManager is being created (or at least this is
-       a problem with gcj/gij). */
+       while the EventManager is being created (or at least this
+       is a problem with gcj/gij). */
     EventManager.getDefault();
 
     // Now we are finally ready and initialized

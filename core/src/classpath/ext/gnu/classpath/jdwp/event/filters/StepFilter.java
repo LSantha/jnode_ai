@@ -115,7 +115,8 @@ public class StepFilter
    */
   public boolean matches (Event event)
   {
-    // FIXME
-    throw new RuntimeException ("StepFilter.matches not implemented");
+    // Step events are not yet fully implemented in JNode
+    // Return false to prevent crashes until proper step support is added
+    return false;
   }
 }

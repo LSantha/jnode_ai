@@ -62,6 +62,10 @@ public class JdwpString
   public static void writeString(DataOutputStream os, String string)
       throws IOException
   {
+    if (string == null) {
+      os.writeInt(0);
+      return;
+    }
     // Get the bytes of the string as a string in UTF-8
     byte[] strBytes = string.getBytes("UTF-8");
     os.writeInt(strBytes.length);

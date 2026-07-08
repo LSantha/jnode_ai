@@ -43,6 +43,8 @@ import gnu.classpath.jdwp.Jdwp;
 import gnu.classpath.jdwp.event.Event;
 import gnu.classpath.jdwp.event.EventRequest;
 
+import org.apache.log4j.Logger;
+
 import java.io.ByteArrayOutputStream;
 import java.io.DataInputStream;
 import java.io.DataOutputStream;
@@ -66,6 +68,8 @@ import java.util.Arrays;
 public class JdwpConnection
   extends Thread
 {
+  private static final Logger log = Logger.getLogger(JdwpConnection.class);
+
   // The JDWP handshake
   private static final byte[] _HANDSHAKE = {'J', 'D', 'W', 'P', '-', 'H', 'a',
 					    'n', 'd', 's', 'h', 'a', 'k', 'e'};
@@ -149,6 +153,7 @@ public class JdwpConnection
       {
 	// Send reply handshake
 	_outStream.write (_HANDSHAKE, 0, _HANDSHAKE.length);
+	_outStream.flush ();
 	return;
       }
     else
@@ -182,18 +187,18 @@ public class JdwpConnection
 	       2. Transport was shutdown
 	       In either case, we make sure that all of the
 	       back-end gets shutdown. */
-          //jnode
-          //we will take care of the shutdown elsewhere
-          break;
-        //Jdwp.getDefault().shutdown ();
+	    log.info("JdwpConnection: connection lost: " + ioe.getMessage());
+	    break;
 	  }
 	catch (Throwable t)
 	  {
-	    System.out.println ("JdwpConnection.run: caught an exception: "
-				+ t);
+	    log.error("JdwpConnection.run: caught an exception: " + t, t);
 	    // Just keep going
 	  }
       }
+
+    // Ensure packet processor is unblocked when connection thread exits
+    shutdown ();
   }
 
   // Reads a single packet from the connection, adding it to the packet
@@ -239,7 +244,7 @@ public class JdwpConnection
   {
     synchronized (_commandQueue)
       {
-	while (_commandQueue.isEmpty ())
+	while (_commandQueue.isEmpty () && !_shutdown)
 	  {
 	    try
 	      {
@@ -247,10 +252,13 @@ public class JdwpConnection
 	      }
 	    catch (InterruptedException ie)
 	      {
-		/* PacketProcessor is interrupted
-		   when shutting down */
 		return null;
 	      }
+	  }
+
+	if (_shutdown && _commandQueue.isEmpty ())
+	  {
+	    return null;
 	  }
 
 	return (JdwpPacket) _commandQueue.remove (0);
@@ -263,10 +271,11 @@ public class JdwpConnection
    * @param pkt a <code>JdwpPacket</code> to send
    * @throws IOException
    */
-  public void sendPacket (JdwpPacket pkt)
+  public synchronized void sendPacket (JdwpPacket pkt)
     throws IOException
   {
     pkt.write (_outStream);
+    _outStream.flush ();
   }
 
   /**
@@ -280,14 +289,16 @@ public class JdwpConnection
     throws IOException
   {
     JdwpPacket pkt;
+    byte[] data;
 
     synchronized (_bytes)
       {
 	_bytes.reset ();
 	pkt = event.toPacket (_doStream, request);
-	pkt.setData (_bytes.toByteArray ());
+	data = _bytes.toByteArray ();
       }
 
+    pkt.setData (data);
     sendPacket (pkt);
   }
 
@@ -298,8 +309,15 @@ public class JdwpConnection
   {
     if (!_shutdown)
       {
-	_transport.shutdown ();
 	_shutdown = true;
+	try { _transport.shutdown (); } catch (Exception e) { }
+
+	// Wake up anyone waiting on the command queue
+	synchronized (_commandQueue)
+	  {
+	    _commandQueue.notifyAll ();
+	  }
+
 	interrupt ();
       }
   }

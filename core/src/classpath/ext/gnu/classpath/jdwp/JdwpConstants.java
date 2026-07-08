@@ -714,6 +714,7 @@ public class JdwpConstants
    */
   public static final class SuspendStatus
   {
+    public static final byte NOT_SUSPENDED = 0;
     public static final byte SUSPENDED = 1;
   }
 

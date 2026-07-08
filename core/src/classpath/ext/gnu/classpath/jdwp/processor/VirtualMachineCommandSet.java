@@ -1,7 +1,7 @@
 /* VirtualMachineCommandSet.java -- class to implement the VirtualMachine
    Command Set
    Copyright (C) 2005, 2006 Free Software Foundation
- 
+
 This file is part of GNU Classpath.
 
 GNU Classpath is free software; you can redistribute it and/or modify
@@ -59,7 +59,7 @@ import java.util.Properties;
 
 /**
  * A class representing the VirtualMachine Command Set.
- * 
+ *
  * @author Aaron Luchko <aluchko@redhat.com>
  */
 public class VirtualMachineCommandSet
@@ -203,31 +203,32 @@ public class VirtualMachineCommandSet
   private void executeAllClasses(ByteBuffer bb, DataOutputStream os)
     throws JdwpException, IOException
   {
-    // Disable garbage collection while we're collecting the info on loaded
-    // classes so we some classes don't get collected between the time we get
-    // the count and the time we get the list
-    //VMVirtualMachine.disableGarbageCollection();
-
-    int classCount = VMVirtualMachine.getAllLoadedClassesCount();
-    os.writeInt(classCount);
-
-    // This will be an Iterator over all loaded Classes
+    // Collect all classes into a list first to avoid count/iteration mismatch
+    // (classes can be GC'd between count and iteration, causing stream corruption)
+    ArrayList classes = new ArrayList();
     Iterator iter = VMVirtualMachine.getAllLoadedClasses();
-    //VMVirtualMachine.enableGarbageCollection();
-    int count = 0;
-
-    // Note it's possible classes were created since out classCount so make
-    // sure we don't write more classes than we told the debugger
-    while (iter.hasNext() && count++ < classCount)
-      {
+    while (iter.hasNext()) {
+      try {
         Class clazz = (Class) iter.next();
-        ReferenceTypeId id = idMan.getReferenceTypeId(clazz);
-        id.writeTagged(os);
-        String sig = Signature.computeClassSignature(clazz);
-        JdwpString.writeString(os, sig);
-        int status = VMVirtualMachine.getClassStatus(clazz);
-        os.writeInt(status);
+        if (clazz != null) {
+          classes.add(clazz);
+        }
+      } catch (Exception e) {
+        // Skip classes that can't be resolved (e.g. asClass() failed)
       }
+    }
+
+    os.writeInt(classes.size());
+
+    for (int i = 0; i < classes.size(); i++) {
+      Class clazz = (Class) classes.get(i);
+      ReferenceTypeId id = idMan.getReferenceTypeId(clazz);
+      id.writeTagged(os);
+      String sig = Signature.computeClassSignature(clazz);
+      JdwpString.writeString(os, sig);
+      int status = VMVirtualMachine.getClassStatus(clazz);
+      os.writeInt(status);
+    }
   }
 
   private void executeAllThreads(ByteBuffer bb, DataOutputStream os)
@@ -333,7 +334,7 @@ public class VirtualMachineCommandSet
   {
     String string = JdwpString.readString(bb);
     ObjectId stringId = idMan.getObjectId(string);
-    
+
     // Since this string isn't referenced anywhere we'll disable garbage
     // collection on it so it's still around when the debugger gets back to it.
     stringId.disableCollection();
@@ -357,10 +358,12 @@ public class VirtualMachineCommandSet
     throws JdwpException, IOException
   {
     String baseDir = System.getProperty("user.dir");
+    if (baseDir == null) baseDir = "/";
     JdwpString.writeString(os, baseDir);
 
     // Find and write the classpath
     String classPath = System.getProperty("java.class.path");
+    if (classPath == null) classPath = "";
     String[] paths = classPath.split(":");
 
     os.writeInt(paths.length);
@@ -369,6 +372,7 @@ public class VirtualMachineCommandSet
 
     // Now the bootpath
     String bootPath = System.getProperty("sun.boot.class.path");
+    if (bootPath == null) bootPath = "";
     paths = bootPath.split(":");
     os.writeInt(paths.length);
     for (int i = 0; i < paths.length; i++)
@@ -413,7 +417,7 @@ public class VirtualMachineCommandSet
     os.writeBoolean(false); // canGetOwnedMonitorInfo
     os.writeBoolean(false); // canGetCurrentContendedMonitor
     os.writeBoolean(false); // canGetMonitorInfo
-      //jnode 
+      //jnode
     os.writeBoolean(true); // canRedefineClasses
     os.writeBoolean(false); // canAddMethod
     os.writeBoolean(false); // canUnrestrictedlyRedefineClasses
@@ -460,11 +464,10 @@ public class VirtualMachineCommandSet
   }
 
   private void executeAllClassesWithGeneric(ByteBuffer bb, DataOutputStream os)
-    throws JdwpException
+    throws JdwpException, IOException
   {
-    // We don't handle generics
-    throw new NotImplementedException(
-      "Command VirtualMachine.AllClassesWithGeneric not implemented");
+    // We don't handle generics, delegate to regular ALL_CLASSES
+    executeAllClasses(bb, os);
   }
 
   /**

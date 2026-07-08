@@ -30,11 +30,14 @@ import javax.net.ServerSocketFactory;
 import javax.net.SocketFactory;
 import gnu.classpath.jdwp.transport.ITransport;
 import gnu.classpath.jdwp.transport.TransportException;
+import org.apache.log4j.Logger;
 
 /**
  *
  */
 public class JNodeSocketTransport implements ITransport {
+
+    private static final Logger log = Logger.getLogger(JNodeSocketTransport.class);
 
     /**
      * Name of this transport
@@ -87,25 +90,48 @@ public class JNodeSocketTransport implements ITransport {
     }
 
     public static class ServerSocketHolder {
-        private static ServerSocket ss;
-        public static void close(){
-            if(ss != null){
-                try {
-                    ss.close();
-                } catch (Exception e){
+        private static volatile ServerSocket ss;
 
-                } finally {
-                    ss = null;
+        public static void close(){
+            ServerSocket s = ss;
+            ss = null;
+            if(s != null){
+                try {
+                    s.close();
+                } catch (Exception e){
+                    log.warn("Error closing ServerSocket: " + e.getMessage());
                 }
             }
         }
 
         static Socket getSocket(int port, int backlog) throws IOException{
-            if(ss == null){
-                ServerSocketFactory ssf = ServerSocketFactory.getDefault();
-                ss = ssf.createServerSocket(port, backlog);
+            ServerSocket s;
+            synchronized (ServerSocketHolder.class) {
+                s = ss;
+                if(s == null || s.isClosed()){
+                    try {
+                        s = new ServerSocket(port, backlog);
+                        ss = s;
+                    } catch (IOException e) {
+                        log.warn("Failed to create ServerSocket on port " + port + ": " + e.getMessage());
+                        throw e;
+                    }
+                }
             }
-            return ss.accept();
+            if(s == null || s.isClosed()){
+                throw new IOException("ServerSocket unavailable on port " + port);
+            }
+            try {
+                return s.accept();
+            } catch (Exception e) {
+                // If accept fails (including NPE from concurrent close),
+                // the socket may be in a bad state.
+                // Close it so the next call creates a fresh one.
+                log.warn("ServerSocket accept failed, resetting: " + e.getClass().getName() + ": " + e.getMessage());
+                close();
+                // Return a dummy - the caller will retry
+                throw new IOException("ServerSocket accept failed: " + e.getMessage());
+            }
         }
     }
     
