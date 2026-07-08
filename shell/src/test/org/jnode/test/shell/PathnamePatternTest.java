@@ -21,6 +21,7 @@
 package org.jnode.test.shell;
 
 import java.io.File;
+import java.io.IOException;
 import java.util.LinkedList;
 
 import org.jnode.shell.PathnamePattern;
@@ -142,16 +143,57 @@ public class PathnamePatternTest {
     }
     
     @Test
-    public void testExpand() {
-        PathnamePattern pat = PathnamePattern.compilePathPattern("/tmp/*");
-        LinkedList<String> list = pat.expand(new File("."));
-        for (String path : list) {
-            Assert.assertTrue(new File(path).exists());
+    public void testExpand() throws Exception {
+        // Use a controlled temporary directory rather than globbing the real
+        // filesystem (e.g. /tmp may contain sockets or other special files
+        // for which File.exists() returns false). This keeps the test immune
+        // to unrelated contents of the host's temporary directories.
+        File dir = createTempDir();
+        try {
+            String[] names = {"alpha", "beta", "gamma"};
+            for (String name : names) {
+                Assert.assertTrue("create " + name, new File(dir, name).createNewFile());
+            }
+
+            // Relative pattern expanded against the temp directory. The
+            // expansion returns names relative to 'dir', so resolve them
+            // against 'dir' when checking.
+            PathnamePattern pat = PathnamePattern.compilePathPattern("*");
+            LinkedList<String> list = pat.expand(dir);
+            Assert.assertEquals("relative match count", names.length, list.size());
+            for (String path : list) {
+                File f = new File(dir, path);
+                Assert.assertTrue("exists " + path, f.exists());
+                Assert.assertTrue("is file " + path, f.isFile());
+            }
+
+            // Absolute pattern expanded against the temp directory.
+            pat = PathnamePattern.compilePathPattern(dir.getCanonicalPath() + "/*");
+            list = pat.expand(new File("."));
+            Assert.assertEquals("absolute match count", names.length, list.size());
+            for (String path : list) {
+                Assert.assertTrue("exists " + path, new File(path).exists());
+            }
+        } finally {
+            deleteRecursively(dir);
         }
-        pat = PathnamePattern.compilePathPattern("*");
-        list = pat.expand(new File("."));
-        for (String path : list) {
-            Assert.assertTrue(new File(path).exists());
+    }
+
+    private static File createTempDir() throws IOException {
+        File base = new File(System.getProperty("java.io.tmpdir", "."));
+        File d = new File(base, "jnode-pp-test-" + System.currentTimeMillis() + "-"
+                + Thread.currentThread().getId());
+        Assert.assertTrue("mkdir " + d, d.mkdirs());
+        return d;
+    }
+
+    private static void deleteRecursively(File f) {
+        File[] children = f.listFiles();
+        if (children != null) {
+            for (File c : children) {
+                deleteRecursively(c);
+            }
         }
+        f.delete();
     }
 }
