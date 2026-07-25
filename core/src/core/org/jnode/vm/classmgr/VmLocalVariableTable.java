@@ -8,16 +8,16 @@
  * by the Free Software Foundation; either version 2.1 of the License, or
  * (at your option) any later version.
  *
- * This library is distributed in the hope that it will be useful, but 
+ * This library is distributed in the hope that it will be useful, but
  * WITHOUT ANY WARRANTY; without even the implied warranty of MERCHANTABILITY
- * or FITNESS FOR A PARTICULAR PURPOSE. See the GNU Lesser General Public 
+ * or FITNESS FOR A PARTICULAR PURPOSE. See the GNU Lesser General Public
  * License for more details.
  *
  * You should have received a copy of the GNU Lesser General Public License
- * along with this library; If not, write to the Free Software Foundation, Inc., 
+ * along with this library; If not, write to the Free Software Foundation, Inc.,
  * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
  */
- 
+
 package org.jnode.vm.classmgr;
 
 import org.jnode.vm.objects.VmSystemObject;
@@ -68,6 +68,19 @@ public final class VmLocalVariableTable extends VmSystemObject {
             if (var.matches(pc, index)) {
                 return var;
             }
+        }
+        return null;
+    }
+
+    /**
+     * Gets the local variable at the given table index.
+     *
+     * @param index the index in this table
+     * @return The variable or null if out of range.
+     */
+    public final VmLocalVariable getVariable(int index) {
+        if (index >= 0 && index < table.length) {
+            return table[index];
         }
         return null;
     }

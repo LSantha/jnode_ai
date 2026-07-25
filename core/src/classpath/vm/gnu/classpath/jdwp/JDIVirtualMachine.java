@@ -35,6 +35,8 @@ import org.jnode.annotation.NoInline;
 import org.jnode.vm.classmgr.ClassDecoder;
 import org.jnode.vm.classmgr.VmClassLoader;
 import org.jnode.vm.classmgr.VmIsolatedStatics;
+import org.jnode.vm.VmStackFrame;
+import org.jnode.vm.classmgr.VmByteCode;
 import org.jnode.vm.classmgr.VmMethod;
 import org.jnode.vm.classmgr.VmStaticsIterator;
 import org.jnode.vm.classmgr.VmType;
@@ -196,8 +198,11 @@ public class JDIVirtualMachine {
             VMMethod[] methods = new VMMethod[methodCount];
             for (int i = 0; i < methodCount; i++) {
                 VmMethod vmMethod = vmType.getDeclaredMethod(i);
-                // Use the method's hash code as the ID
-                methods[i] = new VMMethod(clazz, vmMethod.getMemberHashCode());
+                // Use the method's index within its declaring class as the
+                // stable, collision-free JDWP method id. The same index is
+                // used when building stack frames and when resolving a method
+                // id back via getDeclaredMethod(int).
+                methods[i] = new VMMethod(clazz, i);
             }
             return methods;
         } catch (Exception e) {
@@ -216,13 +221,16 @@ public class JDIVirtualMachine {
             VmType vmType = VmType.fromClass(clazz);
             if (vmType == null) return null;
 
-            // Search for method with matching hash code
+            // The method id is the method's index within its declaring class.
+            int idx = (int) methodId;
             int methodCount = vmType.getNoDeclaredMethods();
-            for (int i = 0; i < methodCount; i++) {
-                VmMethod vmMethod = vmType.getDeclaredMethod(i);
-                if (vmMethod.getMemberHashCode() == methodId) {
-                    return new VMMethod(clazz, methodId);
-                }
+            if (idx >= 0 && idx < methodCount) {
+                return new VMMethod(clazz, idx);
+            }
+            if (debug()) {
+                appendDiag("getClassMethod MISS id=" + methodId
+                    + " class=" + clazz.getName()
+                    + " declared=" + methodCount + "\n");
             }
             return null;
         } catch (Exception e) {
@@ -231,57 +239,137 @@ public class JDIVirtualMachine {
             return null;
         }
     }
+
+    private static void appendDiag(String s) {
+        try {
+            java.io.FileWriter fw = new java.io.FileWriter("/jnode/jdwp_diag.txt", true);
+            fw.write(s);
+            fw.close();
+        } catch (Exception e) {
+            // ignore
+        }
+    }
+
     /**
+     * Resolves the internal VmThread for a given JDWP thread.
+     */
+    private static VmThread getVmThread(Thread thread) {
+        if (thread == null) return null;
+        try {
+            Field vmThreadField = Thread.class.getDeclaredField("vmThread");
+            vmThreadField.setAccessible(true);
+            return (VmThread) vmThreadField.get(thread);
+        } catch (Exception e) {
+            return null;
+        }
+    }
+ 
+    /**
+    * Returns the index of the given VmMethod within its declaring class, which
+    * is used as the stable JDWP method id.
+    */
+    private static int getMethodIndex(VmType<?> vmType, VmMethod vmMethod) {
+        int n = vmType.getNoDeclaredMethods();
+        for (int i = 0; i < n; i++) {
+            if (vmType.getDeclaredMethod(i) == vmMethod) {
+                return i;
+            }
+        }
+        return -1;
+    }
+
+    /**
+     * Reads the program counter of a VmStackFrame (private final field).
+     */
+    private static int getProgramCounter(VmStackFrame sf) {
+        try {
+            Field pcField = VmStackFrame.class.getDeclaredField("programCounter");
+            pcField.setAccessible(true);
+            return pcField.getInt(sf);
+        } catch (Exception e) {
+            return -1;
+        }
+    }
+
+    /**
+     * Builds a JDWP VMFrame from a real VmStackFrame at the given frame index.
+     */
+    private static VMFrame buildFrame(VmStackFrame sf, int frameIndex) {
+        try {
+            VmMethod vmMethod = sf.getMethod();
+            Location loc = Location.getEmptyLocation();
+            if (vmMethod != null) {
+                VmType<?> vmType = vmMethod.getDeclaringClass();
+                Class<?> clazz = vmType.asClass();
+                if (clazz != null) {
+                    // Use the VmMethod's declaring-class index as the JDWP
+                    // method id. This is the same id space used by the
+                    // ReferenceType methods command and by
+                    // VMMethod.getClassMethod, so that jdb can resolve frame
+                    // locations and line tables without hash collisions.
+                    int methodIdx = getMethodIndex(vmType, vmMethod);
+                    if (methodIdx >= 0) {
+                        VMMethod jdwpMethod = new VMMethod(clazz, methodIdx);
+                        int pc = getProgramCounter(sf);
+                        VmByteCode bc = vmMethod.getBytecode();
+                        boolean hasLines = (bc != null) && (bc.getLineNrs() != null)
+                            && (bc.getLineNrs().getLength() > 0);
+                        if (pc < 0 || !hasLines) {
+                            // Unknown pc (interpreted/native) or no line info:
+                            // use 0, which is always a valid index in the line
+                            // table built by NativeVMMethod.getLineTable.
+                            pc = 0;
+                        } else {
+                            int len = bc.getLength();
+                            if (len > 0 && pc >= len) {
+                                pc = len - 1;
+                            }
+                        }
+                        loc = new Location(jdwpMethod, pc);
+                    }
+                }
+            }
+            VMFrame frame = new VMFrame();
+            Field idField = VMFrame.class.getDeclaredField("id");
+            idField.setAccessible(true);
+            idField.setLong(frame, frameIndex);
+            Field locField = VMFrame.class.getDeclaredField("loc");
+            locField.setAccessible(true);
+            locField.set(frame, loc);
+            Field objField = VMFrame.class.getDeclaredField("obj");
+            objField.setAccessible(true);
+            objField.set(frame, null);
+            return frame;
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    /**
+     * Walks the real (suspended) thread stack using the VM stack reader and
+     * returns JDWP frames with real method and line-number locations.
+     *
      * @see gnu.classpath.jdwp.VMVirtualMachine#getFrames(java.lang.Thread, int, int)
      */
     @NoInline
     static ArrayList getFrames(Thread thread, int startFrame, int length) {
         if(debug())
-            log.debug("NativeVMVirtualMachine.getFrame()");
+            log.debug("NativeVMVirtualMachine.getFrames()");
 
         ArrayList frames = new ArrayList();
         try {
-            StackTraceElement[] elements = thread.getStackTrace();
-            VMIdManager idm = VMIdManager.getDefault();
-            int count = 0;
-            for (int i = 0; i < elements.length && count < length; i++) {
-                if (i < startFrame) continue;
-                StackTraceElement elem = elements[i];
-                Class clazz = null;
-                try {
-                    clazz = Class.forName(elem.getClassName());
-                } catch (ClassNotFoundException e) {
-                    // skip frames we can't resolve
-                    continue;
+            VmThread vmThread = getVmThread(thread);
+            if (vmThread == null) return frames;
+            Object[] st = VmThread.getStackTrace(vmThread);
+            if (st == null) return frames;
+            int total = st.length;
+            if (startFrame < 0) startFrame = 0;
+            int end = (length < 0) ? total : Math.min(startFrame + length, total);
+            for (int i = startFrame; i < end; i++) {
+                VMFrame frame = buildFrame((VmStackFrame) st[i], i);
+                if (frame != null) {
+                    frames.add(frame);
                 }
-                VMMethod vmMethod = null;
-                try {
-                    java.lang.reflect.Method[] methods = clazz.getDeclaredMethods();
-                    for (int j = 0; j < methods.length; j++) {
-                        if (methods[j].getName().equals(elem.getMethodName())) {
-                            ObjectId methodId = idm.getObjectId(methods[j]);
-                            vmMethod = new VMMethod(clazz, methodId.getId());
-                            break;
-                        }
-                    }
-                } catch (Exception e) {
-                    // skip if we can't find the method
-                }
-                Location loc = vmMethod != null ? new Location(vmMethod, 0) : Location.getEmptyLocation();
-                VMFrame frame = new VMFrame();
-                // Use reflection to set the frame fields since VMFrame fields are private
-                // VMFrame just needs id and location
-                // The only way to set them is through the constructor or reflection
-                // Since VMFrame has no public constructor that takes id+location,
-                // we'll create it via the native path by setting fields via reflection
-                java.lang.reflect.Field idField = VMFrame.class.getDeclaredField("id");
-                idField.setAccessible(true);
-                idField.setLong(frame, i);
-                java.lang.reflect.Field locField = VMFrame.class.getDeclaredField("loc");
-                locField.setAccessible(true);
-                locField.set(frame, loc);
-                frames.add(frame);
-                count++;
             }
         } catch (Exception e) {
             if (debug())
@@ -299,30 +387,13 @@ public class JDIVirtualMachine {
 
         try {
             long frameId = bb.getLong();
-            StackTraceElement[] elements = thread.getStackTrace();
-            if (frameId >= 0 && frameId < elements.length) {
-                StackTraceElement elem = elements[(int) frameId];
-                Class clazz = Class.forName(elem.getClassName());
-                VMMethod vmMethod = null;
-                java.lang.reflect.Method[] methods = clazz.getDeclaredMethods();
-                for (int j = 0; j < methods.length; j++) {
-                    if (methods[j].getName().equals(elem.getMethodName())) {
-                        VMIdManager idm = VMIdManager.getDefault();
-                        ObjectId methodId = idm.getObjectId(methods[j]);
-                        vmMethod = new VMMethod(clazz, methodId.getId());
-                        break;
-                    }
-                }
-                Location loc = vmMethod != null ? new Location(vmMethod, 0) : Location.getEmptyLocation();
-                VMFrame frame = new VMFrame();
-                java.lang.reflect.Field idField = VMFrame.class.getDeclaredField("id");
-                idField.setAccessible(true);
-                idField.setLong(frame, frameId);
-                java.lang.reflect.Field locField = VMFrame.class.getDeclaredField("loc");
-                locField.setAccessible(true);
-                locField.set(frame, loc);
-                return frame;
+            VmThread vmThread = getVmThread(thread);
+            if (vmThread == null) return null;
+            Object[] st = VmThread.getStackTrace(vmThread);
+            if (st == null || frameId < 0 || frameId >= st.length) {
+                return null;
             }
+            return buildFrame((VmStackFrame) st[(int) frameId], (int) frameId);
         } catch (Exception e) {
             if (debug())
                 log.debug("getFrame error: " + e);
@@ -338,8 +409,10 @@ public class JDIVirtualMachine {
             log.debug("NativeVMVirtualMachine.getFrameCount()");
 
         try {
-            StackTraceElement[] elements = thread.getStackTrace();
-            return elements.length;
+            VmThread vmThread = getVmThread(thread);
+            if (vmThread == null) return 0;
+            Object[] st = VmThread.getStackTrace(vmThread);
+            return (st == null) ? 0 : st.length;
         } catch (Exception e) {
             if (debug())
                 log.debug("getFrameCount error: " + e);

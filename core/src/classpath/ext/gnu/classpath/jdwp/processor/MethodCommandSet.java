@@ -102,9 +102,15 @@ public class MethodCommandSet
     ClassReferenceTypeId refId
       = (ClassReferenceTypeId) idMan.readReferenceTypeId(bb);
     Class clazz = refId.getType();
-
     VMMethod method = VMMethod.readId(clazz, bb);
+    if (method == null) {
+      new LineTable(0, 1, new int[] { 0 }, new long[] { 0 }).write(os);
+      return;
+    }
     LineTable lt = method.getLineTable();
+    if (lt == null) {
+      lt = new LineTable(0, 1, new int[] { 0 }, new long[] { 0 });
+    }
     lt.write(os);
   }
 
@@ -116,6 +122,11 @@ public class MethodCommandSet
     Class clazz = refId.getType();
 
     VMMethod method = VMMethod.readId(clazz, bb);
+    if (method == null) {
+      new VariableTable(0, 0, new long[0], new String[0],
+          new String[0], new int[0], new int[0]).write(os);
+      return;
+    }
     VariableTable vt = method.getVariableTable();
     vt.write(os);
   }

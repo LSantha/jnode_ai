@@ -148,9 +148,12 @@ public class Location
     return index;
   }
 
-  // convenient for debugging
-  public String toString ()
-  {
-    return method.toString () + "." + index;
-  }
+// convenient for debugging
+   public String toString ()
+   {
+     if (method == null) {
+       return "(empty location)";
+     }
+     return method.toString () + "." + index;
+   }
 }

@@ -40,7 +40,6 @@ exception statement from your version. */
 package gnu.classpath.jdwp.processor;
 
 import gnu.classpath.jdwp.JdwpConstants;
-import gnu.classpath.jdwp.VMMethod;
 import gnu.classpath.jdwp.VMVirtualMachine;
 import gnu.classpath.jdwp.exception.InvalidFieldException;
 import gnu.classpath.jdwp.exception.JdwpException;
@@ -56,8 +55,9 @@ import gnu.classpath.jdwp.util.Value;
 import java.io.DataOutputStream;
 import java.io.IOException;
 import java.lang.reflect.Field;
-import java.lang.reflect.Method;
-import java.lang.reflect.Modifier;
+
+import org.jnode.vm.classmgr.VmMethod;
+import org.jnode.vm.classmgr.VmType;
 import java.nio.ByteBuffer;
 
 /**
@@ -187,15 +187,19 @@ public class ReferenceTypeCommandSet
     ReferenceTypeId refId = idMan.readReferenceTypeId(bb);
     Class clazz = refId.getType();
 
-    Method[] methods = clazz.getDeclaredMethods();
-    os.writeInt(methods.length);
-    for (int i = 0; i < methods.length; i++)
+    VmType vmType = VmType.fromClass(clazz);
+    int count = (vmType == null) ? 0 : vmType.getNoDeclaredMethods();
+    os.writeInt(count);
+    for (int i = 0; i < count; i++)
       {
-        Method method = methods[i];
-        idMan.getObjectId(method).write(os);
-        JdwpString.writeString(os, method.getName());
-        JdwpString.writeString(os, Signature.computeMethodSignature(method));
-        os.writeInt(method.getModifiers());
+        VmMethod vmMethod = vmType.getDeclaredMethod(i);
+        // VmType.getDeclaredMethod(i) should never return null for i in
+        // [0, getNoDeclaredMethods()). If it does, that indicates a VM
+        // bug; let the NPE surface rather than writing mismatched count.
+        os.writeLong(i);
+        JdwpString.writeString(os, vmMethod.getName());
+        JdwpString.writeString(os, vmMethod.getSignature());
+        os.writeInt(vmMethod.getModifiers());
       }
   }
 
