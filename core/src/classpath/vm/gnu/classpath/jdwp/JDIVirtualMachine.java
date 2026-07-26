@@ -508,11 +508,28 @@ public class JDIVirtualMachine {
      * @see gnu.classpath.jdwp.VMVirtualMachine#executeMethod(java.lang.Object, java.lang.Thread, java.lang.Class, java.lang.reflect.Method, java.lang.Object[], boolean)
      */
     @NoInline
-    static MethodResult executeMethod(Object arg1, Thread arg2, Class arg3, Method arg4, Object[] arg5, boolean arg6) {
-        //todo implement it
+    static MethodResult executeMethod(Object obj, Thread thread, Class clazz,
+                                      Method method, Object[] args,
+                                      boolean nonVirtual) {
         if(debug())
-            log.debug("NativeVMVirtualMachine.executeMethod()");
-        return null;
+            log.debug("NativeVMVirtualMachine.executeMethod() " + clazz.getName() + "." + method.getName());
+
+        MethodResult result = new MethodResult();
+        try {
+            Method m = method;
+            if (nonVirtual && !method.getDeclaringClass().isInterface()) {
+                // nonVirtual: invoke the specific class's method, not virtual dispatch
+                m = clazz.getDeclaredMethod(method.getName(), method.getParameterTypes());
+                m.setAccessible(true);
+            }
+            Object ret = m.invoke(obj, args);
+            result.setReturnedValue(ret);
+        } catch (java.lang.reflect.InvocationTargetException ex) {
+            result.setThrownException((Exception) ex.getCause());
+        } catch (Exception ex) {
+            result.setThrownException(ex);
+        }
+        return result;
     }
     /**
      * @see gnu.classpath.jdwp.VMVirtualMachine#getSourceFile(java.lang.Class)

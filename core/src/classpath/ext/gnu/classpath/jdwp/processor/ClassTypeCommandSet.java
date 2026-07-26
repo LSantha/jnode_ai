@@ -154,10 +154,18 @@ public class ClassTypeCommandSet
 
     Object value = mr.getReturnedValue();
     Exception exception = mr.getThrownException();
-    ObjectId eId = idMan.getObjectId(exception);
 
     Value.writeTaggedValue(os, value);
-    eId.writeTagged(os);
+    if (exception != null)
+      {
+        ObjectId eId = idMan.getObjectId(exception);
+        eId.writeTagged(os);
+      }
+    else
+      {
+        os.writeByte(0);
+        os.writeLong(0);
+      }
   }
 
   private void executeNewInstance(ByteBuffer bb, DataOutputStream os)
@@ -166,12 +174,28 @@ public class ClassTypeCommandSet
     MethodResult mr = invokeMethod(bb);
 
     Object obj = mr.getReturnedValue();
-    ObjectId oId = idMan.getObjectId(obj);
     Exception exception = mr.getThrownException();
-    ObjectId eId = idMan.getObjectId(exception);
 
-    oId.writeTagged(os);
-    eId.writeTagged(os);
+    if (obj != null)
+      {
+        ObjectId oId = idMan.getObjectId(obj);
+        oId.writeTagged(os);
+      }
+    else
+      {
+        os.writeByte(0);
+        os.writeLong(0);
+      }
+    if (exception != null)
+      {
+        ObjectId eId = idMan.getObjectId(exception);
+        eId.writeTagged(os);
+      }
+    else
+      {
+        os.writeByte(0);
+        os.writeLong(0);
+      }
   }
 
   /**

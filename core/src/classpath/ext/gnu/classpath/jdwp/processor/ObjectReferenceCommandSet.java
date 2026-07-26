@@ -248,9 +248,18 @@ public class ObjectReferenceCommandSet
     Object value = mr.getReturnedValue();
     Exception exception = mr.getThrownException();
 
-    ObjectId eId = idMan.getObjectId(exception);
     Value.writeTaggedValue(os, value);
-    eId.writeTagged(os);
+    if (exception != null)
+      {
+        ObjectId eId = idMan.getObjectId(exception);
+        eId.writeTagged(os);
+      }
+    else
+      {
+        // Write null object tag + zero ID for no exception
+        os.writeByte(0);
+        os.writeLong(0);
+      }
   }
 
   private void executeDisableCollection(ByteBuffer bb, DataOutputStream os)
