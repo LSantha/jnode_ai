@@ -45,6 +45,7 @@ import org.jnode.vm.isolate.VmIsolate;
 import org.jnode.vm.scheduler.VmThread;
 
 import java.lang.reflect.Field;
+import java.util.HashMap;
 
 /**
  * User: lsantha
@@ -52,6 +53,8 @@ import java.lang.reflect.Field;
  */
 public class JDIVirtualMachine {
     private static final Logger log = Logger.getLogger(JDIVirtualMachine.class);
+
+    private static final HashMap<Thread, Integer> suspendCounts = new HashMap<Thread, Integer>();
 
     @NoInline
     static boolean debug() {
@@ -63,28 +66,50 @@ public class JDIVirtualMachine {
      */
     @NoInline
     static void suspendThread(Thread arg1) {
-        //todo implement it
+        synchronized (suspendCounts) {
+            Integer count = suspendCounts.get(arg1);
+            int newCount = (count == null) ? 1 : count.intValue() + 1;
+            suspendCounts.put(arg1, Integer.valueOf(newCount));
+        }
         if(debug())
-            log.debug("NativeVMVirtualMachine.suspendThread()");
+            log.debug("suspendThread() " + arg1.getName() + " suspendCount=" + getSuspendCount(arg1));
     }
     /**
      * @see gnu.classpath.jdwp.VMVirtualMachine#resumeThread(java.lang.Thread)
      */
     @NoInline
     static void resumeThread(Thread arg1) {
-        //todo implement it
+        synchronized (suspendCounts) {
+            Integer count = suspendCounts.get(arg1);
+            int newCount = (count == null) ? 0 : count.intValue() - 1;
+            if (newCount <= 0) {
+                suspendCounts.remove(arg1);
+            } else {
+                suspendCounts.put(arg1, Integer.valueOf(newCount));
+            }
+        }
         if(debug())
-            log.debug("NativeVMVirtualMachine.resumeThread()");
+            log.debug("resumeThread() " + arg1.getName() + " suspendCount=" + getSuspendCount(arg1));
     }
     /**
      * @see gnu.classpath.jdwp.VMVirtualMachine#getSuspendCount(java.lang.Thread)
      */
     @NoInline
     static int getSuspendCount(Thread arg1) {
-        //todo implement it
-        if(debug())
-            log.debug("NativeVMVirtualMachine.getSuspendCount()");
-        return 0;
+        synchronized (suspendCounts) {
+            Integer count = suspendCounts.get(arg1);
+            return (count == null) ? 0 : count.intValue();
+        }
+    }
+
+    /**
+     * Check if a thread is suspended by the debugger.
+     */
+    static boolean isThreadSuspended(Thread thread) {
+        synchronized (suspendCounts) {
+            Integer count = suspendCounts.get(thread);
+            return count != null && count.intValue() > 0;
+        }
     }
     /**
      * @see gnu.classpath.jdwp.VMVirtualMachine#getAllLoadedClassesCount()
@@ -338,7 +363,19 @@ public class JDIVirtualMachine {
             locField.set(frame, loc);
             Field objField = VMFrame.class.getDeclaredField("obj");
             objField.setAccessible(true);
-            objField.set(frame, null);
+            // For instance methods, read slot 0 ("this") from the frame
+            Object thisObj = null;
+            if (vmMethod != null && !vmMethod.isStatic()) {
+                try {
+                    thisObj = sf.readLocalVariable(0);
+                } catch (Exception ex) {
+                    // ignore
+                }
+            }
+            objField.set(frame, thisObj);
+            Field sfField = VMFrame.class.getDeclaredField("vmStackFrame");
+            sfField.setAccessible(true);
+            sfField.set(frame, sf);
             return frame;
         } catch (Exception e) {
             return null;
@@ -383,7 +420,7 @@ public class JDIVirtualMachine {
     @NoInline
     static VMFrame getFrame(Thread thread, ByteBuffer bb) {
         if(debug())
-            log.debug("NativeVMVirtualMachine.getFrame()");
+            log.debug("NativeVMVirtualMachine.getFrame() thread=" + thread);
 
         try {
             long frameId = bb.getLong();

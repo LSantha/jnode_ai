@@ -99,6 +99,14 @@ public class Value
                                 boolean tagged)
     throws IOException, JdwpException
   {
+    if (obj == null)
+      {
+        if (tagged)
+          os.writeByte(JdwpConstants.Tag.OBJECT);
+        // Write a null object ID (0)
+        os.writeLong(0);
+        return;
+      }
     Class clazz = obj.getClass();
     if (clazz.isPrimitive())
       {

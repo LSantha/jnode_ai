@@ -151,8 +151,9 @@ public class ThreadReferenceCommandSet
     ThreadId tid = (ThreadId) idMan.readObjectId(bb);
     Thread thread = tid.getThread();
     int threadStatus = VMVirtualMachine.getThreadStatus(thread);
-    // We don't actually suspend threads, so always report NOT_SUSPENDED
-    int suspendStatus = JdwpConstants.SuspendStatus.NOT_SUSPENDED;
+    int suspendStatus = VMVirtualMachine.getSuspendCount(thread) > 0
+        ? JdwpConstants.SuspendStatus.SUSPENDED
+        : JdwpConstants.SuspendStatus.NOT_SUSPENDED;
 
     os.writeInt(threadStatus);
     os.writeInt(suspendStatus);

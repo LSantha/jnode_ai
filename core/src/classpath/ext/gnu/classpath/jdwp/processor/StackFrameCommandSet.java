@@ -101,15 +101,14 @@ public class StackFrameCommandSet
     ObjectId tId = idMan.readObjectId(bb);
     Thread thread = (Thread) tId.getObject();
 
-    // Although Frames look like other ids they are not. First they are not
-    // ObjectIds since they don't exist in the users code. Storing them as an
-    // ObjectId would mean they could be garbage collected since no one else
-    // has a reference to them. Furthermore they are not ReferenceTypeIds since
-    // these are held permanently and we want these to be held only as long as
-    // the Thread is suspended.
     VMFrame frame = VMVirtualMachine.getFrame(thread, bb);
     int slots = bb.getInt();
-    os.writeInt(slots); // Looks pointless but this is the protocol
+    if (frame == null)
+      {
+        os.writeInt(0);
+        return;
+      }
+    os.writeInt(slots);
     for (int i = 0; i < slots; i++)
       {
         int slot = bb.getInt();
@@ -128,6 +127,16 @@ public class StackFrameCommandSet
     VMFrame frame = VMVirtualMachine.getFrame(thread, bb);
 
     int slots = bb.getInt();
+    if (frame == null)
+      {
+        // Frame not available, consume and discard the slot data
+        for (int i = 0; i < slots; i++)
+          {
+            bb.getInt(); // slot
+            Value.getObj(bb); // value
+          }
+        return;
+      }
     for (int i = 0; i < slots; i++)
       {
         int slot = bb.getInt();
@@ -144,6 +153,11 @@ public class StackFrameCommandSet
 
     VMFrame frame = VMVirtualMachine.getFrame(thread, bb);
 
+    if (frame == null)
+      {
+        Value.writeTaggedValue(os, null);
+        return;
+      }
     Object thisObject = frame.getObject();
     Value.writeTaggedValue(os, thisObject);
   }

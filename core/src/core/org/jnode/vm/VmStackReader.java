@@ -167,7 +167,7 @@ public abstract class VmStackReader extends VmSystemObject {
         final VmStackFrame[] stack = new VmStackFrame[count];
         sfEnum.reset(frame, ip);
         for (int i = 0; i < count; i++) {
-            stack[i] = new VmStackFrame(sfEnum.getMethod(), sfEnum.getProgramCounter());
+            stack[i] = new VmStackFrame(sfEnum.getMethod(), sfEnum.getProgramCounter(), sfEnum.getFramePtr());
             sfEnum.next();
         }
 

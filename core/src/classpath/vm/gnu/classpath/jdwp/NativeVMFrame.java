@@ -20,6 +20,8 @@
  
 package gnu.classpath.jdwp;
 
+import org.jnode.vm.VmStackFrame;
+
 /**
  * @see gnu.classpath.jdwp.VMFrame
  */
@@ -27,14 +29,30 @@ class NativeVMFrame {
     /**
      * @see gnu.classpath.jdwp.VMFrame#getValue(int)
      */
-    private static Object getValue(VMFrame instance, int arg1) {
-        //todo implement it
+    private static Object getValue(VMFrame instance, int slot) {
+        try {
+            Object sfObj = instance.getVmStackFrame();
+            if (sfObj instanceof VmStackFrame) {
+                VmStackFrame sf = (VmStackFrame) sfObj;
+                return sf.readLocalVariable(slot);
+            }
+        } catch (Throwable t) {
+            // Ignore
+        }
         return null;
     }
     /**
      * @see gnu.classpath.jdwp.VMFrame#setValue(int, java.lang.Object)
      */
-    private static void setValue(VMFrame instance, int arg1, Object arg2) {
-        //todo implement it
+    private static void setValue(VMFrame instance, int slot, Object value) {
+        try {
+            Object sfObj = instance.getVmStackFrame();
+            if (sfObj instanceof VmStackFrame) {
+                VmStackFrame sf = (VmStackFrame) sfObj;
+                sf.writeLocalVariable(slot, value);
+            }
+        } catch (Throwable t) {
+            // Ignore
+        }
     }
 }

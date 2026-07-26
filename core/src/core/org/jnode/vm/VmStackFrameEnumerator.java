@@ -90,6 +90,15 @@ final class VmStackFrameEnumerator {
     }
 
     /**
+     * Gets the current frame pointer (EBP/RBP).
+     *
+     * @return the native frame pointer
+     */
+    public final Address getFramePtr() {
+        return framePtr;
+    }
+
+    /**
      * Move to the next stack position.
      */
     public final void next() {

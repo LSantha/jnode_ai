@@ -62,6 +62,9 @@ public class VMFrame
   
   // id of this frame
   private long id;
+
+  // The VM stack frame (opaque, used by NativeVMFrame for variable access)
+  private Object vmStackFrame;
   
   /**
    * Gets the current location of the frame.
@@ -101,6 +104,15 @@ public class VMFrame
   public long getId()
   {
     return id;
+  }
+
+  /**
+   * Get the VM stack frame associated with this JDWP frame.
+   * @return the VmStackFrame, or null if not available
+   */
+  Object getVmStackFrame()
+  {
+    return vmStackFrame;
   }
 
 }

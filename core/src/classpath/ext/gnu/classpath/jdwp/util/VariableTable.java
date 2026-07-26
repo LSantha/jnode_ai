@@ -95,9 +95,9 @@ public class VariableTable
    */
   public void write(DataOutputStream os) throws IOException
   {
-    os.writeLong(argCnt);
-    os.writeLong(slots);
-    for (int i = 0; i < slots; i++)
+    os.writeInt((int) argCnt);
+    os.writeInt((int) slots);
+    for (int i = 0; i < (int) slots; i++)
       {
         os.writeLong(lineCI[i]);
         JdwpString.writeString(os, names[i]);

@@ -53,6 +53,8 @@ import gnu.classpath.jdwp.util.MethodResult;
 import java.io.DataOutputStream;
 import java.io.IOException;
 import java.lang.reflect.Field;
+import org.jnode.vm.classmgr.VmType;
+import org.jnode.vm.classmgr.VmMethod;
 import java.lang.reflect.Method;
 import java.nio.ByteBuffer;
 
@@ -204,8 +206,19 @@ public class ObjectReferenceCommandSet
     ReferenceTypeId rid = idMan.readReferenceTypeId(bb);
     Class clazz = rid.getType();
 
-    ObjectId mid = idMan.readObjectId(bb);
-    Method method = (Method) mid.getObject();
+    // Method IDs in our implementation are VmMethod indices, not object IDs.
+    // Read the raw long and resolve from the class's method table.
+    long methodIdx = bb.getLong();
+    VmType vmType = VmType.fromClass(clazz);
+    VmMethod vmMethod = (vmType != null && methodIdx >= 0
+                         && methodIdx < vmType.getNoDeclaredMethods())
+        ? vmType.getDeclaredMethod((int) methodIdx) : null;
+    Method method = (vmMethod != null) ? (Method) vmMethod.asMember() : null;
+    if (method == null)
+      {
+        throw new JdwpInternalErrorException("Invalid method index: "
+                                             + methodIdx + " for " + clazz);
+      }
 
     int args = bb.getInt();
     Object[] values = new Object[args];

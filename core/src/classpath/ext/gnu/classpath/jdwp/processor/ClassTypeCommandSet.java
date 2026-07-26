@@ -56,6 +56,8 @@ import java.io.IOException;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.nio.ByteBuffer;
+import org.jnode.vm.classmgr.VmType;
+import org.jnode.vm.classmgr.VmMethod;
 
 /**
  * A class representing the ClassType Command Set.
@@ -184,8 +186,18 @@ public class ClassTypeCommandSet
     ObjectId tId = idMan.readObjectId(bb);
     Thread thread = (Thread) tId.getObject();
 
-    ObjectId mId = idMan.readObjectId(bb);
-    Method method = (Method) mId.getObject();
+    // Method IDs are VmMethod indices, not object IDs.
+    long methodIdx = bb.getLong();
+    VmType vmType = VmType.fromClass(clazz);
+    VmMethod vmMethod = (vmType != null && methodIdx >= 0
+                         && methodIdx < vmType.getNoDeclaredMethods())
+        ? vmType.getDeclaredMethod((int) methodIdx) : null;
+    Method method = (vmMethod != null) ? (Method) vmMethod.asMember() : null;
+    if (method == null)
+      {
+        throw new JdwpInternalErrorException("Invalid method index: "
+                                             + methodIdx + " for " + clazz);
+      }
 
     int args = bb.getInt();
     Object[] values = new Object[args];
