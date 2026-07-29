@@ -76,14 +76,14 @@ public class DebugCommand extends AbstractCommand {
             return;
         }
 
+        final int port = argPort.isSet() ? argPort.getValue() : DEFAULT_PORT;
+
         // If a listener is already running, report it
         if (s_jdwp != null && s_jdwpThread != null && s_jdwpThread.isAlive()) {
-            out.println("JDWP listener already running on port " + DEFAULT_PORT);
+            out.println("JDWP listener already running on port " + port);
             out.println("Use 'debug --stop' to shut it down.");
             return;
         }
-
-        final int port = argPort.isSet() ? argPort.getValue() : DEFAULT_PORT;
         final String ps = "transport=dt_socket,suspend=n,address=" + port + ",server=y";
 
         Thread t = new Thread(new Runnable() {
