@@ -122,7 +122,7 @@ public class ArrayReferenceCommandSet
     else if (clazz == double.class)
       os.writeByte(JdwpConstants.Tag.DOUBLE);
     else if (clazz == int.class)
-      os.writeByte(JdwpConstants.Tag.BYTE);
+      os.writeByte(JdwpConstants.Tag.INT);
     else if (clazz == long.class)
       os.writeByte(JdwpConstants.Tag.LONG);
     else if (clazz == short.class)
@@ -145,6 +145,9 @@ public class ArrayReferenceCommandSet
       os.writeByte(JdwpConstants.Tag.CLASS_OBJECT);
     else
       os.writeByte(JdwpConstants.Tag.OBJECT);
+
+    // JDWP arrayregion: tag + length + values
+    os.writeInt(length);
 
     // Write all the values, primitives should be untagged and Objects must be
     // tagged

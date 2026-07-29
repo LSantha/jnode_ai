@@ -320,18 +320,22 @@ public class JDIVirtualMachine {
      * Builds a JDWP VMFrame from a real VmStackFrame at the given frame index.
      */
     private static VMFrame buildFrame(VmStackFrame sf, int frameIndex) {
+        VMFrame frame = new VMFrame();
         try {
-            VmMethod vmMethod = sf.getMethod();
-            Location loc = Location.getEmptyLocation();
-            if (vmMethod != null) {
+            Field idField = VMFrame.class.getDeclaredField("id");
+            idField.setAccessible(true);
+            idField.setLong(frame, frameIndex);
+        } catch (Throwable t) {
+            // ignore
+        }
+
+        Location loc = Location.getEmptyLocation();
+        VmMethod vmMethod = (sf == null) ? null : sf.getMethod();
+        if (vmMethod != null) {
+            try {
                 VmType<?> vmType = vmMethod.getDeclaringClass();
-                Class<?> clazz = vmType.asClass();
+                Class<?> clazz = (vmType == null) ? null : vmType.asClass();
                 if (clazz != null) {
-                    // Use the VmMethod's declaring-class index as the JDWP
-                    // method id. This is the same id space used by the
-                    // ReferenceType methods command and by
-                    // VMMethod.getClassMethod, so that jdb can resolve frame
-                    // locations and line tables without hash collisions.
                     int methodIdx = getMethodIndex(vmType, vmMethod);
                     if (methodIdx >= 0) {
                         VMMethod jdwpMethod = new VMMethod(clazz, methodIdx);
@@ -340,9 +344,6 @@ public class JDIVirtualMachine {
                         boolean hasLines = (bc != null) && (bc.getLineNrs() != null)
                             && (bc.getLineNrs().getLength() > 0);
                         if (pc < 0 || !hasLines) {
-                            // Unknown pc (interpreted/native) or no line info:
-                            // use 0, which is always a valid index in the line
-                            // table built by NativeVMMethod.getLineTable.
                             pc = 0;
                         } else {
                             int len = bc.getLength();
@@ -353,33 +354,45 @@ public class JDIVirtualMachine {
                         loc = new Location(jdwpMethod, pc);
                     }
                 }
+            } catch (Throwable t) {
+                // ignore
             }
-            VMFrame frame = new VMFrame();
-            Field idField = VMFrame.class.getDeclaredField("id");
-            idField.setAccessible(true);
-            idField.setLong(frame, frameIndex);
+        }
+
+        try {
             Field locField = VMFrame.class.getDeclaredField("loc");
             locField.setAccessible(true);
             locField.set(frame, loc);
+        } catch (Throwable t) {
+            // ignore
+        }
+
+        Object thisObj = null;
+        if (sf != null && vmMethod != null && !vmMethod.isStatic()) {
+            try {
+                thisObj = sf.readLocalVariable(0);
+            } catch (Throwable ex) {
+                thisObj = null;
+            }
+        }
+
+        try {
             Field objField = VMFrame.class.getDeclaredField("obj");
             objField.setAccessible(true);
-            // For instance methods, read slot 0 ("this") from the frame
-            Object thisObj = null;
-            if (vmMethod != null && !vmMethod.isStatic()) {
-                try {
-                    thisObj = sf.readLocalVariable(0);
-                } catch (Exception ex) {
-                    // ignore
-                }
-            }
             objField.set(frame, thisObj);
+        } catch (Throwable t) {
+            // ignore
+        }
+
+        try {
             Field sfField = VMFrame.class.getDeclaredField("vmStackFrame");
             sfField.setAccessible(true);
             sfField.set(frame, sf);
-            return frame;
-        } catch (Exception e) {
-            return null;
+        } catch (Throwable t) {
+            // ignore
         }
+
+        return frame;
     }
 
     /**
@@ -520,8 +533,8 @@ public class JDIVirtualMachine {
             if (nonVirtual && !method.getDeclaringClass().isInterface()) {
                 // nonVirtual: invoke the specific class's method, not virtual dispatch
                 m = clazz.getDeclaredMethod(method.getName(), method.getParameterTypes());
-                m.setAccessible(true);
             }
+            m.setAccessible(true);
             Object ret = m.invoke(obj, args);
             result.setReturnedValue(ret);
         } catch (java.lang.reflect.InvocationTargetException ex) {

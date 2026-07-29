@@ -108,60 +108,61 @@ public class Value
         return;
       }
     Class clazz = obj.getClass();
-    if (clazz.isPrimitive())
+    // Handle boxed primitive types (e.g. Integer, Long from readLocalVariable)
+    if (obj instanceof Byte)
       {
-        if (clazz == byte.class)
-          {
-            if (tagged)
-              os.writeByte(JdwpConstants.Tag.BYTE);
-            os.writeByte(((Byte) obj).byteValue());
-          }
-        else if (clazz == char.class)
-          {
-            if (tagged)
-              os.writeByte(JdwpConstants.Tag.CHAR);
-            os.writeChar(((Character) obj).charValue());
-          }
-        else if (clazz == float.class)
-          {
-            if (tagged)
-              os.writeByte(JdwpConstants.Tag.FLOAT);
-            os.writeFloat(((Float) obj).floatValue());
-          }
-        else if (clazz == double.class)
-          {
-            if (tagged)
-              os.writeByte(JdwpConstants.Tag.DOUBLE);
-            os.writeDouble(((Double) obj).doubleValue());
-          }
-        else if (clazz == int.class)
-          {
-            if (tagged)
-              os.writeByte(JdwpConstants.Tag.BYTE);
-            os.writeInt(((Integer) obj).intValue());
-          }
-        else if (clazz == long.class)
-          {
-            if (tagged)
-              os.writeByte(JdwpConstants.Tag.LONG);
-            os.writeLong(((Long) obj).longValue());
-          }
-        else if (clazz == short.class)
-          {
-            if (tagged)
-              os.writeByte(JdwpConstants.Tag.SHORT);
-            os.writeInt(((Short) obj).shortValue());
-          }
-        else if (clazz == void.class)
+        if (tagged)
+          os.writeByte(JdwpConstants.Tag.BYTE);
+        os.writeByte(((Byte) obj).byteValue());
+      }
+    else if (obj instanceof Character)
+      {
+        if (tagged)
+          os.writeByte(JdwpConstants.Tag.CHAR);
+        os.writeChar(((Character) obj).charValue());
+      }
+    else if (obj instanceof Float)
+      {
+        if (tagged)
+          os.writeByte(JdwpConstants.Tag.FLOAT);
+        os.writeFloat(((Float) obj).floatValue());
+      }
+    else if (obj instanceof Double)
+      {
+        if (tagged)
+          os.writeByte(JdwpConstants.Tag.DOUBLE);
+        os.writeDouble(((Double) obj).doubleValue());
+      }
+    else if (obj instanceof Integer)
+      {
+        if (tagged)
+          os.writeByte(JdwpConstants.Tag.INT);
+        os.writeInt(((Integer) obj).intValue());
+      }
+    else if (obj instanceof Long)
+      {
+        if (tagged)
+          os.writeByte(JdwpConstants.Tag.LONG);
+        os.writeLong(((Long) obj).longValue());
+      }
+    else if (obj instanceof Short)
+      {
+        if (tagged)
+          os.writeByte(JdwpConstants.Tag.SHORT);
+        os.writeShort(((Short) obj).shortValue());
+      }
+    else if (obj instanceof Boolean)
+      {
+        if (tagged)
+          os.writeByte(JdwpConstants.Tag.BOOLEAN);
+        os.writeBoolean(((Boolean) obj).booleanValue());
+      }
+    else if (clazz.isPrimitive())
+      {
+        if (clazz == void.class)
           { // A 'void' has no data
             if (tagged)
               os.writeByte(JdwpConstants.Tag.VOID);
-          }
-        else if (clazz == boolean.class)
-          {
-            if (tagged)
-              os.writeByte(JdwpConstants.Tag.BOOLEAN);
-            os.writeBoolean(((Boolean) obj).booleanValue());
           }
         else
           { // This shouldn't be possible

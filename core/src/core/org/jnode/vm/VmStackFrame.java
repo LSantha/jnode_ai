@@ -89,7 +89,8 @@ public final class VmStackFrame extends VmSystemObject {
             int slotSize = Address.size();
             int offset;
             if (slot < argSlotCount) {
-                // Argument: above EBP
+                // Argument: above EBP (matches X86StackFrame.getEbpOffset formula
+                // which adds EbpFrameRefOffset = 1*slotSize for the frame magic word)
                 offset = (argSlotCount - slot + 2) * slotSize;
             } else {
                 // Local variable: below EBP

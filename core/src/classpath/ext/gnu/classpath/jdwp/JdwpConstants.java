@@ -160,6 +160,7 @@ public class JdwpConstants
       public static final byte REFERENCE_TYPE = 1;
       public static final byte GET_VALUES = 2;
       public static final byte SET_VALUES = 3;
+      public static final byte TO_STRING = 4;
       public static final byte MONITOR_INFO = 5;
       public static final byte INVOKE_METHOD = 6;
       public static final byte DISABLE_COLLECTION = 7;

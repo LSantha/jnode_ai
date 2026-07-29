@@ -55,8 +55,11 @@ import java.io.DataOutputStream;
 import java.io.IOException;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
+import java.lang.reflect.Constructor;
+import java.lang.reflect.Member;
 import java.nio.ByteBuffer;
 import org.jnode.vm.classmgr.VmType;
+import org.jnode.vm.classmgr.VmNormalClass;
 import org.jnode.vm.classmgr.VmMethod;
 
 /**
@@ -211,24 +214,74 @@ public class ClassTypeCommandSet
     Thread thread = (Thread) tId.getObject();
 
     // Method IDs are VmMethod indices, not object IDs.
+    // If the method is not found in the given class, walk up the class
+    // hierarchy to handle inherited methods (e.g. toString() from Object).
     long methodIdx = bb.getLong();
-    VmType vmType = VmType.fromClass(clazz);
-    VmMethod vmMethod = (vmType != null && methodIdx >= 0
-                         && methodIdx < vmType.getNoDeclaredMethods())
-        ? vmType.getDeclaredMethod((int) methodIdx) : null;
-    Method method = (vmMethod != null) ? (Method) vmMethod.asMember() : null;
-    if (method == null)
-      {
-        throw new JdwpInternalErrorException("Invalid method index: "
-                                             + methodIdx + " for " + clazz);
-      }
 
     int args = bb.getInt();
     Object[] values = new Object[args];
-
     for (int i = 0; i < args; i++)
       {
         values[i] = Value.getObj(bb);
+      }
+
+    // Resolve member (method/constructor) from class or superclass using index and parameter count matching
+    Member member = null;
+    VmType vmType = VmType.fromClass(clazz);
+    VmType searchType = vmType;
+    while (searchType != null && member == null)
+      {
+        int nMethods = searchType.getNoDeclaredMethods();
+        if (methodIdx >= 0 && methodIdx < nMethods)
+          {
+            VmMethod vmMethod = searchType.getDeclaredMethod((int) methodIdx);
+            if (vmMethod != null)
+              {
+                Member candidate = vmMethod.asMember();
+                int paramCount = (candidate instanceof Method)
+                    ? ((Method) candidate).getParameterTypes().length
+                    : ((Constructor) candidate).getParameterTypes().length;
+                if (paramCount == values.length)
+                  {
+                    member = candidate;
+                    break;
+                  }
+              }
+          }
+        if (searchType instanceof VmNormalClass)
+          {
+            searchType = ((VmNormalClass) searchType).getSuperClass();
+          }
+        else
+          {
+            break;
+          }
+      }
+
+    // Fallback: search Java reflection declared methods across class hierarchy
+    if (member == null)
+      {
+        Class curClass = clazz;
+        while (curClass != null && member == null)
+          {
+            Method[] declared = curClass.getDeclaredMethods();
+            if (methodIdx >= 0 && methodIdx < declared.length)
+              {
+                Method candidate = declared[(int) methodIdx];
+                if (candidate.getParameterTypes().length == values.length)
+                  {
+                    member = candidate;
+                    break;
+                  }
+              }
+            curClass = curClass.getSuperclass();
+          }
+      }
+
+    if (member == null)
+      {
+        throw new JdwpInternalErrorException("Invalid method index: "
+                                              + methodIdx + " for " + clazz);
       }
 
     int invokeOpts = bb.getInt();
@@ -240,9 +293,37 @@ public class ClassTypeCommandSet
         if (suspend)
 	  VMVirtualMachine.suspendAllThreads ();
 
-        MethodResult mr = VMVirtualMachine.executeMethod(null, thread,
-							 clazz, method,
-							 values, false);
+        MethodResult mr;
+        if (member instanceof Method)
+          {
+            mr = VMVirtualMachine.executeMethod(null, thread,
+						clazz, (Method) member,
+						values, false);
+          }
+        else if (member instanceof Constructor)
+          {
+            mr = new MethodResult();
+            try
+              {
+                Constructor ctor = (Constructor) member;
+                ctor.setAccessible(true);
+                Object ret = ctor.newInstance(values);
+                mr.setReturnedValue(ret);
+              }
+            catch (java.lang.reflect.InvocationTargetException ex)
+              {
+                mr.setThrownException((Exception) ex.getCause());
+              }
+            catch (Exception ex)
+              {
+                mr.setThrownException(ex);
+              }
+          }
+        else
+          {
+            throw new JdwpInternalErrorException("Unsupported member type: " + member);
+          }
+
         if (suspend)
 	  VMVirtualMachine.resumeAllThreads ();
 

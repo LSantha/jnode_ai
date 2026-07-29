@@ -49,11 +49,13 @@ import gnu.classpath.jdwp.id.ObjectId;
 import gnu.classpath.jdwp.id.ReferenceTypeId;
 import gnu.classpath.jdwp.util.Value;
 import gnu.classpath.jdwp.util.MethodResult;
+import gnu.classpath.jdwp.util.JdwpString;
 
 import java.io.DataOutputStream;
 import java.io.IOException;
 import java.lang.reflect.Field;
 import org.jnode.vm.classmgr.VmType;
+import org.jnode.vm.classmgr.VmNormalClass;
 import org.jnode.vm.classmgr.VmMethod;
 import java.lang.reflect.Method;
 import java.nio.ByteBuffer;
@@ -81,6 +83,9 @@ public class ObjectReferenceCommandSet
             break;
           case JdwpConstants.CommandSet.ObjectReference.SET_VALUES:
             executeSetValues(bb, os);
+            break;
+          case JdwpConstants.CommandSet.ObjectReference.TO_STRING:
+            executeToString(bb, os);
             break;
           case JdwpConstants.CommandSet.ObjectReference.MONITOR_INFO:
             executeMonitorInfo(bb, os);
@@ -184,6 +189,23 @@ public class ObjectReferenceCommandSet
       }
   }
 
+  private void executeToString(ByteBuffer bb, DataOutputStream os)
+    throws JdwpException, IOException
+  {
+    ObjectId oid = idMan.readObjectId(bb);
+    Object obj = oid.getObject();
+    if (obj == null) {
+      // Object was garbage collected or invalid - return empty string
+      JdwpString.writeString(os, "");
+      return;
+    }
+    String str = obj.toString();
+    if (str == null) {
+      str = "";
+    }
+    JdwpString.writeString(os, str);
+  }
+
   private void executeMonitorInfo(ByteBuffer bb, DataOutputStream os)
     throws JdwpException
   {
@@ -208,24 +230,71 @@ public class ObjectReferenceCommandSet
 
     // Method IDs in our implementation are VmMethod indices, not object IDs.
     // Read the raw long and resolve from the class's method table.
+    // If the method is not found in the given class, walk up the class
+    // hierarchy to handle inherited methods (e.g. toString() from Object).
     long methodIdx = bb.getLong();
-    VmType vmType = VmType.fromClass(clazz);
-    VmMethod vmMethod = (vmType != null && methodIdx >= 0
-                         && methodIdx < vmType.getNoDeclaredMethods())
-        ? vmType.getDeclaredMethod((int) methodIdx) : null;
-    Method method = (vmMethod != null) ? (Method) vmMethod.asMember() : null;
-    if (method == null)
-      {
-        throw new JdwpInternalErrorException("Invalid method index: "
-                                             + methodIdx + " for " + clazz);
-      }
 
     int args = bb.getInt();
     Object[] values = new Object[args];
-
     for (int i = 0; i < args; i++)
       {
         values[i] = Value.getObj(bb);
+      }
+
+    // Resolve method from class or superclass using index and parameter count matching
+    Method method = null;
+    VmType vmType = VmType.fromClass(clazz);
+    VmType searchType = vmType;
+    while (searchType != null && method == null)
+      {
+        int nMethods = searchType.getNoDeclaredMethods();
+        if (methodIdx >= 0 && methodIdx < nMethods)
+          {
+            VmMethod vmMethod = searchType.getDeclaredMethod((int) methodIdx);
+            if (vmMethod != null && !vmMethod.isConstructor())
+              {
+                Method candidate = (Method) vmMethod.asMember();
+                if (candidate != null && candidate.getParameterTypes().length == values.length)
+                  {
+                    method = candidate;
+                    break;
+                  }
+              }
+          }
+        if (searchType instanceof VmNormalClass)
+          {
+            searchType = ((VmNormalClass) searchType).getSuperClass();
+          }
+        else
+          {
+            break;
+          }
+      }
+
+    // Fallback: search Java reflection declared methods across class hierarchy
+    if (method == null)
+      {
+        Class curClass = clazz;
+        while (curClass != null && method == null)
+          {
+            Method[] declared = curClass.getDeclaredMethods();
+            if (methodIdx >= 0 && methodIdx < declared.length)
+              {
+                Method candidate = declared[(int) methodIdx];
+                if (candidate.getParameterTypes().length == values.length)
+                  {
+                    method = candidate;
+                    break;
+                  }
+              }
+            curClass = curClass.getSuperclass();
+          }
+      }
+
+    if (method == null)
+      {
+        throw new JdwpInternalErrorException("Invalid method index: "
+                                              + methodIdx + " for " + clazz);
       }
 
     int invokeOptions = bb.getInt();
