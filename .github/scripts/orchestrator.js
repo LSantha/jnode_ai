@@ -504,8 +504,10 @@ module.exports = async ({ github, context, core }) => {
                   task.phase = 'REVIEW';
                   task.retries = 0;
                   await triggerTask(task.pr, getReviewPrompt());
+                } else if (labels.includes('kind/feature') || labels.includes('kind/bug')) {
+                  core.error(`#${task.issue}: agent/done but no PR. Retrying.`);
+                  phaseFailed = true;
                 } else {
-                  // No PR found, treat as completed
                   state.completed.push(task.issue);
                   isDone = true;
                 }
