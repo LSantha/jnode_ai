@@ -27,10 +27,6 @@ import java.util.Iterator;
 import org.jnode.driver.block.BlockDeviceAPI;
 import org.jnode.driver.block.FileDevice;
 import org.jnode.emu.naming.BasicNameSpace;
-import org.jnode.emu.plugin.model.DummyConfigurationElement;
-import org.jnode.emu.plugin.model.DummyExtension;
-import org.jnode.emu.plugin.model.DummyExtensionPoint;
-import org.jnode.emu.plugin.model.DummyPluginDescriptor;
 import org.jnode.fs.FSDirectory;
 import org.jnode.fs.FSEntry;
 import org.jnode.fs.FSFile;
@@ -40,7 +36,6 @@ import org.jnode.fs.jfat.FatFileSystem;
 import org.jnode.fs.jfat.FatFileSystemFormatter;
 import org.jnode.fs.jfat.FatFileSystemType;
 import org.jnode.fs.service.FileSystemService;
-import org.jnode.fs.service.def.FileSystemPlugin;
 import org.jnode.naming.InitialNaming;
 import org.jnode.test.fs.DataStructureAsserts;
 import org.jnode.test.fs.FileSystemTestUtils;
@@ -63,26 +58,7 @@ public class FatFileSystemTest {
         } catch (SecurityException e) {
         }
 
-        DummyPluginDescriptor desc = new DummyPluginDescriptor(true);
-        DummyExtensionPoint ep = new DummyExtensionPoint("types", "org.jnode.fs.types", "types");
-        desc.addExtensionPoint(ep);
-        for (String className : new String[]{
-            "org.jnode.fs.jfat.FatFileSystemType",
-            "org.jnode.fs.ext2.Ext2FileSystemType",
-            "org.jnode.fs.fat.FatFileSystemType",
-            "org.jnode.fs.exfat.ExFatFileSystemType",
-            "org.jnode.fs.iso9660.ISO9660FileSystemType",
-            "org.jnode.fs.hfsplus.HfsPlusFileSystemType",
-            "org.jnode.fs.ntfs.NTFSFileSystemType",
-            "org.jnode.fs.jifs.JifsFileSystemType"
-        }) {
-            DummyExtension extension = new DummyExtension();
-            DummyConfigurationElement element = new DummyConfigurationElement();
-            element.addAttribute("class", className);
-            extension.addElement(element);
-            ep.addExtension(extension);
-        }
-        fss = new FileSystemPlugin(desc);
+        fss = FileSystemTestUtils.createFSService(FatFileSystemType.class.getName());
         try {
             InitialNaming.bind(FileSystemService.class, fss);
         } catch (javax.naming.NameAlreadyBoundException e) {
