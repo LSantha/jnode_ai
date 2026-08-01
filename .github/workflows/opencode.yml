@@ -59,7 +59,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GH_PAT }}
           OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY }}
         with:
-          model: opencode/nemotron-3-ultra-free
+          model: opencode/mimo-v2.5-free
           variant: high
 
       - name: Apply agent/* label and close if work-product is the comment
