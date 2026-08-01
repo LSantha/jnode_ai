@@ -26,6 +26,7 @@ import org.jnode.test.fs.filesystem.tests.ConcurrentAccessFSTest;
 import org.jnode.test.fs.filesystem.tests.FileFSTest;
 import org.jnode.test.fs.filesystem.tests.TreeFSTest;
 import org.jnode.test.fs.jfat.FatDirectoryExtensionTest;
+import org.jnode.test.fs.jfat.FatFileSystemTest;
 import org.jnode.test.fs.jfat.FatReadWriteTest;
 import org.jnode.test.fs.jfat.FatWriteTest;
 import org.jnode.test.fs.jfat.JFatLongFileNameTest;
@@ -54,6 +55,7 @@ import org.junit.runners.Suite.SuiteClasses;
     FatReadWriteTest.class,
     FatWriteTest.class,
     FatDirectoryExtensionTest.class,
+    FatFileSystemTest.class,
     JFatLongFileNameTest.class,
 }
 )
