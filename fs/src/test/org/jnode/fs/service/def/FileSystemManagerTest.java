@@ -23,6 +23,7 @@ package org.jnode.fs.service.def;
 import java.util.Collection;
 import org.jnode.driver.Device;
 import org.jnode.fs.FileSystem;
+import org.junit.After;
 import org.junit.Before;
 import org.junit.Test;
 
@@ -43,6 +44,21 @@ public class FileSystemManagerTest {
         device = mock(Device.class);
         fs = mock(FileSystem.class);
         when(fs.getDevice()).thenReturn(device);
+    }
+
+    @After
+    public void tearDown() throws Exception {
+        fsm = null;
+        device = null;
+        fs = null;
+    }
+
+    @Test
+    public void testRegisterFileSystem() throws Exception {
+        fsm.registerFileSystem(fs);
+        FileSystem<?> result = fsm.getFileSystem(device);
+        assertNotNull(result);
+        assertEquals(fs, result);
     }
 
     @Test
