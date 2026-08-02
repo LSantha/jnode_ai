@@ -96,7 +96,7 @@ public class SignatureTest {
     }
 
     @Test
-    public void testSignatureMethodNoArgsNoReturn() {
+    public void testSignatureMethodNullReturnType() {
         String res = Signature.toSignature((Class) null, (Class[]) null);
         Assert.assertEquals("()V", res);
     }
