@@ -34,6 +34,7 @@ import org.junit.runners.Suite.SuiteClasses;
 @RunWith(Suite.class)
 @SuiteClasses({
     NumberUtilsTest.class,
+    SignatureTest.class,
     VersionTest.class,
     TryFinallyTest.class,
     VarArgsTest.class,
