@@ -128,7 +128,12 @@ def _run_jdb_agent_cmd(cmd, timeout=120):
         timeout=timeout,
         env=_build_env(),
     )
-    return result.stdout.strip()
+    output = result.stdout.strip()
+    if not output and result.returncode != 0:
+        raise RuntimeError(
+            f"jdb agent failed (rc={result.returncode}): {result.stderr.strip()}"
+        )
+    return output
 
 
 def _kill_jdb_agent():
@@ -443,41 +448,19 @@ def jdb(jdb_session):
     """
     Provide a helper function to send jdb commands and get output.
 
-    This fixture is function-scoped and checks daemon health before each
-    test. If the daemon has died (e.g., due to a previous timeout), it
-    restarts it automatically.
+    This fixture is function-scoped but does NOT check daemon health
+    before each test. Health checks spawn a subprocess and send an extra
+    JDWP command per test, which adds ~52 extra round-trips and can
+    crash the serial console after ~30 tests. Instead, we only restart
+    the daemon if a command actually fails.
 
     Usage in tests:
         def test_version(jdb):
             output = jdb("version")
             assert "JNode" in output or "jdwp" in output.lower()
     """
-    # Check daemon health before each test
-    try:
-        test_output = _run_jdb_agent_cmd("version", timeout=30)
-        if not test_output:
-            raise Exception("Empty output from daemon")
-    except Exception:
-        # Daemon is dead, restart it
-        _kill_jdb_agent()
-        time.sleep(2)
-        target = f"{GUEST_IP}:{JDWP_PORT}"
-        result = subprocess.run(
-            [sys.executable, JDB_AGENT, "start", target],
-            capture_output=True,
-            text=True,
-            timeout=120,
-            env=_build_env(),
-        )
-        if "jdb session started" not in result.stdout and "already running" not in result.stdout:
-            pytest.fail(
-                f"Failed to restart jdb session. stdout: {result.stdout}, "
-                f"stderr: {result.stderr}"
-            )
-        time.sleep(5)
-
     def _send(cmd, timeout=120):
-        """Send a jdb command, restarting daemon if needed."""
+        """Send a jdb command, restarting daemon only on failure."""
         try:
             output = _run_jdb_agent_cmd(cmd, timeout=timeout)
             if not output:
@@ -486,7 +469,7 @@ def jdb(jdb_session):
         except Exception:
             # Daemon may have died, restart it
             _kill_jdb_agent()
-            time.sleep(2)
+            time.sleep(3)
             target = f"{GUEST_IP}:{JDWP_PORT}"
             result = subprocess.run(
                 [sys.executable, JDB_AGENT, "start", target],
@@ -500,7 +483,16 @@ def jdb(jdb_session):
                     f"Failed to restart jdb session. stdout: {result.stdout}, "
                     f"stderr: {result.stderr}"
                 )
-            time.sleep(5)
+            # Wait for jdb to fully connect before retrying
+            time.sleep(10)
+            # Probe daemon health before retrying
+            for _ in range(3):
+                try:
+                    probe = _run_jdb_agent_cmd("version", timeout=30)
+                    if probe:
+                        break
+                except Exception:
+                    time.sleep(3)
             # Retry the command
             return _run_jdb_agent_cmd(cmd, timeout=timeout)
     return _send
