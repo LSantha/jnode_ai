@@ -136,8 +136,12 @@ def _run_jdb_agent_cmd(cmd, timeout=120):
     return output
 
 
+SOCK_PATH = "/tmp/jdb_agent.sock"
+
+
 def _kill_jdb_agent():
-    """Stop the jdb_agent.py daemon if running."""
+    """Stop the jdb_agent.py daemon if running, and clean up stale sockets."""
+    # Try to stop gracefully
     if os.path.exists(JDB_AGENT):
         try:
             subprocess.run(
@@ -149,6 +153,20 @@ def _kill_jdb_agent():
             )
         except Exception:
             pass
+    # Always remove stale socket file
+    if os.path.exists(SOCK_PATH):
+        try:
+            os.unlink(SOCK_PATH)
+        except OSError:
+            pass
+    # Kill any lingering daemon processes
+    try:
+        subprocess.run(
+            ["pkill", "-9", "-f", "jdb_agent.py _daemon"],
+            capture_output=True, timeout=5,
+        )
+    except Exception:
+        pass
 
 
 def _vboxmanage(*args):
@@ -318,29 +336,31 @@ def network_configured(serial_cmd):
     # Check if network is already configured
     ifconfig_output = serial_cmd("ifconfig", timeout=10)
 
-    # Try to detect existing IP from ifconfig output
+    # Try to detect existing IP from ifconfig output (use last IP on eth interface,
+    # as multiple IPs may be stacked from previous configurations)
     import re as _re
-    ip_match = _re.search(r'(\d+\.\d+\.\d+\.\d+)', ifconfig_output)
-    if ip_match:
-        detected_ip = ip_match.group(1)
-        # Check if it's a real IP (not 0.0.0.0 or null)
-        if detected_ip != "0.0.0.0" and detected_ip != "null":
-            # Network is already configured, use the detected IP
-            global GUEST_IP
-            GUEST_IP = detected_ip
-            # Verify connectivity (JNode ping doesn't support -c/-W flags)
+    eth_block = ifconfig_output.split("loopback")[0] if "loopback" in ifconfig_output else ifconfig_output
+    ip_matches = _re.findall(r'(\d+\.\d+\.\d+\.\d+)', eth_block)
+    # Filter out null/0.0.0.0 and take the last one (most recently configured)
+    valid_ips = [ip for ip in ip_matches if ip != "0.0.0.0" and ip != "null"]
+    if valid_ips:
+        detected_ip = valid_ips[-1]
+        # Network is already configured, use the detected IP
+        global GUEST_IP
+        GUEST_IP = detected_ip
+        # Verify connectivity (JNode ping doesn't support -c/-W flags)
+        ping_output = serial_cmd(f"ping {GATEWAY_IP}", timeout=15)
+        if "packets received" not in ping_output:
+            # Network may need route configuration
+            serial_cmd(f"route --add 0.0.0.0 eth-pci(0,3,0) {GATEWAY_IP}")
+            time.sleep(2)
             ping_output = serial_cmd(f"ping {GATEWAY_IP}", timeout=15)
             if "packets received" not in ping_output:
-                # Network may need route configuration
-                serial_cmd(f"route --add 0.0.0.0 eth-pci(0,3,0) {GATEWAY_IP}")
-                time.sleep(2)
-                ping_output = serial_cmd(f"ping {GATEWAY_IP}", timeout=15)
-                if "packets received" not in ping_output:
-                    pytest.fail(
-                        f"Network connectivity check failed. Ping output: {ping_output}"
-                    )
-            yield
-            return
+                pytest.fail(
+                    f"Network connectivity check failed. Ping output: {ping_output}"
+                )
+        yield
+        return
 
     # Network not configured, set it up
     serial_cmd(f"ifconfig eth-pci(0,3,0) {GUEST_IP} {NETMASK}")
