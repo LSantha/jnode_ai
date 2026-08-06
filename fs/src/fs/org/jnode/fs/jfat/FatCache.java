@@ -399,6 +399,13 @@ public class FatCache {
                 throw new IllegalArgumentException("cannot write a free element");
 
             elem.clear();
+            // The backing byte[] is elementSize + 1 byte to allow FAT-12's two-byte
+            // getUInt16 read to straddle the last byte of the element. Writes MUST NOT
+            // emit that extra byte: doing so corrupts the first byte of the next FAT
+            // sector on disk (the LSB of the first FAT entry in the next cache element),
+            // causing the next sector's first entry -- entry 128 on FAT-32 with a
+            // 512-byte cache element -- to be silently clobbered with zero.
+            elem.limit(elementSize);
 
             long addr = address.get() * elementSize;
 
@@ -406,6 +413,7 @@ public class FatCache {
                 api.write(addr, elem);
                 addr += fatsize;
                 elem.clear();
+                elem.limit(elementSize);
             }
         }
 
