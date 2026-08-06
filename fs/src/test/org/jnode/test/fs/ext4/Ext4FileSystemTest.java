@@ -82,13 +82,13 @@ public class Ext4FileSystemTest {
 
         Superblock sb = fs.getSuperblock();
         Assert.assertEquals(0xEF53, sb.getMagic());
-        Assert.assertTrue(sb.getBlockSize() >= 1024);
-        Assert.assertEquals(15728640, sb.getBlocksCount());
-        Assert.assertEquals(13918208, sb.getFreeBlocksCount());
-        Assert.assertTrue(sb.getINodesCount() > 0);
-        Assert.assertTrue(sb.getFreeInodesCount() > 0);
-        Assert.assertTrue(sb.getBlocksPerGroup() > 0);
-        Assert.assertTrue(sb.getINodesPerGroup() > 0);
+        Assert.assertEquals(1024, sb.getBlockSize());
+        Assert.assertEquals(15360, sb.getBlocksCount());
+        Assert.assertEquals(13592, sb.getFreeBlocksCount());
+        Assert.assertEquals(3840, sb.getINodesCount());
+        Assert.assertEquals(3822, sb.getFreeInodesCount());
+        Assert.assertEquals(8192, sb.getBlocksPerGroup());
+        Assert.assertEquals(1920, sb.getINodesPerGroup());
         Assert.assertEquals(Ext2Constants.EXT2_DYNAMIC_REV, sb.getRevLevel());
         Assert.assertEquals(Ext2Constants.EXT2_VALID_FS, sb.getState());
         Assert.assertEquals(0, sb.getINodeSize() % 2);
@@ -120,8 +120,8 @@ public class Ext4FileSystemTest {
 
         Superblock sb = fs.getSuperblock();
         Assert.assertEquals(0xEF53, sb.getMagic());
-        Assert.assertEquals(2998272, sb.getBlocksCount());
-        Assert.assertEquals(1870848, sb.getFreeBlocksCount());
+        Assert.assertEquals(2928, sb.getBlocksCount());
+        Assert.assertEquals(1827, sb.getFreeBlocksCount());
         long incompatFeatures = sb.getFeatureIncompat();
         Assert.assertTrue((incompatFeatures & Ext2Constants.EXT4_FEATURE_INCOMPAT_MMP) != 0);
 
@@ -238,9 +238,9 @@ public class Ext4FileSystemTest {
         Superblock sb = fs.getSuperblock();
         Assert.assertEquals(0xEF53, sb.getMagic());
         Assert.assertEquals("ext4-ftw-omgz", sb.getVolumeName());
-        Assert.assertEquals(127926272, sb.getBlocksCount());
-        Assert.assertEquals(123949056, sb.getFreeBlocksCount());
-        Assert.assertTrue(sb.getBlockSize() >= 1024);
+        Assert.assertEquals(124928, sb.getBlocksCount());
+        Assert.assertEquals(121044, sb.getFreeBlocksCount());
+        Assert.assertEquals(1024, sb.getBlockSize());
         long incompatFeatures = sb.getFeatureIncompat();
         Assert.assertTrue((incompatFeatures & Ext2Constants.EXT4_FEATURE_INCOMPAT_FLEX_BG) != 0);
         Assert.assertTrue(sb.isUsingFlexibleBlockGroups());
@@ -277,11 +277,11 @@ public class Ext4FileSystemTest {
 
         Superblock sb = fs.getSuperblock();
         Assert.assertEquals(0xEF53, sb.getMagic());
-        Assert.assertEquals(4997120, sb.getBlocksCount());
-        Assert.assertEquals(3680256, sb.getFreeBlocksCount());
+        Assert.assertEquals(4880, sb.getBlocksCount());
+        Assert.assertEquals(3594, sb.getFreeBlocksCount());
         long incompatFeatures = sb.getFeatureIncompat();
         Assert.assertTrue((incompatFeatures & Ext2Constants.EXT2_FEATURE_INCOMPAT_META_BG) != 0);
-        Assert.assertTrue(sb.getBlockSize() >= 1024);
+        Assert.assertEquals(1024, sb.getBlockSize());
         Assert.assertEquals(Ext2Constants.EXT2_DYNAMIC_REV, sb.getRevLevel());
 
         GroupDescriptor[] gds = fs.getGroupDescriptors();
@@ -416,11 +416,10 @@ public class Ext4FileSystemTest {
         Assert.assertNotNull(rootInode);
         Assert.assertEquals(Ext2Constants.EXT2_ROOT_INO, rootInode.getINodeNr());
         Assert.assertEquals(Ext2Constants.EXT2_S_IFDIR, rootInode.getMode() & Ext2Constants.EXT2_S_IFMT);
-        Assert.assertTrue("Root inode size should be > 0", rootInode.getSize() > 0);
-        Assert.assertTrue("Root inode links count should be >= 2",
-            rootInode.getLinksCount() >= 2);
-        Assert.assertEquals(0, rootInode.getUid());
-        Assert.assertEquals(0, rootInode.getGid());
+        Assert.assertEquals(1024, rootInode.getSize());
+        Assert.assertEquals(3, rootInode.getLinksCount());
+        Assert.assertEquals(1000, rootInode.getUid());
+        Assert.assertEquals(1000, rootInode.getGid());
         Assert.assertTrue("Root inode atime should be > 0", rootInode.getAtime() > 0);
         Assert.assertTrue("Root inode ctime should be > 0", rootInode.getCtime() > 0);
         Assert.assertTrue("Root inode mtime should be > 0", rootInode.getMtime() > 0);
