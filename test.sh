@@ -16,9 +16,11 @@ else
 fi
 shift
 
+FAIL=0
 for PROJECT in $PROJECTS ; do
     java -Xmx768M -Xms256M -jar $dir/core/lib/ant-launcher.jar \
 	-lib $JAVA_HOME/lib -lib $dir/core/lib \
-        -f $dir/$PROJECT/build-tests.xml $*
+        -f $dir/$PROJECT/build-tests.xml $* || FAIL=1
 done
+exit $FAIL
 

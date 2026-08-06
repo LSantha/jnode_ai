@@ -27,7 +27,6 @@ jobs:
       run: |
         ./build.sh clean -Dbuild.properties.file=../.github/qemu/jnode.properties cd-x86-lite regression-tests
         ./test.sh all
-      continue-on-error: true
     - name: Publish Test Summary
       uses: test-summary/action@v2
       with:
