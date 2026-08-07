@@ -43,6 +43,16 @@ public class FileDeviceContext extends BlockDeviceAPIContext {
         init(null, device, null);
     }
 
+    public void init(TestConfig config, Object testCase) throws Exception {
+        if (testCase instanceof MockObjectTestCase) {
+            init(config, (MockObjectTestCase) testCase);
+        } else {
+            super.init(config, null);
+            FileDevice device = new FileDevice(f, "rw");
+            init(null, device, null);
+        }
+    }
+
     protected void destroyImpl() {
         f.delete();
     }

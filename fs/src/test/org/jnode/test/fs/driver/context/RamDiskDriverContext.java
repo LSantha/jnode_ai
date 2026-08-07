@@ -43,4 +43,18 @@ public class RamDiskDriverContext extends BlockDeviceAPIContext {
         final RamDiskDriver driver = new RamDiskDriver(name);
         init(null, driver, device);
     }
+
+    public void init(TestConfig config, Object testCase) throws Exception {
+        if (testCase instanceof MockObjectTestCase) {
+            init(config, (MockObjectTestCase) testCase);
+        } else {
+            super.init(config, null);
+            BlockDeviceAPITestConfig cfg = (BlockDeviceAPITestConfig) config;
+            String name = "RamDiskDevice-Tests";
+            final RamDiskDevice device =
+                new RamDiskDevice(StubDeviceManager.INSTANCE.getSystemBus(), name, cfg.getDeviceSize());
+            final RamDiskDriver driver = new RamDiskDriver(name);
+            init(null, driver, device);
+        }
+    }
 }

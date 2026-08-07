@@ -38,4 +38,15 @@ public class ByteArrayDeviceContext extends BlockDeviceAPIContext {
         ByteArrayDevice device = new ByteArrayDevice(new byte[cfg.getDeviceSize()]);
         init(null, device, null);
     }
+
+    public void init(TestConfig config, Object testCase) throws Exception {
+        if (testCase instanceof MockObjectTestCase) {
+            init(config, (MockObjectTestCase) testCase);
+        } else {
+            super.init(config, null);
+            BlockDeviceAPITestConfig cfg = (BlockDeviceAPITestConfig) config;
+            ByteArrayDevice device = new ByteArrayDevice(new byte[cfg.getDeviceSize()]);
+            init(null, device, null);
+        }
+    }
 }

@@ -41,6 +41,10 @@ public class IDEDiskDriverContext extends BlockDeviceAPIContext {
     public void init(TestConfig config, MockObjectTestCase testCase) throws Exception {
         super.init(config, testCase);
 
+        if (testCase == null) {
+            return;
+        }
+
         IDEDiskDriver driver = new IDEDiskDriver();
 
         // set the current testCase for our factory
@@ -57,6 +61,14 @@ public class IDEDiskDriverContext extends BlockDeviceAPIContext {
         IDEDevice device = MockObjectFactory.createIDEDevice(parent, testCase, true, cfg.getDeviceSize());
 
         init(null, driver, device);
+    }
+
+    public void init(TestConfig config, Object testCase) throws Exception {
+        if (testCase instanceof MockObjectTestCase) {
+            init(config, (MockObjectTestCase) testCase);
+        } else {
+            super.init(config, null);
+        }
     }
 
     protected void destroyImpl() {

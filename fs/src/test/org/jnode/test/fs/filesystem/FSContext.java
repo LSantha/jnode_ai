@@ -41,6 +41,14 @@ public class FSContext implements Context {
         cfg.getFileSystem().mount(workDevice);
     }
 
+    public void init(TestConfig config, Object testCase) throws Exception {
+        if (testCase instanceof MockObjectTestCase) {
+            init(config, (MockObjectTestCase) testCase);
+        } else {
+            init(config, (MockObjectTestCase) null);
+        }
+    }
+
     public void destroy() throws Exception {
         deviceParam.tearDown(workDevice);
     }

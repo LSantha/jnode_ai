@@ -21,28 +21,82 @@
 package org.jnode.test.fs.driver.tests;
 
 import java.io.IOException;
+import java.io.PrintStream;
 import java.nio.ByteBuffer;
+import java.util.Arrays;
+import java.util.Collection;
+import org.jmock.cglib.MockObjectTestCase;
 import org.jnode.driver.block.BlockDeviceAPI;
-import org.jnode.driver.block.ByteArrayDevice;
 import org.jnode.driver.bus.ide.IDEConstants;
+import org.jnode.test.fs.driver.BlockDeviceAPITestConfig;
+import org.jnode.test.fs.driver.Partition;
+import org.jnode.test.fs.driver.context.ByteArrayDeviceContext;
+import org.jnode.test.fs.driver.context.FileDeviceContext;
+import org.jnode.test.fs.driver.context.FloppyDriverContext;
+import org.jnode.test.fs.driver.context.IDEDiskDriverContext;
+import org.jnode.test.fs.driver.context.RamDiskDriverContext;
+import org.jnode.test.support.ContextManager;
 import org.junit.After;
+import org.junit.Assume;
 import org.junit.Before;
 import org.junit.Test;
+import org.junit.runner.RunWith;
+import org.junit.runners.Parameterized;
+import org.junit.runners.Parameterized.Parameters;
 
 import static org.junit.Assert.*;
 
+@RunWith(Parameterized.class)
 public class BlockDeviceAPITest {
 
     private static final int DEVICE_SIZE = 1 * 1024 * 1024;
-    private static final boolean DEVICE_NEEDS_ALIGNMENT = false;
 
-    private ByteArrayDevice device;
+    private final Class<?> contextClass;
+    private final boolean deviceNeedsAlignment;
+    private final String testName;
+
+    private BlockDeviceAPITestConfig config;
     private BlockDeviceAPI api;
+
+    public BlockDeviceAPITest(Class<?> contextClass, boolean deviceNeedsAlignment, String testName) {
+        this.contextClass = contextClass;
+        this.deviceNeedsAlignment = deviceNeedsAlignment;
+        this.testName = testName;
+    }
+
+    @Parameters
+    public static Collection<Object[]> data() {
+        return Arrays.asList(new Object[][]{
+            {ByteArrayDeviceContext.class, false, "ByteArrayDevice"},
+            {RamDiskDriverContext.class, false, "RamDiskDriver"},
+            {FloppyDriverContext.class, true, "FloppyDriver"},
+            {FileDeviceContext.class, false, "FileDevice"},
+            {IDEDiskDriverContext.class, true, "IDEDiskDriver-noPartition"},
+            {IDEDiskDriverContext.class, true, "IDEDiskDriver-1Partition"},
+            {IDEDiskDriverContext.class, true, "IDEDiskDriver-2Partitions"},
+        });
+    }
 
     @Before
     public void setUp() throws Exception {
-        device = new ByteArrayDevice(new byte[DEVICE_SIZE]);
-        api = device.getAPI(BlockDeviceAPI.class);
+        Assume.assumeTrue(contextClass != FloppyDriverContext.class);
+
+        ContextManager.getInstance().init();
+        bindBootLog();
+        config = new BlockDeviceAPITestConfig(contextClass);
+
+        if ("IDEDiskDriver-1Partition".equals(testName)) {
+            config.addPartition(new Partition(false, 0, config.getDeviceNbSectors()));
+        } else if ("IDEDiskDriver-2Partitions".equals(testName)) {
+            int nbSectors1 = config.getDeviceNbSectors() / 2;
+            int nbSectors2 = config.getDeviceNbSectors() - nbSectors1;
+            config.addPartition(new Partition(false, 0, nbSectors1));
+            config.addPartition(new Partition(false, nbSectors1, nbSectors2));
+        }
+
+        DummyTestCase dummyTestCase = new DummyTestCase();
+        ContextManager.getInstance().setContext(contextClass, config, dummyTestCase);
+        api = config.getBlockDeviceAPI();
     }
 
     @After
@@ -50,8 +104,19 @@ public class BlockDeviceAPITest {
         if (api != null) {
             api.flush();
         }
-        device = null;
+        ContextManager.getInstance().clearContext();
         api = null;
+        config = null;
+    }
+
+    private void bindBootLog() {
+        try {
+            org.jnode.bootlog.BootLogInstance.set(new NoOpBootLog());
+        } catch (javax.naming.NameAlreadyBoundException e) {
+            // already bound, ignore
+        } catch (Exception e) {
+            // ignore - will fail later if BootLog is needed
+        }
     }
 
     @Test
@@ -118,6 +183,8 @@ public class BlockDeviceAPITest {
 
     @Test
     public void testWriteThenRead() throws Exception {
+        Assume.assumeTrue(contextClass != IDEDiskDriverContext.class);
+
         long length = api.getLength();
         long offset = length / 2;
         byte[] writeData = new byte[IDEConstants.SECTOR_SIZE];
@@ -136,7 +203,7 @@ public class BlockDeviceAPITest {
     }
 
     private void doRead(boolean aligned, byte boundsType) throws Exception {
-        Bounds bounds = new Bounds(true, aligned, boundsType, api.getLength(), DEVICE_NEEDS_ALIGNMENT);
+        Bounds bounds = new Bounds(true, aligned, boundsType, api.getLength(), deviceNeedsAlignment);
         boolean errorOccured;
 
         try {
@@ -158,7 +225,7 @@ public class BlockDeviceAPITest {
     }
 
     private void doWrite(boolean aligned, byte boundsType) throws Exception {
-        Bounds bounds = new Bounds(false, aligned, boundsType, api.getLength(), DEVICE_NEEDS_ALIGNMENT);
+        Bounds bounds = new Bounds(false, aligned, boundsType, api.getLength(), deviceNeedsAlignment);
         boolean errorOccured;
 
         try {
@@ -211,6 +278,32 @@ public class BlockDeviceAPITest {
 
             offset += toWrite;
         }
+    }
+
+    private static class DummyTestCase extends MockObjectTestCase {
+        public DummyTestCase() {
+            super();
+        }
+
+        protected void setUp() throws Exception {
+        }
+
+        protected void tearDown() throws Exception {
+        }
+    }
+
+    private static class NoOpBootLog implements org.jnode.bootlog.BootLog {
+        public void debug(String msg) {}
+        public void debug(String msg, Throwable ex) {}
+        public void error(String msg) {}
+        public void error(String msg, Throwable ex) {}
+        public void fatal(String msg) {}
+        public void fatal(String msg, Throwable ex) {}
+        public void info(String msg) {}
+        public void info(String msg, Throwable ex) {}
+        public void warn(String msg, Throwable ex) {}
+        public void warn(String msg) {}
+        public void setDebugOut(PrintStream out) {}
     }
 
     private static class Bounds {

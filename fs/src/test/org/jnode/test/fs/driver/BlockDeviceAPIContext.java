@@ -64,6 +64,15 @@ public class BlockDeviceAPIContext implements Context {
         partitions = cfg.getPartitions();
     }
 
+    public void init(TestConfig config, Object testCase)
+        throws Exception {
+        if (testCase instanceof MockObjectTestCase) {
+            init(config, (MockObjectTestCase) testCase);
+        } else {
+            init(config, (MockObjectTestCase) null);
+        }
+    }
+
     protected void init(BlockDeviceAPIContext parentContext,
                         BlockDeviceAPI api, Device device) {
         this.api = api;
