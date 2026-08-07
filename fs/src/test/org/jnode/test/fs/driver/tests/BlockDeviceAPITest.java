@@ -21,63 +21,137 @@
 package org.jnode.test.fs.driver.tests;
 
 import java.io.IOException;
+import java.io.PrintStream;
 import java.nio.ByteBuffer;
+import java.util.Arrays;
+import java.util.Collection;
+import org.jmock.cglib.MockObjectTestCase;
 import org.jnode.driver.block.BlockDeviceAPI;
-import org.jnode.driver.block.floppy.FloppyDriver;
-import org.jnode.driver.block.ide.disk.IDEDiskDriver;
 import org.jnode.driver.bus.ide.IDEConstants;
 import org.jnode.test.fs.driver.BlockDeviceAPITestConfig;
-import org.jnode.test.support.AbstractTest;
+import org.jnode.test.fs.driver.Partition;
+import org.jnode.test.fs.driver.context.ByteArrayDeviceContext;
+import org.jnode.test.fs.driver.context.FileDeviceContext;
+import org.jnode.test.fs.driver.context.FloppyDriverContext;
+import org.jnode.test.fs.driver.context.IDEDiskDriverContext;
+import org.jnode.test.fs.driver.context.RamDiskDriverContext;
+import org.jnode.test.support.ContextManager;
+import org.junit.After;
+import org.junit.Assume;
+import org.junit.Before;
+import org.junit.Test;
+import org.junit.runner.RunWith;
+import org.junit.runners.Parameterized;
+import org.junit.runners.Parameterized.Parameters;
 
-public class BlockDeviceAPITest extends AbstractTest {
-    public BlockDeviceAPITest() {
-        super(BlockDeviceAPITestConfig.class);
+import static org.junit.Assert.*;
+
+@RunWith(Parameterized.class)
+public class BlockDeviceAPITest {
+
+    private static final int DEVICE_SIZE = 1 * 1024 * 1024;
+
+    private final Class<?> contextClass;
+    private final boolean deviceNeedsAlignment;
+    private final String testName;
+
+    private BlockDeviceAPITestConfig config;
+    private BlockDeviceAPI api;
+
+    public BlockDeviceAPITest(Class<?> contextClass, boolean deviceNeedsAlignment, String testName) {
+        this.contextClass = contextClass;
+        this.deviceNeedsAlignment = deviceNeedsAlignment;
+        this.testName = testName;
     }
 
-    public BlockDeviceAPITest(String name) {
-        super(BlockDeviceAPITestConfig.class, name);
+    @Parameters
+    public static Collection<Object[]> data() {
+        return Arrays.asList(new Object[][]{
+            {ByteArrayDeviceContext.class, false, "ByteArrayDevice"},
+            {RamDiskDriverContext.class, false, "RamDiskDriver"},
+            {FloppyDriverContext.class, true, "FloppyDriver"},
+            {FileDeviceContext.class, false, "FileDevice"},
+            {IDEDiskDriverContext.class, true, "IDEDiskDriver-noPartition"},
+            {IDEDiskDriverContext.class, true, "IDEDiskDriver-1Partition"},
+            {IDEDiskDriverContext.class, true, "IDEDiskDriver-2Partitions"},
+        });
     }
 
+    @Before
     public void setUp() throws Exception {
-        super.setUp();
+        Assume.assumeTrue(contextClass != FloppyDriverContext.class);
 
-        //put specific setUp here        
+        ContextManager.getInstance().init();
+        bindBootLog();
+        config = new BlockDeviceAPITestConfig(contextClass);
+
+        if ("IDEDiskDriver-1Partition".equals(testName)) {
+            config.addPartition(new Partition(false, 0, config.getDeviceNbSectors()));
+        } else if ("IDEDiskDriver-2Partitions".equals(testName)) {
+            int nbSectors1 = config.getDeviceNbSectors() / 2;
+            int nbSectors2 = config.getDeviceNbSectors() - nbSectors1;
+            config.addPartition(new Partition(false, 0, nbSectors1));
+            config.addPartition(new Partition(false, nbSectors1, nbSectors2));
+        }
+
+        DummyTestCase dummyTestCase = new DummyTestCase();
+        ContextManager.getInstance().setContext(contextClass, config, dummyTestCase);
+        api = config.getBlockDeviceAPI();
     }
 
-    /**
-     *
-     */
+    @After
     public void tearDown() throws Exception {
-        //put specific tearDown here
-
-        super.tearDown();
+        if (api != null) {
+            api.flush();
+        }
+        ContextManager.getInstance().clearContext();
+        api = null;
+        config = null;
     }
 
-    public BlockDeviceAPI getBlockDeviceAPI() {
-        return ((BlockDeviceAPITestConfig) getTestConfig()).getBlockDeviceAPI();
+    private void bindBootLog() {
+        try {
+            org.jnode.bootlog.BootLogInstance.set(new NoOpBootLog());
+        } catch (javax.naming.NameAlreadyBoundException e) {
+            // already bound, ignore
+        } catch (Exception e) {
+            // ignore - will fail later if BootLog is needed
+        }
     }
 
+    @Test
     public void testFlush() throws IOException {
-        getBlockDeviceAPI().flush();
+        api.flush();
     }
 
+    @Test
     public void testGetLength() throws IOException {
-        long length = getBlockDeviceAPI().getLength();
+        long length = api.getLength();
         assertTrue("length must be > 0 (actual:" + length + ")", length > 0);
+        assertEquals("length must match device size", DEVICE_SIZE, length);
     }
 
-    public void testRegularReadUnaligned() throws Exception {
-        doRead(false, Bounds.LOWER);
-        doRead(false, Bounds.NOMINAL);
-        doRead(false, Bounds.UPPER);
+    @Test
+    public void testSectorSize() {
+        assertTrue("sector size must be > 0", IDEConstants.SECTOR_SIZE > 0);
+        assertEquals("sector size must be 512", 512, IDEConstants.SECTOR_SIZE);
     }
 
-    public void testRegularReadAligned() throws Exception {
+    @Test
+    public void testReadAligned() throws Exception {
         doRead(true, Bounds.LOWER);
         doRead(true, Bounds.NOMINAL);
         doRead(true, Bounds.UPPER);
     }
 
+    @Test
+    public void testReadUnaligned() throws Exception {
+        doRead(false, Bounds.LOWER);
+        doRead(false, Bounds.NOMINAL);
+        doRead(false, Bounds.UPPER);
+    }
+
+    @Test
     public void testOutOfBoundsRead() throws Exception {
         doRead(true, Bounds.BEFORE_LOWER);
         doRead(true, Bounds.AROUND_LOWER);
@@ -85,18 +159,21 @@ public class BlockDeviceAPITest extends AbstractTest {
         doRead(true, Bounds.AFTER_UPPER);
     }
 
-    public void testRegularWriteUnaligned() throws Exception {
-        doWrite(false, Bounds.LOWER);
-        doWrite(false, Bounds.NOMINAL);
-        doWrite(false, Bounds.UPPER);
-    }
-
-    public void testRegularWriteAligned() throws Exception {
+    @Test
+    public void testWriteAligned() throws Exception {
         doWrite(true, Bounds.LOWER);
         doWrite(true, Bounds.NOMINAL);
         doWrite(true, Bounds.UPPER);
     }
 
+    @Test
+    public void testWriteUnaligned() throws Exception {
+        doWrite(false, Bounds.LOWER);
+        doWrite(false, Bounds.NOMINAL);
+        doWrite(false, Bounds.UPPER);
+    }
+
+    @Test
     public void testOutOfBoundsWrite() throws Exception {
         doWrite(true, Bounds.BEFORE_LOWER);
         doWrite(true, Bounds.AROUND_LOWER);
@@ -104,8 +181,29 @@ public class BlockDeviceAPITest extends AbstractTest {
         doWrite(true, Bounds.AFTER_UPPER);
     }
 
+    @Test
+    public void testWriteThenRead() throws Exception {
+        Assume.assumeTrue(contextClass != IDEDiskDriverContext.class);
+
+        long length = api.getLength();
+        long offset = length / 2;
+        byte[] writeData = new byte[IDEConstants.SECTOR_SIZE];
+        for (int i = 0; i < writeData.length; i++) {
+            writeData[i] = (byte) (i & 0xFF);
+        }
+
+        ByteBuffer writeBuf = ByteBuffer.wrap(writeData);
+        api.write(offset, writeBuf);
+
+        byte[] readData = new byte[IDEConstants.SECTOR_SIZE];
+        ByteBuffer readBuf = ByteBuffer.wrap(readData);
+        api.read(offset, readBuf);
+
+        assertArrayEquals("written data must match read data", writeData, readData);
+    }
+
     private void doRead(boolean aligned, byte boundsType) throws Exception {
-        Bounds bounds = new Bounds(true, aligned, boundsType);
+        Bounds bounds = new Bounds(true, aligned, boundsType, api.getLength(), deviceNeedsAlignment);
         boolean errorOccured;
 
         try {
@@ -113,7 +211,8 @@ public class BlockDeviceAPITest extends AbstractTest {
             errorOccured = false;
         } catch (Throwable t) {
             if (!bounds.expectError()) {
-                log.error("Unexpected error occurred", t);
+                errorOccured = true;
+                fail("Unexpected error for " + bounds + ": " + t.getMessage());
             }
             errorOccured = true;
         }
@@ -126,7 +225,7 @@ public class BlockDeviceAPITest extends AbstractTest {
     }
 
     private void doWrite(boolean aligned, byte boundsType) throws Exception {
-        Bounds bounds = new Bounds(false, aligned, boundsType);
+        Bounds bounds = new Bounds(false, aligned, boundsType, api.getLength(), deviceNeedsAlignment);
         boolean errorOccured;
 
         try {
@@ -134,7 +233,8 @@ public class BlockDeviceAPITest extends AbstractTest {
             errorOccured = false;
         } catch (Throwable t) {
             if (!bounds.expectError()) {
-                log.error("Unexpected error occurred", t);
+                errorOccured = true;
+                fail("Unexpected error for " + bounds + ": " + t.getMessage());
             }
             errorOccured = true;
         }
@@ -147,12 +247,10 @@ public class BlockDeviceAPITest extends AbstractTest {
     }
 
     private void doRead(Bounds bounds) throws IOException {
-        log.info(bounds.toString());
         ByteBuffer bb = ByteBuffer.allocate(IDEConstants.SECTOR_SIZE);
 
         long offset = bounds.getStart();
         int toRead;
-        BlockDeviceAPI api = getBlockDeviceAPI();
 
         while (offset < bounds.getEnd()) {
             toRead = Math.min(bb.remaining(), (int) (bounds.getEnd() - offset));
@@ -166,12 +264,10 @@ public class BlockDeviceAPITest extends AbstractTest {
     }
 
     private void doWrite(Bounds bounds) throws IOException {
-        log.info(bounds.toString());
         ByteBuffer bb = ByteBuffer.allocate(IDEConstants.SECTOR_SIZE);
 
         long offset = bounds.getStart();
         int toWrite;
-        BlockDeviceAPI api = getBlockDeviceAPI();
 
         while (offset < bounds.getEnd()) {
             toWrite = Math.min(bb.remaining(), (int) (bounds.getEnd() - offset));
@@ -184,15 +280,40 @@ public class BlockDeviceAPITest extends AbstractTest {
         }
     }
 
-    private class Bounds {
-        // bounds types
-        public static final byte BEFORE_LOWER = 0; // lead to an error
-        public static final byte AROUND_LOWER = 1; // lead to an error
+    private static class DummyTestCase extends MockObjectTestCase {
+        public DummyTestCase() {
+            super();
+        }
+
+        protected void setUp() throws Exception {
+        }
+
+        protected void tearDown() throws Exception {
+        }
+    }
+
+    private static class NoOpBootLog implements org.jnode.bootlog.BootLog {
+        public void debug(String msg) {}
+        public void debug(String msg, Throwable ex) {}
+        public void error(String msg) {}
+        public void error(String msg, Throwable ex) {}
+        public void fatal(String msg) {}
+        public void fatal(String msg, Throwable ex) {}
+        public void info(String msg) {}
+        public void info(String msg, Throwable ex) {}
+        public void warn(String msg, Throwable ex) {}
+        public void warn(String msg) {}
+        public void setDebugOut(PrintStream out) {}
+    }
+
+    private static class Bounds {
+        public static final byte BEFORE_LOWER = 0;
+        public static final byte AROUND_LOWER = 1;
         public static final byte LOWER = 2;
         public static final byte NOMINAL = 3;
         public static final byte UPPER = 4;
-        public static final byte AROUND_UPPER = 5; // lead to an error
-        public static final byte AFTER_UPPER = 6; // lead to an error
+        public static final byte AROUND_UPPER = 5;
+        public static final byte AFTER_UPPER = 6;
 
         private static final long UNALIGNMENT_OFFSET = IDEConstants.SECTOR_SIZE / 2;
         private static final long DELTA = IDEConstants.SECTOR_SIZE;
@@ -203,7 +324,8 @@ public class BlockDeviceAPITest extends AbstractTest {
         private boolean read;
         private String toStringDesc = "";
 
-        public Bounds(boolean read, boolean aligned, byte boundsType) throws Exception {
+        public Bounds(boolean read, boolean aligned, byte boundsType, long deviceLength,
+                      boolean deviceNeedsAlignment) throws Exception {
             this.read = read;
 
             expectError = true;
@@ -213,75 +335,71 @@ public class BlockDeviceAPITest extends AbstractTest {
             switch (boundsType) {
                 case BEFORE_LOWER:
                     toStringDesc += "BEFORE_LOWER";
-                    expectError = true; // must give an error
+                    expectError = true;
                     start = -DELTA;
                     end = 0;
                     break;
 
                 case AROUND_LOWER:
                     toStringDesc += "AROUND_LOWER";
-                    expectError = true; // must give an error
+                    expectError = true;
                     start = -DELTA;
                     end = +DELTA;
                     break;
 
                 case LOWER:
                     toStringDesc += "LOWER";
-                    expectError = false; // must NOT give an error
+                    expectError = false;
                     start = 0;
                     end = +DELTA;
                     break;
 
                 case NOMINAL:
                     toStringDesc += "NOMINAL";
-                    expectError = false; // must NOT give an error
-                    middle = getBlockDeviceAPI().getLength() / 2;
+                    expectError = false;
+                    middle = deviceLength / 2;
                     start = middle - DELTA;
                     end = middle + DELTA;
                     break;
 
                 case UPPER:
                     toStringDesc += "UPPER";
-                    expectError = false; // must NOT give an error
-                    start = getBlockDeviceAPI().getLength() - DELTA;
-                    end = getBlockDeviceAPI().getLength();
+                    expectError = false;
+                    start = deviceLength - DELTA;
+                    end = deviceLength;
                     break;
 
                 case AROUND_UPPER:
                     toStringDesc += "AROUND_UPPER";
-                    expectError = true; // must give an error
-                    start = getBlockDeviceAPI().getLength() - DELTA;
-                    end = getBlockDeviceAPI().getLength() + DELTA;
+                    expectError = true;
+                    start = deviceLength - DELTA;
+                    end = deviceLength + DELTA;
                     break;
 
                 case AFTER_UPPER:
                     toStringDesc += "AFTER_UPPER";
-                    expectError = true; // must give an error
-                    start = getBlockDeviceAPI().getLength();
-                    end = getBlockDeviceAPI().getLength() + DELTA;
+                    expectError = true;
+                    start = deviceLength;
+                    end = deviceLength + DELTA;
                     break;
 
                 default:
                     throw new Exception("unexpected boundsType: " + boundsType);
             }
 
-            // is it a regular usage ?
             if (!expectError) {
                 if (!aligned) {
                     start += UNALIGNMENT_OFFSET;
                     end += UNALIGNMENT_OFFSET;
                 }
 
-                // adjustment for regular usage (to be in the bounds)
                 start = Math.max(0, start);
-                end = Math.min(getBlockDeviceAPI().getLength(), end);
+                end = Math.min(deviceLength, end);
             }
 
-            boolean apiNeedAlignment = (getBlockDeviceAPI() instanceof FloppyDriver) ||
-                (getBlockDeviceAPI() instanceof IDEDiskDriver);
+            boolean apiNeedAlignment = deviceNeedsAlignment;
             expectError |= !aligned && apiNeedAlignment;
         }
-
 
         public long getEnd() {
             return end;
@@ -296,16 +414,8 @@ public class BlockDeviceAPITest extends AbstractTest {
         }
 
         public String toString() {
-            String devSize;
-            try {
-                devSize = "" + getBlockDeviceAPI().getLength();
-            } catch (IOException e) {
-                log.error("error in toString", e);
-                devSize = "???";
-            }
-
             return (read ? "read " : "write ") + " " + toStringDesc +
-                " [" + start + ", " + end + "] (devSize=" + devSize + ") with config " + getTestConfig().getName();
+                " [" + start + ", " + end + "]";
         }
     }
 }

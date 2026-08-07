@@ -76,11 +76,8 @@ public class MockObjectFactory {
 
                 long nbSectors = deviceSize / IDEConstants.SECTOR_SIZE;
                 Long lNbSectors = new Long(nbSectors);
-                String methodName = supp48bitsAddr ?
-                    "getSectorsIn48bitAddressing" :
-                    "getSectorsIn28bitAddressing";
                 mockDesc.expects(mockTestCase.atLeastOnce()).
-                    method(methodName).
+                    method("getSectorsAddressable").
                     withNoArguments().will(new ReturnStub(lNbSectors));
 
             }

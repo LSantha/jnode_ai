@@ -95,6 +95,6 @@
   
   <extension point="org.jnode.testrunner.tests">
     <test class="org.jnode.test.fs.filesystem.FSTestSuite" category="fs"/>
-    <test class="org.jnode.test.fs.driver.BlockDeviceAPITestSuite" category="fs,driver"/>
+    <suite class="org.jnode.test.fs.driver.BlockDeviceAPITestSuite" category="fs,driver"/>
   </extension>  
 </plugin>

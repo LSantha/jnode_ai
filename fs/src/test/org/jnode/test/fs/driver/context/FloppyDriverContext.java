@@ -41,6 +41,10 @@ public class FloppyDriverContext extends BlockDeviceAPIContext {
     public void init(TestConfig config, MockObjectTestCase testCase) throws Exception {
         super.init(config, testCase);
 
+        if (testCase == null) {
+            return;
+        }
+
         // set the current testCase for our factory
         MockFloppyDeviceFactory factory;
         try {
@@ -59,5 +63,13 @@ public class FloppyDriverContext extends BlockDeviceAPIContext {
         FloppyDriver driver = (FloppyDriver) findDriver(deviceFinder, "fd0");
         log.debug("findDriver->" + driver);
         init(null, driver, null);
+    }
+
+    public void init(TestConfig config, Object testCase) throws Exception {
+        if (testCase instanceof MockObjectTestCase) {
+            init(config, (MockObjectTestCase) testCase);
+        } else {
+            super.init(config, null);
+        }
     }
 }
