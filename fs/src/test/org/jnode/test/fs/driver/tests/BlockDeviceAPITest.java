@@ -34,6 +34,7 @@ import static org.junit.Assert.*;
 public class BlockDeviceAPITest {
 
     private static final int DEVICE_SIZE = 1 * 1024 * 1024;
+    private static final boolean DEVICE_NEEDS_ALIGNMENT = false;
 
     private ByteArrayDevice device;
     private BlockDeviceAPI api;
@@ -135,7 +136,7 @@ public class BlockDeviceAPITest {
     }
 
     private void doRead(boolean aligned, byte boundsType) throws Exception {
-        Bounds bounds = new Bounds(true, aligned, boundsType, api.getLength());
+        Bounds bounds = new Bounds(true, aligned, boundsType, api.getLength(), DEVICE_NEEDS_ALIGNMENT);
         boolean errorOccured;
 
         try {
@@ -157,7 +158,7 @@ public class BlockDeviceAPITest {
     }
 
     private void doWrite(boolean aligned, byte boundsType) throws Exception {
-        Bounds bounds = new Bounds(false, aligned, boundsType, api.getLength());
+        Bounds bounds = new Bounds(false, aligned, boundsType, api.getLength(), DEVICE_NEEDS_ALIGNMENT);
         boolean errorOccured;
 
         try {
@@ -230,7 +231,8 @@ public class BlockDeviceAPITest {
         private boolean read;
         private String toStringDesc = "";
 
-        public Bounds(boolean read, boolean aligned, byte boundsType, long deviceLength) throws Exception {
+        public Bounds(boolean read, boolean aligned, byte boundsType, long deviceLength,
+                      boolean deviceNeedsAlignment) throws Exception {
             this.read = read;
 
             expectError = true;
@@ -301,6 +303,9 @@ public class BlockDeviceAPITest {
                 start = Math.max(0, start);
                 end = Math.min(deviceLength, end);
             }
+
+            boolean apiNeedAlignment = deviceNeedsAlignment;
+            expectError |= !aligned && apiNeedAlignment;
         }
 
         public long getEnd() {
