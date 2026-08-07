@@ -20,6 +20,7 @@
  
 package org.jnode.test;
 
+import org.jnode.test.threads.ThreadingTestJUnit4;
 import org.jnode.test.util.NumberUtilsTest;
 import org.jnode.test.util.VersionTest;
 import org.junit.runner.RunWith;
@@ -38,6 +39,7 @@ import org.junit.runners.Suite.SuiteClasses;
     VersionTest.class,
     TryFinallyTest.class,
     VarArgsTest.class,
+    ThreadingTestJUnit4.class,
 }
 )
 public class CoreTestSuite {
