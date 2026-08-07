@@ -150,8 +150,15 @@ public class ReferenceTypeCommandSet
 
     Class clazz = refId.getType();
     ClassLoader loader = clazz.getClassLoader();
-    ObjectId oid = idMan.getObjectId(loader);
-    oid.write(os);
+    if (loader == null)
+      {
+        os.writeLong(0);
+      }
+    else
+      {
+        ObjectId oid = idMan.getObjectId(loader);
+        oid.write(os);
+      }
   }
 
   private void executeModifiers(ByteBuffer bb, DataOutputStream os)
@@ -193,9 +200,6 @@ public class ReferenceTypeCommandSet
     for (int i = 0; i < count; i++)
       {
         VmMethod vmMethod = vmType.getDeclaredMethod(i);
-        // VmType.getDeclaredMethod(i) should never return null for i in
-        // [0, getNoDeclaredMethods()). If it does, that indicates a VM
-        // bug; let the NPE surface rather than writing mismatched count.
         os.writeLong(i);
         JdwpString.writeString(os, vmMethod.getName());
         JdwpString.writeString(os, vmMethod.getSignature());

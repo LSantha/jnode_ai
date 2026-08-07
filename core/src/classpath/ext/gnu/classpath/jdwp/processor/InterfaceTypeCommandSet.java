@@ -39,11 +39,18 @@ exception statement from your version. */
 
 package gnu.classpath.jdwp.processor;
 
+import gnu.classpath.jdwp.JdwpConstants;
 import gnu.classpath.jdwp.exception.JdwpException;
+import gnu.classpath.jdwp.exception.JdwpInternalErrorException;
 import gnu.classpath.jdwp.exception.NotImplementedException;
+import gnu.classpath.jdwp.id.ReferenceTypeId;
+import gnu.classpath.jdwp.util.JdwpString;
 
 import java.io.DataOutputStream;
+import java.io.IOException;
 import java.nio.ByteBuffer;
+import org.jnode.vm.classmgr.VmType;
+import org.jnode.vm.classmgr.VmMethod;
 
 /**
  * A class representing the InterfaceType Command Set.
@@ -53,16 +60,58 @@ import java.nio.ByteBuffer;
 public class InterfaceTypeCommandSet
   extends CommandSet
 {
-  /**
-   * There are no commands for this CommandSet at this time so we just throw a
-   * NotImplementedException whenever it's called.
-   * 
-   * @throws JdwpException An exception will always be thrown
-   */
   public boolean runCommand(ByteBuffer bb, DataOutputStream os, byte command)
     throws JdwpException
   {
-    throw new NotImplementedException(
-      "No commands for command set InterfaceType implemented.");
+    try
+      {
+        switch (command)
+          {
+          case JdwpConstants.CommandSet.InterfaceType.METHODS:
+            executeMethods(bb, os);
+            break;
+          case JdwpConstants.CommandSet.InterfaceType.METHOD_WITH_GENERIC:
+            executeMethodWithGeneric(bb, os);
+            break;
+          default:
+            throw new NotImplementedException(
+              "Command " + command + " not found in InterfaceType Command Set.");
+          }
+      }
+    catch (IOException ex)
+      {
+        throw new JdwpInternalErrorException(ex);
+      }
+
+    return false;
+  }
+
+  /**
+   * List methods declared in this interface.
+   */
+  private void executeMethods(ByteBuffer bb, DataOutputStream os)
+    throws JdwpException, IOException
+  {
+    ReferenceTypeId refId = idMan.readReferenceTypeId(bb);
+    Class clazz = refId.getType();
+    VmType vmType = VmType.fromClass(clazz);
+
+    int count = (vmType == null) ? 0 : vmType.getNoDeclaredMethods();
+    os.writeInt(count);
+    for (int i = 0; i < count; i++)
+      {
+        VmMethod vmMethod = vmType.getDeclaredMethod(i);
+        os.writeLong(i);
+        JdwpString.writeString(os, vmMethod.getName());
+        JdwpString.writeString(os, vmMethod.getSignature());
+        os.writeInt(vmMethod.getModifiers());
+      }
+  }
+
+  private void executeMethodWithGeneric(ByteBuffer bb, DataOutputStream os)
+    throws JdwpException, IOException
+  {
+    // Reuse executeMethods - generic signatures are not tracked separately
+    executeMethods(bb, os);
   }
 }

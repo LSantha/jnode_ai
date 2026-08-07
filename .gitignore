@@ -16,3 +16,4 @@ classlib.pack.gz
 /.metadata
 /.idea/
 /.wiki/
+__pycache__/

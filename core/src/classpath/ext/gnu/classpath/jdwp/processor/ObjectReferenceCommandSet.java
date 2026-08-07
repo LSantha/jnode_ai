@@ -54,8 +54,8 @@ import gnu.classpath.jdwp.util.JdwpString;
 import java.io.DataOutputStream;
 import java.io.IOException;
 import java.lang.reflect.Field;
+import java.lang.reflect.Member;
 import org.jnode.vm.classmgr.VmType;
-import org.jnode.vm.classmgr.VmNormalClass;
 import org.jnode.vm.classmgr.VmMethod;
 import java.lang.reflect.Method;
 import java.nio.ByteBuffer;
@@ -228,10 +228,6 @@ public class ObjectReferenceCommandSet
     ReferenceTypeId rid = idMan.readReferenceTypeId(bb);
     Class clazz = rid.getType();
 
-    // Method IDs in our implementation are VmMethod indices, not object IDs.
-    // Read the raw long and resolve from the class's method table.
-    // If the method is not found in the given class, walk up the class
-    // hierarchy to handle inherited methods (e.g. toString() from Object).
     long methodIdx = bb.getLong();
 
     int args = bb.getInt();
@@ -241,55 +237,9 @@ public class ObjectReferenceCommandSet
         values[i] = Value.getObj(bb);
       }
 
-    // Resolve method from class or superclass using index and parameter count matching
-    Method method = null;
     VmType vmType = VmType.fromClass(clazz);
-    VmType searchType = vmType;
-    while (searchType != null && method == null)
-      {
-        int nMethods = searchType.getNoDeclaredMethods();
-        if (methodIdx >= 0 && methodIdx < nMethods)
-          {
-            VmMethod vmMethod = searchType.getDeclaredMethod((int) methodIdx);
-            if (vmMethod != null && !vmMethod.isConstructor())
-              {
-                Method candidate = (Method) vmMethod.asMember();
-                if (candidate != null && candidate.getParameterTypes().length == values.length)
-                  {
-                    method = candidate;
-                    break;
-                  }
-              }
-          }
-        if (searchType instanceof VmNormalClass)
-          {
-            searchType = ((VmNormalClass) searchType).getSuperClass();
-          }
-        else
-          {
-            break;
-          }
-      }
-
-    // Fallback: search Java reflection declared methods across class hierarchy
-    if (method == null)
-      {
-        Class curClass = clazz;
-        while (curClass != null && method == null)
-          {
-            Method[] declared = curClass.getDeclaredMethods();
-            if (methodIdx >= 0 && methodIdx < declared.length)
-              {
-                Method candidate = declared[(int) methodIdx];
-                if (candidate.getParameterTypes().length == values.length)
-                  {
-                    method = candidate;
-                    break;
-                  }
-              }
-            curClass = curClass.getSuperclass();
-          }
-      }
+    Member resolved = MethodResolver.resolveForInstance(vmType, clazz, methodIdx, values.length);
+    Method method = (resolved instanceof Method) ? (Method) resolved : null;
 
     if (method == null)
       {

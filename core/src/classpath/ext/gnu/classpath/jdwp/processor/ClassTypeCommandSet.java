@@ -59,7 +59,6 @@ import java.lang.reflect.Constructor;
 import java.lang.reflect.Member;
 import java.nio.ByteBuffer;
 import org.jnode.vm.classmgr.VmType;
-import org.jnode.vm.classmgr.VmNormalClass;
 import org.jnode.vm.classmgr.VmMethod;
 
 /**
@@ -111,12 +110,15 @@ public class ClassTypeCommandSet
     Class clazz = refId.getType();
     Class superClazz = clazz.getSuperclass();
 
-    if (superClazz == null) {
-    	os.writeLong(0L);
-    } else {
-    ReferenceTypeId clazzId = idMan.getReferenceTypeId(superClazz);
-    clazzId.write(os);
-  }
+    if (superClazz == null)
+      {
+        os.writeLong(0L);
+      }
+    else
+      {
+        ReferenceTypeId clazzId = idMan.getReferenceTypeId(superClazz);
+        clazzId.write(os);
+      }
   }
 
   private void executeSetValues(ByteBuffer bb, DataOutputStream os)
@@ -225,58 +227,10 @@ public class ClassTypeCommandSet
         values[i] = Value.getObj(bb);
       }
 
-    // Resolve member (method/constructor) from class or superclass using index and parameter count matching
-    Member member = null;
+    // Resolve member (method/constructor) from class or superclass using index and parameter count matching.
+    // Walk the full hierarchy: superclass chain + all implemented interfaces.
     VmType vmType = VmType.fromClass(clazz);
-    VmType searchType = vmType;
-    while (searchType != null && member == null)
-      {
-        int nMethods = searchType.getNoDeclaredMethods();
-        if (methodIdx >= 0 && methodIdx < nMethods)
-          {
-            VmMethod vmMethod = searchType.getDeclaredMethod((int) methodIdx);
-            if (vmMethod != null)
-              {
-                Member candidate = vmMethod.asMember();
-                int paramCount = (candidate instanceof Method)
-                    ? ((Method) candidate).getParameterTypes().length
-                    : ((Constructor) candidate).getParameterTypes().length;
-                if (paramCount == values.length)
-                  {
-                    member = candidate;
-                    break;
-                  }
-              }
-          }
-        if (searchType instanceof VmNormalClass)
-          {
-            searchType = ((VmNormalClass) searchType).getSuperClass();
-          }
-        else
-          {
-            break;
-          }
-      }
-
-    // Fallback: search Java reflection declared methods across class hierarchy
-    if (member == null)
-      {
-        Class curClass = clazz;
-        while (curClass != null && member == null)
-          {
-            Method[] declared = curClass.getDeclaredMethods();
-            if (methodIdx >= 0 && methodIdx < declared.length)
-              {
-                Method candidate = declared[(int) methodIdx];
-                if (candidate.getParameterTypes().length == values.length)
-                  {
-                    member = candidate;
-                    break;
-                  }
-              }
-            curClass = curClass.getSuperclass();
-          }
-      }
+    Member member = MethodResolver.resolveForClassType(vmType, clazz, methodIdx, values.length);
 
     if (member == null)
       {

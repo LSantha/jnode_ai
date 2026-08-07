@@ -131,6 +131,8 @@ public class JdwpConstants
       public static final byte CS_VALUE = 5;
 
       // commands
+      public static final byte METHODS = 1;
+      public static final byte METHOD_WITH_GENERIC = 2;
     }
 
     public static final class Method

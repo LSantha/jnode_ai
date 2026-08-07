@@ -214,7 +214,7 @@ public class PacketProcessor
       }
     catch (Exception ex)
       {
-        log.warn("JDWP command processing error: " + ex.getMessage());
+        log.warn("JDWP command processing error: " + ex.getClass().getName() + ": " + ex.getMessage());
         reply.setErrorCode(JdwpConstants.Error.INTERNAL);
       }
 
