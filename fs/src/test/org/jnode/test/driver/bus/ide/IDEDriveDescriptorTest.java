@@ -26,6 +26,7 @@ import org.junit.Test;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertTrue;
 
 public class IDEDriveDescriptorTest {
@@ -117,18 +118,26 @@ public class IDEDriveDescriptorTest {
     public void testGetSerialNumber() {
         String result = ideDescriptor.getSerialNumber();
         assertEquals("5LS9K7CF", result);
+        assertNotNull("Serial number must not be null", result);
+        assertTrue("Serial number must not be empty", result.length() > 0);
     }
 
     @Test
     public void testGetModel() {
         String result = ideDescriptor.getModel();
         assertEquals("ST3160812AS", result);
+        assertNotNull("Model must not be null", result);
+        assertTrue("Model must not be empty", result.length() > 0);
+        assertTrue("Model must be at most 40 chars", result.length() <= 40);
     }
 
     @Test
     public void testGetFirmware() {
         String result = ideDescriptor.getFirmware();
         assertEquals("3.ADJ", result);
+        assertNotNull("Firmware must not be null", result);
+        assertTrue("Firmware must not be empty", result.length() > 0);
+        assertTrue("Firmware must be at most 8 chars", result.length() <= 8);
     }
 
     @Test
@@ -136,38 +145,118 @@ public class IDEDriveDescriptorTest {
         long result = ideDescriptor.getSectorsAddressable();
         //Get actually the LBA48 user addressable sectors
         assertEquals(312500000, result);
+        assertTrue("Sectors addressable must be positive", result > 0);
+        int[] data28bit = new int[256];
+        System.arraycopy(ide, 0, data28bit, 0, 256);
+        data28bit[83] = data28bit[83] & ~0x400;
+        IDEDriveDescriptor desc28 = new IDEDriveDescriptor(data28bit, true);
+        long result28 = desc28.getSectorsAddressable();
+        assertEquals("28-bit addressing sectors", 268435455L, result28);
+        assertTrue("28-bit sectors must be positive", result28 > 0);
     }
 
     @Test
     public void testSupports48bitAddressing() {
         boolean result = ideDescriptor.supports48bitAddressing();
         assertTrue("Must support 48bits addressing", result);
+        assertTrue("Bit10 of word83 must be set for LBA48",
+            (ide[83] & 0x400) != 0);
     }
 
     @Test
     public void testSupportsLBA() {
         boolean result = ideDescriptor.supportsLBA();
         assertTrue("Must support LBA", result);
+        assertTrue("Bit9 of word49 must be set for LBA support",
+            (ide[49] & 0x0200) != 0);
     }
 
     @Test
     public void testDMA() {
         boolean result = ideDescriptor.supportsDMA();
         assertTrue("Must support DMA", result);
+        assertTrue("Bit8 of word49 must be set for DMA support",
+            (ide[49] & 0x0100) != 0);
     }
 
     @Test
     public void testIsATA() {
         boolean result = ideDescriptor.isAta();
         assertTrue("Must be ATA drive", result);
+        assertFalse("Bit15 of word0 must be clear for ATA",
+            (ide[0] & 0x8000) != 0);
+        assertFalse("CD-ROM must not be ATA", cdromIdeDescriptor.isAta());
     }
 
     @Test
     public void testIsRemovable() {
         boolean result = ideDescriptor.isRemovable();
         assertFalse("Must not be a removable device", result);
+        assertFalse("Bit7 of word0 must be clear for non-removable",
+            (ide[0] & 0x80) != 0);
         result = cdromIdeDescriptor.isRemovable();
         assertTrue("Must be a removable device", result);
+        assertTrue("Bit7 of word0 must be set for removable",
+            (cdrom[0] & 0x80) != 0);
+    }
+
+    @Test
+    public void testIsDisk() {
+        IDEDriveDescriptor ataDisk = new IDEDriveDescriptor(ide, false);
+        assertTrue("IDE disk must be a disk", ataDisk.isDisk());
+        IDEDriveDescriptor atapiDisk = new IDEDriveDescriptor(cdrom, true);
+        assertFalse("CD-ROM must not be a disk", atapiDisk.isDisk());
+    }
+
+    @Test
+    public void testIsCDROM() {
+        IDEDriveDescriptor ataDisk = new IDEDriveDescriptor(ide, false);
+        assertFalse("IDE disk must not be a CD-ROM", ataDisk.isCDROM());
+        assertTrue("CD-ROM descriptor must be a CD-ROM", cdromIdeDescriptor.isCDROM());
+    }
+
+    @Test
+    public void testIsTape() {
+        assertFalse("IDE disk must not be a tape", ideDescriptor.isTape());
+        assertFalse("CD-ROM must not be a tape", cdromIdeDescriptor.isTape());
+    }
+
+    @Test
+    public void testIsAtapi() {
+        IDEDriveDescriptor ataDisk = new IDEDriveDescriptor(ide, false);
+        assertFalse("IDE disk must not be ATAPI", ataDisk.isAtapi());
+        assertTrue("CD-ROM descriptor must be ATAPI", cdromIdeDescriptor.isAtapi());
+    }
+
+    @Test
+    public void testToString() {
+        String result = ideDescriptor.toString();
+        assertNotNull("toString must not be null", result);
+        assertTrue("toString must contain serial", result.contains("serial=[5LS9K7CF]"));
+        assertTrue("toString must contain firmware", result.contains("firmware=[3.ADJ]"));
+        assertTrue("toString must contain model", result.contains("model=[ST3160812AS]"));
+        assertTrue("toString must not be empty", result.length() > 0);
+    }
+
+    @Test
+    public void testCdromSerialNumber() {
+        String result = cdromIdeDescriptor.getSerialNumber();
+        assertNotNull("CD-ROM serial must not be null", result);
+        assertEquals("CD-ROM serial (all spaces)", "", result);
+    }
+
+    @Test
+    public void testCdromModel() {
+        String result = cdromIdeDescriptor.getModel();
+        assertNotNull("CD-ROM model must not be null", result);
+        assertEquals("CD-ROM model", "_NEC DVD+/-RW ND-3650A", result);
+    }
+
+    @Test
+    public void testCdromFirmware() {
+        String result = cdromIdeDescriptor.getFirmware();
+        assertNotNull("CD-ROM firmware must not be null", result);
+        assertEquals("CD-ROM firmware", "105C", result);
     }
 
 }
