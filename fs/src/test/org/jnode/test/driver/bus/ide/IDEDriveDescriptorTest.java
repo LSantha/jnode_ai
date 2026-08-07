@@ -146,11 +146,8 @@ public class IDEDriveDescriptorTest {
         //Get actually the LBA48 user addressable sectors
         assertEquals(312500000, result);
         assertTrue("Sectors addressable must be positive", result > 0);
-        // Verify 28-bit addressing path separately
-        // data[60] = 0xffff, data[61] = 0x0fff => 0x0fff0000 | 0xffff = 0x0ffffffff
         int[] data28bit = new int[256];
         System.arraycopy(ide, 0, data28bit, 0, 256);
-        // Clear the48-bit support bit (bit10 of data[83])
         data28bit[83] = data28bit[83] & ~0x400;
         IDEDriveDescriptor desc28 = new IDEDriveDescriptor(data28bit, true);
         long result28 = desc28.getSectorsAddressable();
@@ -162,7 +159,6 @@ public class IDEDriveDescriptorTest {
     public void testSupports48bitAddressing() {
         boolean result = ideDescriptor.supports48bitAddressing();
         assertTrue("Must support 48bits addressing", result);
-        // Verify the bit is set in the data: data[83] bit10 (0x400)
         assertTrue("Bit10 of word83 must be set for LBA48",
             (ide[83] & 0x400) != 0);
     }
@@ -171,7 +167,6 @@ public class IDEDriveDescriptorTest {
     public void testSupportsLBA() {
         boolean result = ideDescriptor.supportsLBA();
         assertTrue("Must support LBA", result);
-        // Verify bit9 of data[49] (0x0200)
         assertTrue("Bit9 of word49 must be set for LBA support",
             (ide[49] & 0x0200) != 0);
     }
@@ -180,7 +175,6 @@ public class IDEDriveDescriptorTest {
     public void testDMA() {
         boolean result = ideDescriptor.supportsDMA();
         assertTrue("Must support DMA", result);
-        // Verify bit8 of data[49] (0x0100)
         assertTrue("Bit8 of word49 must be set for DMA support",
             (ide[49] & 0x0100) != 0);
     }
@@ -189,10 +183,8 @@ public class IDEDriveDescriptorTest {
     public void testIsATA() {
         boolean result = ideDescriptor.isAta();
         assertTrue("Must be ATA drive", result);
-        // Verify: data[0] bit15 (0x8000) must be clear for ATA
         assertFalse("Bit15 of word0 must be clear for ATA",
             (ide[0] & 0x8000) != 0);
-        // CD-ROM should not be ATA (bit15 is set)
         assertFalse("CD-ROM must not be ATA", cdromIdeDescriptor.isAta());
     }
 
@@ -200,12 +192,10 @@ public class IDEDriveDescriptorTest {
     public void testIsRemovable() {
         boolean result = ideDescriptor.isRemovable();
         assertFalse("Must not be a removable device", result);
-        // Verify: data[0] bit7 (0x80) must be clear for non-removable
         assertFalse("Bit7 of word0 must be clear for non-removable",
             (ide[0] & 0x80) != 0);
         result = cdromIdeDescriptor.isRemovable();
         assertTrue("Must be a removable device", result);
-        // Verify: data[0] bit7 must be set for removable
         assertTrue("Bit7 of word0 must be set for removable",
             (cdrom[0] & 0x80) != 0);
     }
@@ -252,7 +242,6 @@ public class IDEDriveDescriptorTest {
     public void testCdromSerialNumber() {
         String result = cdromIdeDescriptor.getSerialNumber();
         assertNotNull("CD-ROM serial must not be null", result);
-        // data[10..19] are all 0x2020 (spaces), so serial is empty after trim
         assertEquals("CD-ROM serial (all spaces)", "", result);
     }
 
