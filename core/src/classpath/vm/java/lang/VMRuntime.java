@@ -223,6 +223,33 @@ final class VMRuntime
         String mainClassName = cmd[0];
         String[] cmdArgs = new String[cmd.length - 1];
         System.arraycopy(cmd, 1, cmdArgs, 0, cmdArgs.length);
+        
+        if ("java".equals(mainClassName)) {
+            String parsedClassName = null;
+            String[] parsedArgs = null;
+            int classpathEnd = 0;
+            
+            for (int i = 0; i < cmdArgs.length; i++) {
+                if ("-cp".equals(cmdArgs[i]) || "-classpath".equals(cmdArgs[i])) {
+                    if (i + 1 < cmdArgs.length) {
+                        i++;
+                    }
+                    classpathEnd = i + 1;
+                } else if (!cmdArgs[i].startsWith("-")) {
+                    parsedClassName = cmdArgs[i];
+                    int argsCount = cmdArgs.length - i - 1;
+                    parsedArgs = new String[argsCount];
+                    System.arraycopy(cmdArgs, i + 1, parsedArgs, 0, argsCount);
+                    break;
+                }
+            }
+            
+            if (parsedClassName != null) {
+                mainClassName = parsedClassName;
+                cmdArgs = parsedArgs != null ? parsedArgs : new String[0];
+            }
+        }
+        
         try {
             final Process p =
                 VmProcess.createProcess(mainClassName, cmdArgs, env);
