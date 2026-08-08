@@ -128,6 +128,17 @@ public class DefaultCommandInvoker implements SimpleCommandInvoker {
                     } else {
                         throw ex2;
                     }
+                } finally {
+                    try {
+                        System.out.flush();
+                    } catch (Throwable ex) {
+                        // ignore
+                    }
+                    try {
+                        System.err.flush();
+                    } catch (Throwable ex) {
+                        // ignore
+                    }
                 }
             } catch (ShellControlException ex) {
                 throw ex;
