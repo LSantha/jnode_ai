@@ -29,6 +29,7 @@ JNode is a Java operating system with custom JVM. ~3,300 Java files, 25 assembly
 | `net/` | Network stack |
 | `gui/` | AWT, video/input drivers |
 | `all/build.xml` | Master build file |
+| `tests/jdwp/` | JDWP integration tests (75 tests, pytest, requires VirtualBox JNode VM) |
 
 ## Running Tests
 
@@ -36,6 +37,7 @@ JNode is a Java operating system with custom JVM. ~3,300 Java files, 25 assembly
 - **Per subproject JUnit**: `sh build.sh -f <subproject>/build-tests.xml all-junit`
 - **Framework**: JUnit 4.5, JMock, Mockito
 - **Test locations**: `<subproject>/src/test/` (390 test files total)
+- **JDWP tests**: `python3 -m pytest tests/jdwp/ -v` (requires running JNode VM with JDWP listener; see `tests/jdwp/AGENTS.md`). **Run these after any JDWP code change** — they are the regression test suite for the debug backend.
 
 ## Boot Testing
 
