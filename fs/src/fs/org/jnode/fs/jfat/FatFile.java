@@ -112,7 +112,13 @@ public class FatFile extends FatEntry implements FSFile, FSFileSlackSpace {
 
         if (lst != offset) setLastModified(System.currentTimeMillis());
 
-        flush();
+        // The dirty FAT cache, dir entry, and chain are flushed lazily by an
+        // explicit file.flush() / fs.flush() / fs.close(). Flushing on every
+        // write forced an O(N) scan of every dirty cache element per write,
+        // killing throughput for sequential / append-heavy workloads.
+        // Durability is preserved because AbstractFileSystem.close() always
+        // calls flush() in the non-readOnly case, and FatFileSystem.flush()
+        // routes through flushFiles() + fat.flush().
     }
 
     @Override

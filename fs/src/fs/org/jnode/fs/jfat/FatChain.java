@@ -434,37 +434,33 @@ public class FatChain {
          * i.next(); else break;
          */
 
-        try {
-            if (last != clidx) {
-                int m = clidx - last;
+        if (last != clidx) {
+            int m = clidx - last;
 
-                long lst = offset + src.remaining() - last * clsize;
+            long lst = offset + src.remaining() - last * clsize;
 
-                int n = (int) (lst / clsize);
-                if ((lst % clsize) != 0)
-                    n++;
+            int n = (int) (lst / clsize);
+            if ((lst % clsize) != 0)
+                n++;
 
-                last = allocateTail(n, m, p.getOffset());
+            last = allocateTail(n, m, p.getOffset());
 
-                if (cluster != 0) {
-                    fat.set(cluster, last);
-                    ((ChainIterator) i).appendChain(last);
-                } else {
-                    setStartCluster(last);
-                    // i = listIterator ( clidx );
-                }
-
-                /*
-                 * here length is used to decide if we have to zero the data
-                 * inside the last cluster tail
-                 */
-                int ofs = (int) (length % clsize);
-
-                if (ofs != 0)
-                    fat.clearCluster(cluster, ofs, clsize);
+            if (cluster != 0) {
+                fat.set(cluster, last);
+                ((ChainIterator) i).appendChain(last);
+            } else {
+                setStartCluster(last);
+                // i = listIterator ( clidx );
             }
-        } finally {
-            fat.flush();
+
+            /*
+             * here length is used to decide if we have to zero the data
+             * inside the last cluster tail
+             */
+            int ofs = (int) (length % clsize);
+
+            if (ofs != 0)
+                fat.clearCluster(cluster, ofs, clsize);
         }
 
         for (int l = src.remaining(), sz = p.getPartial(), ofs = p.getOffset(), size; l > 0; l -=
@@ -475,18 +471,14 @@ public class FatChain {
                 if ((l % clsize) != 0)
                     n++;
 
-                try {
-                    last = allocateTail(n);
+                last = allocateTail(n);
 
-                    if (cluster != 0) {
-                        fat.set(cluster, last);
-                        ((ChainIterator) i).appendChain(last);
-                    } else {
-                        setStartCluster(last);
-                        // i = listIterator ( 0 );
-                    }
-                } finally {
-                    fat.flush();
+                if (cluster != 0) {
+                    fat.set(cluster, last);
+                    ((ChainIterator) i).appendChain(last);
+                } else {
+                    setStartCluster(last);
+                    // i = listIterator ( 0 );
                 }
             }
 
