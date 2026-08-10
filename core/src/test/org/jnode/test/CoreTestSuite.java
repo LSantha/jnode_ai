@@ -39,6 +39,7 @@ import org.junit.runners.Suite.SuiteClasses;
     VersionTest.class,
     TryFinallyTest.class,
     VarArgsTest.class,
+    JavaCommandParserTest.class,
     ThreadingTestJUnit4.class,
 }
 )

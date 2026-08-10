@@ -220,19 +220,22 @@ final class VMRuntime
             env = new String[0];
         }
 
-        String mainClassName = cmd[0];
-        String[] cmdArgs = new String[cmd.length - 1];
-        System.arraycopy(cmd, 1, cmdArgs, 0, cmdArgs.length);
+        final VmProcess.JavaCommand parsed = VmProcess.parseJavaCommand(cmd);
+        final String mainClassName = parsed.getMainClassName();
+        final String[] cmdArgs = parsed.getArgs();
+
         try {
             final Process p =
-                VmProcess.createProcess(mainClassName, cmdArgs, env);
+                VmProcess.createProcess(mainClassName, cmdArgs, env, parsed.getClassPath());
             if (p == null) {
                 throw new IOException("Exec error");
             } else {
                 return p;
             }
+        } catch (RuntimeException ex) {
+            throw ex;
         } catch (Exception ex) {
-            final IOException ioe = new IOException("Exec error");
+            final IOException ioe = new IOException("Exec error: " + mainClassName);
             ioe.initCause(ex);
             throw ioe;
         }

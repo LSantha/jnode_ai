@@ -67,8 +67,10 @@ public class VmProcess extends Process {
      * @param in
      * @param out
      * @param err
+     * @param classLoader the classloader to use for this process
      */
-    public VmProcess(String mainClassName, String[] args, InputStream in, PrintStream out, PrintStream err) {
+    public VmProcess(String mainClassName, String[] args, InputStream in,
+        PrintStream out, PrintStream err, ClassLoader classLoader) {
         synchronized (getClass()) {
             this.id = lastId++;
         }
@@ -96,6 +98,9 @@ public class VmProcess extends Process {
         }
 
         final Thread mainThread = new Thread(threadGroup, new ProcessRunner());
+        if (classLoader != null) {
+            mainThread.setContextClassLoader(classLoader);
+        }
         mainThread.start();
     }
 
@@ -110,6 +115,103 @@ public class VmProcess extends Process {
     }
 
     /**
+     * Result of parsing a {@code java ...} command line. Immutable.
+     */
+    public static final class JavaCommand {
+        private final String mainClassName;
+        private final String[] args;
+        private final String[] classPath;
+
+        public JavaCommand(String mainClassName, String[] args, String[] classPath) {
+            this.mainClassName = mainClassName;
+            this.args = (args == null) ? new String[0] : args;
+            this.classPath = classPath;
+        }
+
+        public String getMainClassName() {
+            return mainClassName;
+        }
+
+        public String[] getArgs() {
+            return args;
+        }
+
+        public String[] getClassPath() {
+            return classPath;
+        }
+    }
+
+    /**
+     * Parse a {@code java ...} style command line into a main class, its
+     * arguments, and the {@code -cp}/-{@code classpath} entries.
+     *
+     * Supported syntax: {@code java [-cp <path>|-classpath <path>] <MainClass> [args...]}.
+     * Unknown {@code -X}/{@code -D} options that take a value are NOT supported
+     * (they would be misinterpreted as the main class); only the two classpath
+     * flags consume a following token.
+     *
+     * If {@code cmd[0]} is not "java", the array is treated as a direct
+     * {@code <MainClass> [args...]} invocation: cmd[0] is the main class and
+     * cmd[1..] are the arguments verbatim.
+     *
+     * @param cmd the tokenized command; must have length >= 1
+     * @return a {@link JavaCommand}; never null
+     * @throws NullPointerException if cmd is null
+     * @throws IllegalArgumentException if cmd is empty or contains no main class
+     */
+    public static JavaCommand parseJavaCommand(String[] cmd) {
+        if (cmd == null) {
+            throw new NullPointerException("cmd");
+        }
+        if (cmd.length == 0) {
+            throw new IllegalArgumentException("empty command");
+        }
+
+        final String[] cmdArgs;
+        if ("java".equals(cmd[0])) {
+            cmdArgs = new String[cmd.length - 1];
+            System.arraycopy(cmd, 1, cmdArgs, 0, cmdArgs.length);
+        } else {
+            cmdArgs = cmd;
+        }
+
+        String classPathJoined = null;
+        String mainClassName = null;
+        int mainIdx = -1;
+
+        for (int i = 0; i < cmdArgs.length; i++) {
+            if ("-cp".equals(cmdArgs[i]) || "-classpath".equals(cmdArgs[i])) {
+                if (i + 1 >= cmdArgs.length) {
+                    throw new IllegalArgumentException("missing argument for " + cmdArgs[i]);
+                }
+                classPathJoined = cmdArgs[i + 1];
+                i++;
+            } else if (!cmdArgs[i].startsWith("-")) {
+                mainClassName = cmdArgs[i];
+                mainIdx = i;
+                break;
+            }
+        }
+
+        if (mainClassName == null) {
+            throw new IllegalArgumentException("no main class in command");
+        }
+
+        final int argsCount = cmdArgs.length - mainIdx - 1;
+        final String[] parsedArgs = new String[argsCount];
+        System.arraycopy(cmdArgs, mainIdx + 1, parsedArgs, 0, argsCount);
+
+        final String[] classPath;
+        if (classPathJoined != null && classPathJoined.length() > 0) {
+            classPath = classPathJoined.split(":");
+        } else {
+            classPath = null;
+        }
+
+        return new JavaCommand(mainClassName, parsedArgs, classPath);
+    }
+
+    /**
      * Create and run a new process in its own classloader.
      *
      * @param mainClassName
@@ -120,14 +222,33 @@ public class VmProcess extends Process {
      */
     public static Process createProcess(String mainClassName, String[] args, String[] envp)
         throws Exception {
-        final ClassLoader cl = new VmProcessClassLoader();
+        return createProcess(mainClassName, args, envp, null);
+    }
+
+    /**
+     * Create and run a new process in its own classloader with optional classpath.
+     *
+     * @param mainClassName
+     * @param args
+     * @param envp
+     * @param classPath additional classpath entries (can be null)
+     * @return The created process
+     * @throws Exception
+     */
+    public static Process createProcess(String mainClassName, String[] args, String[] envp, String[] classPath)
+        throws Exception {
+        final ClassLoader parent = ClassLoader.getSystemClassLoader();
+        final ClassLoader cl = (classPath != null && classPath.length > 0)
+            ? new VmProcessClassLoader(parent, classPath)
+            : new VmProcessClassLoader(parent);
         final Class processClass = cl.loadClass(VmProcess.class.getName());
         final Class[] argTypes = new Class[]{
             String.class,
             String[].class,
             InputStream.class,
             PrintStream.class,
-            PrintStream.class
+            PrintStream.class,
+            ClassLoader.class
         };
         final Constructor cons = processClass.getConstructor(argTypes);
         final Object[] consArgs = new Object[]{
@@ -135,7 +256,8 @@ public class VmProcess extends Process {
             args,
             System.in,
             System.out,
-            System.err
+            System.err,
+            cl
         };
         final Process proc = (Process) cons.newInstance(consArgs);
         return proc;
@@ -233,7 +355,13 @@ public class VmProcess extends Process {
         @Override
         public void run() {
             try {
-                final Class<?> mainClass = Class.forName(mainClassName);
+                final Class<?> mainClass;
+                final ClassLoader tccl = Thread.currentThread().getContextClassLoader();
+                if (tccl != null) {
+                    mainClass = Class.forName(mainClassName, true, tccl);
+                } else {
+                    mainClass = Class.forName(mainClassName);
+                }
                 final Method mainMethod = mainClass.getMethod("main", new Class[]{String[].class});
 
                 try {

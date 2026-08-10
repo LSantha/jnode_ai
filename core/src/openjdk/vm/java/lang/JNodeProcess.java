@@ -17,57 +17,60 @@
  * along with this library; If not, write to the Free Software Foundation, Inc., 
  * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
  */
- 
+
 package java.lang;
 
-import java.io.OutputStream;
-import java.io.InputStream;
 import java.io.IOException;
-import java.util.Arrays;
+import java.util.Map;
+
+import org.jnode.vm.VmProcess;
 
 /**
- *
+ * ProcessBuilder backend for JNode. Delegates to {@link VmProcess#createProcess};
+ * the returned {@link VmProcess} already implements {@link Process#getInputStream()},
+ * {@link Process#waitFor()}, {@link Process#destroy()} etc., so we return it
+ * directly rather than re-wrapping and losing the streams/exit code.
  */
-class JNodeProcess extends Process {
+class JNodeProcess {
 
-    static Process start(String[] cmdarray, java.util.Map<String, String> environment, String dir,
+    static Process start(String[] cmdarray, Map<String, String> environment, String dir,
                                 boolean redirectErrorStream) throws IOException {
-        
-        System.out.println("cmdarray: " + Arrays.asList(cmdarray));
-        System.out.println("environment: " + environment);
-        System.out.println("dir: " + dir);
-        System.out.println("redirectErrorStream: " + redirectErrorStream);
 
-        return new JNodeProcess();
-    }
-    
-    @Override
-    public OutputStream getOutputStream() {
-        return null;
-    }
+        final String[] env;
+        if (environment == null) {
+            env = new String[0];
+        } else {
+            env = new String[environment.size()];
+            int i = 0;
+            for (Map.Entry<String, String> entry : environment.entrySet()) {
+                env[i++] = entry.getKey() + "=" + entry.getValue();
+            }
+        }
 
-    @Override
-    public InputStream getInputStream() {
-        return null;
-    }
+        final VmProcess.JavaCommand parsed;
+        try {
+            parsed = VmProcess.parseJavaCommand(cmdarray);
+        } catch (RuntimeException ex) {
+            final IOException ioe = new IOException("Exec error: " + ex.getMessage());
+            ioe.initCause(ex);
+            throw ioe;
+        }
 
-    @Override
-    public InputStream getErrorStream() {
-        return null;
-    }
-
-    @Override
-    public int waitFor() throws InterruptedException {
-        return 0;
-    }
-
-    @Override
-    public int exitValue() {
-        return 0;
-    }
-
-    @Override
-    public void destroy() {
-
+        try {
+            final Process p = VmProcess.createProcess(parsed.getMainClassName(),
+                parsed.getArgs(), env, parsed.getClassPath());
+            if (p == null) {
+                throw new IOException("Exec error: " + parsed.getMainClassName());
+            }
+            return p;
+        } catch (RuntimeException ex) {
+            throw ex;
+        } catch (IOException ex) {
+            throw ex;
+        } catch (Exception ex) {
+            final IOException ioe = new IOException("Exec error: " + parsed.getMainClassName());
+            ioe.initCause(ex);
+            throw ioe;
+        }
     }
 }
