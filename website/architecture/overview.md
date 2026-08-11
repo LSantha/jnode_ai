@@ -61,25 +61,25 @@ JNode uses **Isolates** (similar to processes but lighter-weight):
 - Each isolate has its own classloader, heap, thread groups
 - Communication via **channels** (typed message passing)
 - Security via **capabilities** (unforgeable references)
-- See [Isolate Implementation](https://github.com/LSantha/jnode_ai.wiki/wiki/Isolate-Implementation)
+- See [Isolate Implementation](https://github.com/LSantha/jnode_ai/wiki/Isolate-Implementation)
 
 ### 3. Plugin System
 - **PluginDescriptor** (XML) declares exports/imports
 - **PluginManager** resolves dependencies at boot
 - Extension points for: filesystems, drivers, shell commands, network layers
-- See [Plugin System](https://github.com/LSantha/jnode_ai.wiki/wiki/Plugin-System)
+- See [Plugin System](https://github.com/LSantha/jnode_ai/wiki/Plugin-System)
 
 ### 4. MMTk Integration
 - **Memory Management Toolkit** (Rust) for GC
 - JNode binds via JNI: `org.jnode.vm.memmgr.mmtk`
 - Supports: Immix, GenImmix, MarkSweep, SemiSpace
-- See [MMTk Bindings](https://github.com/LSantha/jnode_ai.wiki/wiki/MMTk-Bindings)
+- See [MMTk Bindings](https://github.com/LSantha/jnode_ai/wiki/MMTk-Bindings)
 
 ### 5. VMMagic Annotations
 - `@Uninterruptible`, `@Inline`, `@Offset`, `@Address`
 - Enable low-level operations in Java
 - Processed by JNasm and BootImageBuilder
-- See [VMMagic Annotations](https://github.com/LSantha/jnode_ai.wiki/wiki/VMMagic-Annotations)
+- See [VMMagic Annotations](https://github.com/LSantha/jnode_ai/wiki/VMMagic-Annotations)
 
 ## Boot Sequence
 
@@ -92,7 +92,7 @@ JNode uses **Isolates** (similar to processes but lighter-weight):
 7. **Filesystems**: Mount root (ISO9660 → ramdisk)
 8. **Shell**: Start `init` isolate → command prompt
 
-See [Boot Sequence](https://github.com/LSantha/jnode_ai.wiki/wiki/Boot-Sequence) for detailed trace.
+See [Boot Sequence](https://github.com/LSantha/jnode_ai/wiki/Boot-Sequence) for detailed trace.
 
 ## Memory Layout (x86, 32-bit)
 
@@ -110,7 +110,7 @@ See [Boot Sequence](https://github.com/LSantha/jnode_ai.wiki/wiki/Boot-Sequence)
 - **Isolates** allocated in low 3 GB
 - **Direct memory** via `VmUnsafe` for DMA, framebuffer
 
-See [Paging Implementation](https://github.com/LSantha/jnode_ai.wiki/wiki/Paging-Implementation) and [Memory Management](https://github.com/LSantha/jnode_ai.wiki/wiki/Memory-Management).
+See [Paging Implementation](https://github.com/LSantha/jnode_ai/wiki/Paging-Implementation) and [Memory Management](https://github.com/LSantha/jnode_ai/wiki/Memory-Management).
 
 ## Threading & Scheduling
 
@@ -118,7 +118,7 @@ See [Paging Implementation](https://github.com/LSantha/jnode_ai.wiki/wiki/Paging
 - **Priority-based preemptive** scheduler
 - **Yieldpoints** at method calls, loop backedges, allocations
 - **IsolateThread** = Java thread + kernel context
-- See [Core Thread Scheduling](https://github.com/LSantha/jnode_ai.wiki/wiki/Core-Thread-Scheduling)
+- See [Core Thread Scheduling](https://github.com/LSantha/jnode_ai/wiki/Core-Thread-Scheduling)
 
 ## JIT Compilers
 
@@ -131,17 +131,17 @@ See [Paging Implementation](https://github.com/LSantha/jnode_ai.wiki/wiki/Paging
 - L1: Fast compilation, basic optimization
 - L2: SSA-based, inlining, escape analysis
 - Selected via `jnode.compiler` property
-- See [JIT Compilers](https://github.com/LSantha/jnode_ai.wiki/wiki/JIT-Compilers)
+- See [JIT Compilers](https://github.com/LSantha/jnode_ai/wiki/JIT-Compilers)
 
 ## Further Reading
 
 | Topic | Wiki Page |
 |-------|-----------|
-| Kernel Entry Point | [Kernel-Entry-Point](https://github.com/LSantha/jnode_ai.wiki/wiki/Kernel-Entry-Point) |
-| Device Manager | [Device-Manager](https://github.com/LSantha/jnode_ai.wiki/wiki/Device-Manager) |
-| Driver Framework | [Driver-Framework](https://github.com/LSantha/jnode_ai.wiki/wiki/Driver-Framework) |
-| Filesystem Layer | [Filesystem-Layer](https://github.com/LSantha/jnode_ai.wiki/wiki/Filesystem-Layer) |
-| Network Stack | [Network-Stack](https://github.com/LSantha/jnode_ai.wiki/wiki/Network-Stack) |
-| Object Layout | [Object-Layout](https://github.com/LSantha/jnode_ai.wiki/wiki/Object-Layout) |
-| Stack Frame Layout | [Stack-Frame-Layout](https://github.com/LSantha/jnode_ai.wiki/wiki/Stack-Frame-Layout) |
-| Virtual Methods Dispatch | [Virtual-Methods-Dispatch](https://github.com/LSantha/jnode_ai.wiki/wiki/Virtual-Methods-Dispatch) |
+| Kernel Entry Point | [Kernel-Entry-Point](https://github.com/LSantha/jnode_ai/wiki/Kernel-Entry-Point) |
+| Device Manager | [Device-Manager](https://github.com/LSantha/jnode_ai/wiki/Device-Manager) |
+| Driver Framework | [Driver-Framework](https://github.com/LSantha/jnode_ai/wiki/Driver-Framework) |
+| Filesystem Layer | [Filesystem-Layer](https://github.com/LSantha/jnode_ai/wiki/Filesystem-Layer) |
+| Network Stack | [Network-Stack](https://github.com/LSantha/jnode_ai/wiki/Network-Stack) |
+| Object Layout | [Object-Layout](https://github.com/LSantha/jnode_ai/wiki/Object-Layout) |
+| Stack Frame Layout | [Stack-Frame-Layout](https://github.com/LSantha/jnode_ai/wiki/Stack-Frame-Layout) |
+| Virtual Methods Dispatch | [Virtual-Methods-Dispatch](https://github.com/LSantha/jnode_ai/wiki/Virtual-Methods-Dispatch) |

@@ -90,4 +90,4 @@ This appears in:
 - `vminfo` command
 - Sidecar `.vm-version` file next to each ISO
 
-See [Build System Wiki](https://github.com/LSantha/jnode_ai.wiki/wiki/Build-System) for deep dive.
+See [Build System Wiki](https://github.com/LSantha/jnode_ai/wiki/Build-System) for deep dive.

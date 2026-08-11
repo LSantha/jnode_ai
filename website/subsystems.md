@@ -6,11 +6,11 @@ JNode's functionality is organized into independent subsystems, each implemented
 
 | Subsystem | Package | Wiki |
 |-----------|---------|------|
-| **Filesystems** | `org.jnode.fs.*` | [Filesystem-Layer](https://github.com/LSantha/jnode_ai.wiki/wiki/Filesystem-Layer) |
-| **Network Stack** | `org.jnode.net.*` | [Network-Stack](https://github.com/LSantha/jnode_ai.wiki/wiki/Network-Stack) |
-| **Shell** | `org.jnode.shell.*` | [Shell-Commands](https://github.com/LSantha/jnode_ai.wiki/wiki/Shell-Commands) |
-| **GUI/AWT** | `org.jnode.awt.*`, `org.jnode.gui.*` | [GUI-AWT](https://github.com/LSantha/jnode_ai.wiki/wiki/GUI-AWT) |
-| **Drivers** | `org.jnode.driver.*` | [Driver-Framework](https://github.com/LSantha/jnode_ai.wiki/wiki/Driver-Framework) |
+| **Filesystems** | `org.jnode.fs.*` | [Filesystem-Layer](https://github.com/LSantha/jnode_ai/wiki/Filesystem-Layer) |
+| **Network Stack** | `org.jnode.net.*` | [Network-Stack](https://github.com/LSantha/jnode_ai/wiki/Network-Stack) |
+| **Shell** | `org.jnode.shell.*` | [Shell-Commands](https://github.com/LSantha/jnode_ai/wiki/Shell-Commands) |
+| **GUI/AWT** | `org.jnode.awt.*`, `org.jnode.gui.*` | [GUI-AWT](https://github.com/LSantha/jnode_ai/wiki/GUI-AWT) |
+| **Drivers** | `org.jnode.driver.*` | [Driver-Framework](https://github.com/LSantha/jnode_ai/wiki/Driver-Framework) |
 
 ## Filesystems
 
@@ -28,7 +28,7 @@ Supported formats:
 
 Architecture: VFS layer → FSEntry cache → FileSystemType plugins → Block drivers
 
-See [Filesystem Layer](https://github.com/LSantha/jnode_ai.wiki/wiki/Filesystem-Layer) and [Block Device Layer](https://github.com/LSantha/jnode_ai.wiki/wiki/Block-Device-Layer).
+See [Filesystem Layer](https://github.com/LSantha/jnode_ai/wiki/Filesystem-Layer) and [Block Device Layer](https://github.com/LSantha/jnode_ai/wiki/Block-Device-Layer).
 
 ## Network Stack
 
@@ -58,7 +58,7 @@ Key components:
 - **TCPProtocol** — State machine, congestion control
 - **DNSServer** — Built-in DNS resolver
 
-See [Network Stack](https://github.com/LSantha/jnode_ai.wiki/wiki/Network-Stack), [TCP Protocol](https://github.com/LSantha/jnode_ai.wiki/wiki/TCP-Protocol), [UDP Protocol](https://github.com/LSantha/jnode_ai.wiki/wiki/UDP-Protocol).
+See [Network Stack](https://github.com/LSantha/jnode_ai/wiki/Network-Stack), [TCP Protocol](https://github.com/LSantha/jnode_ai/wiki/TCP-Protocol), [UDP Protocol](https://github.com/LSantha/jnode_ai/wiki/UDP-Protocol).
 
 ## Shell
 
@@ -73,7 +73,7 @@ The JNode shell (`org.jnode.shell`) provides:
 
 Architecture: `Shell` → `CommandParser` → `Command` plugins → `AliasManager`
 
-See [Shell Commands](https://github.com/LSantha/jnode_ai.wiki/wiki/Shell-Commands) and [Shell Syntax](https://github.com/LSantha/jnode_ai.wiki/wiki/Shell-Syntax).
+See [Shell Commands](https://github.com/LSantha/jnode_ai/wiki/Shell-Commands) and [Shell Syntax](https://github.com/LSantha/jnode_ai/wiki/Shell-Syntax).
 
 ## GUI / AWT
 
@@ -90,7 +90,7 @@ JNode implements a subset of **AWT** with custom peers:
 Video drivers: VESA, Bochs, VMware, VirtualBox
 Input drivers: PS/2 keyboard/mouse, USB HID
 
-See [GUI/AWT](https://github.com/LSantha/jnode_ai.wiki/wiki/GUI-AWT), [Video Driver Architecture](https://github.com/LSantha/jnode_ai.wiki/wiki/Video-Driver-Architecture), [Input Drivers](https://github.com/LSantha/jnode_ai.wiki/wiki/Input-Drivers).
+See [GUI/AWT](https://github.com/LSantha/jnode_ai/wiki/GUI-AWT), [Video Driver Architecture](https://github.com/LSantha/jnode_ai/wiki/Video-Driver-Architecture), [Input Drivers](https://github.com/LSantha/jnode_ai/wiki/Input-Drivers).
 
 ## Drivers
 
@@ -112,4 +112,4 @@ Major driver categories:
 | **Audio** | Intel HDA (experimental) |
 | **Serial** | 16550 UART, USB serial |
 
-See [Driver Framework](https://github.com/LSantha/jnode_ai.wiki/wiki/Driver-Framework), [Bus Drivers](https://github.com/LSantha/jnode_ai.wiki/wiki/Bus-Drivers), [PCI Capability Structure](https://github.com/LSantha/jnode_ai.wiki/wiki/PCI-Capability-Structure).
+See [Driver Framework](https://github.com/LSantha/jnode_ai/wiki/Driver-Framework), [Bus Drivers](https://github.com/LSantha/jnode_ai/wiki/Bus-Drivers), [PCI Capability Structure](https://github.com/LSantha/jnode_ai/wiki/PCI-Capability-Structure).

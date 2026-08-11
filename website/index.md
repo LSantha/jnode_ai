@@ -44,11 +44,11 @@ See [Architecture Overview](architecture/overview.md) for details.
 
 | Subsystem | Description | Wiki Reference |
 |-----------|-------------|----------------|
-| [Filesystems](subsystems.md#filesystems) | Ext2/3, FAT, ISO9660, NFS2, exFAT, HFS+, NTFS | [Filesystem-Layer](https://github.com/LSantha/jnode_ai.wiki/wiki/Filesystem-Layer) |
-| [Network Stack](subsystems.md#network-stack) | IPv4, TCP, UDP, DNS, NetAPI | [Network-Stack](https://github.com/LSantha/jnode_ai.wiki/wiki/Network-Stack) |
-| [Shell](subsystems.md#shell) | Commands, syntax, aliases, plugins | [Shell-Commands](https://github.com/LSantha/jnode_ai.wiki/wiki/Shell-Commands) |
-| [GUI/AWT](subsystems.md#gui-awt) | Video drivers, input, AWT peers, Thinlet | [GUI-AWT](https://github.com/LSantha/jnode_ai.wiki/wiki/GUI-AWT) |
-| [Drivers](subsystems.md#drivers) | PCI, USB, IDE, SCSI, Ethernet, Audio | [Driver-Framework](https://github.com/LSantha/jnode_ai.wiki/wiki/Driver-Framework) |
+| [Filesystems](subsystems.md#filesystems) | Ext2/3, FAT, ISO9660, NFS2, exFAT, HFS+, NTFS | [Filesystem-Layer](https://github.com/LSantha/jnode_ai/wiki/Filesystem-Layer) |
+| [Network Stack](subsystems.md#network-stack) | IPv4, TCP, UDP, DNS, NetAPI | [Network-Stack](https://github.com/LSantha/jnode_ai/wiki/Network-Stack) |
+| [Shell](subsystems.md#shell) | Commands, syntax, aliases, plugins | [Shell-Commands](https://github.com/LSantha/jnode_ai/wiki/Shell-Commands) |
+| [GUI/AWT](subsystems.md#gui-awt) | Video drivers, input, AWT peers, Thinlet | [GUI-AWT](https://github.com/LSantha/jnode_ai/wiki/GUI-AWT) |
+| [Drivers](subsystems.md#drivers) | PCI, USB, IDE, SCSI, Ethernet, Audio | [Driver-Framework](https://github.com/LSantha/jnode_ai/wiki/Driver-Framework) |
 
 See [Subsystems](subsystems.md) for details.
 
@@ -74,7 +74,7 @@ See [Reference](reference.md) for details.
 ## External Documentation
 
 !!! info "Full Wiki"
-    The [JNode Wiki](https://github.com/LSantha/jnode_ai.wiki/wiki) contains 100+ detailed technical pages covering every subsystem, class, and design decision. This site provides a curated entry point; the wiki is the exhaustive reference.
+    The [JNode Wiki](https://github.com/LSantha/jnode_ai/wiki) contains 100+ detailed technical pages covering every subsystem, class, and design decision. This site provides a curated entry point; the wiki is the exhaustive reference.
 
 ---
 

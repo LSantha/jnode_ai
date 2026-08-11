@@ -96,4 +96,4 @@ qemu-system-x86_64 -cdrom ./all/build/cdroms/jnode-x86-lite.iso \
   -serial file:/tmp/com1.txt -display none
 ```
 
-See [QEMU Wiki](https://github.com/LSantha/jnode_ai.wiki/wiki/Boot-Sequence) for boot process details.
+See [QEMU Wiki](https://github.com/LSantha/jnode_ai/wiki/Boot-Sequence) for boot process details.

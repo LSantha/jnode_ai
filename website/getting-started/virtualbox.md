@@ -63,7 +63,7 @@ jdb -attach localhost:8000
 | Watchpoints | ❌ |
 | Breakpoints | ⚠️ Limited |
 
-See [JDWP Setup Wiki](https://github.com/LSantha/jnode_ai.wiki/wiki/GDB-Debugging-Support) and [JDWP Tests](../development/testing.md#jdwp-integration-tests).
+See [JDWP Setup Wiki](https://github.com/LSantha/jnode_ai/wiki/GDB-Debugging-Support) and [JDWP Tests](../development/testing.md#jdwp-integration-tests).
 
 ## Shared Folders (Optional)
 
