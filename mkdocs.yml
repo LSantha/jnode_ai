@@ -1,8 +1,8 @@
 site_name: JNode
 site_description: A Java Operating System
-site_url: https://lsantha.github.io/jnode_ai_oc
-repo_url: https://github.com/LSantha/jnode_ai_oc
-repo_name: LSantha/jnode_ai_oc
+site_url: https://lsantha.github.io/jnode_ai
+repo_url: https://github.com/LSantha/jnode_ai
+repo_name: LSantha/jnode_ai
 edit_uri: edit/master/website/
 
 docs_dir: website
