@@ -20,6 +20,7 @@
  
 package org.jnode.vm;
 
+import java.io.ByteArrayInputStream;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.io.PrintStream;
@@ -54,9 +55,6 @@ public class VmProcess extends Process {
     private boolean running;
     final String mainClassName;
     final String[] args;
-    private InputStream in;
-    private InputStream err;
-    private OutputStream out;
     private static Process rootProcess;
 
     /**
@@ -297,7 +295,7 @@ public class VmProcess extends Process {
      * @see java.lang.Process#getErrorStream()
      */
     public InputStream getErrorStream() {
-        return err;
+        return new ByteArrayInputStream(new byte[0]);
     }
 
     /**
@@ -305,7 +303,7 @@ public class VmProcess extends Process {
      * @see java.lang.Process#getInputStream()
      */
     public InputStream getInputStream() {
-        return in;
+        return new ByteArrayInputStream(new byte[0]);
     }
 
     /**
@@ -313,7 +311,7 @@ public class VmProcess extends Process {
      * @see java.lang.Process#getOutputStream()
      */
     public OutputStream getOutputStream() {
-        return out;
+        return new java.io.ByteArrayOutputStream();
     }
 
     /**
@@ -354,6 +352,7 @@ public class VmProcess extends Process {
          */
         @Override
         public void run() {
+            int exitCode = 0;
             try {
                 final Class<?> mainClass;
                 final ClassLoader tccl = Thread.currentThread().getContextClassLoader();
@@ -367,10 +366,15 @@ public class VmProcess extends Process {
                 try {
                     mainMethod.invoke(null, new Object[]{args});
                 } catch (InvocationTargetException ex) {
-                    ex.getTargetException().printStackTrace();
+                    final Throwable cause = ex.getTargetException();
+                    cause.printStackTrace();
+                    exitCode = 1;
                 }
-            } catch (Exception ex) {
+            } catch (Throwable ex) {
                 ex.printStackTrace();
+                exitCode = 1;
+            } finally {
+                exit(exitCode);
             }
         }
 
