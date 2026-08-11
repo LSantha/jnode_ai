@@ -1,0 +1,69 @@
+site_name: JNode
+site_description: A Java Operating System
+site_url: https://lsantha.github.io/jnode_ai_oc
+repo_url: https://github.com/LSantha/jnode_ai_oc
+repo_name: LSantha/jnode_ai_oc
+edit_uri: edit/master/website/
+
+docs_dir: website
+site_dir: site
+
+theme:
+  name: material
+  palette:
+    - scheme: default
+      primary: indigo
+      accent: indigo
+    - scheme: slate
+      primary: indigo
+      accent: indigo
+  features:
+    - navigation.tabs
+    - navigation.sections
+    - navigation.expand
+    - navigation.top
+    - search.highlight
+    - search.share
+    - content.code.copy
+    - content.code.annotate
+
+nav:
+  - Home: index.md
+  - Getting Started:
+      - Quick Start: getting-started/quick-start.md
+      - Building: getting-started/building.md
+      - Running in QEMU: getting-started/qemu.md
+      - Running in VirtualBox: getting-started/virtualbox.md
+  - Architecture:
+      - Overview: architecture/overview.md
+  - Development:
+      - Build & Test: development/index.md
+      - Testing: development/testing.md
+  - Subsystems: subsystems.md
+  - Reference: reference.md
+  - Wiki: https://github.com/LSantha/jnode_ai.wiki/wiki
+
+markdown_extensions:
+  - admonition
+  - codehilite:
+      guess_lang: false
+  - toc:
+      permalink: true
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.inlinehilite
+  - pymdownx.snippets
+  - pymdownx.superfences
+  - pymdownx.tabbed:
+      alternate_style: true
+  - pymdownx.tasklist:
+      custom_checkbox: true
+  - attr_list
+  - md_in_html
+
+plugins:
+  - search
+  - git-revision-date-localized:
+      enable_creation_date: true
+  - minify:
+      minify_html: true
