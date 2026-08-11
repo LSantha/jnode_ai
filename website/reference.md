@@ -162,7 +162,7 @@ Controls boot image generation (`all/conf/bootimage.xml`):
 
 ## Version Identifiers
 
-Since [c7f8352](https://github.com/LSantha/jnode_ai_oc/commit/c7f835273):
+Since [c7f8352](https://github.com/LSantha/jnode_ai/commit/c7f835273):
 
 ```
 jnode-vm-ver = 0.2.9-dev+<git-describe>-<timestamp>

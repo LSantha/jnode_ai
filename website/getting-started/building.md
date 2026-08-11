@@ -78,7 +78,7 @@ all/build/
 
 ## Build Identifier
 
-Since [commit c7f8352](https://github.com/LSantha/jnode_ai_oc/commit/c7f835273), each build gets a unique `jnode-vm-ver` property:
+Since [commit c7f8352](https://github.com/LSantha/jnode_ai/commit/c7f835273), each build gets a unique `jnode-vm-ver` property:
 
 ```
 0.2.9-dev+gabc1234-dirty-20260811-143022

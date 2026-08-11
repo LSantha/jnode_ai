@@ -88,7 +88,7 @@ python3 -m pytest -v
 ```
 
 - 75 tests covering: classes, methods, fields, threads, invocation, constructors
-- See [tests/jdwp/AGENTS.md](https://github.com/LSantha/jnode_ai_oc/blob/master/tests/jdwp/AGENTS.md) for setup
+- See [tests/jdwp/AGENTS.md](https://github.com/LSantha/jnode_ai/blob/master/tests/jdwp/AGENTS.md) for setup
 - **Run these after any JDWP code change** — they are the regression suite
 
 ### Boot Testing
@@ -104,7 +104,7 @@ qemu-system-x86_64 -cdrom all/build/cdroms/jnode-x86-lite.iso \
 # 3. Verify: "System has finished" in serial log
 ```
 
-CI does this automatically in [ant.yml](https://github.com/LSantha/jnode_ai_oc/blob/master/.github/workflows/ant.yml).
+CI does this automatically in [ant.yml](https://github.com/LSantha/jnode_ai/blob/master/.github/workflows/ant.yml).
 
 ## Debugging
 
@@ -122,7 +122,7 @@ telnet localhost 4444
 
 Commands: `help`, `bt`, `mem`, `threads`, `isolates`, `plugins`, `devices`
 
-See [KDB Serial Skill](https://github.com/LSantha/jnode_ai_oc/blob/master/.opencode/skills/jnode-kdb-serial/SKILL.md).
+See [KDB Serial Skill](https://github.com/LSantha/jnode_ai/blob/master/.opencode/skills/jnode-kdb-serial/SKILL.md).
 
 ### JDWP (Java Debug Wire Protocol)
 
@@ -132,7 +132,7 @@ Best with VirtualBox:
 2. Port forward: `VBoxManage modifyvm "JNode" --natpf1 "jdwp,tcp,,8000,,8000"`
 3. Connect: `jdb -attach localhost:8000`
 
-See [JDWP Skill](https://github.com/LSantha/jnode_ai_oc/blob/master/.opencode/skills/jnode-jdwp/SKILL.md) and [VirtualBox Guide](../getting-started/virtualbox.md).
+See [JDWP Skill](https://github.com/LSantha/jnode_ai/blob/master/.opencode/skills/jnode-jdwp/SKILL.md) and [VirtualBox Guide](../getting-started/virtualbox.md).
 
 ### Serial Console
 
@@ -177,7 +177,7 @@ gdb -ex "target remote localhost:1234" \
 
 ### Issue Labels
 
-The project uses a label system managed by [sync-labels.js](https://github.com/LSantha/jnode_ai_oc/blob/master/.github/scripts/sync-labels.js):
+The project uses a label system managed by [sync-labels.js](https://github.com/LSantha/jnode_ai/blob/master/.github/scripts/sync-labels.js):
 
 | Family | Examples |
 |--------|----------|
@@ -197,4 +197,4 @@ Trigger OpenCode agent via issue comments:
 /oc triage     # Triage new issue
 ```
 
-See [opencode.yml](https://github.com/LSantha/jnode_ai_oc/blob/master/.github/workflows/opencode.yml) and [jnode-issue-resolver skill](https://github.com/LSantha/jnode_ai_oc/blob/master/.opencode/skills/jnode-issue-resolver/SKILL.md).
+See [opencode.yml](https://github.com/LSantha/jnode_ai/blob/master/.github/workflows/opencode.yml) and [jnode-issue-resolver skill](https://github.com/LSantha/jnode_ai/blob/master/.opencode/skills/jnode-issue-resolver/SKILL.md).

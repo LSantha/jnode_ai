@@ -1,6 +1,6 @@
 # JNode — A Java Operating System
 
-[![Build Status](https://github.com/LSantha/jnode_ai_oc/actions/workflows/ant.yml/badge.svg)](https://github.com/LSantha/jnode_ai_oc/actions/workflows/ant.yml)
+[![Build Status](https://github.com/LSantha/jnode_ai/actions/workflows/ant.yml/badge.svg)](https://github.com/LSantha/jnode_ai/actions/workflows/ant.yml)
 [![Java 8](https://img.shields.io/badge/Java-8-blue.svg)](https://openjdk.java.net/projects/jdk/8/)
 [![License](https://img.shields.io/badge/License-LGPL%202.1-green.svg)](https://www.gnu.org/licenses/lgpl-2.1.html)
 
@@ -80,10 +80,10 @@ See [Reference](reference.md) for details.
 
 ## Community
 
-- **Issues**: [GitHub Issues](https://github.com/LSantha/jnode_ai_oc/issues)
-- **Discussions**: [GitHub Discussions](https://github.com/LSantha/jnode_ai_oc/discussions)
-- **CI**: [GitHub Actions](https://github.com/LSantha/jnode_ai_oc/actions)
+- **Issues**: [GitHub Issues](https://github.com/LSantha/jnode_ai/issues)
+- **Discussions**: [GitHub Discussions](https://github.com/LSantha/jnode_ai/discussions)
+- **CI**: [GitHub Actions](https://github.com/LSantha/jnode_ai/actions)
 
 ---
 
-*JNode is licensed under the GNU Lesser General Public License v2.1. See [LICENSE](https://github.com/LSantha/jnode_ai_oc/blob/master/LICENSE) for details.*
+*JNode is licensed under the GNU Lesser General Public License v2.1. See [LICENSE](https://github.com/LSantha/jnode_ai/blob/master/LICENSE) for details.*

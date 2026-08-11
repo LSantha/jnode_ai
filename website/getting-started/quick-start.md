@@ -13,8 +13,8 @@ Get JNode running in 5 minutes.
 ## Clone & Build
 
 ```bash
-git clone https://github.com/LSantha/jnode_ai_oc.git
-cd jnode_ai_oc
+git clone https://github.com/LSantha/jnode_ai.git
+cd jnode_ai
 sh build.sh cd-x86-lite
 ```
 

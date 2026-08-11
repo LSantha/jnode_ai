@@ -67,7 +67,7 @@ python3 -m pytest -v
 
 **Run after any JDWP code change** — this is the regression suite for the debug backend.
 
-See [tests/jdwp/AGENTS.md](https://github.com/LSantha/jnode_ai_oc/blob/master/tests/jdwp/AGENTS.md) for full setup.
+See [tests/jdwp/AGENTS.md](https://github.com/LSantha/jnode_ai/blob/master/tests/jdwp/AGENTS.md) for full setup.
 
 ## Boot Testing
 
@@ -125,7 +125,7 @@ public class ClassLoaderTest extends TestCase {
 
 ## CI Integration
 
-The [ant.yml](https://github.com/LSantha/jnode_ai_oc/blob/master/.github/workflows/ant.yml) workflow runs:
+The [ant.yml](https://github.com/LSantha/jnode_ai/blob/master/.github/workflows/ant.yml) workflow runs:
 
 1. `sh build.sh clean -Dbuild.properties.file=../.github/qemu/jnode.properties cd-x86-lite regression-tests`
 2. `./test.sh all` (runs JUnit)
@@ -141,4 +141,4 @@ The [ant.yml](https://github.com/LSantha/jnode_ai_oc/blob/master/.github/workflo
 | `filesystem-debug` skill | Analyze FS test failures |
 | `jnode-kdb-serial` skill | Kernel debugger via serial |
 
-See [.opencode/skills/](https://github.com/LSantha/jnode_ai_oc/tree/master/.opencode/skills) for available debugging skills.
+See [.opencode/skills/](https://github.com/LSantha/jnode_ai/tree/master/.opencode/skills) for available debugging skills.
