@@ -10,10 +10,14 @@ on:
     branches: [ "master" ]
   workflow_dispatch:
 
-jobs:
-  build-and-test:
-    runs-on: ubuntu-latest
+# Cancel in-progress runs of the same ref when a new commit lands.
+concurrency:
+  group: ant-${{ github.ref }}
+  cancel-in-progress: true
 
+jobs:
+  build:
+    runs-on: ubuntu-latest
     steps:
     - name: Checkout code
       uses: actions/checkout@v4
@@ -24,16 +28,84 @@ jobs:
         distribution: 'zulu'
     - name: Install system dependencies
       run: sudo apt-get update && sudo apt-get install -y nasm qemu-system-x86
-    - name: Build and run tests
+
+    - name: Build ISO and compile tests
       run: |
         ./build.sh clean -Dbuild.properties.file=../.github/qemu/jnode.properties cd-x86-lite regression-tests
-        ./test.sh all
+
+    - name: Upload build artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: jnode-build
+        # All per-project build/ outputs. Downloaded by test and boot jobs.
+        # Includes the ISO at all/build/cdroms/jnode-x86-lite.iso.
+        path: |
+          */build/**
+        retention-days: 1
+        if-no-files-found: error
+
+  # Runs JUnit tests against the artifacts produced by build.
+  test:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+    - name: Set up JDK 8
+      uses: actions/setup-java@v4
+      with:
+        java-version: '8'
+        distribution: 'zulu'
+    - name: Install system dependencies
+      run: sudo apt-get update && sudo apt-get install -y nasm qemu-system-x86
+
+    - name: Download build artifacts
+      uses: actions/download-artifact@v4
+      with:
+        name: jnode-build
+
+    # test.sh invokes ant -f <project>/build-tests.xml; with build/ outputs
+    # already populated by the build job, ant is a no-op for unchanged
+    # inputs and runs the actual tests.
+    - name: Run regression tests
+      run: ./test.sh all
+
     - name: Publish Test Summary
       uses: test-summary/action@v2
       with:
         paths: '**/build/reports/junit/*.xml'
         show: 'all'
       if: always()
+
+    - name: Upload Test Results
+      uses: actions/upload-artifact@v4
+      with:
+        name: jnode_test_results.zip
+        path: |
+          **/build/reports/junit/
+      if: always()
+
+  # Boots the produced ISO in QEMU and waits for the "System has finished"
+  # banner on the serial console. Independent of test outcome.
+  boot:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+    - name: Set up JDK 8
+      uses: actions/setup-java@v4
+      with:
+        java-version: '8'
+        distribution: 'zulu'
+    - name: Install system dependencies
+      run: sudo apt-get update && sudo apt-get install -y nasm qemu-system-x86
+
+    - name: Download build artifacts
+      uses: actions/download-artifact@v4
+      with:
+        name: jnode-build
+
     - name: Run QEMU Boot Test
       run: |
         echo "Starting JNode in QEMU"
@@ -42,26 +114,24 @@ jobs:
         qemu-system-x86_64 -cdrom ./all/build/cdroms/jnode-x86-lite.iso -m 1024 -M pc -cpu pentium -boot once=d,menu=off -net none -serial file:/tmp/com1.txt -display none &
         qemu_pid=$!
         sleep 1
-        
+
         tail -f /tmp/com1.txt &
         tail_pid=$!
-        
-        # Wait for "System has finished" using a timeout so it doesn't hang indefinitely 
-        timeout 120s bash -c 'until grep -q -i "System has finished" /tmp/com1.txt; do sleep 1; done' || { 
+
+        # Wait for "System has finished" using a timeout so it doesn't hang indefinitely
+        timeout 120s bash -c 'until grep -q -i "System has finished" /tmp/com1.txt; do sleep 1; done' || {
           echo "Boot failed or timed out!"
           cat /tmp/com1.txt
           kill $qemu_pid $tail_pid || true
           exit 1
         }
-        
+
         echo "Successfully booted JNode!"
         kill $qemu_pid $tail_pid || true
-      if: always()
-    - name: Upload Test Results
+
+    - name: Upload Boot Log
       uses: actions/upload-artifact@v4
       with:
-        name: jnode_test_results.zip
-        path: |
-          **/build/reports/junit/
-          /tmp/com1.txt
+        name: jnode_boot_log
+        path: /tmp/com1.txt
       if: always()
