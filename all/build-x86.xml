@@ -186,7 +186,7 @@
 			bits="${jnode.bits}" 
 			listfile="${build.native.dir}/jnodenative.lst"
 			enablejnasm="${jnode.enable.jnasm}"
-			version="${jnode-ver} ${TODAY}">
+			version="${jnode-vm-ver}">
 				<includedir dir="${src.native.dir}/x86" />
 				<includedir dir="${build.native.dir}/src" />
 				<include name="jnode.asm" />
@@ -210,7 +210,7 @@
 			targetArch="x86" 
 			memMgrPluginId="${jnode.memmgr.plugin.id}" 
 			cpu="${cpu}" 
-			version="${jnode-ver}" 
+			version="${jnode-vm-ver}" 
 			jnodeCompiler="${jnode.compiler}" 
 			bits="${jnode.bits}"
 			enableJNasm="${jnode.enable.jnasm}">
@@ -332,6 +332,9 @@
         			/>
                 </else>
             </if>
+            <!-- Save full VM version next to the iso so a built artifact
+                 is self-identifying on disk. -->
+            <echo file="@{destfile}.vm-version" message="${jnode-vm-ver}"/>
         </sequential>
 	</macrodef>
 

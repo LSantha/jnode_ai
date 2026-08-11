@@ -36,6 +36,27 @@
 	<!-- JNode version -->
 	<property name="jnode-ver" value="0.2.9-dev"/>
 
+	<!-- Per-build identifier: git describe + timestamp.
+	     Distinguishes every local build, even of the same commit.
+	     Uses 'nogit-<stamp>' fallback if git is unavailable. -->
+	<exec executable="git" outputproperty="git.describe"
+		failifexecutionfails="false" errorproperty="git.describe.err">
+		<arg line="describe --always --dirty=-dirty"/>
+	</exec>
+	<tstamp><format property="build.stamp" pattern="yyyyMMdd-HHmmss"/></tstamp>
+	<condition property="build.id" value="${git.describe}-${build.stamp}"
+	                              else="nogit-${build.stamp}">
+		<and>
+			<isset property="git.describe"/>
+			<length string="${git.describe}" when="greater" length="0"/>
+		</and>
+	</condition>
+
+	<!-- Full VM version baked into VmImpl; one token (+, no spaces),
+	     readable via `vminfo`, System.getProperty("java.vm.version"),
+	     and the boot banner. -->
+	<property name="jnode-vm-ver" value="${jnode-ver}+${build.id}"/>
+
 	<!-- Java target and source version -->
 	<property name="java.target" value="1.6"/>
 	<property name="java.source" value="1.6"/>
@@ -572,6 +593,7 @@ clean             Remove all intermediate build results.
 		<property name="upload.dir" value="${build.dir}/upload"/>
 		<mkdir dir="${upload.dir}"/>
 		<gzip src="${jnode-x86.iso}" destfile="${upload.dir}/jnode-x86-${jnode-ver}.iso.gz"/>
+		<echo file="${upload.dir}/jnode-x86-${jnode-ver}.iso.gz.vm-version" message="${jnode-vm-ver}"/>
 		<copy todir="${upload.dir}" file="${sources.dist.tar.gz}"/>
 		<checksum algorithm="MD5" forceoverwrite="true">
 			<fileset dir="${upload.dir}">
