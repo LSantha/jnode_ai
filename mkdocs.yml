@@ -12,10 +12,10 @@ theme:
   name: material
   palette:
     - scheme: default
-      primary: indigo
+      primary: white
       accent: indigo
     - scheme: slate
-      primary: indigo
+      primary: white
       accent: indigo
   features:
     - navigation.tabs
