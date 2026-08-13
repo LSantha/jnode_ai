@@ -81,9 +81,8 @@ See [Reference](reference.md) for details.
 ## Community
 
 - **Issues**: [GitHub Issues](https://github.com/LSantha/jnode_ai/issues)
-- **Discussions**: [GitHub Discussions](https://github.com/LSantha/jnode_ai/discussions)
 - **CI**: [GitHub Actions](https://github.com/LSantha/jnode_ai/actions)
 
 ---
 
-*JNode is licensed under the GNU Lesser General Public License v2.1. See [LICENSE](https://github.com/LSantha/jnode_ai/blob/master/LICENSE) for details.*
+*JNode is licensed under the GNU Lesser General Public License v2.1. See [LGPL v2.1](https://www.gnu.org/licenses/lgpl-2.1.html) for details.*

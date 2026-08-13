@@ -122,7 +122,7 @@ telnet localhost 4444
 
 Commands: `help`, `bt`, `mem`, `threads`, `isolates`, `plugins`, `devices`
 
-See [KDB Serial Skill](https://github.com/LSantha/jnode_ai/blob/master/.opencode/skills/jnode-kdb-serial/SKILL.md).
+See [jnode-interact skill](https://github.com/LSantha/jnode_ai/blob/master/.opencode/skills/jnode-interact/SKILL.md) for QEMU serial interaction.
 
 ### JDWP (Java Debug Wire Protocol)
 
@@ -132,7 +132,7 @@ Best with VirtualBox:
 2. Port forward: `VBoxManage modifyvm "JNode" --natpf1 "jdwp,tcp,,8000,,8000"`
 3. Connect: `jdb -attach localhost:8000`
 
-See [JDWP Skill](https://github.com/LSantha/jnode_ai/blob/master/.opencode/skills/jnode-jdwp/SKILL.md) and [VirtualBox Guide](../getting-started/virtualbox.md).
+See [VirtualBox Guide](../getting-started/virtualbox.md) for JDWP setup.
 
 ### Serial Console
 
