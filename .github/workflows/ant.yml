@@ -39,8 +39,11 @@ jobs:
         name: jnode-build
         # All per-project build/ outputs. Downloaded by test and boot jobs.
         # Includes the ISO at all/build/cdroms/jnode-x86-lite.iso.
+        # classlib.jar is downloaded at build time (git-ignored); the test
+        # job needs it on the classpath to run the JUnit suites.
         path: |
           */build/**
+          all/lib/classlib.jar
         retention-days: 1
         if-no-files-found: error
 
