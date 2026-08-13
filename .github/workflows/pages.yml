@@ -4,8 +4,7 @@ on:
   push:
     branches: [master]
     paths:
-      - 'website/**'
-      - 'mkdocs.yml'
+      - '.github/pages/**'
       - '.github/workflows/pages.yml'
   workflow_dispatch:
 
@@ -39,11 +38,12 @@ jobs:
 
       - name: Build Site
         run: mkdocs build --strict --verbose
+        working-directory: .github/pages
 
       - name: Upload Artifact
         uses: actions/upload-pages-artifact@v3
         with:
-          path: ./site
+          path: .github/pages/site_out
 
   deploy:
     needs: build
