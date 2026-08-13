@@ -7,7 +7,18 @@ def _build_jsonld() -> str:
         "@type": "WebSite",
         "name": "JNode",
         "url": "https://lsantha.github.io/jnode_ai/",
-        "description": "JNode is an experimental operating system written in Java. It builds its own JVM, kernel, drivers, filesystems, network stack, and GUI, and boots them on bare metal.",
+        "description": "JNode is an experimental Java operating system, developed with AI agents. It builds its own JVM, kernel, drivers, filesystems, network stack, and GUI.",
+        "keywords": [
+            "JNode",
+            "Java operating system",
+            "JVM",
+            "kernel",
+            "AI development",
+            "agent-driven development",
+            "OpenCode",
+            "open source OS",
+            "bare-metal",
+        ],
         "logo": "https://lsantha.github.io/jnode_ai/assets/images/JNode_logo.png",
         "publisher": {
             "@type": "Organization",
@@ -17,6 +28,10 @@ def _build_jsonld() -> str:
                 "https://github.com/LSantha/jnode_ai",
                 "https://github.com/LSantha/jnode_ai/wiki",
             ],
+        },
+        "audience": {
+            "@type": "Audience",
+            "description": "Developers and researchers interested in OS design, JVM implementation, and AI-driven software development. This fork is maintained with agentic (AI) workflows using OpenCode agents and GitHub Actions.",
         },
     }
     return json.dumps(site, indent=2)

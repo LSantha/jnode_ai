@@ -13,6 +13,7 @@ hooks:
 
 theme:
   name: material
+  logo: assets/images/JNode_logo.png
   palette:
     - scheme: default
       primary: white
