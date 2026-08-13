@@ -4,42 +4,26 @@
 
 ```mermaid
 graph TD
-    subgraph Boot ("Boot")
-        BL["Boot Loader (GRUB → kernel.asm)"]
-    end
-    subgraph Kernel ("Kernel")
-        direction TB
-        KSched["Scheduler (Isolate)"]
-        KMem["Memory Mgmt (def/GC)"]
-        KIntr["Interrupt Handling (IDT, PIC, APIC)"]
-        KSched --> KMem --> KIntr
-    end
-    subgraph VM ("VmImpl (JVM)")
-        VMLoader["Classloader (Plugin)"]
-        VMJIT["JIT Compiler (L1a/L1b/L2)"]
-        VMSafe["VM Magic / Unsafe (VMMagic annos)"]
-    end
-    PS["Plugin System<br/>PluginDescriptor → PluginManager → Extension Points"]
-    CS["Core Services<br/>Naming, Security, Logging"]
-    DRV["Drivers<br/>PCI, USB, IDE, Net, Video"]
-    FS["Filesystems<br/>Ext2, FAT, ISO9660, NFS, NTFS"]
-    NS["Network Stack<br/>IPv4, TCP, UDP, DNS"]
-    SH["Shell<br/>Commands, Aliases, Plugins"]
-    GUI["GUI / AWT<br/>Video, Input, Thinlet"]
+    BL["Boot Loader (GRUB to kernel.asm)"]
+    K["Kernel - Scheduler, Memory Mgmt, Interrupts"]
+    VM["VmImpl / JVM - Classloader, JIT Compiler, VM Magic"]
+    PS["Plugin System - PluginDescriptor, PluginManager, Extension Points"]
+    CS["Core Services - Naming, Security, Logging"]
+    DRV["Drivers - PCI, USB, IDE, Net, Video"]
+    FS["Filesystems - Ext2, FAT, ISO9660, NFS, NTFS"]
+    NS["Network Stack - IPv4, TCP, UDP, DNS"]
+    SH["Shell - Commands, Aliases, Plugins"]
+    GUI["GUI / AWT - Video, Input, Thinlet"]
 
-    BL --> Kernel
-    Kernel --> VM
+    BL --> K
+    K --> VM
     VM --> PS
-    PS ==> CS
-    PS ==> DRV
-    PS ==> FS
+    PS --> CS
+    PS --> DRV
+    PS --> FS
     CS --> NS
     CS --> SH
     CS --> GUI
-
-    linkStyle 0 stroke:#999
-    classDef box fill:#f4f4f4,stroke:#999,stroke-width:1px
-    class BL,KSched,KMem,KIntr,VMLoader,VMJIT,VMSafe,PS,CS,DRV,FS,NS,SH,GUI box
 ```
 
 ## Key Design Principles
