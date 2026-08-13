@@ -19,7 +19,6 @@ def _build_jsonld() -> str:
             "open source OS",
             "bare-metal",
         ],
-        "logo": "https://lsantha.github.io/jnode_ai/assets/images/JNode_logo.png",
         "publisher": {
             "@type": "Organization",
             "name": "JNode Project",
