@@ -17,7 +17,6 @@ classlib.pack.gz
 /.idea/
 /.wiki/
 __pycache__/
-site/
 
 # GitHub Pages build output
 .github/pages/site_out/
