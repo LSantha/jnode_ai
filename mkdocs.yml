@@ -8,6 +8,9 @@ edit_uri: edit/master/website/
 docs_dir: website
 site_dir: site
 
+hooks:
+  - hooks/jsonld.py
+
 theme:
   name: material
   palette:
