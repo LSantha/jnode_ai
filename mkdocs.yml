@@ -41,7 +41,7 @@ nav:
       - Testing: development/testing.md
   - Subsystems: subsystems.md
   - Reference: reference.md
-  - Wiki: https://github.com/LSantha/jnode_ai.wiki/wiki
+  - Wiki: https://github.com/LSantha/jnode_ai/wiki
 
 markdown_extensions:
   - admonition
