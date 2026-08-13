@@ -3,13 +3,13 @@ site_description: A Java Operating System
 site_url: https://lsantha.github.io/jnode_ai
 repo_url: https://github.com/LSantha/jnode_ai
 repo_name: LSantha/jnode_ai
-edit_uri: edit/master/website/
+edit_uri: edit/master/.github/pages/site/
 
-docs_dir: website
-site_dir: site
+docs_dir: site
+site_dir: site_out
 
 hooks:
-  - website_hooks/jsonld.py
+  - hooks/jsonld.py
 
 theme:
   name: material

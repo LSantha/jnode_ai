@@ -1,0 +1,30 @@
+# JNode
+
+> JNode is an experimental operating system written in Java. It builds its own JVM, kernel, drivers, filesystems, network stack, and GUI, and boots them on bare metal with only a few hundred lines of assembly at the very bottom. It is a platform for exploring OS design, JVM implementation, and system-level Java.
+
+Important URLs:
+- [Quick Start](https://lsantha.github.io/jnode_ai/getting-started/quick-start/): Build a JNode ISO and boot it in QEMU
+- [Building](https://lsantha.github.io/jnode_ai/getting-started/building/): Build targets, properties, and output structure
+- [Running in QEMU](https://lsantha.github.io/jnode_ai/getting-started/qemu/): QEMU boot, serial logging, networking, GDB
+- [Running in VirtualBox](https://lsantha.github.io/jnode_ai/getting-started/virtualbox/): VirtualBox setup and JDWP remote debugging
+
+Architecture:
+- [Architecture Overview](https://lsantha.github.io/jnode_ai/architecture/overview/): High-level components, boot sequence, memory layout, JIT compilers
+
+Development:
+- [Build & Test](https://lsantha.github.io/jnode_ai/development/): Development workflow, PR process, issue labels
+- [Testing](https://lsantha.github.io/jnode_ai/development/testing/): JUnit, regression, and boot testing
+
+Agentic development:
+- This is a fork of the classic JNode project, maintained as a living experiment in agent-driven development. GitHub Actions and OpenCode agents triage issues, implement fixes, review pull requests, update the wiki, and boot every build in QEMU before it lands.
+- Issue batching is coordinated through an orchestrator workflow; issues are labeled with `agent/in-progress`, `agent/done`, `agent/needs-info`, and routed by `/oc` verbs (`fix`, `investigate`, `review`, `wiki`, `triage`).
+- Agentic skills in the repo: `jnode-issue-resolver` (issue/PR resolution), `jnode-interact` (QEMU boot testing), `filesystem-debug` (filesystem bug diagnosis), `update-wiki` (wiki spoke pages).
+- Workflow definitions: [opencode.yml](https://github.com/LSantha/jnode_ai/blob/master/.github/workflows/opencode.yml), [jnode-issue-resolver skill](https://github.com/LSantha/jnode_ai/blob/master/.opencode/skills/jnode-issue-resolver/SKILL.md)
+
+Reference:
+- [Subsystems](https://lsantha.github.io/jnode_ai/subsystems/): Filesystems, network stack, shell, GUI, drivers
+- [Reference](https://lsantha.github.io/jnode_ai/reference/): Shell commands, boot parameters, configuration, build properties
+
+More:
+- [JNode Wiki](https://github.com/LSantha/jnode_ai/wiki): Full technical wiki (100+ pages)
+- [GitHub Repository](https://github.com/LSantha/jnode_ai): Source code and issues
