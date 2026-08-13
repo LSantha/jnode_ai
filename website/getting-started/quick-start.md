@@ -1,6 +1,6 @@
 # Quick Start
 
-Get JNode running in 5 minutes.
+Build a JNode ISO and boot it in QEMU.
 
 ## Prerequisites
 
@@ -44,9 +44,9 @@ jnode>
 ```bash
 jnode> help
 jnode> ls /
-jnode> ps
+jnode> memory
 jnode> vminfo
-jnode> mem
+jnode> uname
 ```
 
 Type `exit` to shut down cleanly.

@@ -12,7 +12,7 @@
 │                         Kernel                                │
 │  ┌─────────────┐  ┌─────────────┐  ┌─────────────────────┐  │
 │  │  Scheduler  │  │  Memory Mgmt│  │  Interrupt Handling │  │
-│  │  (Isolate)  │  │  (MMTk/GC)  │  │  (IDT, PIC, APIC)   │  │
+│  │  (Isolate)  │  │  (def/GC)   │  │  (IDT, PIC, APIC)   │  │
 │  └─────────────┘  └─────────────┘  └─────────────────────┘  │
 └──────────────────────────┬──────────────────────────────────┘
                            │
@@ -20,7 +20,7 @@
 │                      VmImpl (JVM)                           │
 │  ┌─────────────┐  ┌─────────────┐  ┌─────────────────────┐  │
 │  │  Classloader│  │  JIT Compiler│  │  VM Magic / Unsafe  │  │
-│  │  (Plugin)   │  │  (L1 / L2)  │  │  (VMMagic annos)    │  │
+│  │  (Plugin)   │  │  (L1a/L1b/L2)│  │  (VMMagic annos)    │  │
 │  └─────────────┘  └─────────────┘  └─────────────────────┘  │
 └──────────────────────────┬──────────────────────────────────┘
                            │
@@ -35,7 +35,7 @@
 │  Core Services│  │   Drivers     │  │ Filesystems   │
 │  (Naming,     │  │  (PCI, USB,   │  │  (Ext2, FAT,  │
 │   Security,   │  │   IDE, Net,   │  │   ISO9660,    │
-│   Logging)    │  │   Audio)      │  │   NFS, NTFS)  │
+│   Logging)    │  │   Video)      │  │   NFS, NTFS)  │
 └───────────────┘  └───────────────┘  └───────────────┘
         │                  │                  │
         ▼                  ▼                  ▼
@@ -70,9 +70,9 @@ JNode uses **Isolates** (similar to processes but lighter-weight):
 - See [Plugin System](https://github.com/LSantha/jnode_ai/wiki/Plugin-System)
 
 ### 4. MMTk Integration
-- **Memory Management Toolkit** (Rust) for GC
-- JNode binds via JNI: `org.jnode.vm.memmgr.mmtk`
-- Supports: Immix, GenImmix, MarkSweep, SemiSpace
+- **Memory Management Toolkit** bindings for garbage collection
+- Available MMTk plans: `org.jnode.vm.memmgr.mmtk.ms` (MarkSweep), `...genrc` (generational), `...nogc` (no collection)
+- Default memory manager is `org.jnode.vm.memmgr.def`; MMTk plans are experimental
 - See [MMTk Bindings](https://github.com/LSantha/jnode_ai/wiki/MMTk-Bindings)
 
 ### 5. VMMagic Annotations
@@ -124,13 +124,12 @@ See [Paging Implementation](https://github.com/LSantha/jnode_ai/wiki/Paging-Impl
 
 | Compiler | Tier | Status |
 |----------|------|--------|
-| **L1** | Baseline | ✅ Stable |
-| **L2** | Optimizing | ⚠️ Experimental |
-| **None** | Interpreter | ✅ Always available |
+| **L1A / L1B** | Baseline | Default |
+| **Stub** | Stub generation | For non-Java natives |
+| **L2** | Optimizing | Test-only, not selected at boot |
 
-- L1: Fast compilation, basic optimization
-- L2: SSA-based, inlining, escape analysis
-- Selected via `jnode.compiler` property
+- L1A/L1B: baseline bytecode compilers; `jnode.compiler` accepts `L1A`, `L1B`, or `default` (→ L1A)
+- L2: optimizing compiler, used only in test harness (`testCompilers`)
 - See [JIT Compilers](https://github.com/LSantha/jnode_ai/wiki/JIT-Compilers)
 
 ## Further Reading

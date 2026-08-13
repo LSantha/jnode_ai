@@ -36,18 +36,18 @@ You'll see the boot banner and shell prompt.
 
 ## JDWP Remote Debugging
 
-JNode listens for JDWP on port **8000** by default (configured in `jnode.properties`).
+JNode's `debug` command starts a JDWP listener on port **6789** by default (override with the `port` argument).
 
 ### Port Forwarding (NAT)
 
 ```bash
-VBoxManage modifyvm "JNode" --natpf1 "jdwp,tcp,,8000,,8000"
+VBoxManage modifyvm "JNode" --natpf1 "jdwp,tcp,,6789,,6789"
 ```
 
 ### Connect with jdb
 
 ```bash
-jdb -attach localhost:8000
+jdb -attach localhost:6789
 ```
 
 ### Supported JDWP Features
@@ -63,7 +63,7 @@ jdb -attach localhost:8000
 | Watchpoints | ❌ |
 | Breakpoints | ⚠️ Limited |
 
-See [JDWP Setup Wiki](https://github.com/LSantha/jnode_ai/wiki/GDB-Debugging-Support) and [JDWP Tests](../development/testing.md#jdwp-integration-tests).
+See [JDWP Setup Wiki](https://github.com/LSantha/jnode_ai/wiki/GDB-Debugging-Support).
 
 ## Shared Folders (Optional)
 
@@ -81,7 +81,7 @@ For file transfer between host and JNode:
 |-------|-----|
 | Boot hangs at "Loading..." | Ensure **I/O APIC** enabled, try `-cpu pentium` in QEMU first |
 | No serial output | Verify pipe path, check `socat` / PuTTY connection |
-| JDWP connection refused | Check port forwarding, firewall, `jnode.properties` `jdwp.port=8000` |
+| JDWP connection refused | Check port forwarding, firewall, `debug` command arguments |
 | Network not working | Try Bridged Adapter instead of NAT; check `dhcp eth0` |
 
 ## VM Export for Distribution

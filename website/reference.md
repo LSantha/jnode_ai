@@ -6,40 +6,43 @@
 
 | Command | Description |
 |---------|-------------|
-| `ls [path]` | List directory |
+| `ls` / `dir` | List directory |
 | `cd <path>` | Change directory |
 | `pwd` | Print working directory |
 | `cat <file>` | Display file |
 | `cp <src> <dst>` | Copy file |
-| `mv <src> <dst>` | Move/rename |
-| `rm <file>` | Remove file |
+| `rm` / `del` | Remove file |
 | `mkdir <dir>` | Create directory |
-| `rmdir <dir>` | Remove empty directory |
 | `find <path> <pattern>` | Find files |
+| `du`, `df`, `cmp`, `md5sum` | Disk usage, sizes, compare, checksum |
 
 ### Process & Memory
 
 | Command | Description |
 |---------|-------------|
-| `ps` | List processes/isolates |
-| `kill <pid>` | Terminate isolate |
-| `mem` | Memory usage summary |
+| `isolate` | List/inspect isolates |
+| `thread` | Thread dump |
+| `kill <pid>` | Terminate process |
+| `terminate` | Terminate an isolate |
+| `memory` | Memory usage summary |
 | `vminfo` | VM version, build ID, uptime |
 | `gc` | Trigger garbage collection |
+| `onheap`, `page` | Heap / page info |
 
 ### System
 
 | Command | Description |
 |---------|-------------|
 | `help [cmd]` | Show help |
-| `version` | Show JNode version |
+| `uname` | Show system info |
 | `reboot` | Reboot system |
-| `shutdown` | Power off |
-| `plugins` | List loaded plugins |
-| `devices` | List devices |
-| `drivers` | List drivers |
+| `halt` | Power off |
+| `plugin` | List loaded plugins |
+| `device` | List devices |
 | `mount` | Show mounts |
 | `dhcp <iface>` | DHCP request |
+| `env` / `printenv` | Show environment |
+| `alias`, `bindkeys`, `locale`, `log4j` | Shell configuration |
 
 ### Network
 
@@ -49,40 +52,39 @@
 | `netstat` | Network connections |
 | `ifconfig <iface>` | Interface config |
 | `route` | Routing table |
-| `dns <name>` | DNS lookup |
+| `resolver` | DNS lookup |
+| `arp`, `bootp`, `tcpinout`, `wget`, `tftp`, `wlanctl` | Other network tools |
 
 ### Debug
 
 | Command | Description |
 |---------|-------------|
 | `kdb` | Enter kernel debugger |
-| `threads` | Thread dump |
-| `isolates` | Isolate dump |
-| `heap` | Heap histogram |
+| `debug` | Start JDWP listener |
+| `disasm` | Disassemble bytecode |
+| `lsirq` | List interrupt requests |
 
 ---
 
 ## Boot Parameters
 
-Passed via GRUB kernel command line:
+The kernel copies the GRUB command line (multiboot `kernel` line) and exposes it to the system as the `jnode.cmdline` property. Plugins can inspect it at startup.
 
-| Parameter | Description | Default |
-|-----------|-------------|---------|
-| `console=ttyS0` | Serial console | `ttyS0` |
-| `console=tty0` | VGA console | — |
-| `mem=512M` | Memory limit | Auto-detect |
-| `plugins=full` | Plugin list | `default` |
-| `debug=jdwp` | Enable JDWP | Disabled |
-| `jdwp.port=8000` | JDWP port | `8000` |
-| `loglevel=DEBUG` | Boot log level | `INFO` |
+Known handling:
+
+| Parameter | Description |
+|-----------|-------------|
+| `debug` | Substring on the command line enables plugin debug mode |
 
 Example GRUB entry:
 ```grub
-menuentry "JNode (debug)" {
-    multiboot /boot/kernel.gz console=ttyS0 debug=jdwp loglevel=DEBUG
+menuentry "JNode" {
+    multiboot /boot/kernel.gz debug
     module /boot/bootimage.gz
 }
 ```
+
+Beyond the `debug` flag, command-line handling is up to individual plugins reading `jnode.cmdline`. This is an area still under development.
 
 ---
 
@@ -95,22 +97,15 @@ Main build/runtime configuration:
 ```properties
 # Architecture
 jnode.bits=32
-jnode.memmgr.plugin.id=org.jnode.vm.memmgr.mmtk.MMTkMemoryManager
-jnode.compiler=l1
+jnode.memmgr.plugin.id=org.jnode.vm.memmgr.def
+jnode.compiler=default
 
 # Plugins
 jnode.enable.jnasm=true
-jnode.plugin.list=default-plugin-list.xml
-
-# Network
-jnode.net.dhcp=true
-jnode.net.ipv4.forwarding=false
-
-# Debug
-jnode.jdwp.enabled=false
-jnode.jdwp.port=8000
-jnode.jdwp.suspend=n
+target.plugin.list=default
 ```
+
+`jnode.compiler` accepts `L1A`, `L1B`, or `default` (which resolves to L1A).
 
 Location: `jnode.properties` (root) or `-Dbuild.properties.file=...`
 
@@ -118,10 +113,11 @@ Location: `jnode.properties` (root) or `-Dbuild.properties.file=...`
 
 | File | Description |
 |------|-------------|
-| `all/conf/default-plugin-list.xml` | Minimal: kernel, shell, basic FS, net |
-| `all/conf/full-plugin-list.xml` | Full: GUI, all FS, all drivers, dev tools |
+| `all/conf/system-plugin-list.xml` | Core VM/plugin infrastructure, always included in the bootimage |
+| `all/conf/default-plugin-list.xml` | Standard set: kernel, shell, FS, net, common commands |
+| `all/conf/full-plugin-list.xml` | Default set plus additional/optional plugins |
 
-Selected via `jnode.plugin.list` property.
+The jar packager selects `default` or `full` via `target.plugin.list`.
 
 ### BootImageBuilder Config
 
@@ -139,10 +135,10 @@ Controls boot image generation (`all/conf/bootimage.xml`):
 | Property | Default | Description |
 |----------|---------|-------------|
 | `jnode.bits` | `32` | Target: `32` or `64` |
-| `jnode.memmgr.plugin.id` | MMTk | GC implementation |
-| `jnode.compiler` | `l1` | JIT: `l1`, `l2`, `none` |
+| `jnode.memmgr.plugin.id` | `org.jnode.vm.memmgr.def` | Memory manager (`org.jnode.vm.memmgr.mmtk.nogc`/`genrc`/`ms` alternatives) |
+| `jnode.compiler` | `default` | JIT compiler (`L1A`, `L1B`, or `default`) |
 | `jnode.enable.jnasm` | `true` | Use JNasm assembler |
-| `jnode.plugin.list` | `default` | Plugin set |
+| `target.plugin.list` | `default` | Plugin set for jar packager |
 | `build.native.only` | `false` | Skip Java compile |
 | `skip.tests` | `false` | Skip JUnit tests |
 

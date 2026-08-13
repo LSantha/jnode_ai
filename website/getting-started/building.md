@@ -13,9 +13,9 @@ sh build.sh <target> [options]
 | Target | Description |
 |--------|-------------|
 | `assemble` | Compile Java, build native, create bootimage (no ISO) |
-| `cd-x86-lite` | **Minimal x86 ISO** — kernel, shell, basic drivers (~15 MB) |
-| `cd-x86_64-lite` | Minimal x86_64 ISO (experimental) |
-| `cd-x86` | Full x86 ISO with GUI, network, all plugins |
+| `cd-x86-lite` | Bootable x86 CD image (kernel, shell, core subsystems) |
+| `cd-x86_64-lite` | Bootable x86_64 CD image (experimental) |
+| `cd-x86` | Same as `cd-x86-lite`, plus source tarball included on the CD |
 | `tests` | Run all JUnit + regression tests |
 | `clean` | Remove all build artifacts |
 
@@ -57,10 +57,12 @@ Key properties in `jnode.properties` or via `-D`:
 | Property | Default | Description |
 |----------|---------|-------------|
 | `jnode.bits` | `32` | Target architecture: `32` or `64` |
-| `jnode.memmgr.plugin.id` | `org.jnode.vm.memmgr.mmtk.MMTkMemoryManager` | GC implementation |
-| `jnode.compiler` | `l1` | JIT: `l1`, `l2`, or `none` |
+| `jnode.memmgr.plugin.id` | `org.jnode.vm.memmgr.def` | Memory manager; alternatives: `org.jnode.vm.memmgr.mmtk.nogc` (beta), `org.jnode.vm.memmgr.mmtk.genrc` (alpha), `org.jnode.vm.memmgr.mmtk.ms` |
+| `jnode.compiler` | `default` | JIT compiler: `L1A`, `L1B`, or `default` |
 | `jnode.enable.jnasm` | `true` | Use JNasm assembler |
-| `jnode.plugin.list` | `default-plugin-list.xml` | Plugin set: `default` or `full` |
+| `target.plugin.list` | `default` | Plugin set for the jar packager: `default` or `full` |
+
+The bootimage itself always uses `all/conf/system-plugin-list.xml`.
 
 ## Build Output Structure
 

@@ -14,17 +14,19 @@ JNode's functionality is organized into independent subsystems, each implemented
 
 ## Filesystems
 
-Supported formats:
+Supported formats (as documented in the wiki):
 
-| FS | Read | Write | Status |
-|----|------|-------|--------|
-| Ext2 / Ext3 | ✅ | ✅ | Stable |
-| FAT12/16/32 | ✅ | ✅ | Stable |
-| ISO9660 | ✅ | ❌ | Stable |
-| NFS v2 | ✅ | ✅ | Experimental |
-| exFAT | ✅ | ⚠️ | Partial |
-| HFS+ | ✅ | ❌ | Read-only |
+| FS | Read | Write | Notes |
+|----|------|-------|-------|
+| FAT12/16/32 | ✅ | ✅ | Best-supported FS |
+| RAM disk (ramfs) | ✅ | ✅ | In-memory |
+| exFAT | ✅ | ✅ | |
+| Ext2 | ✅ | ❌ | Read-only; ext3 mounted RO unless journal features absent |
+| ISO9660 | ✅ | ❌ | CD-ROM |
 | NTFS | ✅ | ❌ | Read-only |
+| HFS+ | ✅ | ❌ | Read-only |
+| NFS v2 | ✅ | ⚠️ | Network FS, partial |
+| FTP / SMB | ✅ | ⚠️ | Network FS mounts |
 
 Architecture: VFS layer → FSEntry cache → FileSystemType plugins → Block drivers
 
@@ -48,15 +50,15 @@ Internet: IPv4, ICMP, ARP
 Link: Ethernet, Loopback
     │
     ▼
-Driver: RTL8139, E1000, PCNet
+Driver: RTL8139, NE2000, PRO/100, PCNet
 ```
 
 Key components:
 - **NetAPI** — Java networking API implementation
 - **NetworkLayerManager** — Layer registration & routing
-- **IPv4Protocol** — Packet processing, fragmentation
-- **TCPProtocol** — State machine, congestion control
-- **DNSServer** — Built-in DNS resolver
+- **IPv4Protocol** — Packet processing, fragmentation reassembly
+- **TCPProtocol** — State machine (SYN/ACK, retransmission)
+- **ResolverImpl** — DNS resolution (cached)
 
 See [Network Stack](https://github.com/LSantha/jnode_ai/wiki/Network-Stack), [TCP Protocol](https://github.com/LSantha/jnode_ai/wiki/TCP-Protocol), [UDP Protocol](https://github.com/LSantha/jnode_ai/wiki/UDP-Protocol).
 
@@ -64,7 +66,7 @@ See [Network Stack](https://github.com/LSantha/jnode_ai/wiki/Network-Stack), [TC
 
 The JNode shell (`org.jnode.shell`) provides:
 
-- **Built-in commands**: `ls`, `cd`, `cat`, `ps`, `mem`, `vminfo`, `help`, `alias`, `history`
+- **Built-in commands**: `ls`, `cd`, `cat`, `cp`, `rm`, `memory`, `vminfo`, `help`, `alias`, `history`
 - **Plugin commands**: Dynamically loaded via plugin system
 - **Aliases & functions**: Persistent across sessions
 - **Tab completion**: For commands, files, aliases
@@ -87,7 +89,7 @@ JNode implements a subset of **AWT** with custom peers:
 | `Font` | `JNodeFont` → FreeType / built-in |
 | `EventQueue` | `JNodeEventQueue` → Input drivers |
 
-Video drivers: VESA, Bochs, VMware, VirtualBox
+Video drivers: VESA, VGA, ATI, Cirrus, nVidia, VMware SVGA
 Input drivers: PS/2 keyboard/mouse, USB HID
 
 See [GUI/AWT](https://github.com/LSantha/jnode_ai/wiki/GUI-AWT), [Video Driver Architecture](https://github.com/LSantha/jnode_ai/wiki/Video-Driver-Architecture), [Input Drivers](https://github.com/LSantha/jnode_ai/wiki/Input-Drivers).
@@ -106,10 +108,11 @@ Major driver categories:
 | Category | Drivers |
 |----------|---------|
 | **Storage** | IDE (ATA/ATAPI), SCSI, RAM disk, Floppy |
-| **Network** | RTL8139, Intel E1000, AMD PCNet, NE2000 |
-| **Video** | VESA VBE, Bochs VGA, VMware SVGA, VirtualBox |
+| **Network** | RTL8139, Intel PRO/100 (eepro100), AMD PCNet (LANCE), NE2000, 3c90x, Broadcom 570x, VIA Rhine, Prism2 wireless |
+| **Video** | VGA, VESA, ATI, Cirrus Logic, nVidia, VMware SVGA |
 | **Input** | PS/2 keyboard, PS/2 mouse, USB HID |
-| **Audio** | Intel HDA (experimental) |
-| **Serial** | 16550 UART, USB serial |
+| **Serial** | 16550 UART (`0x3f8`) |
+
+No audio driver is implemented yet.
 
 See [Driver Framework](https://github.com/LSantha/jnode_ai/wiki/Driver-Framework), [Bus Drivers](https://github.com/LSantha/jnode_ai/wiki/Bus-Drivers), [PCI Capability Structure](https://github.com/LSantha/jnode_ai/wiki/PCI-Capability-Structure).

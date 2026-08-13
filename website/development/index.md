@@ -76,21 +76,6 @@ sh build.sh regression-tests
 
 Runs shell command tests against a booted JNode image.
 
-### JDWP Integration Tests
-
-Requires a **running JNode VM with JDWP listener** (VirtualBox recommended):
-
-```bash
-# Start JNode in VirtualBox with JDWP on port 8000
-# Then run:
-cd tests/jdwp
-python3 -m pytest -v
-```
-
-- 75 tests covering: classes, methods, fields, threads, invocation, constructors
-- See [tests/jdwp/AGENTS.md](https://github.com/LSantha/jnode_ai/blob/master/tests/jdwp/AGENTS.md) for setup
-- **Run these after any JDWP code change** — they are the regression suite
-
 ### Boot Testing
 
 ```bash
@@ -129,8 +114,8 @@ See [jnode-interact skill](https://github.com/LSantha/jnode_ai/blob/master/.open
 Best with VirtualBox:
 
 1. Enable Serial Port 1 → Host Pipe → `/tmp/jnode-com1`
-2. Port forward: `VBoxManage modifyvm "JNode" --natpf1 "jdwp,tcp,,8000,,8000"`
-3. Connect: `jdb -attach localhost:8000`
+2. Port forward: `VBoxManage modifyvm "JNode" --natpf1 "jdwp,tcp,,6789,,6789"`
+3. Connect: `jdb -attach localhost:6789`
 
 See [VirtualBox Guide](../getting-started/virtualbox.md) for JDWP setup.
 
@@ -181,20 +166,10 @@ The project uses a label system managed by [sync-labels.js](https://github.com/L
 
 | Family | Examples |
 |--------|----------|
-| `kind/*` | `kind/bug`, `kind/feature`, `kind/investigate`, `kind/wiki` |
+| `kind/*` | `kind/bug`, `kind/feature`, `kind/investigate`, `kind/chore` |
 | `agent/*` | `agent/in-progress`, `agent/done`, `agent/needs-info` |
 | `area/*` | `area/core`, `area/fs`, `area/net`, `area/vm`, `area/build` |
 
 ### Agent Automation
 
-Trigger OpenCode agent via issue comments:
-
-```bash
-/oc fix        # Fix the issue
-/oc investigate # Investigate and report
-/oc review     # Review a PR
-/oc wiki       # Update wiki
-/oc triage     # Triage new issue
-```
-
-See [opencode.yml](https://github.com/LSantha/jnode_ai/blob/master/.github/workflows/opencode.yml) and [jnode-issue-resolver skill](https://github.com/LSantha/jnode_ai/blob/master/.opencode/skills/jnode-issue-resolver/SKILL.md).
+An experimental agent-based workflow exists for triaging and resolving issues. It's still exploratory — see [opencode.yml](https://github.com/LSantha/jnode_ai/blob/master/.github/workflows/opencode.yml) and [jnode-issue-resolver skill](https://github.com/LSantha/jnode_ai/blob/master/.opencode/skills/jnode-issue-resolver/SKILL.md) for details.

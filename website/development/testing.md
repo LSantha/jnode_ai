@@ -6,7 +6,6 @@
 |------|---------|-------------|
 | **JUnit** | `sh build.sh tests` | Unit tests for all subprojects |
 | **Regression** | `sh build.sh regression-tests` | Shell command integration tests |
-| **JDWP** | `pytest tests/jdwp/` | Remote debugging protocol tests |
 | **Boot** | QEMU/VirtualBox | Full OS boot verification |
 
 ## JUnit Tests
@@ -37,37 +36,6 @@ sh build.sh regression-tests
 ```
 
 Tests are defined in `tests/regression/` and executed via the shell.
-
-## JDWP Integration Tests
-
-**Requirements:**
-- JNode running in VirtualBox with JDWP listener on port 8000
-- Serial console configured (for agent interaction)
-- Python 3.8+ with pytest
-
-```bash
-# 1. Start JNode in VirtualBox (see VirtualBox guide)
-# 2. Verify JDWP: telnet localhost 8000 → "JDWP Handshake"
-# 3. Run tests
-cd tests/jdwp
-python3 -m pytest -v
-```
-
-### Test Coverage (75 tests)
-
-| Category | Tests |
-|----------|-------|
-| Classes, methods, fields | 18 |
-| Threads, thread groups | 12 |
-| Stack traces (`where`) | 8 |
-| Classpath, connectors | 6 |
-| Method invocation | 15 |
-| Constructors | 10 |
-| Version, capabilities | 6 |
-
-**Run after any JDWP code change** — this is the regression suite for the debug backend.
-
-See [tests/jdwp/AGENTS.md](https://github.com/LSantha/jnode_ai/blob/master/tests/jdwp/AGENTS.md) for full setup.
 
 ## Boot Testing
 
@@ -134,11 +102,12 @@ The [ant.yml](https://github.com/LSantha/jnode_ai/blob/master/.github/workflows/
 
 ## Test Utilities
 
-| Tool | Purpose |
-|------|---------|
-| `jnode-interact` skill | Interactive QEMU testing via serial |
-| `jnode-java-coding` skill | Compile/run Java on live JNode |
-| `filesystem-debug` skill | Analyze FS test failures |
-| `jnode-kdb-serial` skill | Kernel debugger via serial |
+| Tool | Purpose | Location |
+|------|---------|----------|
+| `jnode-interact` skill | Interactive QEMU testing via serial | repo `.opencode/skills/` |
+| `filesystem-debug` skill | Analyze FS test failures | repo `.opencode/skills/` |
+| `jnode-issue-resolver` skill | Issue/PR resolution protocol | repo `.opencode/skills/` |
+| `jnode-java-coding` skill | Compile/run Java on live JNode | user config |
+| `jnode-kdb-serial` skill | Kernel debugger via serial | user config |
 
-See [.opencode/skills/](https://github.com/LSantha/jnode_ai/tree/master/.opencode/skills) for available debugging skills.
+See [.opencode/skills/](https://github.com/LSantha/jnode_ai/tree/master/.opencode/skills) for the repo's skills.
