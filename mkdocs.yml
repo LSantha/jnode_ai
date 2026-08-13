@@ -9,7 +9,7 @@ docs_dir: website
 site_dir: site
 
 hooks:
-  - hooks/jsonld.py
+  - website_hooks/jsonld.py
 
 theme:
   name: material
