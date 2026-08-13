@@ -4,7 +4,7 @@
 [![Java 8](https://img.shields.io/badge/Java-8-blue.svg)](https://openjdk.java.net/projects/jdk/8/)
 [![License](https://img.shields.io/badge/License-LGPL%202.1-green.svg)](https://www.gnu.org/licenses/lgpl-2.1.html)
 
-**JNode** is a complete operating system written primarily in Java, with a small amount of assembly for the lowest-level hardware interaction. It includes a custom JVM, kernel, device drivers, filesystems, network stack, shell, and GUI — all in Java.
+**JNode** is an experimental operating system written in Java. It builds its own JVM, kernel, drivers, filesystems, network stack, and GUI, and boots them on bare metal with only a few hundred lines of assembly at the very bottom. It's a platform for exploring OS design, JVM implementation, and system-level Java. This fork is developed at scale with modern AI-based, agentic methodologies — OpenCode agents resolve issues, review code, and boot-test every build.
 
 ---
 
@@ -75,6 +75,12 @@ See [Reference](reference.md) for details.
 
 !!! info "Full Wiki"
     The [JNode Wiki](https://github.com/LSantha/jnode_ai/wiki) contains 100+ detailed technical pages covering every subsystem, class, and design decision. This site provides a curated entry point; the wiki is the exhaustive reference.
+
+---
+
+## Developed with AI Agents
+
+This is a fork of the classic JNode project, maintained as a living experiment in agent-driven development. GitHub Actions and OpenCode agents triage issues, implement fixes, review pull requests, update the wiki, and boot every build in QEMU before it lands. Batching is coordinated through an orchestrator workflow, with agentic skills for QEMU boot testing, JDWP debugging, and filesystem diagnosis.
 
 ---
 
