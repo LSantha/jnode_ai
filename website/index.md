@@ -6,8 +6,6 @@
 
 **JNode** is an experimental operating system written in Java. It builds its own JVM, kernel, drivers, filesystems, network stack, and GUI, and boots them on bare metal with only a few hundred lines of assembly at the very bottom. It's a platform for exploring OS design, JVM implementation, and system-level Java.
 
-<img alt="JNode logo" src="assets/images/JNode_logo.png" style="max-width: 240px; display: inline-block;" />
-
 ---
 
 ## Developed with AI Agents
