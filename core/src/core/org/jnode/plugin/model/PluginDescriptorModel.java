@@ -661,6 +661,7 @@ public class PluginDescriptorModel extends AbstractModelObject implements
             starting = true;
         }
         // BootLogInstance.get().info("Resolve on plugin " + getId());
+        boolean success = false;
         try {
             AccessController.doPrivileged(new PrivilegedExceptionAction<Object>() {
                 public Object run() throws PluginException {
@@ -680,16 +681,12 @@ public class PluginDescriptorModel extends AbstractModelObject implements
                     return null;
                 }
             });
+            success = true;
         } catch (PrivilegedActionException ex) {
             BootLogInstance.get().error("Error starting plugin", ex);
-            /*try {
-                Thread.sleep(10000);
-            } catch (InterruptedException ex1) {
-                // Ignore
-            }*/
         } finally {
             synchronized (startLock) {
-                started = true;
+                started = success;
                 startLock.notifyAll();
             }
         }

@@ -767,6 +767,15 @@ public final class VmSystemClassLoader extends VmAbstractClassLoader {
             this.vmClassLoader = vmClassLoader;
         }
 
+        protected Class<?> findClass(String name) throws ClassNotFoundException {
+            try {
+                VmType<?> vmType = vmClassLoader.loadClass(name, false);
+                return vmType.asClass();
+            } catch (ClassNotFoundException ex) {
+                throw ex;
+            }
+        }
+
         protected URL findResource(String name) {
             return vmClassLoader.findResource(name);
         }

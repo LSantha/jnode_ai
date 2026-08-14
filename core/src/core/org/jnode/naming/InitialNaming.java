@@ -92,6 +92,12 @@ public final class InitialNaming {
      */
     public static <T, E extends T> void bind(Class<T> name, E service) throws NamingException,
         NameAlreadyBoundException {
+        if (name == null) {
+            throw new IllegalArgumentException("bind: name must not be null");
+        }
+        if (service == null) {
+            throw new IllegalArgumentException("bind: service must not be null");
+        }
         NAME_SPACE.bind(name, service);
     }
 
