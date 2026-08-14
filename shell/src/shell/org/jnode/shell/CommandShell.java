@@ -517,6 +517,7 @@ public class CommandShell implements Runnable, Shell, ConsoleListener {
     }
 
     private void stackTrace(Throwable ex) {
+        log.error(ex.getMessage(), ex);
         if (this.debugEnabled) {
             ex.printStackTrace(errPW);
         }

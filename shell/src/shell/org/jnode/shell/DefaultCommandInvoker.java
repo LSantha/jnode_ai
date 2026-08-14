@@ -34,6 +34,7 @@ import org.jnode.shell.help.HelpFactory;
 import org.jnode.shell.syntax.CommandSyntaxException;
 import org.jnode.shell.io.CommandIO;
 import org.jnode.vm.VmExit;
+import org.apache.log4j.Logger;
 
 /*
  * User: Sam Reid Date: Dec 20, 2003 Time: 1:20:33 AM Copyright (c) Dec 20, 2003
@@ -54,6 +55,7 @@ public class DefaultCommandInvoker implements SimpleCommandInvoker {
     private final PrintWriter err;
     private final CommandShell shell;
 
+    private static final Logger log = Logger.getLogger(DefaultCommandInvoker.class);
     private static final Class<?>[] MAIN_ARG_TYPES = new Class[] {String[].class};
 
     public static final Factory FACTORY = new Factory() {
@@ -178,6 +180,7 @@ public class DefaultCommandInvoker implements SimpleCommandInvoker {
     }
 
     private void stackTrace(Throwable ex) {
+        log.error(ex.getMessage(), ex);
         if (ex != null && shell.isDebugEnabled()) {
             ex.printStackTrace(err);
         }
