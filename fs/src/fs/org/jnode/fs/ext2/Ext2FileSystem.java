@@ -329,6 +329,8 @@ public class Ext2FileSystem extends AbstractFileSystem<Ext2Entry> {
             }
         }
 
+        getApi().flush();
+
         log.info("Filesystem flushed");
     }
 

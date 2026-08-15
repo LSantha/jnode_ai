@@ -113,7 +113,8 @@ public class FatFileSystem extends AbstractFileSystem<FatRootEntry> {
         if (rootDir.isDirty()) {
             rootDir.flush();
         }
-
+        
+        api.flush();
     }
 
     /**

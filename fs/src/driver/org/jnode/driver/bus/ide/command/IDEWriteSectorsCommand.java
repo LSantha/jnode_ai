@@ -70,12 +70,7 @@ public class IDEWriteSectorsCommand extends IDERWSectorsCommand {
             transferOneSector(ide, io);
         }
 
-        // Flush data
-        log.debug("WRSect flush");
-        io.setCommandReg(is48bit ? CMD_FLUSH_CACHE_EXT : CMD_FLUSH_CACHE);
-        log.debug("WRSect after flush");
-        pollWait(io, false);
-        log.debug("WRSect end");
+        // Flush data is deferred to IDEDiskDriver.flush() / sync
 
         // We're done
         notifyFinished();

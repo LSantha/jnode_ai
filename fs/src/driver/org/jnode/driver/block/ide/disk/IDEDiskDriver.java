@@ -45,6 +45,7 @@ import org.jnode.driver.bus.ide.IDEDeviceAPI;
 import org.jnode.driver.bus.ide.IDEDeviceFactory;
 import org.jnode.driver.bus.ide.IDEDriveDescriptor;
 import org.jnode.driver.bus.ide.IDEDriverUtils;
+import org.jnode.driver.bus.ide.command.IDEFlushCacheCommand;
 import org.jnode.driver.bus.ide.command.IDERWSectorsCommand;
 import org.jnode.driver.bus.ide.command.IDEReadSectorsCommand;
 import org.jnode.driver.bus.ide.command.IDEWriteSectorsCommand;
@@ -179,12 +180,31 @@ public class IDEDiskDriver extends Driver
             throw new DriverException("Problem while stopping this IDE device", e);
         }
 
+        try {
+            flush();
+        } catch (IOException e) {
+            log.warn("Failed to flush device during stop", e);
+        }
+
         dev.unregisterAPI(BlockDeviceAPI.class);
         this.pt = null;
     }
 
-    public void flush() {
-        // Nothing to do yet
+    public void flush() throws IOException {
+        final IDEDevice dev = (IDEDevice) getDevice();
+        final IDEBus bus = (IDEBus) dev.getBus();
+        IDEFlushCacheCommand cmd = new IDEFlushCacheCommand(
+            dev.isPrimary(), dev.isMaster(), is48bit);
+        try {
+            bus.executeAndWait(cmd, IDE_DATA_XFER_TIMEOUT);
+            if (cmd.hasError()) {
+                throw new IOException("IDE flush error:" + cmd.getError());
+            }
+        } catch (InterruptedException ex) {
+            throw new IOException("IDE flush interrupted", ex);
+        } catch (org.jnode.util.TimeoutException ex) {
+            throw new InterruptedIOException("IDE flush timeout: " + ex.getMessage());
+        }
     }
 
     public long getLength() {

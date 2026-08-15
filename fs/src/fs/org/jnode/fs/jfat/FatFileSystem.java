@@ -88,6 +88,7 @@ public class FatFileSystem extends AbstractFileSystem<FatRootDirectory> {
     public void flush() throws IOException {
         super.flush();
         fat.flush();
+        getApi().flush();
         if (log.isDebugEnabled()) log.debug(getFat().getCacheStat());
     }
 

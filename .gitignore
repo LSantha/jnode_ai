@@ -20,3 +20,4 @@ __pycache__/
 
 # GitHub Pages build output
 .github/pages/site_out/
+junit*.properties

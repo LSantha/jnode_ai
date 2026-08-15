@@ -170,6 +170,16 @@ public abstract class IDECommand extends Command implements IDEConstants {
      */
     protected void flushCache(IDEIO io, boolean is48bit) throws TimeoutException {
         io.setCommandReg(is48bit ? CMD_FLUSH_CACHE_EXT : CMD_FLUSH_CACHE);
-        io.waitUntilStatus(ST_BUSY, 0, IDE_TIMEOUT, "flushCache");
+        // Force a 400ns wait
+        for (int i = 0; i < 4; i++) {
+            io.getAltStatusReg();
+        }
+        io.waitUntilStatus(ST_BUSY, 0, IDE_DATA_XFER_TIMEOUT, "flushCache");
+        final int state = io.getStatusReg();
+        if ((state & ST_ERROR) != 0) {
+            setError(io.getErrorReg());
+        } else if ((state & ST_DEVICE_FAULT) != 0) {
+            setError(ERR_ABORT);
+        }
     }
 }
