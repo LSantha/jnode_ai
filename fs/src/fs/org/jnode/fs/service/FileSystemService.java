@@ -116,6 +116,16 @@ public interface FileSystemService {
     public boolean isMount(String fullPath);
 
     /**
+     * Unmount the filesystem at the given path.
+     * Flushes the filesystem, closes it, and removes the mount point.
+     *
+     * @param fullPath the mount point path
+     * @throws IOException if flush or close fails
+     * @throws IllegalArgumentException if path is not a mount point
+     */
+    public void unmount(String fullPath) throws IOException;
+
+    /**
      * Gets the filesystem API.
      */
     public VMFileSystemAPI getApi();
