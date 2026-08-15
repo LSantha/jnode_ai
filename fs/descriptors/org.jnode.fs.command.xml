@@ -62,14 +62,14 @@
       </sequence>
     </syntax>
     <syntax alias="sync">
-      <empty description="Flush all mounted filesystems"/>
+      <empty description="Flush all mounted filesystems to disk"/>
       <sequence description="Flush the filesystem at a specific path">
         <argument argLabel="path" description="the path of the filesystem to flush"/>
       </sequence>
     </syntax>
     <syntax alias="umount">
       <sequence description="Unmount the filesystem at the given path">
-        <argument argLabel="directory"/>
+        <argument argLabel="directory" description="the mount point to unmount"/>
       </sequence>
     </syntax>
   </extension>
