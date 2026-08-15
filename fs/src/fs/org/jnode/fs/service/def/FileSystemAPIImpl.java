@@ -37,6 +37,7 @@ import org.jnode.fs.FSAccessRights;
 import org.jnode.fs.FSDirectory;
 import org.jnode.fs.FSEntry;
 import org.jnode.fs.FileSystem;
+import org.jnode.fs.spi.AbstractFileSystem;
 import org.jnode.java.io.VMFileHandle;
 
 /**
@@ -460,8 +461,35 @@ final class FileSystemAPIImpl implements VMFileSystemAPI {
             fullPath = File.separatorChar + fullPath;
         }
 
-        mountPoints.put(fullPath, fs); // TODO handle removal (+ add unmount
-                                        // method) of filesystems
+        mountPoints.put(fullPath, fs);
+    }
+
+    /**
+     * Unmount the filesystem at the given path.
+     * Flushes the filesystem, closes it, and removes the mount point.
+     * If close fails, the mount point is restored for rollback.
+     *
+     * @param fullPath the mount point path
+     * @throws IOException if close fails
+     * @throws IllegalArgumentException if path is not a mount point
+     */
+    void unmount(String fullPath) throws IOException {
+        if (fullPath.charAt(0) != File.separatorChar) {
+            fullPath = File.separatorChar + fullPath;
+        }
+
+        FileSystem<?> fs = mountPoints.remove(fullPath);
+        if (fs == null) {
+            throw new IllegalArgumentException("Not a mount point: " + fullPath);
+        }
+
+        try {
+            fs.close();
+            vfs.unregisterFileSystem(fs.getDevice());
+        } catch (IOException ex) {
+            mountPoints.put(fullPath, fs);
+            throw ex;
+        }
     }
 
     /**

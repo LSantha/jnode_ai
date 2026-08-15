@@ -43,6 +43,7 @@
     <alias name="eject" class="org.jnode.fs.command.EjectCommand"/>
     <alias name="mount" class="org.jnode.fs.command.MountCommand"/>
     <alias name="sync" class="org.jnode.fs.command.SyncCommand"/>
+    <alias name="umount" class="org.jnode.fs.command.UnmountCommand"/>
   </extension>
 
   <extension point="org.jnode.shell.syntaxes">
@@ -64,6 +65,11 @@
       <empty description="Flush all mounted filesystems to disk"/>
       <sequence description="Flush the filesystem at a specific path">
         <argument argLabel="path" description="the path of the filesystem to flush"/>
+      </sequence>
+    </syntax>
+    <syntax alias="umount">
+      <sequence description="Unmount the filesystem at the given path">
+        <argument argLabel="directory" description="the mount point to unmount"/>
       </sequence>
     </syntax>
   </extension>

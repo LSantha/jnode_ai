@@ -148,6 +148,18 @@ public class FileSystemPlugin extends Plugin implements FileSystemService {
     }
 
     /**
+     * Unmount the filesystem at the given path.
+     * Flushes the filesystem, closes it, and removes the mount point.
+     *
+     * @param fullPath the mount point path
+     * @throws IOException if flush or close fails
+     * @throws IllegalArgumentException if path is not a mount point
+     */
+    public void unmount(String fullPath) throws IOException {
+        api.unmount(VMFile.getNormalizedPath(fullPath));
+    }
+
+    /**
      * Return a map (fullPath -> FileSystem) of mount points
      * @return a copy of the internal map, sorted by fullPath
      */
