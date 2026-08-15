@@ -42,6 +42,7 @@
   <extension point="org.jnode.shell.aliases">
     <alias name="eject" class="org.jnode.fs.command.EjectCommand"/>
     <alias name="mount" class="org.jnode.fs.command.MountCommand"/>
+    <alias name="sync" class="org.jnode.fs.command.SyncCommand"/>
   </extension>
 
   <extension point="org.jnode.shell.syntaxes">
@@ -57,6 +58,12 @@
         <argument argLabel="device" description="the device holding the file system"/>
         <argument argLabel="directory" description="the mountpoint"/>
         <argument argLabel="fsPath" description="the file system's root directory"/>
+      </sequence>
+    </syntax>
+    <syntax alias="sync">
+      <empty description="Flush all mounted filesystems to disk"/>
+      <sequence description="Flush the filesystem at a specific path">
+        <argument argLabel="path"/>
       </sequence>
     </syntax>
   </extension>
