@@ -467,9 +467,10 @@ final class FileSystemAPIImpl implements VMFileSystemAPI {
     /**
      * Unmount the filesystem at the given path.
      * Flushes the filesystem, closes it, and removes the mount point.
+     * If close fails, the mount point is restored for rollback.
      *
      * @param fullPath the mount point path
-     * @throws IOException if flush or close fails
+     * @throws IOException if close fails
      * @throws IllegalArgumentException if path is not a mount point
      */
     void unmount(String fullPath) throws IOException {
@@ -483,11 +484,8 @@ final class FileSystemAPIImpl implements VMFileSystemAPI {
         }
 
         try {
-            if (!fs.isReadOnly() && fs instanceof AbstractFileSystem) {
-                ((AbstractFileSystem<?>) fs).flush();
-            }
-            vfs.unregisterFileSystem(fs.getDevice());
             fs.close();
+            vfs.unregisterFileSystem(fs.getDevice());
         } catch (IOException ex) {
             mountPoints.put(fullPath, fs);
             throw ex;

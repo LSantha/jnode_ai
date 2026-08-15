@@ -31,7 +31,6 @@ import org.junit.Test;
 
 import static junit.framework.Assert.assertEquals;
 import static junit.framework.Assert.assertFalse;
-import static junit.framework.Assert.assertNotNull;
 import static junit.framework.Assert.assertTrue;
 import static junit.framework.Assert.fail;
 import static org.mockito.Mockito.doThrow;
@@ -50,7 +49,9 @@ public class FileSystemAPIImplTest {
     @Before
     public void setUp() throws Exception {
         FileSystemManager fsm = new FileSystemManager();
-        vfs = mock(VirtualFS.class);
+        Device device = mock(Device.class);
+        when(device.getShortDescription()).thenReturn("mock-device");
+        vfs = new VirtualFS(device);
         api = new FileSystemAPIImpl(fsm, vfs);
     }
 
@@ -87,7 +88,7 @@ public class FileSystemAPIImplTest {
     }
 
     @Test
-    public void testUnmountReadOnlyFsSkipsFlush() throws Exception {
+    public void testUnmountReadOnlyFsClosesAndUnregisters() throws Exception {
         Device device = mock(Device.class);
         FileSystem<?> fs = mock(FileSystem.class);
         when(fs.getDevice()).thenReturn(device);
@@ -97,6 +98,7 @@ public class FileSystemAPIImplTest {
         api.unmount("/mnt");
 
         verify(fs).close();
+        assertFalse(api.getMountPoints().containsKey("/mnt"));
     }
 
     @Test
