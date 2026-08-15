@@ -63,7 +63,7 @@
     <syntax alias="sync">
       <empty description="Flush all mounted filesystems to disk"/>
       <sequence description="Flush the filesystem at a specific path">
-        <argument argLabel="path"/>
+        <argument argLabel="path" description="the path of the filesystem to flush"/>
       </sequence>
     </syntax>
   </extension>

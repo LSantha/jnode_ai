@@ -59,19 +59,13 @@ public class SyncCommand extends AbstractCommand {
 
         if (argPath.isSet()) {
             String path = argPath.getValue().getCanonicalPath();
-            FileSystem<?> target = null;
-            String mountPoint = null;
-            for (Map.Entry<String, FileSystem<?>> e : fss.getMountPoints().entrySet()) {
-                if (path.equals(e.getKey()) || path.startsWith(e.getKey() + "/")) {
-                    target = e.getValue();
-                    mountPoint = e.getKey();
-                }
-            }
-            if (target == null) {
+            Map.Entry<String, FileSystem<?>> match =
+                findMountPoint(fss.getMountPoints(), path);
+            if (match == null) {
                 err.println("No filesystem mounted at " + path);
                 exit(1);
             }
-            flushFileSystem(target, mountPoint, out, err);
+            flushFileSystem(match.getValue(), match.getKey(), out, err);
         } else {
             int errors = 0;
             for (Map.Entry<String, FileSystem<?>> e : fss.getMountPoints().entrySet()) {
@@ -86,17 +80,51 @@ public class SyncCommand extends AbstractCommand {
         }
     }
 
+    public static Map.Entry<String, FileSystem<?>> findMountPoint(
+            Map<String, FileSystem<?>> mountPoints, String path) {
+        FileSystem<?> target = null;
+        String mountPoint = null;
+        for (Map.Entry<String, FileSystem<?>> e : mountPoints.entrySet()) {
+            String key = e.getKey();
+            if (path.equals(key) || path.startsWith(key + "/") ||
+                (key.length() == 1 && path.length() > 0)) {
+                if (target == null || e.getKey().length() > mountPoint.length()) {
+                    target = e.getValue();
+                    mountPoint = e.getKey();
+                }
+            }
+        }
+        if (target == null) {
+            return null;
+        }
+        final FileSystem<?> t = target;
+        final String mp = mountPoint;
+        return new Map.Entry<String, FileSystem<?>>() {
+            public String getKey() { return mp; }
+            public FileSystem<?> getValue() { return t; }
+            public FileSystem<?> setValue(FileSystem<?> v) { throw new UnsupportedOperationException(); }
+        };
+    }
+
     private void flushFileSystem(FileSystem<?> fs, String mountPoint,
             PrintWriter out, PrintWriter err) throws IOException {
         if (fs instanceof AbstractFileSystem) {
             ((AbstractFileSystem<?>) fs).flush();
         }
         Device device = fs.getDevice();
-        try {
-            BlockDeviceAPI api = device.getAPI(BlockDeviceAPI.class);
-            api.flush();
-        } catch (ApiNotFoundException ex) {
+        boolean deviceFlushed = false;
+        if (device != null) {
+            try {
+                BlockDeviceAPI api = device.getAPI(BlockDeviceAPI.class);
+                api.flush();
+                deviceFlushed = true;
+            } catch (ApiNotFoundException ex) {
+            }
         }
-        out.println("synced " + mountPoint);
+        out.print("synced " + mountPoint);
+        if (!deviceFlushed) {
+            out.print(" (device flush skipped)");
+        }
+        out.println();
     }
 }
