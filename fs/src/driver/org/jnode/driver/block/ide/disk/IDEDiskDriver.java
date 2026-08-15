@@ -53,6 +53,7 @@ import org.jnode.naming.InitialNaming;
 import org.jnode.partitions.ibm.IBMPartitionTable;
 import org.jnode.partitions.ibm.IBMPartitionTableEntry;
 import org.jnode.util.TimeoutException;
+import org.jnode.vm.VmIOContext;
 
 /**
  * Device driver for IDE disks.
@@ -84,6 +85,7 @@ public class IDEDiskDriver extends Driver
     private boolean is48bit;
     private IDEDiskBus diskBus;
     private IBMPartitionTable pt;
+    private boolean writeThrough = true;
 
     protected void startDevice() throws DriverException {
         final IDEDevice dev = (IDEDevice) getDevice();
@@ -98,6 +100,9 @@ public class IDEDiskDriver extends Driver
         //dma = descr.supportsDMA();
         is48bit = descr.supports48bitAddressing();
         maxSector = descr.getSectorsAddressable();
+
+        writeThrough = !"false".equals(
+            VmIOContext.getGlobalProperties().getProperty("jnode.ide.writethrough"));
 
         // Look for partitions
         try {
@@ -268,6 +273,10 @@ public class IDEDiskDriver extends Driver
 
             length -= partLength;
             devOffset += partLength;
+        }
+
+        if (isWrite && writeThrough) {
+            flush();
         }
     }
 
