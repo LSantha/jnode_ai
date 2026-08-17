@@ -1,0 +1,109 @@
+name: Weekly Wiki Update
+
+on:
+  schedule:
+    # Run every Sunday at 06:00 UTC
+    - cron: '0 6 * * 0'
+  workflow_dispatch:
+    inputs:
+      since:
+        description: 'Start date for commit range (YYYY-MM-DD). Leave empty for last run.'
+        required: false
+        default: ''
+
+concurrency:
+  group: wiki-update
+  cancel-in-progress: true
+
+jobs:
+  update-wiki:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+    permissions:
+      id-token: write
+      contents: write
+      issues: write
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+
+      - name: Clone wiki
+        run: gh repo clone LSantha/jnode_ai.wiki .wiki
+        env:
+          GH_TOKEN: ${{ secrets.GH_PAT }}
+
+      - name: Set up JDK 8
+        uses: actions/setup-java@v4
+        with:
+          java-version: '8'
+          distribution: 'zulu'
+
+      - name: Determine commit range
+        id: range
+        run: |
+          if [ -n "${{ github.event.inputs.since }}" ]; then
+            echo "since=${{ github.event.inputs.since }}" >> "$GITHUB_OUTPUT"
+          else
+            # Check if there's a last-run marker in the wiki
+            if [ -f .wiki/.last-wiki-update ]; then
+              since=$(cat .wiki/.last-wiki-update)
+              echo "since=$since" >> "$GITHUB_OUTPUT"
+            else
+              # Default: 7 days ago
+              since=$(date -d '7 days ago' +%Y-%m-%d)
+              echo "since=$since" >> "$GITHUB_OUTPUT"
+            fi
+          fi
+          echo "until=$(date +%Y-%m-%d)" >> "$GITHUB_OUTPUT"
+
+      - name: List commits in range
+        id: commits
+        run: |
+          echo "Commits since ${{ steps.range.outputs.since }}:"
+          git log --oneline --since="${{ steps.range.outputs.since }}" --reverse | tee /tmp/commits.txt
+          count=$(wc -l < /tmp/commits.txt)
+          echo "commit_count=$count" >> "$GITHUB_OUTPUT"
+          if [ "$count" -eq 0 ]; then
+            echo "No commits since ${{ steps.range.outputs.since }}, skipping wiki update."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Run opencode for wiki analysis
+        if: steps.commits.outputs.skip != 'true'
+        id: run_agent
+        uses: anomalyco/opencode/github@latest
+        env:
+          GITHUB_TOKEN: ${{ secrets.GH_PAT }}
+          OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY }}
+        with:
+          model: opencode/mimo-v2.5-free
+          variant: high
+          prompt: |
+            Analyze all commits since ${{ steps.range.outputs.since }} and update wiki pages.
+            
+            1. Run `git log --oneline --since="${{ steps.range.outputs.since }}" --reverse` to see all commits
+            2. Follow the update-wiki skill workflow: research affected source files, update outdated pages, create new pages if needed, update index.md and Changelog.md
+            3. Push all changes to the wiki repository
+            4. Create an issue titled "Weekly Wiki Update: ${{ steps.range.outputs.since }} to ${{ steps.range.outputs.until }}" with a summary of what was updated or created, then close it
+
+      - name: Update last-run marker
+        if: always()
+        run: |
+          echo "${{ steps.range.outputs.until }}" > .wiki/.last-wiki-update
+          cd .wiki && git add .last-wiki-update && git commit -m "Update last wiki update marker" && git push || true
+
+      - name: Report results
+        if: always()
+        run: |
+          echo "## Wiki Update Results" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "- **Commits analyzed:** ${{ steps.commits.outputs.commit_count }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Date range:** ${{ steps.range.outputs.since }} to ${{ steps.range.outputs.until }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Agent outcome:** ${{ steps.run_agent.outcome }}" >> $GITHUB_STEP_SUMMARY
