@@ -62,6 +62,10 @@ public class Log4jConfigurePlugin extends Plugin {
     protected void startPlugin() throws PluginException {
         final Logger root = Logger.getRootLogger();
         try {
+            // Set root logger to INFO by default to reduce verbosity.
+            // Use 'log4j --setLevel --level DEBUG' at runtime to enable debug logging.
+            root.setLevel(Level.INFO);
+
             // Create the appenders
             final ConsoleManager conMgr = InitialNaming.lookup(ConsoleManager.NAME);
             final TextConsole console =

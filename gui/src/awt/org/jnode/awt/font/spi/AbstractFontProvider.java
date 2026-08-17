@@ -31,7 +31,6 @@ import java.util.Map;
 import java.util.Set;
 import java.util.Vector;
 
-import org.apache.log4j.Level;
 import org.apache.log4j.Logger;
 import org.jnode.awt.font.FontProvider;
 import org.jnode.awt.font.TextRenderer;
@@ -48,10 +47,6 @@ public abstract class AbstractFontProvider<F extends Font, FD> implements FontPr
      * My logger
      */
     private static final Logger log = Logger.getLogger(AbstractFontProvider.class);
-
-    static {
-        log.setLevel(Level.DEBUG);
-    }
 
     /**
      * Cache font renderers

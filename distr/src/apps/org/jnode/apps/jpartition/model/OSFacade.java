@@ -27,7 +27,6 @@ import java.util.List;
 
 import javax.naming.NameNotFoundException;
 
-import org.apache.log4j.Level;
 import org.apache.log4j.Logger;
 import org.jnode.driver.ApiNotFoundException;
 import org.jnode.driver.DeviceListener;
@@ -54,10 +53,6 @@ public class OSFacade {
     @SuppressWarnings("unchecked")
     private static final Class<PartitionableBlockDeviceAPI> REQUIRED_API =
             PartitionableBlockDeviceAPI.class;
-
-    static {
-        LOG.setLevel(Level.DEBUG);
-    }
 
     private static final OSFacade INSTANCE;
     static {

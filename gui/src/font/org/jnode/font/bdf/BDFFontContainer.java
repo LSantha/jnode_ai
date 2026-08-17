@@ -42,16 +42,11 @@ import java.io.Reader;
 import java.util.HashMap;
 import java.util.PropertyResourceBundle;
 
-import org.apache.log4j.Level;
 import org.apache.log4j.Logger;
 
 
 public class BDFFontContainer {
 	private static final Logger log = Logger.getLogger(BDFFontContainer.class);
-	static
-	{
-		log.setLevel(Level.DEBUG);
-	}
 
     private static final PropertyResourceBundle charMapper =
     	(PropertyResourceBundle)PropertyResourceBundle.getBundle(
