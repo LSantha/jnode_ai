@@ -27,6 +27,7 @@ import org.jnode.vm.classmgr.VmClassLoader;
 import org.jnode.vm.classmgr.VmMethod;
 import org.jnode.vm.compiler.CompiledMethod;
 import org.jnode.vm.compiler.CompilerBytecodeVisitor;
+import org.jnode.vm.compiler.DelegatingCompilerBytecodeVisitor;
 import org.jnode.vm.compiler.EntryPoints;
 import org.jnode.vm.compiler.GCMapIterator;
 import org.jnode.vm.compiler.InlineBytecodeVisitor;
@@ -135,6 +136,25 @@ public final class X86Level1ACompiler extends AbstractX86Compiler {
             bv = (X86BytecodeVisitor) visitor;
         }
         byteCodeVisitorHolder.set(bv);
+    }
+
+    @Override
+    protected void cleanupBytecodeVisitor(CompilerBytecodeVisitor visitor) {
+        final X86BytecodeVisitor bv = unwrapBytecodeVisitor(visitor);
+        if (bv != null) {
+            bv.cleanupAfterFailedCompilation();
+        }
+    }
+
+    private X86BytecodeVisitor unwrapBytecodeVisitor(CompilerBytecodeVisitor visitor) {
+        CompilerBytecodeVisitor current = visitor;
+        while (current instanceof DelegatingCompilerBytecodeVisitor) {
+            current = ((DelegatingCompilerBytecodeVisitor) current).getDelegate();
+        }
+        if (current instanceof X86BytecodeVisitor) {
+            return (X86BytecodeVisitor) current;
+        }
+        return null;
     }
 
     private MagicHelper getMagicHelper() {

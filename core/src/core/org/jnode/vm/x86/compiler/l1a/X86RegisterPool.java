@@ -238,6 +238,25 @@ abstract class X86RegisterPool {
     }
 
     /**
+     * Reset the register pool, releasing all registers even if they are still
+     * in use. Used to recover a clean state after a compilation that aborted
+     * before it could release all of its registers (e.g. a class that could
+     * not be resolved).
+     *
+     * @param os stream for issuing warning messages
+     */
+    public final void forceReset(X86Assembler os) {
+        for (int i = regCount - 1; i >= 0; i--) {
+            if (!registers[i].isFree()) {
+                os.log("Warning: releasing register in use"
+                    + registers[i].getUsedRegister());
+                registers[i].release();
+            }
+        }
+        this.lastRequestIndex = regCount;
+    }
+
+    /**
      * Gets the register in the same group as the given register, but now for
      * the new type. E.g. getRegisterInSameGroup(X86Register.RAX, JvmType.INT)
      * returns X86Register.EAX;

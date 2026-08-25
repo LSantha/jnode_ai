@@ -308,6 +308,20 @@ final class X86BytecodeVisitor extends InlineBytecodeVisitor {
         this.fpCompiler.reset((X86Assembler) os);
     }
 
+    /**
+     * Release all resources held by this visitor after an aborted compilation,
+     * so that the visitor can be safely reused for the next method. A failed
+     * compilation (e.g. a class that could not be resolved) may leave registers
+     * allocated and items on the virtual stack, because the normal release at
+     * the end of the method is never reached.
+     */
+    final void cleanupAfterFailedCompilation() {
+        eContext.getGPRPool().forceReset(os);
+        eContext.getXMMPool().forceReset(os);
+        vstack.reset(eContext);
+        working = false;
+    }
+
     private void assertCondition(boolean cond, String message) {
         if (!cond)
             throw new Error("assert failed at addresss " + curAddress + ": "

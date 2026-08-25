@@ -248,6 +248,7 @@ public abstract class NativeCodeCompiler extends VmSystemObject {
                 // Create the visitor
                 CompilerBytecodeVisitor bcv = getBytecodeVisitor(method, cm, os, level, isBootstrap);
 
+                boolean compiled = false;
                 try {
                     // Wrap in verifier if needed
                     if (!(bcv instanceof VerifyingCompilerBytecodeVisitor)) {
@@ -273,7 +274,11 @@ public abstract class NativeCodeCompiler extends VmSystemObject {
 
                     //remove the compiler data to save memory, will be regenerated if needed
                     bc.setCompilerData(null);
+                    compiled = true;
                 } finally {
+                    if (!compiled) {
+                        cleanupBytecodeVisitor(bcv);
+                    }
                     releaseBytecodeVisitor(bcv);
                 }
             }
@@ -329,6 +334,18 @@ public abstract class NativeCodeCompiler extends VmSystemObject {
      * @param visitor a bytecode visitor
      */
     protected void releaseBytecodeVisitor(CompilerBytecodeVisitor visitor) {
+
+    }
+    /**
+     * Clean up the state of the given bytecode visitor after a failed
+     * compilation. A failed compilation may leave the compiler (e.g. its
+     * register pool) in an inconsistent state; subclasses that reuse visitors
+     * must override this method to restore a clean state before the visitor is
+     * used again.
+     *
+     * @param visitor a bytecode visitor
+     */
+    protected void cleanupBytecodeVisitor(CompilerBytecodeVisitor visitor) {
 
     }
     /**
