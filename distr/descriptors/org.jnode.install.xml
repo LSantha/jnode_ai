@@ -28,6 +28,7 @@
         
   <requires>
     <import plugin="org.jnode.fs"/>
+    <import plugin="org.jnode.fs.jfat.command"/>
     <import plugin="org.jnode.log4j"/>
   </requires>
         
