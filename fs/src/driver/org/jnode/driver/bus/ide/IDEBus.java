@@ -109,6 +109,10 @@ public class IDEBus extends Bus implements IDEConstants, IRQHandler,
         irqRes = rm.claimIRQ(parent, io.getIrq(), this, true);
         // Reset the controller
         softwareReset();
+        // Run the IDE channels entirely interrupt-free: every command
+        // polls for completion (see the command classes). This removes
+        // the whole class of lost/misrouted completion interrupts.
+        io.setControlReg(CTR_NIEN);
         // Create and start the queue processor
         queueProcessor = new QueueProcessorThread<IDECommand>(name, commandQueue, this);
         queueProcessor.start();
@@ -128,6 +132,13 @@ public class IDEBus extends Bus implements IDEConstants, IRQHandler,
      * Add the given command to the queue of commands to be executed and wait
      * for the command to finish.
      *
+     * The wait is implemented as a sleep-poll loop on purpose: every
+     * Thread.sleep suspends this thread, which runs a scheduler reschedule,
+     * which in turn dispatches pending device interrupts
+     * (IRQManager.dispatchInterrupts). Relying on Object.wait-notify alone
+     * can deadlock on a fully blocked system, where nothing else ever
+     * triggers a reschedule to deliver the interrupt that would notify us.
+     *
      * @param command
      * @param timeout Maximum time to wait
      * @throws InterruptedException
@@ -136,7 +147,13 @@ public class IDEBus extends Bus implements IDEConstants, IRQHandler,
     public void executeAndWait(IDECommand command, long timeout)
         throws InterruptedException, TimeoutException {
         execute(command);
-        command.waitUntilFinished(timeout);
+        final long deadline = System.currentTimeMillis() + timeout;
+        while (!command.isFinished()) {
+            Thread.sleep(20);
+            if (!command.isFinished() && System.currentTimeMillis() >= deadline) {
+                throw new TimeoutException("timeout");
+            }
+        }
     }
 
     /**
@@ -156,9 +173,21 @@ public class IDEBus extends Bus implements IDEConstants, IRQHandler,
     public void handleInterrupt(int irq) {
         final IDECommand cmd = currentCommand;
         //log.debug("IDE IRQ " + irq + " cmd=" + cmd);
-        if (cmd != null) {
+        if (cmd == null) {
+            // Stray interrupt with no command in flight. Read the Status
+            // register to de-assert INTRQ: leaving the level asserted makes
+            // level-triggered lines (e.g. PCI IDE IRQ14/15) re-fire forever.
+            io.getStatusReg();
+            if (log.isDebugEnabled()) {
+                log.debug("Unknown IDE IRQ " + irq + " status 0x" + NumberUtils.hex(io.getAltStatusReg(), 2));
+            }
+        } else {
             try {
                 cmd.handleIRQ(this, io);
+                // Acknowledge any interrupt level the handler did not
+                // consume (e.g. no-op handlers for polling commands);
+                // an unquenchable level would otherwise refire forever.
+                io.getStatusReg();
                 if (cmd.isFinished()) {
                     this.currentCommand = null;
                 }
@@ -167,8 +196,6 @@ public class IDEBus extends Bus implements IDEConstants, IRQHandler,
                 this.currentCommand = null;
                 cmd.setError(ERR_ABORT);
             }
-        } else if (log.isDebugEnabled()) {
-            log.debug("Unknown IDE IRQ " + irq + " status 0x" + NumberUtils.hex(io.getAltStatusReg(), 2));
         }
     }
 
@@ -189,8 +216,8 @@ public class IDEBus extends Bus implements IDEConstants, IRQHandler,
             return null;
         }
 
-        // Interrupts enabled
-        io.setControlReg(CTR_BLANK);
+        // Interrupts stay disabled (full polling mode)
+        io.setControlReg(CTR_NIEN);
 
         // First try a normal IDE Identify command
         IDEIdCommand cmd = new IDEIdCommand(primary, master, false);
@@ -223,8 +250,8 @@ public class IDEBus extends Bus implements IDEConstants, IRQHandler,
 
         // Clear any interrupts
         io.getStatusReg();
-        // Interrupts enabled
-        io.setControlReg(CTR_BLANK);
+        // Interrupts stay disabled (full polling mode)
+        io.setControlReg(CTR_NIEN);
 
         // IDE Identify failed, do an ATAPI Identify
         cmd = new IDEIdCommand(primary, master, true);
@@ -245,6 +272,27 @@ public class IDEBus extends Bus implements IDEConstants, IRQHandler,
             // No device found
             return null;
         }
+    }
+
+    /**
+     * Reset both devices on this channel and clear any pending state.
+     * Used to recover from commands that timed out and may have left the
+     * device (emulator) with a latched interrupt or pending data phase.
+     *
+     * NOTE: there is an inherent, narrow race against the queue processor
+     * thread assigning {@link #currentCommand} in {@link #process()}.
+     * Callers must only invoke this method after the command they waited
+     * for has timed out AND must expect that a concurrently queued command
+     * may be aborted by the software reset; the retry issued by the caller
+     * re-serializes execution afterwards.
+     */
+    public void resetChannel() {
+        softwareReset();
+        // Re-disable interrupts after the reset; softwareReset() leaves
+        // the channel with CTR_BLANK (interrupts enabled) which is not
+        // what polling-mode code expects.
+        io.setControlReg(CTR_NIEN);
+        this.currentCommand = null;
     }
 
     protected void softwareReset() {
@@ -381,6 +429,7 @@ public class IDEBus extends Bus implements IDEConstants, IRQHandler,
         try {
             io.getStatusReg(); // Flush any pending IRQ
             cmd.setup(IDEBus.this, io);
+            this.currentCommand = null;
         } catch (TimeoutException ex) {
             log.error("Timeout in setup of " + cmd + ": " + ex.getMessage());
             if ((io.getAltStatusReg() & ST_ERROR) != 0) {

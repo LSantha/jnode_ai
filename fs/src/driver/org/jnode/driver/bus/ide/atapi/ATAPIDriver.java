@@ -145,11 +145,33 @@ public class ATAPIDriver extends Driver implements SCSIHostControllerAPI {
             final IDEDevice dev = (IDEDevice) getDevice();
             final IDEBus bus = (IDEBus) dev.getBus();
 
+            final long start = System.currentTimeMillis();
             final IDEPacketCommand cmd = new IDEPacketCommand(
                 dev.isPrimary(), dev.isMaster(), cdb.toByteArray(), data,
                 dataOffset);
-            bus.executeAndWait(cmd, timeout);
+            try {
+                bus.executeAndWait(cmd, timeout);
+            } catch (TimeoutException ex) {
+                // The command may have left the device with a latched
+                // interrupt / pending data phase. Reset the channel and
+                // retry once within the remaining time budget so that the
+                // overall worst-case latency stays bounded by 'timeout'.
+                bus.resetChannel();
+                final long remaining = timeout - (System.currentTimeMillis() - start);
+                if (remaining <= 0) {
+                    throw ex;
+                }
+                final IDEPacketCommand retry = new IDEPacketCommand(
+                    dev.isPrimary(), dev.isMaster(), cdb.toByteArray(), data,
+                    dataOffset);
+                bus.executeAndWait(retry, remaining);
+                return finishCommand(retry);
+            }
+            return finishCommand(cmd);
+        }
 
+        private int finishCommand(IDEPacketCommand cmd)
+            throws SCSIException, TimeoutException {
             if (!cmd.isFinished()) {
                 throw new TimeoutException("Timeout in SCSI command");
             } else if (cmd.hasError()) {

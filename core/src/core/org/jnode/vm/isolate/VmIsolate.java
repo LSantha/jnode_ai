@@ -8,16 +8,16 @@
  * by the Free Software Foundation; either version 2.1 of the License, or
  * (at your option) any later version.
  *
- * This library is distributed in the hope that it will be useful, but 
+ * This library is distributed in the hope that it will be useful, but
  * WITHOUT ANY WARRANTY; without even the implied warranty of MERCHANTABILITY
- * or FITNESS FOR A PARTICULAR PURPOSE. See the GNU Lesser General Public 
+ * or FITNESS FOR A PARTICULAR PURPOSE. See the GNU Lesser General Public
  * License for more details.
  *
  * You should have received a copy of the GNU Lesser General Public License
- * along with this library; If not, write to the Free Software Foundation, Inc., 
+ * along with this library; If not, write to the Free Software Foundation, Inc.,
  * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
  */
- 
+
 package org.jnode.vm.isolate;
 
 import java.io.IOException;
@@ -460,7 +460,7 @@ public final class VmIsolate {
     private void stopAllThreads() {
         // TODO - investigate it
         // TODO - this is probably unsafe because any of the threads being killed could
-        // be in the middle of updating a critical system data structure.  I'm also 
+        // be in the middle of updating a critical system data structure.  I'm also
         // unsure of the order in which we are killing the threads here.  It might be
         // better to kill the isolate's main thread first to give it the chance to
         // do a graceful shutdown.  (Stephen Crawley - 2008-11-08)
@@ -484,7 +484,7 @@ public final class VmIsolate {
                 doExit();
             }
         } else {
-            // TODO - analyze this case      
+            // TODO - analyze this case
             doExit();
         }
     }
@@ -941,11 +941,67 @@ public final class VmIsolate {
         }
     }
 
+144    /**
+     * The scheduler-pump thread (see {@link #startSchedulerPump()}), or
+     * {@code null} until first started. Volatile; deliberately NOT
+     * synchronized - the worst case of a racing check-then-act is two
+     * pump threads briefly coexisting, which is harmless (both are
+     * daemon threads at minimum priority doing nothing but yield()).
+     */
+    private static volatile Thread schedulerPump;
+
+    /**
+     * Start the scheduler-pump thread.
+     *
+     * This thread runs in USER mode and continuously yields: every
+     * Thread.yield() executes a yield point, which is the only mechanism
+     * that can run the scheduler's reschedule when every other thread is
+     * blocked without a timeout. Without it, a fully blocked system (all
+     * threads waiting on untimed monitors/queues) would never dispatch
+     * pending device interrupts nor expire timed waits again, because
+     * the kernel-mode idle thread cannot take yield points (a yield
+     * point taken in kernel mode terminates the system via
+     * yieldPointHandler_kernelCode).
+     *
+     * IMPORTANT: this must only ever be called from a user-mode (proclet)
+     * context. VmIsolate.run() qualifies, as it is invoked from
+     * IsolateThread, a normal java.lang.Thread. Code earlier in boot
+     * (VmSystem.initialize(), systemReadyForThreadSwitch()) runs in
+     * kernel context and MUST NOT start this thread.
+     *
+     * Historically this was started from CommandShell.run(), which left
+     * the installer path (org.jnode.install.Main bypasses CommandShell)
+     * running heavy IDE I/O without any scheduler pumping, deadlocking
+     * on the first IDE command.
+     */
+    private static void startSchedulerPump() {
+        final Thread t = schedulerPump;
+        if ((t != null) && t.isAlive()) {
+            return;
+        }
+        final Thread pump = new Thread(new Runnable() {
+            public void run() {
+                while (true) {
+                    Thread.yield();
+                }
+            }
+        }, "scheduler-pump");
+        pump.setDaemon(true);
+        pump.setPriority(Thread.MIN_PRIORITY);
+        pump.start();
+        schedulerPump = pump;
+    }
+
     /**
      * Run this isolate. This method is called from IsolateThread.
      */
     @PrivilegedActionPragma
     final void run(IsolateThread thread) {
+        // Ensure the scheduler-pump exists. Started here rather than in
+        // CommandShell so that every user-mode entry path (shell AND
+        // installer) is covered; self-heals if the isolate that hosted
+        // the previous pump has exited.
+        startSchedulerPump();
         try {
             // Set current
             IsolatedStaticData.current = VmIsolate.this;
@@ -954,7 +1010,7 @@ public final class VmIsolate {
             VmSystem.setOut(thread.getStdout());
             VmSystem.setErr(thread.getStderr());
             VmSystem.setIn(thread.getStdin());
-            
+
             // Set the isolate's properties to a copy of the initial properties passed
             // when the isolate was created.  (This needs to be done really early
             // via the IOContext switch to avoid NPEs when the native compiler,

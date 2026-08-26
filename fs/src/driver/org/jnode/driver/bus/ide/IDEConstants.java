@@ -172,17 +172,32 @@ public interface IDEConstants {
     // Control bits
 
     /**
-     * Default control value
+     * Default control value (interrupts enabled, no reset)
      */
     public static final int CTR_BLANK = 0x00;
+
     /**
-     * Interrupt enable (0==enabled, 1==disabled)
+     * Device control register bit 1 (nIEN): when SET, interrupt requests
+     * from the drives on this channel are disabled. Despite its name, the
+     * historical constant CTR_IEN carried this same (inverted) value; it
+     * was unused and has been removed in favour of this correctly named
+     * constant.
      */
-    public static final int CTR_IEN = 0x02;
+    public static final int CTR_NIEN = 0x02;
+
     /**
      * Software reset (1==reset, 0==reset finished)
      */
     public static final int CTR_SRST = 0x04;
+
+    // --------------------------------
+    // Interrupt Reason bits (sector count register)
+
+    /** Interrupt Reason bit 0 (CoD): transfer is a command, not data. */
+    public static final int IR_CD = 0x01;
+
+    /** Interrupt Reason bit 1 (IO): transfer direction is device-to-host. */
+    public static final int IR_IO = 0x02;
 
     // --------------------------------
     // Timeout
@@ -204,16 +219,13 @@ public interface IDEConstants {
      */
     public static final int MAX_SECTOR_COUNT_48 = 65536;
 
-    // --------------------------------
-    // IDE sector maximum addresses
-
     /**
-     * Maximum sector for 28 bit addresses
+     * Maximum sector number for 28 bit addresses
      */
     public static final long MAX_SECTOR_28 = 0xfffffffL;
 
     /**
-     * Maximum sector for 48 bit addresses
+     * Maximum sector number for 48 bit addresses
      */
     public static final long MAX_SECTOR_48 = 0xfffffffffffffL;
 

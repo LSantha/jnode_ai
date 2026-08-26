@@ -379,20 +379,57 @@ timesliceHandler:
 ; -----------------------------------------------
 ; Handle an IRQ interrupt
 ; -----------------------------------------------
-def_irq_handler:
-	cmp GET_OLD_CS,USER_CS
-	jne def_irq_kernel
-	; Increment the appropriate IRQ counter and set threadSwitch indicator.
+; Count the IRQ, set the threadSwitch indicator and acknowledge it on the
+; PIC(s). Shared by the user-mode and kernel-mode interrupt paths.
+; ABP must point to the interrupt frame ([ABP+INTNO] = irq number).
+; The Java-level handler (and the old EOI in IRQThread.doHandle) run at
+; some arbitrary later reschedule; leaving the level in-service until then
+; can block lower-priority IRQ lines indefinitely, so EOI is sent here.
+def_irq_count_eoi:
 	mov AAX,[ABP+INTNO]
 	mov ADI,IRQCOUNT
 	inc dword [ADI+AAX*4+(VmArray_DATA_OFFSET*SLOT_SIZE)]
 	; Set thread switch indicator
 	or THREADSWITCHINDICATOR, VmProcessor_TSI_SWITCH_NEEDED
+	;
+	; Send the EOI right away ONLY for the edge-triggered legacy IDE
+	; lines (IRQ14 primary / IRQ15 secondary): their completion events
+	; were historically dropped by the resume-overrun logic, leaving
+	; commands waiting forever. Every other line keeps the original
+	; deferred EOI (done in IRQThread.doHandle), which is required for
+	; level-triggered PCI lines (e.g. PCnet) whose interrupt condition
+	; is only cleared by the device driver itself.
+	cmp dword [ABP+INTNO],14
+	je def_irq_eoi_ide
+	cmp dword [ABP+INTNO],15
+	je def_irq_eoi_ide
+	ret
+def_irq_eoi_ide:
+	mov ADX,[ABP+INTNO]
+	and ADX,1			; 14 -> 0 (master), 15 -> 1 (slave)
+	add ADX,0x60
+	mov al,dl
+	cmp dword [ABP+INTNO],14
+	jb def_irq_eoi_master
+	out 0xA0,al			; specific EOI on the slave PIC
+	mov al,0x62			; EOI the cascade line (IRQ2) on the master
+def_irq_eoi_master:
+	out 0x20,al
+	ret
+
+def_irq_handler:
+	cmp GET_OLD_CS,USER_CS
+	jne def_irq_kernel
+	call def_irq_count_eoi
 	; Done
 	ret
-	
+
 def_irq_kernel:
-	PRINT_STR irq_kernel_msg
+	; NOTE: the historical PRINT_STR irq_kernel_msg diagnostic was
+	; removed deliberately - it writes to the VGA text buffer from
+	; interrupt context and would flood during IRQ storms. The event
+	; is still counted (and now EOI'd for IDE lines) below.
+	call def_irq_count_eoi
 	ret
 	
 ; -----------------------------------------------
