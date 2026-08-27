@@ -5,5 +5,5 @@ timeout 0
 # ---------------------------
 title JNode 32-bit tests
 serial --unit=0 --speed=115200 --word=8 --parity=no --stop=1
-kernel /jnode32.gz mp=no kdb lkd
+kernel /jnode32.gz mp=no kdb lkd cmd=halt
 module /tests.jgz
