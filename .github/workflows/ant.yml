@@ -27,27 +27,22 @@ jobs:
         java-version: '8'
         distribution: 'zulu'
     - name: Install system dependencies
-      run: sudo apt-get update && sudo apt-get install -y nasm qemu-system-x86
+      run: sudo apt-get update && sudo apt-get install -y nasm yasm
 
     - name: Build ISO and compile tests
       run: |
-        ./build.sh clean -Dbuild.properties.file=../.github/qemu/jnode.properties cd-x86-lite regression-tests
+        ./build.sh clean -Dbuild.properties.file=../.github/qemu/jnode.properties cd-x86-combined-lite regression-tests
 
     - name: Upload build artifacts
       uses: actions/upload-artifact@v4
       with:
         name: jnode-build
-        # All per-project build/ outputs. Downloaded by test and boot jobs.
-        # Includes the ISO at all/build/cdroms/jnode-x86-lite.iso.
-        # classlib.jar is downloaded at build time (git-ignored); the test
-        # job needs it on the classpath to run the JUnit suites.
         path: |
           */build/**
           all/lib/classlib.jar
         retention-days: 1
         if-no-files-found: error
 
-  # Runs JUnit tests against the artifacts produced by build.
   test:
     needs: build
     runs-on: ubuntu-latest
@@ -59,17 +54,12 @@ jobs:
       with:
         java-version: '8'
         distribution: 'zulu'
-    - name: Install system dependencies
-      run: sudo apt-get update && sudo apt-get install -y nasm qemu-system-x86
 
     - name: Download build artifacts
       uses: actions/download-artifact@v4
       with:
         name: jnode-build
 
-    # test.sh invokes ant -f <project>/build-tests.xml; with build/ outputs
-    # already populated by the build job, ant is a no-op for unchanged
-    # inputs and runs the actual tests.
     - name: Run regression tests
       run: ./test.sh all
 
@@ -88,53 +78,112 @@ jobs:
           **/build/reports/junit/
       if: always()
 
-  # Boots the produced ISO in QEMU and waits for the "System has finished"
-  # banner on the serial console. Independent of test outcome.
-  boot:
+  boot32:
     needs: build
     runs-on: ubuntu-latest
     steps:
     - name: Checkout code
       uses: actions/checkout@v4
-    - name: Set up JDK 8
-      uses: actions/setup-java@v4
-      with:
-        java-version: '8'
-        distribution: 'zulu'
     - name: Install system dependencies
-      run: sudo apt-get update && sudo apt-get install -y nasm qemu-system-x86
+      run: sudo apt-get update && sudo apt-get install -y qemu-system-x86 xorriso
 
     - name: Download build artifacts
       uses: actions/download-artifact@v4
       with:
         name: jnode-build
 
-    - name: Run QEMU Boot Test
+    - name: Build CI ISO (32-bit tests)
       run: |
-        echo "Starting JNode in QEMU"
+        SRC=./all/build/cdroms/jnode-x86-combined-lite.iso
+        EXTRACT=/tmp/jnode-iso-extract
+        rm -rf $EXTRACT
+        xorriso -osirrox on -indev "$SRC" -extract / "$EXTRACT" 2>&1 | tail -3
+        chmod -R u+w "$EXTRACT"
+        cp .github/qemu/menu-ci-32.lst "$EXTRACT/boot/grub/menu.lst"
+        xorriso -as mkisofs -o /tmp/jnode-ci-32.iso \
+          -b boot/grub/eltorito.s2 -no-emul-boot -boot-load-size 4 -boot-info-table \
+          "$EXTRACT" 2>&1 | tail -1
+
+    - name: Run QEMU Boot Test (32-bit)
+      run: |
+        echo "Starting JNode 32-bit in QEMU"
         rm -f /tmp/com1.txt
         touch /tmp/com1.txt
-        qemu-system-x86_64 -cdrom ./all/build/cdroms/jnode-x86-lite.iso -m 1024 -M pc -cpu pentium -boot once=d,menu=off -net none -serial file:/tmp/com1.txt -display none &
+        qemu-system-x86_64 -cdrom /tmp/jnode-ci-32.iso -m 1024 -M pc -cpu pentium -boot once=d,menu=off -net none -serial file:/tmp/com1.txt -display none &
         qemu_pid=$!
         sleep 1
 
         tail -f /tmp/com1.txt &
         tail_pid=$!
 
-        # Wait for "System has finished" using a timeout so it doesn't hang indefinitely
         timeout 120s bash -c 'until grep -q -i "System has finished" /tmp/com1.txt; do sleep 1; done' || {
-          echo "Boot failed or timed out!"
+          echo "32-bit boot failed or timed out!"
           cat /tmp/com1.txt
           kill $qemu_pid $tail_pid || true
           exit 1
         }
 
-        echo "Successfully booted JNode!"
+        echo "Successfully booted JNode 32-bit!"
         kill $qemu_pid $tail_pid || true
 
     - name: Upload Boot Log
       uses: actions/upload-artifact@v4
       with:
-        name: jnode_boot_log
+        name: jnode_boot_log_32bit
         path: /tmp/com1.txt
+      if: always()
+
+  boot64:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+    - name: Install system dependencies
+      run: sudo apt-get update && sudo apt-get install -y qemu-system-x86 xorriso
+
+    - name: Download build artifacts
+      uses: actions/download-artifact@v4
+      with:
+        name: jnode-build
+
+    - name: Build CI ISO (64-bit shell)
+      run: |
+        SRC=./all/build/cdroms/jnode-x86-combined-lite.iso
+        EXTRACT=/tmp/jnode-iso-extract
+        rm -rf $EXTRACT
+        xorriso -osirrox on -indev "$SRC" -extract / "$EXTRACT" 2>&1 | tail -3
+        chmod -R u+w "$EXTRACT"
+        cp .github/qemu/menu-ci-64.lst "$EXTRACT/boot/grub/menu.lst"
+        xorriso -as mkisofs -o /tmp/jnode-ci-64.iso \
+          -b boot/grub/eltorito.s2 -no-emul-boot -boot-load-size 4 -boot-info-table \
+          "$EXTRACT" 2>&1 | tail -1
+
+    - name: Run QEMU Boot Test (64-bit)
+      run: |
+        echo "Starting JNode 64-bit in QEMU"
+        rm -f /tmp/com1_64.txt
+        touch /tmp/com1_64.txt
+        qemu-system-x86_64 -cdrom /tmp/jnode-ci-64.iso -m 1024 -M pc -cpu qemu64 -boot once=d,menu=off -net none -serial file:/tmp/com1_64.txt -display none &
+        qemu_pid=$!
+        sleep 1
+
+        tail -f /tmp/com1_64.txt &
+        tail_pid=$!
+
+        timeout 120s bash -c 'until grep -q -i "System has finished" /tmp/com1_64.txt; do sleep 1; done' || {
+          echo "64-bit boot failed or timed out!"
+          cat /tmp/com1_64.txt
+          kill $qemu_pid $tail_pid || true
+          exit 1
+        }
+
+        echo "Successfully booted JNode 64-bit!"
+        kill $qemu_pid $tail_pid || true
+
+    - name: Upload Boot Log
+      uses: actions/upload-artifact@v4
+      with:
+        name: jnode_boot_log_64bit
+        path: /tmp/com1_64.txt
       if: always()

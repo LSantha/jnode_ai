@@ -7,8 +7,9 @@ JNode is a Java operating system with custom JVM. ~3,300 Java files, 25 assembly
 ## Build System
 
 - **Command**: `sh build.sh <target>` from root
-- **Main targets**: `assemble`, `x86`, `x86_64`, `cd-x86-lite`, `cd-x86_64-lite`, `tests`
+- **Main targets**: `assemble`, `x86`, `x86_64`, `cd-x86-lite`, `cd-x86_64-lite`, `cd-x86-combined-lite`, `tests`
 - **Java**: 1.6, 1.7, or 1.8 required
+- **Assemblers**: 32-bit uses nasm (or JNAsm if enabled), 64-bit requires yasm
 - **Output**: `all/build/cdroms/jnode-*.iso`
 - **Classlib**: Downloaded during build to `all/lib/classlib.jar`
 
@@ -41,9 +42,10 @@ JNode is a Java operating system with custom JVM. ~3,300 Java files, 25 assembly
 
 ## Boot Testing
 
-1. Build: `sh build.sh cd-x86-lite` or `cd-x86_64-lite`
-2. Run: VirtualBox (`.vmx`) or QEMU (`qemu.sh`)
+1. Build: `sh build.sh cd-x86-lite` (32-bit), `cd-x86_64-lite` (64-bit), or `cd-x86-combined-lite` (both)
+2. Run: VirtualBox or QEMU (`qemu-system-x86_64 -cdrom all/build/cdroms/jnode-x86-combined-lite.iso -m 1G -nographic`)
 3. Check logs for crashes
+4. VirtualBox note: 64-bit requires Long Mode and PAE enabled (`vboxmanage modifyvm <vm> --long-mode on --pae on`)
 
 ## Code Style
 

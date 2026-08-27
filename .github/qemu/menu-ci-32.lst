@@ -1,0 +1,9 @@
+# GRUB Configuration - CI 32-bit test (tests.jgz)
+default 0
+timeout 0
+
+# ---------------------------
+title JNode 32-bit tests
+serial --unit=0 --speed=115200 --word=8 --parity=no --stop=1
+kernel /jnode32.gz mp=no kdb lkd
+module /tests.jgz

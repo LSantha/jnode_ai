@@ -1682,9 +1682,6 @@ final class X86BytecodeVisitor extends InlineBytecodeVisitor {
      * @see org.jnode.vm.bytecode.BytecodeVisitor#visit_dup2_x2()
      */
     public final void visit_dup2_x2() {
-        // TODO: port to ORP style (http://orp.sourceforge.net/)
-
-        // Push all on the stack, since this opcode is just too complicated
         vstack.push(eContext);
 
         final Item v1 = vstack.pop1();
@@ -1692,24 +1689,19 @@ final class X86BytecodeVisitor extends InlineBytecodeVisitor {
         final int c1 = v1.getCategory();
         final int c2 = v2.getCategory();
 
-        // Perform a stack swap independent of the actual form
-        os.writePOP(helper.AAX); // Value1
-        os.writePOP(helper.ABX); // Value2
-        os.writePOP(helper.ACX); // Value3
-        os.writePOP(helper.ADX); // Value4
-        os.writePUSH(helper.ABX); // Value2
-        os.writePUSH(helper.AAX); // Value1
-        os.writePUSH(helper.ADX); // Value4
-        os.writePUSH(helper.ACX); // Value3
-        os.writePUSH(helper.ABX); // Value2
-        os.writePUSH(helper.AAX); // Value1
-
-        // Now update the operand stack
-        // cope with brain-dead definition from Sun (look-like somebody there
-        // was to eager to optimize this and it landed in the compiler...
         if (c2 == 2) {
-            // form 4
+            // form 4: v1(2) v2(2) -> v1 v2 v1 v2
             assertCondition(c1 == 2, "category mismatch");
+            os.writePOP(helper.AAX); // v2 word1
+            os.writePOP(helper.ABX); // v2 word2
+            os.writePOP(helper.ACX); // v1 word1
+            os.writePOP(helper.ADX); // v1 word2
+            os.writePUSH(helper.ACX); // v1 word1
+            os.writePUSH(helper.ADX); // v1 word2
+            os.writePUSH(helper.AAX); // v2 word1
+            os.writePUSH(helper.ABX); // v2 word2
+            os.writePUSH(helper.ACX); // v1 word1
+            os.writePUSH(helper.ADX); // v1 word2
             vstack.push1(ifac.createStack(v1.getType()));
             vstack.push1(v2);
             vstack.push1(v1);
@@ -1717,22 +1709,52 @@ final class X86BytecodeVisitor extends InlineBytecodeVisitor {
             final Item v3 = vstack.pop1();
             int c3 = v3.getCategory();
             if (c1 == 2) {
-                // form 2
+                // form 2: v1(2) v2(1) v3(1) -> v1 v3 v2 v1
                 assertCondition(c3 == 1, "category mismatch");
+                os.writePOP(helper.AAX); // v3
+                os.writePOP(helper.ABX); // v2
+                os.writePOP(helper.ACX); // v1 word1
+                os.writePOP(helper.ADX); // v1 word2
+                os.writePUSH(helper.ACX); // v1 word1
+                os.writePUSH(helper.ADX); // v1 word2
+                os.writePUSH(helper.ABX); // v2
+                os.writePUSH(helper.AAX); // v3
+                os.writePUSH(helper.ACX); // v1 word1
+                os.writePUSH(helper.ADX); // v1 word2
                 vstack.push1(ifac.createStack(v1.getType()));
                 vstack.push1(v3);
                 vstack.push1(v2);
                 vstack.push1(v1);
             } else if (c3 == 2) {
-                // form 3
+                // form 3: v1(1) v2(1) v3(2) -> v2 v1 v3 v2 v1
+                os.writePOP(helper.AAX); // v3 word1
+                os.writePOP(helper.ABX); // v3 word2
+                os.writePOP(helper.ACX); // v2
+                os.writePOP(helper.ADX); // v1
+                os.writePUSH(helper.ACX); // v2
+                os.writePUSH(helper.ADX); // v1
+                os.writePUSH(helper.AAX); // v3 word1
+                os.writePUSH(helper.ABX); // v3 word2
+                os.writePUSH(helper.ACX); // v2
+                os.writePUSH(helper.ADX); // v1
                 vstack.push1(ifac.createStack(v2.getType()));
                 vstack.push1(ifac.createStack(v1.getType()));
                 vstack.push1(v3);
                 vstack.push1(v2);
                 vstack.push1(v1);
             } else {
-                // form 1
+                // form 1: v1(1) v2(1) v3(1) v4(1) -> v2 v1 v4 v3 v2 v1
                 final Item v4 = vstack.pop1();
+                os.writePOP(helper.AAX); // v4
+                os.writePOP(helper.ABX); // v3
+                os.writePOP(helper.ACX); // v2
+                os.writePOP(helper.ADX); // v1
+                os.writePUSH(helper.ACX); // v2
+                os.writePUSH(helper.ADX); // v1
+                os.writePUSH(helper.AAX); // v4
+                os.writePUSH(helper.ABX); // v3
+                os.writePUSH(helper.ACX); // v2
+                os.writePUSH(helper.ADX); // v1
                 vstack.push1(ifac.createStack(v2.getType()));
                 vstack.push1(ifac.createStack(v1.getType()));
                 vstack.push1(v4);

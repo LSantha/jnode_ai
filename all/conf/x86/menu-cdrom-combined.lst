@@ -1,0 +1,71 @@
+# GRUB Configuration
+default 0
+timeout 10
+
+# ---------------------------
+# 32-bit entries
+# ---------------------------
+title JNode 32-bit (default)
+serial --unit=0 --speed=115200 --word=8 --parity=no --stop=1
+kernel /jnode32.gz mp=no kdb lkd
+module /default.jgz
+
+# ---------------------------
+title JNode 32-bit (all plugins)
+serial --unit=0 --speed=115200 --word=8 --parity=no --stop=1
+kernel /jnode32.gz mp=no kdb lkd
+module /full.jgz
+
+# ---------------------------
+title JNode 32-bit (minimal shell)
+serial --unit=0 --speed=115200 --word=8 --parity=no --stop=1
+kernel /jnode32.gz mp=no kdb lkd
+module /shell.jgz
+
+# ---------------------------
+title JNode 32-bit (all plugins) (VESA mode)
+serial --unit=0 --speed=115200 --word=8 --parity=no --stop=1
+kernel /jnode32.gz mp=no fb kdb lkd
+vbematch 800 600 32
+module /full.jgz
+
+# ---------------------------
+# 64-bit entries
+# ---------------------------
+title JNode 64-bit (default)
+serial --unit=0 --speed=115200 --word=8 --parity=no --stop=1
+kernel /jnode64.gz mp=no kdb lkd
+module /default.jgz
+
+# ---------------------------
+title JNode 64-bit (all plugins)
+serial --unit=0 --speed=115200 --word=8 --parity=no --stop=1
+kernel /jnode64.gz mp=no kdb lkd
+module /full.jgz
+
+# ---------------------------
+title JNode 64-bit (minimal shell)
+serial --unit=0 --speed=115200 --word=8 --parity=no --stop=1
+kernel /jnode64.gz mp=no kdb lkd
+module /shell.jgz
+
+# ---------------------------
+title JNode 64-bit (all plugins) (VESA mode)
+serial --unit=0 --speed=115200 --word=8 --parity=no --stop=1
+kernel /jnode64.gz mp=no fb kdb lkd
+vbematch 800 600 32
+module /full.jgz
+
+# ---------------------------
+# Test / install entries
+# ---------------------------
+title JNode tests 32-bit (all plugins + tests)
+serial --unit=0 --speed=115200 --word=8 --parity=no --stop=1
+kernel /jnode32.gz mp=no kdb lkd
+module /tests.jgz
+
+# ---------------------------
+title JNode tests 64-bit (all plugins + tests)
+serial --unit=0 --speed=115200 --word=8 --parity=no --stop=1
+kernel /jnode64.gz mp=no kdb lkd
+module /tests.jgz

@@ -8,12 +8,13 @@ CI infrastructure, agent automation, and label conventions for JNode.
 |------|---------|
 | `workflows/opencode.yml` | Single-issue agent runner. Triggered by `/oc <verb>` comments. |
 | `workflows/orchestrator.yml` | Multi-task batch runner. Triggered by `/orchestrate` or by opencode completion. |
-| `workflows/ant.yml` | Plain Java CI: build + test + QEMU boot on every push/PR to master. |
+| `workflows/ant.yml` | Plain Java CI: build + test + QEMU boot (32-bit and 64-bit) on every push/PR to master. |
 | `scripts/opencode-post-step.js` | JS post-step run by opencode.yml after the agent exits. Applies `agent/*` label, closes investigations. |
 | `scripts/orchestrator.js` | JS state machine run by orchestrator.yml. Drives the queue, updates the master issue, triggers child tasks. |
 | `scripts/sync-labels.js` | One-shot label bootstrap. Idempotent. Use `--dry-run` to preview. |
 | `qemu/jnode.properties` | CI build profile (used by opencode.yml and ant.yml). |
-| `qemu/menu-cdrom.lst` | CD menu listing for the lite ISO. |
+| `qemu/menu-ci-32.lst` | GRUB menu for CI 32-bit boot test (jnode32.gz + tests.jgz). |
+| `qemu/menu-ci-64.lst` | GRUB menu for CI 64-bit boot test (jnode64.gz + shell.jgz). |
 
 ## Workflow Triggers
 

@@ -149,14 +149,15 @@ public class BootImageBuilder extends AbstractBootImageBuilder {
      * @return The native stream
      */
     protected NativeStream createNativeStream() {
-        X86Constants.Mode mode = ((VmX86Architecture) getArchitecture()).getMode();
+        X86Constants.Mode mode = ((VmX86Architecture) getArchitecture())
+            .getMode();
         X86BinaryAssembler x86BinaryAssembler = new X86BinaryAssembler(getCPUID(), mode, LOAD_ADDR,
             INITIAL_OBJREFS_CAPACITY, INITIAL_SIZE, INITIAL_SIZE);
 
-        if (!debug) {
+        if (!debug || mode == X86Constants.Mode.CODE64) {
             return x86BinaryAssembler;
         } else {
-            //in debug mode write bootimage also in text format
+            //in debug mode write bootimage also in text format (32-bit only)
             try {
                 x86BinaryAssembler.setByteValueEnabled(true);
                 x86BinaryAssembler.setRelJumpEnabled(false);

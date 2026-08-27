@@ -28,7 +28,6 @@
 	<property name="build.netboot.dir" value="${my-build.dir}/netboot" />
 	<property name="jnode.disk" value="${my-build.dir}/jnodedisk${jnode.bits}.dat" />
 	<property name="jnode.disk.pln" value="${my-build.dir}/jnodedisk${jnode.bits}.pln" />
-	<property name="jnode.disk.geometry" value="64/16/63" />
 
 	<property name="jnode.virtual.memsize" value="512" />
 	<property name="logFile" value="${build.dir}/debugger.txt" />
@@ -41,6 +40,13 @@
 	<property name="grub.stage2.name" value="stage2" />
 	<property name="grub.menu" value="${my-conf.dir}/menu.lst" />
 	<property name="grub.menu.cdrom" value="${my-conf.dir}/menu-cdrom.lst" />
+	<property name="grub.menu.cdrom.combined" value="${my-conf.dir}/menu-cdrom-combined.lst" />
+	<property name="grub.menu.cdrom.64" value="${my-conf.dir}/menu-cdrom-64.lst" />
+
+	<!-- JNAsm is 32-bit only; on 64-bit force external yasm regardless of jnode.enable.jnasm. -->
+	<condition property="jnode.enable.jnasm.effective" value="false" else="${jnode.enable.jnasm}">
+		<equals arg1="${jnode.bits}" arg2="64"/>
+	</condition>
 
   <!-- Properties for building the boot files for windows NT/2K/XP -->
   <property name="jnode.install-nt.dir" value="C:\jnode" />
@@ -185,7 +191,7 @@
 			extension="o" 
 			bits="${jnode.bits}" 
 			listfile="${build.native.dir}/jnodenative.lst"
-			enablejnasm="${jnode.enable.jnasm}"
+			enablejnasm="${jnode.enable.jnasm.effective}"
 			version="${jnode-vm-ver}">
 				<includedir dir="${src.native.dir}/x86" />
 				<includedir dir="${build.native.dir}/src" />
@@ -213,7 +219,7 @@
 			version="${jnode-vm-ver}" 
 			jnodeCompiler="${jnode.compiler}" 
 			bits="${jnode.bits}"
-			enableJNasm="${jnode.enable.jnasm}">
+			enableJNasm="${jnode.enable.jnasm.effective}">
 
 			<nanokernelsources srcfile="${src.native.dir}/x86/jnode.asm">
 				<includedir dir="${src.native.dir}/x86" />
@@ -243,7 +249,7 @@
 			</fileset>	
 		</copy>
 
-		<bootdisk destfile="${jnode.disk}" stage1ResourceName="${grub.stage1.name}" stage2ResourceName="${grub.stage2.name}" plnfile="${jnode.disk.pln}" geometry="${jnode.disk.geometry}">
+		<bootdisk destfile="${jnode.disk}" stage1ResourceName="${grub.stage1.name}" stage2ResourceName="${grub.stage2.name}" plnfile="${jnode.disk.pln}" bits="${jnode.bits}">
 			<fileset dir="${bootdisk.dir}" />
 		</bootdisk>
 	</target>
@@ -286,6 +292,7 @@
 	<macrodef name="create-cdrom">
 		<attribute name="dir" />
 		<attribute name="destfile" />
+		<attribute name="menufile" default="${grub.menu.cdrom}" />
 		<sequential>
 			<mkdir dir="@{dir}/boot/grub" />
 			<mkdir dir="@{dir}/licenses" />
@@ -302,7 +309,7 @@
             <copy file="${my-lib.dir}/fat.s15" todir="@{dir}/boot/grub" />
             <copy file="${my-lib.dir}/grub.s1" todir="@{dir}/boot/grub" />
             <copy file="${my-lib.dir}/grub.s2" todir="@{dir}/boot/grub" />
-            <copy file="${grub.menu.cdrom}" tofile="@{dir}/boot/grub/menu.lst" />
+            <copy file="@{menufile}" tofile="@{dir}/boot/grub/menu.lst" overwrite="true" />
             <if>
                 <equals arg1="${jnode.enable.mkisofs}" arg2="true" />
                 <then>
@@ -341,7 +348,8 @@
 	<!-- Create a full distributable bootable CDROM image -->
 	<target name="cdrom" depends="prepare">
 		<copy file="${sources.dist.tar.gz}" todir="${my-build.dir}/cdrom-full" />
-		<create-cdrom destfile="${jnode-x86.iso}" dir="${my-build.dir}/cdrom-full" />
+		<create-cdrom destfile="${jnode-x86.iso}" dir="${my-build.dir}/cdrom-full"
+			menufile="${grub.menu.cdrom.combined}" />
 
 		<taskdef name="vmware" classname="org.jnode.build.VMwareBuilderTask" classpathref="cp-x86" />
 		<vmware 
@@ -372,7 +380,8 @@
 	</target>
 
 	<target name="cdrom_64-lite" depends="prepare">
-		<create-cdrom destfile="${jnode-x86_64-lite.iso}" dir="${my-build.dir}/cdrom-lite" />
+		<create-cdrom destfile="${jnode-x86_64-lite.iso}" dir="${my-build.dir}/cdrom-lite"
+			menufile="${grub.menu.cdrom.64}" />
 
 		<taskdef name="vmware" classname="org.jnode.build.VMwareBuilderTask" classpathref="cp-x86" />
 		<vmware
@@ -383,6 +392,23 @@
 			vmdkImageFile="${vmware.vmx.vmdk.image}"
             overrideFile="${vmware.vmx.overrides}"
 			name="JNode x64 lite"
+		/>
+	</target>
+
+	<!-- Combined 32-bit + 64-bit lite CDROM (both jnode32.gz and jnode64.gz on one ISO) -->
+	<target name="cdrom-combined-lite" depends="prepare">
+		<create-cdrom destfile="${jnode-x86-combined-lite.iso}" dir="${my-build.dir}/cdrom-combined-lite"
+			menufile="${grub.menu.cdrom.combined}" />
+
+		<taskdef name="vmware" classname="org.jnode.build.VMwareBuilderTask" classpathref="cp-x86" />
+		<vmware
+			isoFile="${jnode-x86-combined-lite.iso}"
+			logFile="${logFile}"
+			memSize="${jnode.virtual.memsize}"
+			saveDir="${save.dir}"
+			vmdkImageFile="${vmware.vmx.vmdk.image}"
+            overrideFile="${vmware.vmx.overrides}"
+			name="JNode x86 x64 combined lite"
 		/>
 	</target>
 

@@ -925,7 +925,7 @@ final class MagicHelper extends BaseX86MagicHelper {
                     os.writeMOVSXD(indexReg64, (GPR32) indexReg);
                     indexReg = indexReg64;
                 }
-                os.writeLEA(itemReg, itemReg, indexReg, os.getWordSize(), VmArray.DATA_OFFSET * os.getWordSize());
+                os.writeLEA(itemReg, itemReg, indexReg, 4, VmArray.DATA_OFFSET * os.getWordSize());
                 index.release(ec);
                 vstack.push(item);
                 break;
@@ -950,7 +950,7 @@ final class MagicHelper extends BaseX86MagicHelper {
                     os.writeMOVSXD(indexReg64, (GPR32) indexReg);
                     indexReg = indexReg64;
                 }
-                os.writeLEA(itemReg, itemReg, indexReg, os.getWordSize(), VmArray.DATA_OFFSET * os.getWordSize());
+                os.writeLEA(itemReg, itemReg, indexReg, 4, VmArray.DATA_OFFSET * os.getWordSize());
                 index.release(ec);
                 vstack.push(item);
                 break;

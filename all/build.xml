@@ -155,6 +155,7 @@
 	<property name="jnode-x86.iso" value="${cdroms.dir}/jnode-x86.iso"/>
 	<property name="jnode-x86-lite.iso" value="${cdroms.dir}/jnode-x86-lite.iso"/>
 	<property name="jnode-x86_64-lite.iso" value="${cdroms.dir}/jnode-x86_64-lite.iso"/>
+	<property name="jnode-x86-combined-lite.iso" value="${cdroms.dir}/jnode-x86-combined-lite.iso"/>
 
 	<!-- list of classes and packages that should to be compiled to native code 
 	     in the boot image.  -->
@@ -569,8 +570,7 @@ clean             Remove all intermediate build results.
 	<target name="cd-x86" depends="assemble" description="Create a bootable JNode CD image with sources included">
 		<tar destfile="${sources.dist.tar.gz}" compression="gzip" basedir="${root.dir}" excludes="*/build/**"/>
 		<x86-build bits="32" target="java-image"/>
-		<!-- TODO enable this when 64 bit support is working -->
-		<!--x86-build bits="64" target="java-image"/-->
+		<x86-build bits="64" target="java-image"/>
 		<property name="jnode.bits" value="32" />
 		<ant antfile="build-x86.xml" inheritall="true" inheritrefs="true" target="cdrom"/>
 	</target>
@@ -586,6 +586,14 @@ clean             Remove all intermediate build results.
 		<x86-build bits="64" target="java-image"/>
 		<property name="jnode.bits" value="64" />
 		<ant antfile="build-x86.xml" inheritall="true" inheritrefs="true" target="cdrom_64-lite"/>
+	</target>
+
+	<!-- Create a bootable CDROM image containing BOTH 32-bit and 64-bit x86 bootable images -->
+	<target name="cd-x86-combined-lite" depends="assemble" description="Create a bootable JNode CD image with both 32-bit and 64-bit kernels">
+		<x86-build bits="32" target="java-image"/>
+		<x86-build bits="64" target="java-image"/>
+		<property name="jnode.bits" value="32" />
+		<ant antfile="build-x86.xml" inheritall="true" inheritrefs="true" target="cdrom-combined-lite"/>
 	</target>
 
 	<!-- Upload a distribution -->

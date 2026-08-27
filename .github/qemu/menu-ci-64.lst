@@ -1,0 +1,9 @@
+# GRUB Configuration - CI 64-bit test (shell.jgz)
+default 0
+timeout 0
+
+# ---------------------------
+title JNode 64-bit shell
+serial --unit=0 --speed=115200 --word=8 --parity=no --stop=1
+kernel /jnode64.gz mp=no kdb lkd
+module /shell.jgz
