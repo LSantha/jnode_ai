@@ -91,10 +91,11 @@ public class JGrub {
             i--;
         }
         final String parentDeviceName = deviceName.substring(0, i + 1);
-        final int partitionNumber = Integer.parseInt(deviceName.substring(i + 1));
+        final String partitionSuffix = deviceName.substring(i + 1);
+        final int partitionNumber = partitionSuffix.isEmpty() ? 0 : Integer.parseInt(partitionSuffix);
         //
 
-        final Device parentDevice = getDevice(dm, parentDeviceName);
+        final Device parentDevice = parentDeviceName.isEmpty() ? device : getDevice(dm, parentDeviceName);
         final BlockDeviceAPI parentDeviceApi = getBlockDeviceAPI(parentDevice);
 
         stage1.format(parentDeviceApi);

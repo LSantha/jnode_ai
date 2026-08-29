@@ -38,8 +38,10 @@ import org.jnode.install.OutputContext;
  */
 public class GrubInstallerAction implements InstallerAction {
     private JGrub jgrub;
+    private InputContext inContext;
 
     public ActionInput getInput(final InputContext inContext) {
+        this.inContext = inContext;
         return new ActionInput() {
             public AbstractInstaller.Step collect() {
                 try {
@@ -50,7 +52,6 @@ public class GrubInstallerAction implements InstallerAction {
                     JGrub jgrub = new JGrub(new PrintWriter(new OutputStreamWriter(System.out)), disk);
 
                     GrubInstallerAction.this.jgrub = jgrub;
-                    inContext.setStringValue(ActionConstants.INSTALL_ROOT_DIR, jgrub.getMountPoint());
                     return AbstractInstaller.Step.forth;
                 } catch (Exception e) {
                     return AbstractInstaller.Step.back;
@@ -63,6 +64,7 @@ public class GrubInstallerAction implements InstallerAction {
         if (jgrub == null) {
             throw new IllegalStateException("No installation device selected");
         }
+        inContext.setStringValue(ActionConstants.INSTALL_ROOT_DIR, jgrub.getMountPoint());
         jgrub.install();
     }
 

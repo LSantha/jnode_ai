@@ -50,6 +50,13 @@ public abstract class AbstractInstaller {
                 Step step = input.collect();
                 if (step != null && step.equals(Step.quit))
                     break;
+                if (step != null && step.equals(Step.back)) {
+                    if (lit.hasPrevious())
+                        action = lit.previous();
+                    else
+                        break out;
+                    continue;
+                }
             }
 
             try {
