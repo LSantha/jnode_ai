@@ -30,6 +30,8 @@
     <import plugin="org.jnode.fs"/>
     <import plugin="org.jnode.fs.jfat.command"/>
     <import plugin="org.jnode.log4j"/>
+    <import plugin="org.jnode.shell"/>
+    <import plugin="org.jnode.shell.syntax"/>
   </requires>
         
   <runtime>
@@ -39,5 +41,19 @@
       <export name="org.jnode.install.cmdline.*"/>
       </library>
   </runtime>
-        
+
+  <extension point="org.jnode.shell.aliases">
+    <alias name="install" class="org.jnode.install.cmdline.InstallCommand"/>
+  </extension>
+
+  <extension point="org.jnode.shell.syntaxes">
+    <syntax alias="install">
+      <empty description="install JNode onto a disk device"/>
+    </syntax>
+  </extension>
+
+  <extension point="org.jnode.security.permissions">
+    <permission class="java.io.FilePermission" name="&lt;&lt;ALL FILES&gt;&gt;" actions="read,write,delete"/>
+  </extension>
+
 </plugin>

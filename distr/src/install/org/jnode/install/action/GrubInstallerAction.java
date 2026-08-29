@@ -49,6 +49,7 @@ public class GrubInstallerAction implements InstallerAction {
                     Device disk = DeviceUtils.getDevice(deviceID);
                     JGrub jgrub = new JGrub(new PrintWriter(new OutputStreamWriter(System.out)), disk);
 
+                    GrubInstallerAction.this.jgrub = jgrub;
                     inContext.setStringValue(ActionConstants.INSTALL_ROOT_DIR, jgrub.getMountPoint());
                     return AbstractInstaller.Step.forth;
                 } catch (Exception e) {
@@ -59,6 +60,9 @@ public class GrubInstallerAction implements InstallerAction {
     }
 
     public void execute() throws Exception {
+        if (jgrub == null) {
+            throw new IllegalStateException("No installation device selected");
+        }
         jgrub.install();
     }
 
