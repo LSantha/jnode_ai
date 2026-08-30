@@ -105,7 +105,7 @@ public class Log4jConfigurePlugin extends Plugin {
                     SerialAppender serialApp = new SerialAppender(new PatternLayout(LAYOUT));
                     serialApp.setThreshold(Level.DEBUG);
                     root.addAppender(serialApp);
-                } catch (Exception e) {
+                } catch (RuntimeException e) {
                     Unsafe.debug("SerialAppender failed: " + e.toString() + "\n");
                     UnsafeDebugAppender kdbApp = new UnsafeDebugAppender(new PatternLayout(LAYOUT));
                     kdbApp.setThreshold(Level.DEBUG);

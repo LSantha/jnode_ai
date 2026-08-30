@@ -20,87 +20,44 @@ package org.jnode.log4j.config;
 
 import java.io.IOException;
 import java.io.Writer;
-import java.security.AccessController;
-import java.security.PrivilegedExceptionAction;
-
-import javax.naming.NameNotFoundException;
 
 import org.apache.log4j.Layout;
+import org.apache.log4j.Logger;
 import org.apache.log4j.WriterAppender;
-import org.jnode.naming.InitialNaming;
-import org.jnode.system.resource.IOResource;
-import org.jnode.system.resource.ResourceManager;
-import org.jnode.system.resource.SimpleResourceOwner;
-import org.jnode.vm.Unsafe;
+import org.jnode.driver.DeviceUtils;
+import org.jnode.driver.serial.SerialPortAPI;
 
 /**
- * Log4j appender that writes directly to a serial port (COM1/COM2)
- * via IOResource, bypassing Unsafe.debug() to avoid VGA screen output.
+ * Log4j appender that writes to a serial port via SerialPortDriver's API.
+ * Uses lazy initialization - the serial port device may not be available
+ * when this appender is created (plugins start before device finders).
+ * Pending output is buffered until the device becomes available.
  *
  * @author JNode.org
  */
 public class SerialAppender extends WriterAppender {
 
-    private static final int COM1_BASE = 0x3F8;
-    private static final int COM1_LENGTH = 8;
+    private static final Logger log = Logger.getLogger(SerialAppender.class);
+    private static final String SERIAL_PORT = "serial0";
 
-    private IOResource ioResource;
     private final Writer writer;
 
-    public SerialAppender(Layout layout) throws Exception {
+    public SerialAppender(Layout layout) {
         super();
         this.layout = layout;
-
-        final ResourceManager rm;
-        try {
-            rm = InitialNaming.lookup(ResourceManager.NAME);
-        } catch (NameNotFoundException e) {
-            throw new Exception("ResourceManager not found", e);
-        }
-
-        try {
-            ioResource = AccessController.doPrivileged(
-                new PrivilegedExceptionAction<IOResource>() {
-                    public IOResource run() throws Exception {
-                        return rm.claimIOResource(
-                            new SimpleResourceOwner("Log4j-Serial"), COM1_BASE, COM1_LENGTH);
-                    }
-                });
-        } catch (Exception e) {
-            throw new Exception("Cannot claim COM1 ports 0x" +
-                Integer.toHexString(COM1_BASE) + "-0x" +
-                Integer.toHexString(COM1_BASE + COM1_LENGTH - 1) + ": " + e, e);
-        }
-
-        configureUART();
-
         this.writer = new SerialWriter();
         super.setWriter(this.writer);
     }
 
-    private void configureUART() {
-        final int base = COM1_BASE;
-
-        ioResource.outPortByte(base + 3, (byte) 0x80);
-        ioResource.outPortByte(base + 0, (byte) 0x0C);
-        ioResource.outPortByte(base + 1, (byte) 0x00);
-        ioResource.outPortByte(base + 3, (byte) 0x03);
-        ioResource.outPortByte(base + 2, (byte) 0xC7);
-        ioResource.outPortByte(base + 4, (byte) 0x03);
-    }
-
     @Override
     protected void closeWriter() {
-        // Intentionally empty: do NOT close the serial port writer.
-        // WriterAppender.reset() calls closeWriter() which would release
-        // our IOResource. We handle cleanup in SerialWriter.close() directly.
+        // Intentionally empty: cleanup handled in SerialWriter.close()
     }
 
     @Override
     public void activateOptions() {
-        // Writer already set in constructor via super.setWriter().
         // Override to prevent WriterAppender.activateOptions() from
-        // calling super.setWriter() again, which would trigger reset().
+        // calling super.setWriter() again.
     }
 
     @Override
@@ -113,15 +70,71 @@ public class SerialAppender extends WriterAppender {
 
     private class SerialWriter extends Writer {
 
+        private static final int MAX_PENDING_BYTES = 8192;
+
+        private SerialPortAPI serialPort;
+        // StringBuilder is sufficient here: all access is guarded by
+        // the synchronized init() / synchronized bufferPending() methods.
+        private StringBuilder pendingOutput;
+        private int droppedBytes;
+
         public SerialWriter() {
         }
 
+        /**
+         * Lazily acquire the serial port device and drain any pending output.
+         * Synchronized to prevent races between drain and concurrent bufferPending().
+         */
+        private synchronized boolean init() {
+            if (serialPort != null) {
+                return true;
+            }
+            try {
+                serialPort = (SerialPortAPI) DeviceUtils.getAPI(SERIAL_PORT, SerialPortAPI.class);
+                drainPendingOutput();
+            } catch (Exception e) {
+                // Device not available yet - will retry on next write
+                serialPort = null;
+            }
+            return serialPort != null;
+        }
+
+        private void drainPendingOutput() {
+            if (pendingOutput == null || pendingOutput.length() == 0 || serialPort == null) {
+                return;
+            }
+            String data = pendingOutput.toString();
+            pendingOutput = null;
+            for (int i = 0; i < data.length(); i++) {
+                char ch = data.charAt(i);
+                try {
+                    if (ch == '\n') {
+                        serialPort.writeSingle('\r');
+                    }
+                    serialPort.writeSingle(ch);
+                } catch (Exception e) {
+                    // Device became unavailable - re-buffer remaining data
+                    serialPort = null;
+                    pendingOutput = new StringBuilder(data.substring(i));
+                    return;
+                }
+            }
+            if (droppedBytes > 0) {
+                log.warn("Serial appender: " + droppedBytes +
+                    " bytes dropped while device was unavailable");
+                droppedBytes = 0;
+            }
+        }
+
+        /**
+         * Close does not flush pending data. This is intentional for a logging
+         * appender - close() should not block on a potentially dead serial port.
+         */
         @Override
         public void close() throws IOException {
-            if (ioResource != null) {
-                ioResource.release();
-                ioResource = null;
-            }
+            serialPort = null;
+            pendingOutput = null;
+            droppedBytes = 0;
         }
 
         @Override
@@ -130,27 +143,42 @@ public class SerialAppender extends WriterAppender {
 
         @Override
         public void write(char[] cbuf, int off, int len) throws IOException {
-            if (ioResource == null) {
-                return;
-            }
-            final int base = COM1_BASE;
-            for (int i = 0; i < len; i++) {
-                char ch = cbuf[off + i];
-                if (ch == '\n') {
-                    writeChar(base, '\r');
-                }
-                writeChar(base, ch);
+            if (init()) {
+                writeDirect(cbuf, off, len);
+            } else {
+                bufferPending(cbuf, off, len);
             }
         }
 
-        private void writeChar(int base, char ch) throws IOException {
-            int timeout = 10000;
-            while ((ioResource.inPortByte(base + 5) & 0x20) == 0) {
-                if (--timeout <= 0) {
+        private void writeDirect(char[] cbuf, int off, int len) throws IOException {
+            for (int i = 0; i < len; i++) {
+                char ch = cbuf[off + i];
+                try {
+                    if (ch == '\n') {
+                        serialPort.writeSingle('\r');
+                    }
+                    serialPort.writeSingle(ch);
+                } catch (Exception e) {
+                    // Device became unavailable - buffer remainder
+                    serialPort = null;
+                    bufferPending(cbuf, off + i, len - i);
                     return;
                 }
             }
-            ioResource.outPortByte(base, (byte) ch);
+        }
+
+        private synchronized void bufferPending(char[] cbuf, int off, int len) {
+            if (pendingOutput == null) {
+                pendingOutput = new StringBuilder();
+            }
+            int space = MAX_PENDING_BYTES - pendingOutput.length();
+            if (len > space) {
+                droppedBytes += (len - space);
+                len = space;
+            }
+            if (len > 0) {
+                pendingOutput.append(cbuf, off, len);
+            }
         }
     }
 }

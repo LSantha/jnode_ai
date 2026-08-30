@@ -29,6 +29,7 @@
         
   <requires>
     <import plugin="org.jnode.driver.console"/>
+    <import plugin="org.jnode.driver.serial"/>
   </requires>
         
   <runtime>
@@ -37,8 +38,4 @@
     </library>
   </runtime>
 
-  <extension point="org.jnode.security.permissions">
-    <permission class="org.jnode.system.resource.ResourcePermission" name="ioports"/>
-  </extension>
-        
 </plugin>
