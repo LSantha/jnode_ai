@@ -1,0 +1,59 @@
+# GRUB Configuration for combined 32+64-bit disk
+default 0
+timeout 10
+
+# ---------------------------
+# 32-bit entries
+# ---------------------------
+title JNode 32-bit (default)
+kernel (hd0,0)/jnode32.gz mp=no kdb lkd
+module (hd0,0)/default.jgz
+
+# ---------------------------
+title JNode 32-bit (all plugins)
+kernel (hd0,0)/jnode32.gz mp=no kdb lkd
+module (hd0,0)/full.jgz
+
+# ---------------------------
+title JNode 32-bit (minimal shell)
+kernel (hd0,0)/jnode32.gz mp=no kdb lkd
+module (hd0,0)/shell.jgz
+
+# ---------------------------
+# 64-bit entries
+# ---------------------------
+title JNode 64-bit (default)
+kernel (hd0,0)/jnode64.gz mp=no kdb lkd
+module (hd0,0)/default.jgz
+
+# ---------------------------
+title JNode 64-bit (all plugins)
+kernel (hd0,0)/jnode64.gz mp=no kdb lkd
+module (hd0,0)/full.jgz
+
+# ---------------------------
+title JNode 64-bit (minimal shell)
+kernel (hd0,0)/jnode64.gz mp=no kdb lkd
+module (hd0,0)/shell.jgz
+
+# ---------------------------
+# Test / install entries
+# ---------------------------
+title JNode tests 32-bit (all plugins + tests)
+kernel (hd0,0)/jnode32.gz mp=no kdb lkd
+module (hd0,0)/tests.jgz
+
+# ---------------------------
+title JNode tests 64-bit (all plugins + tests)
+kernel (hd0,0)/jnode64.gz mp=no kdb lkd
+module (hd0,0)/tests.jgz
+
+# ---------------------------
+title JNode install 32-bit
+kernel (hd0,0)/jnode32.gz mp=no kdb lkd
+module (hd0,0)/install.jgz
+
+# ---------------------------
+title JNode install 64-bit
+kernel (hd0,0)/jnode64.gz mp=no kdb lkd
+module (hd0,0)/install.jgz

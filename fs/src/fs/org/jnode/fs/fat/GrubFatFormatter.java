@@ -60,6 +60,30 @@ public class GrubFatFormatter {
         this.bootSectorOffset = bootSectorOffset;
     }
 
+    /**
+     * Constructor with explicit total sectors for partition formatting
+     * 
+     * @param bps bytes per sector
+     * @param spc sectors per cluster
+     * @param geom device geometry
+     * @param fatSize FAT type (FAT12, FAT16, FAT32)
+     * @param bootSectorOffset offset of boot sector
+     * @param stage1ResourceName resource name for stage1
+     * @param stage2ResourceName resource name for stage2
+     * @param totalSectors explicit total sectors (e.g. partition size)
+     */
+    public GrubFatFormatter(int bps, int spc, Geometry geom, FatType fatSize, int bootSectorOffset,
+            String stage1ResourceName, String stage2ResourceName, long totalSectors) {
+
+        GrubBootSector bs =
+                (GrubBootSector) createBootSector(stage1ResourceName, stage2ResourceName);
+        bs.setOemName("JNode1.0");
+        formatter =
+                FatFormatter.HDFormatter(bps, (int) totalSectors, geom.getSectors(), geom
+                        .getHeads(), fatSize, 0, calculateReservedSectors(512), bs);
+        this.bootSectorOffset = bootSectorOffset;
+    }
+
     private int calculateReservedSectors(int bps) {
         return stage2.length / bps + 1 + 1;
     }

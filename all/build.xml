@@ -18,7 +18,7 @@
     along with this library; If not, write to the Free Software Foundation, Inc.,
     51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
 -->
-<project name="JNode" default="help" basedir=".">
+<project name="JNode" default="all" basedir=".">
 
 	<property name="root.dir" value="${basedir}/.."/>
 
@@ -499,6 +499,8 @@
 	<target name="assemble" depends="assemble-default-initjars, assemble-custom-initjars" description="Assemble all subprojects, plugins and initjars.">
 	</target>
 
+	<target name="all" depends="disk,cd-x86-combined-lite" description="Build the bootable disk image and CD (default target)">
+	</target>
 
 	<target name="help" description="Display detailed usage information.">
 		<echo>
@@ -556,6 +558,13 @@ clean             Remove all intermediate build results.
 
 	<target name="x86_64" depends="assemble" description="Create the X86 64-bit boot image">
 		<x86-build bits="64"/>
+	</target>
+
+	<target name="disk" depends="assemble" description="Build bootable x86 disk image with both 32-bit and 64-bit kernels">
+		<x86-build bits="32" target="java-image"/>
+		<x86-build bits="64" target="java-image"/>
+		<property name="jnode.bits" value="32" />
+		<ant antfile="build-x86.xml" inheritall="true" inheritrefs="true" target="boot-disk"/>
 	</target>
 
 	<target name="jop" depends="assemble" description="Create the JOP boot image">

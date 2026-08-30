@@ -194,14 +194,31 @@ public class BootSector {
      * @return int
      */
     public int getNrLogicalSectors() {
-        return get16(0x13);
+        int v = get16(0x13);
+        if (v == 0) {
+            // If the 16-bit field is 0, use the 32-bit field
+            return (int) get32(0x20);
+        }
+        return v;
     }
 
     /**
      * Sets the number of logical sectors
+     * For FAT16 volumes > 65535 sectors, use total_sectors_32 at offset 0x20
+     * and clear the 16-bit field at offset 0x13
      */
     public void setNrLogicalSectors(int v) {
-        set16(0x13, v);
+        if (v > 65535) {
+            // Use 32-bit field for large volumes
+            set32(0x20, v);
+            // Clear 16-bit field (set to 0)
+            set16(0x13, 0);
+        } else {
+            // Use 16-bit field for small volumes
+            set16(0x13, v);
+            // Clear 32-bit field
+            set32(0x20, 0);
+        }
     }
 
     /**

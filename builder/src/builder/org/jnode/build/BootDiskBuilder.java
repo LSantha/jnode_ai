@@ -103,7 +103,7 @@ public class BootDiskBuilder extends BootFloppyBuilder {
         /* Format partition 0 */
         part0 = new MappedFSBlockDeviceSupport(device, pte.getStartLba() * bytesPerSector, pte.getNrSectors()
             * bytesPerSector);
-        GrubFatFormatter ff = createFormatter();
+        GrubFatFormatter ff = createFormatter(pte.getNrSectors());
         ff.setInstallPartition(0x0000FFFF);
         ff.format(part0);
         GrubBootSector part0bs = (GrubBootSector) ff.getBootSector();
@@ -128,6 +128,18 @@ public class BootDiskBuilder extends BootFloppyBuilder {
     protected GrubFatFormatter createFormatter() throws IOException {
         return new GrubFatFormatter(bytesPerSector, spc, geom, FatType.FAT16, 1, getStage1ResourceName(),
             getStage2ResourceName());
+    }
+
+    /**
+     * Create formatter with explicit total sectors (for partition formatting)
+     * 
+     * @param totalSectors explicit total sectors for the partition
+     * @return The formatter
+     * @throws IOException
+     */
+    protected GrubFatFormatter createFormatter(long totalSectors) throws IOException {
+        return new GrubFatFormatter(bytesPerSector, spc, geom, FatType.FAT16, 1, getStage1ResourceName(),
+            getStage2ResourceName(), totalSectors);
     }
 
     /**
@@ -186,28 +198,33 @@ public class BootDiskBuilder extends BootFloppyBuilder {
      * Called from Ant via {@code bits="${jnode.bits}"} on the bootdisk task.
      * Overridden by {@link #setGeometry(String)} if both are specified.
      *
-     * @param bits "32" or "64"
+     * @param bits "32", "64", or "combined"
      */
     public void setBits(String bits) {
-        final int wordSize;
-        try {
-            wordSize = Integer.parseInt(bits);
-        } catch (NumberFormatException e) {
-            return; // ignore invalid values, keep default geometry
-        }
-        switch (wordSize) {
-            case 32:
-                // ~32MB: jnode32.gz (~20MB) + plugins + GRUB
-                geom = new Geometry(64, 32, 63);
-                break;
-            case 64:
-                // ~42MB: jnode64.gz (~21MB) + plugins + GRUB
-                geom = new Geometry(88, 32, 63);
-                break;
-            default:
-                // ~86MB: both kernels + plugins + GRUB
-                geom = new Geometry(128, 63, 63);
-                break;
+        if ("combined".equals(bits)) {
+            // ~248MB: both kernels + all plugins + GRUB
+            geom = new Geometry(128, 63, 63);
+        } else {
+            final int wordSize;
+            try {
+                wordSize = Integer.parseInt(bits);
+            } catch (NumberFormatException e) {
+                return; // ignore invalid values, keep default geometry
+            }
+            switch (wordSize) {
+                case 32:
+                    // ~32MB: jnode32.gz (~20MB) + plugins + GRUB
+                    geom = new Geometry(64, 32, 63);
+                    break;
+                case 64:
+                    // ~42MB: jnode64.gz (~21MB) + plugins + GRUB
+                    geom = new Geometry(88, 32, 63);
+                    break;
+                default:
+                    // ~86MB: both kernels + plugins + GRUB
+                    geom = new Geometry(128, 63, 63);
+                    break;
+            }
         }
         log("Computed bootdisk geometry for " + bits + "-bit: "
             + geom.getCylinders() + "/" + geom.getHeads() + "/" + geom.getSectors()

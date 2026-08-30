@@ -28,6 +28,9 @@
 	<property name="build.netboot.dir" value="${my-build.dir}/netboot" />
 	<property name="jnode.disk" value="${my-build.dir}/jnodedisk${jnode.bits}.dat" />
 	<property name="jnode.disk.pln" value="${my-build.dir}/jnodedisk${jnode.bits}.pln" />
+	<property name="jnode.disk.combined" value="${my-build.dir}/jnode.dat" />
+	<property name="jnode.disk.combined.pln" value="${my-build.dir}/jnode.pln" />
+	<property name="grub.menu.disk.combined" value="${my-conf.dir}/menu-disk-combined.lst" />
 
 	<property name="jnode.virtual.memsize" value="512" />
 	<property name="logFile" value="${build.dir}/debugger.txt" />
@@ -231,25 +234,30 @@
 		<gzip src="${build.bootimage.dir}/bootimage.bin" zipfile="${jnode.kernel}" />
 	</target>
 
-	<!-- Build the boot disk -->
+	<!-- Build combined 32+64-bit boot disk -->
 	<target name="boot-disk" depends="java-image" unless="no.bootdisk">
 		<taskdef name="bootdisk" classname="org.jnode.build.BootDiskBuilder" classpathref="cp-x86" />
 
-		<property name="bootdisk.dir" value="${my-build.dir}/${jnode.bits}bits/bootdisk" />
+		<property name="bootdisk.dir" value="${my-build.dir}/combinedbits/bootdisk" />
 
 		<mkdir dir="${bootdisk.dir}" />
 		<mkdir dir="${bootdisk.dir}/boot/grub" />
-		<copy file="${jnode.kernel}" todir="${bootdisk.dir}" />
-		<copy file="${grub.menu}" todir="${bootdisk.dir}/boot/grub" />
+
+		<!-- Copy both kernels -->
+		<copy file="${jnode.kernel.dir}/jnode32.gz" todir="${bootdisk.dir}" />
+		<copy file="${jnode.kernel.dir}/jnode64.gz" todir="${bootdisk.dir}" />
+
+		<!-- Copy combined menu as menu.lst (GRUB expects this name) -->
+		<copy file="${grub.menu.disk.combined}" tofile="${bootdisk.dir}/boot/grub/menu.lst" />
+
+		<!-- Copy all plugin jars -->
 		<copy todir="${bootdisk.dir}">
 			<fileset dir="${initjars.dir}">
-				<!-- Limit the size of the bootdisk -->
-				<include name="default.jgz"/>
-				<include name="full.jgz"/>
-			</fileset>	
+				<include name="*.jgz"/>
+			</fileset>
 		</copy>
 
-		<bootdisk destfile="${jnode.disk}" stage1ResourceName="${grub.stage1.name}" stage2ResourceName="${grub.stage2.name}" plnfile="${jnode.disk.pln}" bits="${jnode.bits}">
+		<bootdisk destfile="${jnode.disk.combined}" stage1ResourceName="${grub.stage1.name}" stage2ResourceName="${grub.stage2.name}" plnfile="${jnode.disk.combined.pln}" bits="combined">
 			<fileset dir="${bootdisk.dir}" />
 		</bootdisk>
 	</target>
