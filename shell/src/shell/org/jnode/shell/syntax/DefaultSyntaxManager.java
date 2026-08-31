@@ -148,7 +148,7 @@ public class DefaultSyntaxManager implements SyntaxManager, ExtensionPointListen
      */
     protected void refreshSyntaxes() {
         final Logger log = Logger.getLogger(getClass());
-        System.out.println("Refreshing syntax list");
+        log.debug("Refreshing syntax list");
         if (syntaxEP != null) {
             syntaxes.clear();
             arguments.clear();

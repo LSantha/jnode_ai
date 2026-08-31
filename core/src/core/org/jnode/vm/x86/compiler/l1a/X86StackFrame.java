@@ -27,6 +27,7 @@ import org.jnode.assembler.x86.X86BinaryAssembler;
 import org.jnode.assembler.x86.X86Constants;
 import org.jnode.assembler.x86.X86Register;
 import org.jnode.assembler.x86.X86Register.GPR;
+import org.jnode.bootlog.BootLogInstance;
 import org.jnode.vm.classmgr.VmByteCode;
 import org.jnode.vm.classmgr.VmInterpretedExceptionHandler;
 import org.jnode.vm.classmgr.VmMethod;
@@ -267,7 +268,8 @@ final class X86StackFrame {
 
             /** Clear the calculation stack (only locals are left) */
             if (noLocalVars < 0) {
-                System.out.println("@#@#@#@# noLocalVars = " + noLocalVars);
+                BootLogInstance.get().error("L1A: negative local slot count in " + method +
+                    " (maxLocals=" + maxLocals + ", argSlotCount=" + argSlotCount + ")");
             }
             final int ofs = Math.max(0, noLocalVars) * slotSize;
             os.writeLEA(asp, abp, -ofs);

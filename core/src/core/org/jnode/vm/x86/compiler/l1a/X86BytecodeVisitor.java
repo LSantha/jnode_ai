@@ -673,7 +673,8 @@ final class X86BytecodeVisitor extends InlineBytecodeVisitor {
         stackFrame.emitTrailer(typeSizeInfo, maxLocals);
         if (ItemFactory.CHECK_BALANCED_ITEM_FACTORY) {
             if (!ifac.isBalanced()) {
-                System.out.println("WARNING: unbalanced item handling in " + currentMethod.getFullName());
+                BootLogInstance.get().warn(
+                    "Unbalanced item handling in " + currentMethod.getFullName());
                 ifac.balance();
             }
         }

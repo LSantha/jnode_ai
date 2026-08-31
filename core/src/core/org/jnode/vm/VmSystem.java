@@ -105,6 +105,11 @@ public final class VmSystem {
 
     private static PrintStream out;
 
+    /**
+     * Minimal layout for the temporary Log4j appender used during early VM
+     * initialization. Log4jConfigurePlugin installs the final timestamped
+     * layout once the console infrastructure is available.
+     */
     private static final String LAYOUT = "%-5p [%c{1}]: %m%n";
 
     private static boolean inShutdown = false;

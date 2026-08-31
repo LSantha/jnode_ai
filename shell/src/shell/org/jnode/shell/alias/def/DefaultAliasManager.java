@@ -27,6 +27,7 @@ import java.util.HashSet;
 import java.util.Iterator;
 import java.util.Map;
 
+import org.apache.log4j.Logger;
 import org.jnode.plugin.ConfigurationElement;
 import org.jnode.plugin.Extension;
 import org.jnode.plugin.ExtensionPoint;
@@ -40,6 +41,8 @@ import org.jnode.util.BooleanUtils;
  */
 public class DefaultAliasManager implements AliasManager,
         ExtensionPointListener {
+
+    private static final Logger log = Logger.getLogger(DefaultAliasManager.class);
 
     private final DefaultAliasManager parent;
 
@@ -179,7 +182,7 @@ public class DefaultAliasManager implements AliasManager,
      * Reload the alias list from the extension-point
      */
     protected void refreshAliases() {
-        System.out.println("Refreshing alias list");
+        log.debug("Refreshing alias list");
         if (aliasesEP != null) {
             aliases.clear();
             final Extension[] extensions = aliasesEP.getExtensions();

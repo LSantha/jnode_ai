@@ -43,7 +43,7 @@ class BootLogImpl implements BootLog, BootableObject {
      * Format: HH:MM:SS,mmm LEVEL  -- fully allocation-free.
      */
     private static void writePrefix(PrintStream ps, String level) {
-        long ms = VmSystem.currentTimeMillis();
+        long ms = VmSystem.currentKernelMillis();
         long totalSeconds = ms / 1000;
         int millis = (int)(ms % 1000);
         int seconds = (int)(totalSeconds % 60);
@@ -72,7 +72,7 @@ class BootLogImpl implements BootLog, BootableObject {
      * Fully allocation-free, safe during early boot.
      */
     private static void writePrefixUnsafe(String level) {
-        long ms = VmSystem.currentTimeMillis();
+        long ms = VmSystem.currentKernelMillis();
         long totalSeconds = ms / 1000;
         int millis = (int)(ms % 1000);
         int seconds = (int)(totalSeconds % 60);
