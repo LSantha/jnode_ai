@@ -115,6 +115,8 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
     X86Constants {
     private static final GPR SR1 = X86Register.EAX;
 
+    private static int labelCounter;
+
     // private static final Register SR2 = Register.EBX;
     // private static final Register SR3 = Register.ECX;
     // private static final Register SR4 = Register.EDX;
@@ -427,12 +429,48 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
             case L2D:
                 throw new IllegalArgumentException("Unknown operation: " + operation);
 
-            case F2I:
+            case F2I: {
+                final String uid1 = "f2i_" + (++labelCounter) + "_";
+                final Label doneL1 = new Label(uid1 + "fix");
+                final Label overflowL1 = new Label(uid1 + "ovf");
+                final Label isInfL1 = new Label(uid1 + "inf");
                 os.writePUSH((GPR) rhsReg);
                 os.writeFLD32(X86Register.ESP, 0);
-                os.writeFISTP32(X86Register.ESP, 0);
+                os.writePUSH(X86Register.EAX);
+                os.writeFSTP32(X86Register.ESP, -4);
+                os.writeFLD32(X86Register.ESP, -4);
+                os.writeFISTP32(X86Register.ESP, 4);
+                os.writeMOV(X86Constants.BITS32, X86Register.EAX, X86Register.ESP, 4);
+                os.writeCMP_Const(X86Register.EAX, 0x80000000);
+                os.writeJCC(doneL1, X86Constants.JNE);
+                os.writeMOV(X86Constants.BITS32, X86Register.EAX, X86Register.ESP, -4);
+                os.writeAND(X86Register.EAX, 0x7F800000);
+                os.writeCMP_Const(X86Register.EAX, 0x7F800000);
+                os.writeJCC(overflowL1, X86Constants.JNE);
+                os.writeMOV(X86Constants.BITS32, X86Register.EAX, X86Register.ESP, -4);
+                os.writeTEST(X86Register.EAX, 0x007FFFFF);
+                os.writeJCC(isInfL1, X86Constants.JZ);
+                os.writeXOR(X86Register.EAX, X86Register.EAX);
+                os.writeMOV(X86Constants.BITS32, X86Register.ESP, 4, X86Register.EAX);
+                os.writeJMP(doneL1);
+                os.setObjectRef(isInfL1);
+                os.writeMOV(X86Constants.BITS32, X86Register.EAX, X86Register.ESP, -4);
+                os.writeTEST(X86Register.EAX, 0x80000000);
+                os.writeJCC(doneL1, X86Constants.JNZ);
+                os.writeMOV_Const(X86Register.EAX, 0x7FFFFFFF);
+                os.writeMOV(X86Constants.BITS32, X86Register.ESP, 4, X86Register.EAX);
+                os.writeJMP(doneL1);
+                os.setObjectRef(overflowL1);
+                os.writeMOV(X86Constants.BITS32, X86Register.EAX, X86Register.ESP, -4);
+                os.writeTEST(X86Register.EAX, 0x80000000);
+                os.writeJCC(doneL1, X86Constants.JNZ);
+                os.writeMOV_Const(X86Register.EAX, 0x7FFFFFFF);
+                os.writeMOV(X86Constants.BITS32, X86Register.ESP, 4, X86Register.EAX);
+                os.setObjectRef(doneL1);
+                os.writePOP(X86Register.EAX);
                 os.writePOP((GPR) lhsReg);
                 break;
+            }
 
             case F2L:
             case F2D:
@@ -506,12 +544,48 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
             case L2D:
                 throw new IllegalArgumentException("Unknown operation: " + operation);
 
-            case F2I:
+            case F2I: {
+                final String uid2 = "f2i_" + (++labelCounter) + "_";
+                final Label doneL2 = new Label(uid2 + "fix");
+                final Label overflowL2 = new Label(uid2 + "ovf");
+                final Label isInfL2 = new Label(uid2 + "inf");
                 os.writePUSH(X86Register.EBP, rhsDisp);
                 os.writeFLD32(X86Register.ESP, 0);
-                os.writeFISTP32(X86Register.ESP, 0);
+                os.writePUSH(X86Register.EAX);
+                os.writeFSTP32(X86Register.ESP, -4);
+                os.writeFLD32(X86Register.ESP, -4);
+                os.writeFISTP32(X86Register.ESP, 4);
+                os.writeMOV(X86Constants.BITS32, X86Register.EAX, X86Register.ESP, 4);
+                os.writeCMP_Const(X86Register.EAX, 0x80000000);
+                os.writeJCC(doneL2, X86Constants.JNE);
+                os.writeMOV(X86Constants.BITS32, X86Register.EAX, X86Register.ESP, -4);
+                os.writeAND(X86Register.EAX, 0x7F800000);
+                os.writeCMP_Const(X86Register.EAX, 0x7F800000);
+                os.writeJCC(overflowL2, X86Constants.JNE);
+                os.writeMOV(X86Constants.BITS32, X86Register.EAX, X86Register.ESP, -4);
+                os.writeTEST(X86Register.EAX, 0x007FFFFF);
+                os.writeJCC(isInfL2, X86Constants.JZ);
+                os.writeXOR(X86Register.EAX, X86Register.EAX);
+                os.writeMOV(X86Constants.BITS32, X86Register.ESP, 4, X86Register.EAX);
+                os.writeJMP(doneL2);
+                os.setObjectRef(isInfL2);
+                os.writeMOV(X86Constants.BITS32, X86Register.EAX, X86Register.ESP, -4);
+                os.writeTEST(X86Register.EAX, 0x80000000);
+                os.writeJCC(doneL2, X86Constants.JNZ);
+                os.writeMOV_Const(X86Register.EAX, 0x7FFFFFFF);
+                os.writeMOV(X86Constants.BITS32, X86Register.ESP, 4, X86Register.EAX);
+                os.writeJMP(doneL2);
+                os.setObjectRef(overflowL2);
+                os.writeMOV(X86Constants.BITS32, X86Register.EAX, X86Register.ESP, -4);
+                os.writeTEST(X86Register.EAX, 0x80000000);
+                os.writeJCC(doneL2, X86Constants.JNZ);
+                os.writeMOV_Const(X86Register.EAX, 0x7FFFFFFF);
+                os.writeMOV(X86Constants.BITS32, X86Register.ESP, 4, X86Register.EAX);
+                os.setObjectRef(doneL2);
+                os.writePOP(X86Register.EAX);
                 os.writePOP((GPR) lhsReg);
                 break;
+            }
 
             case F2L:
             case F2D:
@@ -586,11 +660,49 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
             case L2I:
             case L2F:
             case L2D:
-            case F2I:
+            case F2I: {
+                final String uid3 = "f2i_" + (++labelCounter) + "_";
+                final Label doneL3 = new Label(uid3 + "fix");
+                final Label overflowL3 = new Label(uid3 + "ovf");
+                final Label isInfL3 = new Label(uid3 + "inf");
                 os.writeMOV(X86Constants.BITS32, X86Register.EBP, lhsDisp, (GPR) rhsReg);
                 os.writeFLD32(X86Register.EBP, lhsDisp);
+                os.writePUSH(X86Register.EAX);
+                os.writeLEA(X86Register.ESP, X86Register.ESP, -4);
+                os.writeFSTP32(X86Register.ESP, 0);
+                os.writeFLD32(X86Register.ESP, 0);
                 os.writeFISTP32(X86Register.EBP, lhsDisp);
+                os.writeMOV(X86Constants.BITS32, X86Register.EAX, X86Register.EBP, lhsDisp);
+                os.writeCMP_Const(X86Register.EAX, 0x80000000);
+                os.writeJCC(doneL3, X86Constants.JNE);
+                os.writeMOV(X86Constants.BITS32, X86Register.EAX, X86Register.ESP, 0);
+                os.writeAND(X86Register.EAX, 0x7F800000);
+                os.writeCMP_Const(X86Register.EAX, 0x7F800000);
+                os.writeJCC(overflowL3, X86Constants.JNE);
+                os.writeMOV(X86Constants.BITS32, X86Register.EAX, X86Register.ESP, 0);
+                os.writeTEST(X86Register.EAX, 0x007FFFFF);
+                os.writeJCC(isInfL3, X86Constants.JZ);
+                os.writeXOR(X86Register.EAX, X86Register.EAX);
+                os.writeMOV(X86Constants.BITS32, X86Register.EBP, lhsDisp, X86Register.EAX);
+                os.writeJMP(doneL3);
+                os.setObjectRef(isInfL3);
+                os.writeMOV(X86Constants.BITS32, X86Register.EAX, X86Register.ESP, 0);
+                os.writeTEST(X86Register.EAX, 0x80000000);
+                os.writeJCC(doneL3, X86Constants.JNZ);
+                os.writeMOV_Const(X86Register.EAX, 0x7FFFFFFF);
+                os.writeMOV(X86Constants.BITS32, X86Register.EBP, lhsDisp, X86Register.EAX);
+                os.writeJMP(doneL3);
+                os.setObjectRef(overflowL3);
+                os.writeMOV(X86Constants.BITS32, X86Register.EAX, X86Register.ESP, 0);
+                os.writeTEST(X86Register.EAX, 0x80000000);
+                os.writeJCC(doneL3, X86Constants.JNZ);
+                os.writeMOV_Const(X86Register.EAX, 0x7FFFFFFF);
+                os.writeMOV(X86Constants.BITS32, X86Register.EBP, lhsDisp, X86Register.EAX);
+                os.setObjectRef(doneL3);
+                os.writeLEA(X86Register.ESP, X86Register.ESP, 4);
+                os.writePOP(X86Register.EAX);
                 break;
+            }
 
             case F2L:
             case F2D:
@@ -671,10 +783,48 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
             case L2D:
                 throw new IllegalArgumentException("Unknown operation: " + operation);
 
-            case F2I:
+            case F2I: {
+                final String uid4 = "f2i_" + (++labelCounter) + "_";
+                final Label doneL4 = new Label(uid4 + "fix");
+                final Label overflowL4 = new Label(uid4 + "ovf");
+                final Label isInfL4 = new Label(uid4 + "inf");
                 os.writeFLD32(X86Register.EBP, rhsDisp);
+                os.writePUSH(X86Register.EAX);
+                os.writeLEA(X86Register.ESP, X86Register.ESP, -4);
+                os.writeFSTP32(X86Register.ESP, 0);
+                os.writeFLD32(X86Register.ESP, 0);
                 os.writeFISTP32(X86Register.EBP, lhsDisp);
+                os.writeMOV(X86Constants.BITS32, X86Register.EAX, X86Register.EBP, lhsDisp);
+                os.writeCMP_Const(X86Register.EAX, 0x80000000);
+                os.writeJCC(doneL4, X86Constants.JNE);
+                os.writeMOV(X86Constants.BITS32, X86Register.EAX, X86Register.ESP, 0);
+                os.writeAND(X86Register.EAX, 0x7F800000);
+                os.writeCMP_Const(X86Register.EAX, 0x7F800000);
+                os.writeJCC(overflowL4, X86Constants.JNE);
+                os.writeMOV(X86Constants.BITS32, X86Register.EAX, X86Register.ESP, 0);
+                os.writeTEST(X86Register.EAX, 0x007FFFFF);
+                os.writeJCC(isInfL4, X86Constants.JZ);
+                os.writeXOR(X86Register.EAX, X86Register.EAX);
+                os.writeMOV(X86Constants.BITS32, X86Register.EBP, lhsDisp, X86Register.EAX);
+                os.writeJMP(doneL4);
+                os.setObjectRef(isInfL4);
+                os.writeMOV(X86Constants.BITS32, X86Register.EAX, X86Register.ESP, 0);
+                os.writeTEST(X86Register.EAX, 0x80000000);
+                os.writeJCC(doneL4, X86Constants.JNZ);
+                os.writeMOV_Const(X86Register.EAX, 0x7FFFFFFF);
+                os.writeMOV(X86Constants.BITS32, X86Register.EBP, lhsDisp, X86Register.EAX);
+                os.writeJMP(doneL4);
+                os.setObjectRef(overflowL4);
+                os.writeMOV(X86Constants.BITS32, X86Register.EAX, X86Register.ESP, 0);
+                os.writeTEST(X86Register.EAX, 0x80000000);
+                os.writeJCC(doneL4, X86Constants.JNZ);
+                os.writeMOV_Const(X86Register.EAX, 0x7FFFFFFF);
+                os.writeMOV(X86Constants.BITS32, X86Register.EBP, lhsDisp, X86Register.EAX);
+                os.setObjectRef(doneL4);
+                os.writeLEA(X86Register.ESP, X86Register.ESP, 4);
+                os.writePOP(X86Register.EAX);
                 break;
+            }
 
             case F2L:
             case F2D:

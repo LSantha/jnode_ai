@@ -20,7 +20,9 @@
  
 package org.jnode.vm.x86.compiler.l1b;
 
+import org.jnode.assembler.Label;
 import org.jnode.assembler.x86.X86Assembler;
+import org.jnode.assembler.x86.X86Constants;
 import org.jnode.assembler.x86.X86Register;
 import org.jnode.assembler.x86.X86Register.GPR;
 import org.jnode.assembler.x86.X86Register.GPR32;
@@ -34,6 +36,8 @@ import org.jnode.vm.x86.compiler.X86CompilerConstants;
  * @author Ewout Prangsma (epr@users.sourceforge.net)
  */
 final class LongItem extends DoubleWordItem implements X86CompilerConstants {
+
+    private static int labelCounter;
 
     private long value;
 
@@ -95,14 +99,91 @@ final class LongItem extends DoubleWordItem implements X86CompilerConstants {
     }
 
     /**
-     * Pop the top of the FPU stack into the given memory location.
+     * Pop the top of the FPU stack into the given memory location,
+     * with JLS-correct handling for NaN, infinity, and overflow.
      *
      * @param os
      * @param reg
      * @param disp
      */
     protected void popFromFPU(X86Assembler os, GPR reg, int disp) {
+        final String uid = "f2l_" + (++labelCounter) + "_";
+        final Label done = new Label(uid + "fix");
+        final Label overflow = new Label(uid + "ovf");
+        final Label isInf = new Label(uid + "inf");
+        final Label isInf2 = new Label(uid + "inf2");
+
+        os.writePUSH(X86Register.EAX);
+
+        // Save double copy at [reg+disp-8], then reload for FISTP
+        os.writeFSTP64(reg, disp - 8);
+        os.writeFLD64(reg, disp - 8);
         os.writeFISTP64(reg, disp);
+
+        // Check if 64-bit result == Long.MIN_VALUE (indefinite integer)
+        // Check low 32 bits == 0
+        os.writeCMP_Const(X86Constants.BITS32, reg, disp, 0);
+        os.writeJCC(done, X86Constants.JNE);
+        // Check high 32 bits == 0x80000000
+        os.writeCMP_Const(X86Constants.BITS32, reg, disp + 4, 0x80000000);
+        os.writeJCC(done, X86Constants.JNE);
+
+        // Check saved double for NaN/Infinity
+        // Double high word at [reg+disp-4]: exponent bits 30:20 = 0x7FF00000
+        os.writeMOV(X86Constants.BITS32, X86Register.EAX, reg, disp - 4);
+        os.writeAND(X86Register.EAX, 0x7FF00000);
+        os.writeCMP_Const(X86Register.EAX, 0x7FF00000);
+        os.writeJCC(overflow, X86Constants.JNE);
+
+        // NaN or Infinity: check mantissa
+        os.writeMOV(X86Constants.BITS32, X86Register.EAX, reg, disp - 8);
+        os.writeTEST(X86Register.EAX, X86Register.EAX);
+        os.writeJCC(isInf, X86Constants.JZ);
+        // NaN (low mantissa != 0)
+        os.writeXOR(X86Register.EAX, X86Register.EAX);
+        os.writeMOV(X86Constants.BITS32, reg, disp, X86Register.EAX);
+        os.writeMOV(X86Constants.BITS32, reg, disp + 4, X86Register.EAX);
+        os.writeJMP(done);
+
+        // Check high mantissa bits
+        os.setObjectRef(isInf);
+        os.writeMOV(X86Constants.BITS32, X86Register.EAX, reg, disp - 4);
+        os.writeAND(X86Register.EAX, 0x000FFFFF);
+        os.writeTEST(X86Register.EAX, X86Register.EAX);
+        os.writeJCC(isInf2, X86Constants.JZ);
+        // NaN (high mantissa != 0)
+        os.writeXOR(X86Register.EAX, X86Register.EAX);
+        os.writeMOV(X86Constants.BITS32, reg, disp, X86Register.EAX);
+        os.writeMOV(X86Constants.BITS32, reg, disp + 4, X86Register.EAX);
+        os.writeJMP(done);
+
+        // Infinity
+        os.setObjectRef(isInf2);
+        os.writeMOV(X86Constants.BITS32, X86Register.EAX, reg, disp - 4);
+        os.writeTEST(X86Register.EAX, 0x80000000);
+        os.writeJCC(done, X86Constants.JNZ); // -Inf -> MIN_VALUE (correct)
+
+        // +Inf -> MAX_VALUE
+        os.writeMOV_Const(X86Register.EAX, 0xFFFFFFFF);
+        os.writeMOV(X86Constants.BITS32, reg, disp, X86Register.EAX);
+        os.writeMOV_Const(X86Register.EAX, 0x7FFFFFFF);
+        os.writeMOV(X86Constants.BITS32, reg, disp + 4, X86Register.EAX);
+        os.writeJMP(done);
+
+        // Not NaN/Inf, but result is MIN_VALUE: overflow or genuine MIN_VALUE
+        os.setObjectRef(overflow);
+        os.writeMOV(X86Constants.BITS32, X86Register.EAX, reg, disp - 4);
+        os.writeTEST(X86Register.EAX, 0x80000000);
+        os.writeJCC(done, X86Constants.JNZ); // Negative -> keep MIN_VALUE
+
+        // Positive overflow -> MAX_VALUE
+        os.writeMOV_Const(X86Register.EAX, 0xFFFFFFFF);
+        os.writeMOV(X86Constants.BITS32, reg, disp, X86Register.EAX);
+        os.writeMOV_Const(X86Register.EAX, 0x7FFFFFFF);
+        os.writeMOV(X86Constants.BITS32, reg, disp + 4, X86Register.EAX);
+
+        os.setObjectRef(done);
+        os.writePOP(X86Register.EAX);
     }
 
     /**
