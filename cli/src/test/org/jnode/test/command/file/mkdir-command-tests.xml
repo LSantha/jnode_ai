@@ -1,0 +1,22 @@
+<testSet title="mkdir command tests">
+    <plugin id="org.jnode.command.file"/>
+    <plugin id="org.jnode.shell.bjorne" class="org.jnode.test.shell.bjorne.BjornePseudoPlugin"/>
+    <testSpec title="single-directory" command="mkdir" runMode="AS_ALIAS" rc="0">
+        <arg>@TEMP_DIR@/newdir</arg>
+    </testSpec>
+    <testSpec title="nested-with-parents" command="mkdir" runMode="AS_ALIAS" rc="0">
+        <arg>-p</arg>
+        <arg>@TEMP_DIR@/a/b/c</arg>
+    </testSpec>
+    <testSpec title="nested-with-parents-long" command="mkdir" runMode="AS_ALIAS" rc="0">
+        <arg>--parents</arg>
+        <arg>@TEMP_DIR@/x/y/z</arg>
+    </testSpec>
+    <testSpec title="existing-with-parents" command="mkdir" runMode="AS_ALIAS" rc="0">
+        <arg>-p</arg>
+        <arg>@TEMP_DIR@/newdir</arg>
+    </testSpec>
+    <testSpec title="nested-without-parents-fails" command="mkdir" runMode="AS_ALIAS" rc="1">
+        <arg>@TEMP_DIR@/d/e/f</arg>
+    </testSpec>
+</testSet>

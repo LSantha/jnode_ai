@@ -337,7 +337,12 @@
       </sequence>
     </syntax>
     <syntax alias="mkdir">
-      <argument argLabel="directory" description="create a new directory"/>
+      <sequence description="create a new directory">
+        <optionSet>
+          <option argLabel="parents" shortName="p" longName="parents"/>
+        </optionSet>
+        <argument argLabel="directory" description="create a new directory"/>
+      </sequence>
     </syntax>
     <syntax alias="paste">
       <empty />

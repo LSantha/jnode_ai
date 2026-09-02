@@ -8,4 +8,5 @@
     <include setName="tail-command-tests.xml"/>
     <include setName="tee-command-tests.xml"/>
     <include setName="wc-command-tests.xml"/>
+    <include setName="mkdir-command-tests.xml"/>
 </testSet>
