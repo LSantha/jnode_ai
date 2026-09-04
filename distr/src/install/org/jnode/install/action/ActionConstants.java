@@ -25,4 +25,5 @@ package org.jnode.install.action;
  */
 public interface ActionConstants {
     String INSTALL_ROOT_DIR = "INSTALL_ROOT_DIR";
+    String DEVICE_ID = "DEVICE_ID";
 }

@@ -45,8 +45,17 @@ public class GrubInstallerAction implements InstallerAction {
         return new ActionInput() {
             public AbstractInstaller.Step collect() {
                 try {
-                    String deviceID =
-                        inContext.getStringInput("Enter the installation disk device name (example: hda0) : ");
+                    String deviceID = inContext.getStringValue(ActionConstants.DEVICE_ID);
+                    if (deviceID == null || deviceID.trim().length() == 0) {
+                        deviceID =
+                            inContext.getStringInput("Enter the installation disk device name (example: hda0) : ");
+                        if (deviceID == null || deviceID.trim().length() == 0) {
+                            return AbstractInstaller.Step.back;
+                        }
+                        deviceID = deviceID.trim();
+                        inContext.setStringValue(ActionConstants.DEVICE_ID, deviceID);
+                    }
+                    deviceID = deviceID.trim();
 
                     Device disk = DeviceUtils.getDevice(deviceID);
                     JGrub jgrub = new JGrub(new PrintWriter(new OutputStreamWriter(System.out)), disk);
