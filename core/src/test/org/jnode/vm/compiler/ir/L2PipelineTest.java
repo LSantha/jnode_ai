@@ -50,6 +50,8 @@ import org.jnode.vm.x86.compiler.l2.X86Level2Compiler;
 import org.jnode.vm.x86.compiler.l2.X86StackFrame;
 import org.jnode.vm.compiler.ir.quad.BinaryOperation;
 import org.jnode.vm.compiler.ir.quad.BinaryQuad;
+import org.jnode.vm.compiler.ir.quad.PhiAssignQuad;
+import org.jnode.vm.compiler.ir.quad.Quad;
 import org.jnode.vm.compiler.ir.quad.VariableRefAssignQuad;
 import org.junit.BeforeClass;
 import org.junit.Test;
@@ -246,6 +248,80 @@ public class L2PipelineTest {
         assertAllocationComplete("add");
         assertAllocationComplete("discriminant"); // highest register pressure in corpus
         assertAllocationComplete("appel");
+    }
+
+    // ---------------- T1: post-DCE phi-use invariant (OPT-03 analysis pin) ----------------
+
+    /**
+     * Run the pipeline up to and including removeUnusedVars (no allocation,
+     * no emission) and return the CFG.
+     */
+    private static IRControlFlowGraph runToPostDce(VmMethod m) throws Exception {
+        VmByteCode code = m.getBytecode();
+        TypeSizeInfo typeSizeInfo = loader.getArchitecture().getTypeSizeInfo();
+        IRControlFlowGraph cfg = new IRControlFlowGraph(code);
+        IRGenerator irg = new IRGenerator(cfg, typeSizeInfo, m.getDeclaringClass().getLoader());
+        BytecodeParser.parse(code, irg);
+        cfg.constructSSA();
+        cfg.optimize();
+        cfg.removeUnusedVars();
+        return cfg;
+    }
+
+    private static boolean hasLiveUse(List liveQuads, Variable lhs) {
+        for (int i = 0; i < liveQuads.size(); i++) {
+            Quad q = (Quad) liveQuads.get(i);
+            Operand[] refs = q.getReferencedOps();
+            if (refs == null) {
+                continue;
+            }
+            for (int j = 0; j < refs.length; j++) {
+                if (lhs.equals(refs[j])) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    /**
+     * ANCHOR-L2-022: after iterative DCE every surviving phi must have a live
+     * use (mirroring getVariableUsage: refs of live quads, phis included).
+     * This pins the OPT-03 analysis — a live-gated deconstruction filter can
+     * only fire if this ever fails, i.e. DCE was incomplete. If it fails,
+     * wire the filtering deconstrucSSA overload (now sort- and null-safe)
+     * into doCompile instead of dismissing it.
+     */
+    @Test
+    public void testAnchorL2_022_postDcePhisAllUsed() throws Exception {
+        String[] methods = {"appel", "terniary22", "terniary1", "discriminant",
+            "trivial1", "simpleWhile", "const1", "add"};
+        int totalLivePhis = 0;
+        for (int k = 0; k < methods.length; k++) {
+            IRControlFlowGraph cfg = runToPostDce(findMethod(methods[k]));
+            List liveQuads = new java.util.ArrayList();
+            Iterator blocks = cfg.iterator();
+            while (blocks.hasNext()) {
+                IRBasicBlock b = (IRBasicBlock) blocks.next();
+                List quads = b.getQuads();
+                for (int i = 0; i < quads.size(); i++) {
+                    Quad q = (Quad) quads.get(i);
+                    if (!q.isDeadCode()) {
+                        liveQuads.add(q);
+                    }
+                }
+            }
+            for (int i = 0; i < liveQuads.size(); i++) {
+                Quad q = (Quad) liveQuads.get(i);
+                if (q instanceof PhiAssignQuad) {
+                    totalLivePhis++;
+                    Variable lhs = (Variable) ((PhiAssignQuad) q).getDefinedOp();
+                    assertTrue("live phi without live use (DCE incomplete) in "
+                        + methods[k] + ": " + q, hasLiveUse(liveQuads, lhs));
+                }
+            }
+        }
+        assertTrue("expected join-heavy corpus to hold live phis", totalLivePhis > 0);
     }
 
     // ---------------- T3: emitter shapes for the CG-1 backend fixes ----------------
