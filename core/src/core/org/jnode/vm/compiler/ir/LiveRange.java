@@ -34,9 +34,10 @@ public class LiveRange<T> implements Comparable<LiveRange<T>> {
         this.lastUseAddress = v.getLastUseAddress();
     }
 
+    // ANCHOR-L2-002: overlap requires BOTH halves (was ||, almost always true).
     public boolean interferesWith(LiveRange<T> other) {
-        return lastUseAddress > other.getAssignAddress() ||
-            other.lastUseAddress > assignAddress;
+        return lastUseAddress >= other.getAssignAddress() &&
+            other.lastUseAddress >= assignAddress;
     }
 
     public Variable<T> getVariable() {

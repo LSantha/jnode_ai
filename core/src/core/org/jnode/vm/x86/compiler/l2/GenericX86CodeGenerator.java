@@ -158,6 +158,14 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
     }
 
     public final Label getInstrLabel(int address) {
+        // ANCHOR-L2-00D: dense quad addresses can exceed the bytecode length
+        // the table was sized with (dup/phi-moves expand one bytecode into
+        // several quads), so grow on demand instead of crashing.
+        if (address >= addressLabels.length) {
+            Label[] grown = new Label[address + 16];
+            System.arraycopy(addressLabels, 0, grown, 0, addressLabels.length);
+            addressLabels = grown;
+        }
         Label l = addressLabels[address];
         if (l == null) {
             l = new Label(instrLabelPrefix + address);
@@ -258,11 +266,8 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
 
     public void checkLabel(int address) {
         for (int i = prev_addr + 1; i <= address; i++) {
-            Label l = addressLabels[i];
-            if (l == null) {
-                l = getInstrLabel(i);
-            }
-            os.setObjectRef(l);
+            // getInstrLabel (not direct indexing) so the table can grow (ANCHOR-L2-00D).
+            os.setObjectRef(getInstrLabel(i));
         }
         prev_addr = address;
     }
@@ -3530,13 +3535,24 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
                 os.writeFSTP64(X86Register.EBP, disp1);
                 break;
 
-            case DREM:
+            case DREM: {
+                // ANCHOR-L2-009: FPREM loop to completion (C2 -> PF set -> retry)
+                // and pop the divisor, keeping the x87 stack balanced.
+                // The old sequence issued a single FPREM (partial remainder for
+                // operands 2^64 apart) and leaked a stack slot via FFREE.
+                final Label curInstrLabel = getInstrLabel(quad.getAddress());
+                final Label againLabel = new Label(curInstrLabel + "again");
                 os.writeFLD64(X86Register.EBP, disp3);
                 os.writeFLD64(X86Register.EBP, disp2);
+                os.setObjectRef(againLabel);
                 os.writeFPREM();
+                os.writeFNSTSW_AX();
+                os.writeSAHF();
+                os.writeJCC(againLabel, X86Constants.JP);
                 os.writeFSTP64(X86Register.EBP, disp1);
-                os.writeFFREE(X86Register.ST0);
+                os.writeFSTP(X86Register.ST0);
                 break;
+            }
 
             case DSUB:
                 os.writeFLD64(X86Register.EBP, disp2);
@@ -3562,13 +3578,21 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
                 os.writeFSTP32(X86Register.EBP, disp1);
                 break;
 
-            case FREM:
+            case FREM: {
+                // ANCHOR-L2-009: see DREM above (loop + balanced x87 stack).
+                final Label curInstrLabel = getInstrLabel(quad.getAddress());
+                final Label againLabel = new Label(curInstrLabel + "again");
                 os.writeFLD32(X86Register.EBP, disp3);
                 os.writeFLD32(X86Register.EBP, disp2);
+                os.setObjectRef(againLabel);
                 os.writeFPREM();
+                os.writeFNSTSW_AX();
+                os.writeSAHF();
+                os.writeJCC(againLabel, X86Constants.JP);
                 os.writeFSTP32(X86Register.EBP, disp1);
-                os.writeFFREE(X86Register.ST0);
+                os.writeFSTP(X86Register.ST0);
                 break;
+            }
 
             case FSUB:
                 os.writeFLD32(X86Register.EBP, disp2);
@@ -3579,37 +3603,42 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
             case LCMP: {
                 final Label curInstrLabel = getInstrLabel(quad.getAddress());
                 final Label ltLabel = new Label(curInstrLabel + "lt");
+                final Label gtLabel = new Label(curInstrLabel + "gt");
                 final Label endLabel = new Label(curInstrLabel + "end");
 
                 // Calculate
                 if (os.isCode32()) {
+                    // ANCHOR-L2-00B: compare without clobbering either operand.
+                    // The old sequence stored the low-half difference back into
+                    // [disp2lsb], corrupting op1 whenever it was still live.
                     int disp3lsb = disp3 - stackFrame.getHelper().SLOTSIZE;
                     int disp3msb = disp3;
                     int disp2lsb = disp2 - stackFrame.getHelper().SLOTSIZE;
                     int disp2msb = disp2;
-                    os.writeMOV(BITS32, SR1, X86Register.EBP, disp2lsb);
-                    os.writeSUB(SR1, X86Register.EBP, disp3lsb);
-                    os.writeMOV(BITS32, X86Register.EBP, disp2lsb, SR1);
+                    // Signed compare of the high halves first ...
                     os.writeMOV(BITS32, SR1, X86Register.EBP, disp2msb);
-                    os.writeSBB(SR1, X86Register.EBP, disp3msb);
-                    os.writeJCC(ltLabel, X86Constants.JL); // JL
-                    os.writeOR(X86Register.EBP, disp2lsb, SR1);
+                    os.writeCMP(SR1, X86Register.EBP, disp3msb);
+                    os.writeJCC(ltLabel, X86Constants.JL); // high1 < high2
+                    os.writeJCC(gtLabel, X86Constants.JG); // high1 > high2
+                    // ... then unsigned compare of the low halves.
+                    os.writeMOV(BITS32, SR1, X86Register.EBP, disp2lsb);
+                    os.writeCMP(SR1, X86Register.EBP, disp3lsb);
+                    os.writeJCC(ltLabel, X86Constants.JB); // low1 < low2
+                    os.writeJCC(gtLabel, X86Constants.JA); // low1 > low2
+                    /** EQ */
+                    os.writeMOV_Const(BITS32, X86Register.EBP, disp1, 0);
+                    os.writeJMP(endLabel);
+                    /** GT */
+                    os.setObjectRef(gtLabel);
+                    os.writeMOV_Const(BITS32, X86Register.EBP, disp1, 1);
+                    os.writeJMP(endLabel);
+                    /** LT */
+                    os.setObjectRef(ltLabel);
+                    os.writeMOV_Const(BITS32, X86Register.EBP, disp1, -1);
+                    os.setObjectRef(endLabel);
+                } else {
+                    throw new IllegalArgumentException("Unknown operation: " + operation);
                 }
-//                else {
-//                    final GPR64 v2r = v2.getRegister(eContext);
-//                    final GPR64 v1r = v1.getRegister(eContext);
-//                    os.writeCMP(v1r, v2r);
-//                    os.writeJCC(ltLabel, X86Constants.JL); // JL
-//                }
-                os.writeMOV_Const(BITS32, X86Register.EBP, disp1, 0);
-                os.writeJCC(endLabel, X86Constants.JZ); // value1 == value2
-                /** GT */
-                os.writeINC(BITS32, X86Register.EBP, disp1);
-                os.writeJMP(endLabel);
-                /** LT */
-                os.setObjectRef(ltLabel);
-                os.writeMOV_Const(BITS32, X86Register.EBP, disp1, -1);
-                os.setObjectRef(endLabel);
                 break;
             }
             case LADD: {
@@ -3617,8 +3646,9 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
                 int disp3msb = disp3;
                 int disp2lsb = disp2 - stackFrame.getHelper().SLOTSIZE;
                 int disp2msb = disp2;
-                int disp1lsb = disp2 - stackFrame.getHelper().SLOTSIZE;
-                int disp1msb = disp2;
+                // ANCHOR-L2-007: result halves go to disp1 (were disp2).
+                int disp1lsb = disp1 - stackFrame.getHelper().SLOTSIZE;
+                int disp1msb = disp1;
                 os.writeMOV(BITS32, SR1, X86Register.EBP, disp2lsb);
                 os.writeADD(SR1, X86Register.EBP, disp3lsb);
                 os.writeMOV(BITS32, X86Register.EBP, disp1lsb, SR1);
@@ -3640,8 +3670,9 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
                 int disp3msb = disp3;
                 int disp2lsb = disp2 - stackFrame.getHelper().SLOTSIZE;
                 int disp2msb = disp2;
-                int disp1lsb = disp2 - stackFrame.getHelper().SLOTSIZE;
-                int disp1msb = disp2;
+                // ANCHOR-L2-007: result halves go to disp1 (were disp2).
+                int disp1lsb = disp1 - stackFrame.getHelper().SLOTSIZE;
+                int disp1msb = disp1;
                 os.writeMOV(BITS32, SR1, X86Register.EBP, disp2lsb);
                 os.writeSUB(SR1, X86Register.EBP, disp3lsb);
                 os.writeMOV(BITS32, X86Register.EBP, disp1lsb, SR1);
@@ -3846,6 +3877,7 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
 
     @Override
     public void generateCodeFor(NewPrimitiveArrayAssignQuad<T> quad) {
+        checkLabel(quad.getAddress()); // ANCHOR-L2-00C: position this quad's label
         // Setup a call to SoftByteCodes.allocArray
         X86CompilerHelper helper = stackFrame.getHelper();
         helper.writePushStaticsEntry(getInstrLabel(quad.getAddress()),
@@ -3879,6 +3911,7 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
 
     @Override
     public void generateCodeFor(NewObjectArrayAssignQuad<T> quad) {
+        checkLabel(quad.getAddress()); // ANCHOR-L2-00C: position this quad's label
         VmConstClass clazz = quad.getComponentType();
         Label label = getInstrLabel(quad.getAddress());
         writeResolveAndLoadClassToReg(clazz, SR1, label);
@@ -3907,6 +3940,7 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
 
     @Override
     public void generateCodeFor(NewMultiArrayAssignQuad<T> quad) {
+        checkLabel(quad.getAddress()); // ANCHOR-L2-00C: position this quad's label
         // Create the dimensions array
         Operand[] sizes = quad.getSizes();
         Label label = getInstrLabel(quad.getAddress());
@@ -3964,6 +3998,7 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
 
     @Override
     public void generateCodeFor(ArrayLengthAssignQuad quad) {
+        checkLabel(quad.getAddress()); // ANCHOR-L2-00C: position this quad's label
         Variable lhs = quad.getLHS();
         final int slotSize = stackFrame.getHelper().SLOTSIZE;
         int arrayLengthOffset = VmArray.LENGTH_OFFSET * slotSize;
@@ -4365,6 +4400,7 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
 
     @Override
     public void generateCodeFor(ConstantClassAssignQuad<T> quad) {
+        checkLabel(quad.getAddress()); // ANCHOR-L2-00C: position this quad's label
         VmConstClass clazz = quad.getConstClass();
         // Resolve the class
         Label label = getInstrLabel(quad.getAddress());
@@ -4385,18 +4421,21 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
 
     @Override
     public void generateCodeFor(ConstantStringAssignQuad<T> quad) {
+        checkLabel(quad.getAddress()); // ANCHOR-L2-00C: label must be positioned even with no emission yet
         //todo
 //        throw new UnsupportedOperationException();
     }
 
     @Override
     public void generateCodeFor(CheckcastQuad<T> quad) {
+        checkLabel(quad.getAddress()); // ANCHOR-L2-00C: label must be positioned even with no emission yet
         //todo
 //        throw new UnsupportedOperationException();
     }
 
     @Override
     public void generateCodeFor(InstanceofAssignQuad<T> quad) {
+        checkLabel(quad.getAddress()); // ANCHOR-L2-00C: position this quad's label
         VmConstClass clazz = quad.getConstClass();
         Operand ref = quad.getRef();
         Variable lhs = quad.getLHS();
@@ -4663,6 +4702,7 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
 
     @Override
     public void generateCodeFor(TableswitchQuad<T> quad) {
+        checkLabel(quad.getAddress()); // ANCHOR-L2-00C: position this quad's label
         // IMPROVE: check Jaos implementation
         Operand val = quad.getValue();
         IRBasicBlock[] blocks = quad.getTargetBlocks();
@@ -4808,6 +4848,7 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
 
     @Override
     public void generateCodeFor(MonitorenterQuad<T> quad) {
+        checkLabel(quad.getAddress()); // ANCHOR-L2-00C: position this quad's label
         Operand op = quad.getOperand();
         if (op.getAddressingMode() == REGISTER) {
             os.writePUSH((GPR) ((RegisterLocation) ((Variable) op).getLocation()).getRegister());
@@ -4821,6 +4862,7 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
 
     @Override
     public void generateCodeFor(MonitorexitQuad<T> quad) {
+        checkLabel(quad.getAddress()); // ANCHOR-L2-00C: position this quad's label
         Operand op = quad.getOperand();
         if (op.getAddressingMode() == REGISTER) {
             os.writePUSH((GPR) ((RegisterLocation) ((Variable) op).getLocation()).getRegister());
@@ -4834,6 +4876,7 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
 
     @Override
     public void generateCodeFor(NewAssignQuad<T> quad) {
+        checkLabel(quad.getAddress()); // ANCHOR-L2-00C: position this quad's label
         VmConstClass clazz = quad.getType();
         Label label = getInstrLabel(quad.getAddress());
         writeResolveAndLoadClassToReg(clazz, SR1, label);
@@ -4854,6 +4897,7 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
 
     @Override
     public void generateCodeFor(ThrowQuad<T> quad) {
+        checkLabel(quad.getAddress()); // ANCHOR-L2-00C: position this quad's label
         // Exception must be in EAX
         Operand op = quad.getOperand();
         if (op.getAddressingMode() == REGISTER) {
@@ -5052,6 +5096,7 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
 
     @Override
     public void generateCodeFor(RefAssignQuad<T> quad) {
+        checkLabel(quad.getAddress()); // ANCHOR-L2-00C: position this quad's label
         VmConstFieldRef fieldRef = quad.getFieldRef();
         fieldRef.resolve(currentMethod.getDeclaringClass().getLoader());
         final VmField field = fieldRef.getResolvedVmField();
@@ -5286,6 +5331,7 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
 
     @Override
     public void generateCodeFor(RefStoreQuad<T> quad) {
+        checkLabel(quad.getAddress()); // ANCHOR-L2-00C: position this quad's label
         VmConstFieldRef fieldRef = quad.getFieldRef();
         fieldRef.resolve(currentMethod.getDeclaringClass().getLoader());
         final VmField field = fieldRef.getResolvedVmField();
@@ -5458,6 +5504,7 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
 
     @Override
     public void generateCodeFor(SpecialCallAssignQuad quad) {
+        checkLabel(quad.getAddress()); // ANCHOR-L2-00C: position this quad's label
         VmConstMethodRef methodRef = quad.getMethodRef();
         methodRef.resolve(currentMethod.getDeclaringClass().getLoader());
         try {
@@ -5481,12 +5528,14 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
             }
         } else if (lhs.getAddressingMode() == STACK) {
             int disp = ((StackLocation) lhs.getLocation()).getDisplacement();
-            os.writeMOV(X86Constants.BITS32, GPR.ESP, disp, GPR.EAX);
+            // ANCHOR-L2-008: spills are EBP-relative (was ESP).
+            os.writeMOV(X86Constants.BITS32, X86Register.EBP, disp, GPR.EAX);
         }
     }
 
     @Override
     public void generateCodeFor(SpecialCallQuad quad) {
+        checkLabel(quad.getAddress()); // ANCHOR-L2-00C: position this quad's label
         VmConstMethodRef methodRef = quad.getMethodRef();
         methodRef.resolve(currentMethod.getDeclaringClass().getLoader());
         try {
@@ -5572,7 +5621,8 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
             }
         } else if (lhs.getAddressingMode() == STACK) {
             int disp = ((StackLocation) lhs.getLocation()).getDisplacement();
-            os.writeMOV(X86Constants.BITS32, GPR.ESP, disp, GPR.EAX);
+            // ANCHOR-L2-008: spills are EBP-relative (was ESP).
+            os.writeMOV(X86Constants.BITS32, X86Register.EBP, disp, GPR.EAX);
         }
     }
 
@@ -5657,7 +5707,8 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
                 }
             } else if (lhs.getAddressingMode() == STACK) {
                 int disp = ((StackLocation) lhs.getLocation()).getDisplacement();
-                os.writeMOV(X86Constants.BITS32, GPR.ESP, disp, GPR.EAX);
+                // ANCHOR-L2-008: spills are EBP-relative (was ESP).
+                os.writeMOV(X86Constants.BITS32, X86Register.EBP, disp, GPR.EAX);
             }
         }
     }
@@ -5679,6 +5730,7 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
 
     @Override
     public void generateCodeFor(InterfaceCallAssignQuad quad) {
+        checkLabel(quad.getAddress()); // ANCHOR-L2-00C: position this quad's label
         VmConstMethodRef methodRef = quad.getMethodRef();
         methodRef.resolve(currentMethod.getDeclaringClass().getLoader());
         final VmMethod method = methodRef.getResolvedVmMethod();
@@ -5697,12 +5749,14 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
             }
         } else if (lhs.getAddressingMode() == STACK) {
             int disp = ((StackLocation) lhs.getLocation()).getDisplacement();
-            os.writeMOV(X86Constants.BITS32, GPR.ESP, disp, GPR.EAX);
+            // ANCHOR-L2-008: spills are EBP-relative (was ESP).
+            os.writeMOV(X86Constants.BITS32, X86Register.EBP, disp, GPR.EAX);
         }
     }
 
     @Override
     public void generateCodeFor(InterfaceCallQuad quad) {
+        checkLabel(quad.getAddress()); // ANCHOR-L2-00C: position this quad's label
         VmConstMethodRef methodRef = quad.getMethodRef();
         // Resolve the method
         methodRef.resolve(currentMethod.getDeclaringClass().getLoader());

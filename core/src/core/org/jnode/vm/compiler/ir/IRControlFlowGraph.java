@@ -344,14 +344,21 @@ public class IRControlFlowGraph<T> implements Iterable<IRBasicBlock<T>> {
     }
 
     /**
-     *
+     * Rebuild the dominated-blocks tree from the final idom fixpoint.
+     * Must not rely on edges accumulated by {@code setIDominator} during
+     * {@code doComputeDominance}: idoms change between iterations and every
+     * former parent keeps a stale child edge (entries are only added, never
+     * removed). Stale edges make {@code renameVariables} visit blocks twice,
+     * appending duplicate phi sources (ANCHOR-L2-004).
      */
     private void computeDominatedBlocks() {
-        for (IRBasicBlock<T> b : postOrderList) {
+        for (IRBasicBlock<T> b : bblocks) {
+            b.clearDominatedBlocks();
+        }
+        for (IRBasicBlock<T> b : bblocks) {
             IRBasicBlock<T> idom = b.getIDominator();
-            if (idom != null) {
+            if (idom != null && idom != b) {
                 idom.addDominatedBlock(b);
-                idom = idom.getIDominator();
             }
         }
     }

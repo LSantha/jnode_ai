@@ -125,6 +125,17 @@ public class IRBasicBlock<T> {
     }
 
     /**
+     * Drop all dominated-block edges. Used by
+     * {@code IRControlFlowGraph.computeDominatedBlocks}, which rebuilds the
+     * dominator tree from the final idom fixpoint: {@code setIDominator}
+     * accumulates stale child edges while idoms still change between
+     * iterations (ANCHOR-L2-004).
+     */
+    public void clearDominatedBlocks() {
+        dominatedBlocks.clear();
+    }
+
+    /**
      * @return the variables for the basic block
      */
     public Variable<T>[] getVariables() {
