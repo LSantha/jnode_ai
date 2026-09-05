@@ -22,6 +22,7 @@ package org.jnode.fs.fat;
 
 import java.io.IOException;
 import java.nio.ByteBuffer;
+import java.nio.ByteOrder;
 
 import org.jnode.driver.block.BlockDeviceAPI;
 import org.jnode.driver.block.Geometry;
@@ -29,7 +30,6 @@ import org.jnode.driver.block.GeometryException;
 import org.jnode.partitions.ibm.IBMPartitionTable;
 import org.jnode.partitions.ibm.IBMPartitionTableEntry;
 import org.jnode.partitions.ibm.IBMPartitionTypes;
-import org.jnode.util.LittleEndian;
 import org.jnode.util.NumberUtils;
 
 /**
@@ -37,25 +37,26 @@ import org.jnode.util.NumberUtils;
  */
 public class BootSector {
 
-    private byte[] data;
+    private ByteBuffer data;
     private boolean dirty;
     private final IBMPartitionTableEntry[] partitions;
 
     public BootSector(int size) {
-        data = new byte[size];
+        data = ByteBuffer.allocate(size);
+        data.order(ByteOrder.LITTLE_ENDIAN);
         dirty = false;
         partitions = new IBMPartitionTableEntry[4];
     }
 
     public BootSector(byte[] src) {
-        data = new byte[src.length];
-        System.arraycopy(src, 0, data, 0, src.length);
+        data = ByteBuffer.wrap(src.clone());
+        data.order(ByteOrder.LITTLE_ENDIAN);
         dirty = false;
         partitions = new IBMPartitionTableEntry[4];
     }
 
     public boolean isaValidBootSector() {
-        return IBMPartitionTable.containsPartitionTable(data);
+        return IBMPartitionTable.containsPartitionTable(data.array());
     }
 
     /**
@@ -64,8 +65,8 @@ public class BootSector {
      * @param device
      */
     public synchronized void read(BlockDeviceAPI device) throws IOException {
-        device.read(0, ByteBuffer.wrap(data));
-
+        data.clear();
+        device.read(0, data);
         dirty = false;
     }
 
@@ -75,7 +76,8 @@ public class BootSector {
      * @param device
      */
     public synchronized void write(BlockDeviceAPI device) throws IOException {
-        device.write(0, ByteBuffer.wrap(data));
+        data.rewind();
+        device.write(0, data);
         dirty = false;
     }
 
@@ -87,7 +89,7 @@ public class BootSector {
     public String getOemName() {
         StringBuilder b = new StringBuilder(8);
         for (int i = 0; i < 8; i++) {
-            int v = data[0x3 + i];
+            int v = data.get(0x3 + i) & 0xFF;
             b.append((char) v);
         }
         return b.toString();
@@ -104,8 +106,9 @@ public class BootSector {
             } else {
                 ch = (char) 0;
             }
-            set8(0x3 + i, ch);
+            data.put(0x3 + i, (byte) ch);
         }
+        dirty = true;
     }
 
     /**
@@ -308,7 +311,7 @@ public class BootSector {
      * @return int
      */
     protected int get8(int offset) {
-        return LittleEndian.getUInt8(data, offset);
+        return data.get(offset) & 0xFF;
     }
 
     /**
@@ -317,7 +320,7 @@ public class BootSector {
      * @param offset
      */
     protected void set8(int offset, int value) {
-        LittleEndian.setInt8(data, offset, value);
+        data.put(offset, (byte) value);
         dirty = true;
     }
 
@@ -328,7 +331,7 @@ public class BootSector {
      * @return int
      */
     protected int get16(int offset) {
-        return LittleEndian.getUInt16(data, offset);
+        return data.getShort(offset) & 0xFFFF;
     }
 
     /**
@@ -337,7 +340,7 @@ public class BootSector {
      * @param offset
      */
     protected void set16(int offset, int value) {
-        LittleEndian.setInt16(data, offset, value);
+        data.putShort(offset, (short) value);
         dirty = true;
     }
 
@@ -348,7 +351,7 @@ public class BootSector {
      * @return int
      */
     protected long get32(int offset) {
-        return LittleEndian.getUInt32(data, offset);
+        return data.getInt(offset) & 0xFFFFFFFFL;
     }
 
     /**
@@ -357,7 +360,7 @@ public class BootSector {
      * @param offset
      */
     protected void set32(int offset, long value) {
-        LittleEndian.setInt32(data, offset, (int) value);
+        data.putInt(offset, (int) value);
         dirty = true;
     }
 
@@ -394,7 +397,7 @@ public class BootSector {
 
     public synchronized IBMPartitionTableEntry getPartition(int partNr) {
         if (partitions[partNr] == null) {
-            partitions[partNr] = new IBMPartitionTableEntry(null, data, partNr);
+            partitions[partNr] = new IBMPartitionTableEntry(null, data.array(), partNr);
         }
         return partitions[partNr];
     }
@@ -439,10 +442,11 @@ public class BootSector {
         res.append(getNrRootDirEntries());
         res.append('\n');
 
-        for (int i = 0; i < data.length / 16; i++) {
+        byte[] arr = data.array();
+        for (int i = 0; i < arr.length / 16; i++) {
             res.append(Integer.toHexString(i));
             res.append('-');
-            res.append(NumberUtils.hex(data, i * 16, 16));
+            res.append(NumberUtils.hex(arr, i * 16, 16));
             res.append('\n');
         }
 

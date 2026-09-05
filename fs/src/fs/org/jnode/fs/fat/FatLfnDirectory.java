@@ -120,7 +120,7 @@ public class FatLfnDirectory extends FatDirectory {
 
     }
 
-    protected synchronized void read(byte[] src) {
+    protected synchronized void read(ByteBuffer src) {
         super.read(src);
         readLFN();
     }
