@@ -4980,10 +4980,15 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
         IRBasicBlock[] blocks = quad.getTargetBlocks();
         int lowValue = quad.getLowValue();
         int highValue = quad.getHighValue();
-        int defAddress = quad.getDefaultAddress();
         X86CompilerHelper helper = stackFrame.getHelper();
 
         final int n = blocks.length;
+        // ANCHOR-L2-070 (CG-4a): the default target is the last entry of
+        // targetBlocks (quad.getDefaultAddress() is a stale bytecode address
+        // from translation time; fixupAddresses() renumbers block PCs, so only
+        // block-relative labels resolve. helper.getInstrLabel() labels are
+        // never positioned in the L2 flow).
+        final Label defaultLabel = getInstrLabel(blocks[n - 1].getStartPC());
         if ((n > 4) && os.isCode32()) {
             // Optimized version.  Needs some overhead, so only useful for
             // larger tables.
@@ -5000,7 +5005,7 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
                 value -= lowValue;
                 // If outsite low-high range, jump to default
                 if (value >= n) {
-                    os.writeJMP(helper.getInstrLabel(defAddress));
+                    os.writeJMP(defaultLabel);
                 }
                 // Get absolute address of l1 into S0. (do not use
                 // stackMgr.writePOP!)
@@ -5024,7 +5029,7 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
                 }
                 // If outsite low-high range, jump to default
                 os.writeCMP_Const(valr, n);
-                os.writeJCC(helper.getInstrLabel(defAddress), X86Constants.JAE);
+                os.writeJCC(defaultLabel, X86Constants.JAE);
 
 
 
@@ -5050,7 +5055,7 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
                 }
                 // If outsite low-high range, jump to default
                 os.writeCMP_Const(BITS32, X86Register.EBP, vald, n);
-                os.writeJCC(helper.getInstrLabel(defAddress), X86Constants.JAE);
+                os.writeJCC(defaultLabel, X86Constants.JAE);
 
 
 
@@ -5112,7 +5117,7 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
                 os.writeCMP_Const(valr, lowValue + i);
                 os.writeJCC(getInstrLabel(blocks[i].getStartPC()), X86Constants.JE); // JE
             }
-            os.writeJMP(getInstrLabel(defAddress));
+            os.writeJMP(defaultLabel);
         }
 
 //        val.release(eContext);

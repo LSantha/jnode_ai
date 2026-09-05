@@ -185,6 +185,34 @@ public class L2PipelineTest {
         assertCompiles("lxor");
     }
 
+    /**
+     * CG-4a (ANCHOR-L2-070): switches through the real pipeline —
+     * tableswitch PIC (dense), tableswitch linear (small), lookupswitch.
+     */
+    @Test
+    public void testCompileSwitches() throws Exception {
+        assertCompiles("switchDense");
+        assertCompiles("switchSmall");
+        assertCompiles("switchSparse");
+    }
+
+    /**
+     * CG-4a: pin which lowering each switch shape takes (PIC jump table vs
+     * linear compare chains).
+     */
+    @Test
+    public void testSwitchEmissionShapes() throws Exception {
+        String dense = compileToText(findMethod("switchDense"));
+        assertTrue("dense tableswitch must use the PIC jump table, got:\n" + dense,
+            dense.contains("call "));
+        String small = compileToText(findMethod("switchSmall"));
+        assertTrue("small tableswitch must use compare chains, got:\n" + small,
+            small.contains("cmp "));
+        String sparse = compileToText(findMethod("switchSparse"));
+        assertTrue("lookupswitch must use compare chains, got:\n" + sparse,
+            sparse.contains("cmp "));
+    }
+
     // ---------------- T1: dominator-tree exactness (ANCHOR-L2-004) ----------------
 
     private static void assertDominatedTreeExact(String name) throws Exception {

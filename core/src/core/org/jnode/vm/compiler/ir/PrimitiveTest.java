@@ -464,4 +464,35 @@ public class PrimitiveTest {
         }
         return sum;
     }
+
+    // CG-4a switch corpus (ANCHOR-L2-070)
+    public static int switchDense(int a0) {
+        switch (a0) {
+            case 0: return 10;
+            case 1: return 11;
+            case 2: return 12;
+            case 3: return 13;
+            case 4: return 14;
+            case 5: return 15;
+            default: return -1;
+        }
+    }
+
+    public static int switchSparse(int a0) {
+        switch (a0) {
+            case -100: return 1;
+            case 7: return 2;
+            case 1000: return 3;
+            default: return -1;
+        }
+    }
+
+    public static int switchSmall(int a0) {
+        switch (a0) {
+            case 0: return 100;
+            case 1: return 200;
+            case 2: return 300;
+            default: return -1;
+        }
+    }
 }
