@@ -534,4 +534,37 @@ public class PrimitiveTest {
     public static double dret(double a0) {
         return a0 + 1.0;
     }
+
+    // CG-4c type corpus (ANCHOR-L2-074; `new` needs invokespecial, CG-4e)
+    public static int isString(Object o) {
+        return (o instanceof String) ? 1 : 0;
+    }
+
+    public static int isSerializable(Object o) {
+        return (o instanceof java.io.Serializable) ? 1 : 0;
+    }
+
+    public static int isIntArray(Object o) {
+        return (o instanceof int[]) ? 1 : 0;
+    }
+
+    public static String castString(Object o) {
+        return (String) o;
+    }
+
+    public static java.io.Serializable castSer(Object o) {
+        return (java.io.Serializable) o;
+    }
+
+    public static String hello() {
+        return "hi";
+    }
+
+    public static Class stringClass() {
+        return String.class;
+    }
+
+    public static int[][] multi(int n) {
+        return new int[n][2];
+    }
 }

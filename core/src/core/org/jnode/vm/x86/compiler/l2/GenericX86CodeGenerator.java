@@ -39,6 +39,7 @@ import org.jnode.vm.classmgr.TIBLayout;
 import org.jnode.vm.classmgr.VmArray;
 import org.jnode.vm.classmgr.VmClassType;
 import org.jnode.vm.classmgr.VmConstClass;
+import org.jnode.vm.classmgr.VmConstString;
 import org.jnode.vm.classmgr.VmConstFieldRef;
 import org.jnode.vm.classmgr.VmConstMethodRef;
 import org.jnode.vm.classmgr.VmField;
@@ -4243,7 +4244,12 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
             throw new IllegalArgumentException();
         }
 
+        // ANCHOR-L2-074 (CG-4c): ECX is caller-saved (L1A pool marks EBX/ESI
+        // callee-saved, ECX not); a live ECX-allocated value would not survive
+        // the call, so preserve it. EBX/ESI need nothing (JNode convention).
+        os.writePUSH(X86Register.ECX);
         callJavaMethod(stackFrame.getEntryPoints().getAllocPrimitiveArrayMethod());
+        os.writePOP(X86Register.ECX);
         Variable lhs = quad.getLHS();
         if (lhs.getAddressingMode() == REGISTER) {
             os.writeMOV(BITS32, (GPR) ((RegisterLocation) lhs.getLocation()).getRegister(), X86Register.EAX);
@@ -4273,7 +4279,10 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
         } else {
             throw new IllegalArgumentException();
         }
+        // ANCHOR-L2-074 (CG-4c): preserve caller-saved ECX across the call.
+        os.writePUSH(X86Register.ECX);
         callJavaMethod(stackFrame.getEntryPoints().getAnewarrayMethod());
+        os.writePOP(X86Register.ECX);
         Variable lhs = quad.getLHS();
         if (lhs.getAddressingMode() == REGISTER) {
             os.writeMOV(BITS32, (GPR) ((RegisterLocation) lhs.getLocation()).getRegister(), X86Register.EAX);
@@ -4295,7 +4304,12 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
         helper.writePushStaticsEntry(label, currentMethod.getDeclaringClass()); /* currentClass */
         os.writePUSH(10); /* type=int */
         os.writePUSH(sizes.length); /* elements */
+        // ANCHOR-L2-074 (CG-4c): ECX is caller-saved (L1A pool marks EBX/ESI
+        // callee-saved, ECX not); a live ECX-allocated value would not survive
+        // the call, so preserve it. EBX/ESI need nothing (JNode convention).
+        os.writePUSH(X86Register.ECX);
         callJavaMethod(stackFrame.getEntryPoints().getAllocPrimitiveArrayMethod());
+        os.writePOP(X86Register.ECX);
         final GPR dimsr = SR1;
         if (SR1 != X86Register.EAX) {
             os.writeMOV(BITS32, SR1, X86Register.EAX);
@@ -4331,7 +4345,10 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
         // Now call the multianewarrayhelper
         os.writeXCHG(X86Register.ESP, 0, dimsr);
         os.writePUSH(dimsr); // dimensions[]
+        // ANCHOR-L2-074 (CG-4c): preserve caller-saved ECX across the call.
+        os.writePUSH(X86Register.ECX);
         callJavaMethod(stackFrame.getEntryPoints().getAllocMultiArrayMethod());
+        os.writePOP(X86Register.ECX);
         Variable lhs = quad.getLHS();
         if (lhs.getAddressingMode() == REGISTER) {
             os.writeMOV(BITS32, (GPR) ((RegisterLocation) lhs.getLocation()).getRegister(), X86Register.EAX);
@@ -4768,7 +4785,11 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
         writeResolveAndLoadClassToReg(clazz, SR1, label);
         // Call SoftByteCodes#getClassForVmType
         os.writePUSH(SR1);
-        stackFrame.getHelper().invokeJavaMethod(stackFrame.getEntryPoints().getGetClassForVmTypeMethod());
+        // ANCHOR-L2-074 (CG-4c): EAX-result model + preserve caller-saved ECX
+        // (shared invokeJavaMethod NPEs with L2's null stackMgr, B18).
+        os.writePUSH(X86Register.ECX);
+        callJavaMethod(stackFrame.getEntryPoints().getGetClassForVmTypeMethod());
+        os.writePOP(X86Register.ECX);
         Variable lhs = quad.getLHS();
         if (lhs.getAddressingMode() == REGISTER) {
             os.writeMOV(BITS32, (GPR) ((RegisterLocation) lhs.getLocation()).getRegister(), X86Register.EAX);
@@ -4782,16 +4803,106 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
 
     @Override
     public void generateCodeFor(ConstantStringAssignQuad<T> quad) {
-        checkLabel(quad.getAddress()); // ANCHOR-L2-00C: label must be positioned even with no emission yet
-        //todo
-//        throw new UnsupportedOperationException();
+        checkLabel(quad.getAddress()); // ANCHOR-L2-00C: position this quad's label
+        // ANCHOR-L2-074 (CG-4c): interned strings live in the shared statics
+        // table (L1A RefItem.loadToConstant shape).
+        VmConstString value = quad.getConstString();
+        Variable lhs = quad.getLHS();
+        X86CompilerHelper helper = stackFrame.getHelper();
+        Label label = getInstrLabel(quad.getAddress());
+        if (lhs.getAddressingMode() == REGISTER) {
+            GPR reg = (GPR) ((RegisterLocation) lhs.getLocation()).getRegister();
+            helper.writeGetStaticsEntry(label, reg, value);
+        } else if (lhs.getAddressingMode() == STACK) {
+            int disp = ((StackLocation) lhs.getLocation()).getDisplacement();
+            helper.writeGetStaticsEntry(label, SR1, value);
+            os.writeMOV(BITS32, X86Register.EBP, disp, SR1);
+        } else {
+            throw new IllegalArgumentException();
+        }
     }
 
     @Override
     public void generateCodeFor(CheckcastQuad<T> quad) {
-        checkLabel(quad.getAddress()); // ANCHOR-L2-00C: label must be positioned even with no emission yet
-        //todo
-//        throw new UnsupportedOperationException();
+        checkLabel(quad.getAddress()); // ANCHOR-L2-00C: position this quad's label
+        // ANCHOR-L2-074 (CG-4c): null passes in place; otherwise the shared
+        // type test, else classCastFailed(ref, type). Mirrors L1A checkcast.
+        VmConstClass clazz = quad.getConstClass();
+        clazz.resolve(currentMethod.getDeclaringClass().getLoader());
+        final VmType<?> resolvedType = clazz.getResolvedVmClass();
+        final Label curLabel = getInstrLabel(quad.getAddress());
+        final Label trueLabel = new Label(curLabel + "cc_true");
+        final Label endLabel = new Label(curLabel + "cc_end");
+        Operand ref = quad.getRef();
+        writeInstanceTest(ref, clazz, resolvedType, curLabel, trueLabel, endLabel);
+        // False fallthrough: restore temps, then fail (throw path: nothing live).
+        os.writePOP(X86Register.EBX);
+        os.writePOP(X86Register.ECX);
+        if (ref.getAddressingMode() == REGISTER) {
+            GPR origReg = (GPR) ((RegisterLocation) ((Variable) ref).getLocation()).getRegister();
+            os.writeMOV(BITS32, X86Register.EAX, origReg);
+        } else if (ref.getAddressingMode() == STACK) {
+            int disp = ((StackLocation) ((Variable) ref).getLocation()).getDisplacement();
+            os.writeMOV(BITS32, X86Register.EAX, X86Register.EBP, disp);
+        } // CONSTANT took the null branch above and never reaches here.
+        os.writePUSH(X86Register.EAX);
+        writeResolveAndLoadClassToReg(clazz, X86Register.EDX, curLabel);
+        os.writePUSH(X86Register.EDX);
+        callJavaMethod(stackFrame.getEntryPoints().getClassCastFailedMethod());
+        os.setObjectRef(trueLabel);
+        os.setObjectRef(endLabel);
+    }
+
+    /**
+     * Shared instanceof/checkcast type test (ANCHOR-L2-074, CG-4c). Loads the
+     * reference (normalizing ECX-allocated refs to EAX, since the init CALL
+     * below would kill ECX), lets null jump to {@code nullLabel} (only null
+     * constants arrive as CONSTANT; strings/classes have their own quads),
+     * then runs the class fast path ({@code instanceOfClass}, which
+     * initializes internally) or the interface/array loop ({@code instanceOf},
+     * with explicit resolve + init first so EAX-objectr is loaded after).
+     * Jumps to {@code trueLabel} on success, falls through on failure with
+     * ECX + EBX pushed (caller pops on both paths).
+     * <p/>
+     * Register discipline: EAX/EDX are never allocated (free scratch); EBX is
+     * PUSHed for the loop counter; ECX is PUSHed (the helpers and the init
+     * call destroy it); EBX/ESI values survive via the JNode callee-saved
+     * convention (same model as L1A's pool: EBX/ESI not caller-saved).
+     */
+    private void writeInstanceTest(Operand ref, VmConstClass clazz, VmType<?> resolvedType,
+                                   Label curLabel, Label trueLabel, Label nullLabel) {
+        X86CompilerHelper helper = stackFrame.getHelper();
+        if (resolvedType.isInterface() || resolvedType.isArray()) {
+            writeResolveAndLoadClassToReg(clazz, X86Register.EDX, curLabel);
+            helper.writeClassInitialize(curLabel, X86Register.EDX, X86Register.EAX, resolvedType);
+        }
+        GPR refr;
+        if (ref.getAddressingMode() == REGISTER) {
+            refr = (GPR) ((RegisterLocation) ((Variable) ref).getLocation()).getRegister();
+            if (refr == X86Register.ECX) {
+                os.writeMOV(BITS32, SR1, refr);
+                refr = SR1;
+            }
+        } else if (ref.getAddressingMode() == STACK) {
+            int disp = ((StackLocation) ((Variable) ref).getLocation()).getDisplacement();
+            os.writeMOV(BITS32, SR1, X86Register.EBP, disp);
+            refr = SR1;
+        } else if (ref.getAddressingMode() == CONSTANT) {
+            os.writeJMP(nullLabel);
+            return;
+        } else {
+            throw new IllegalArgumentException();
+        }
+        os.writeTEST(refr, refr);
+        os.writeJCC(nullLabel, X86Constants.JZ);
+        os.writePUSH(X86Register.ECX);
+        os.writePUSH(X86Register.EBX);
+        if (resolvedType.isInterface() || resolvedType.isArray()) {
+            instanceOf(refr, X86Register.EDX, X86Register.EAX, X86Register.EBX, trueLabel, true, curLabel);
+        } else {
+            instanceOfClass(refr, (VmClassType<?>) resolvedType, X86Register.EDX, null, trueLabel, true,
+                curLabel);
+        }
     }
 
     @Override
@@ -4804,96 +4915,36 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
         // Resolve the classRef
         clazz.resolve(currentMethod.getDeclaringClass().getLoader());
 
-        // Prepare
-//        final X86RegisterPool pool = eContext.getGPRPool();
+        // ANCHOR-L2-074 (CG-4c): 1/0 result via the shared type test (null
+        // yields 0). Class fast path and interface/array loop below.
         final VmType<?> resolvedType = clazz.getResolvedVmClass();
-
-        if (resolvedType.isInterface() || resolvedType.isArray()) {
-            if (ref.getAddressingMode() == REGISTER) {
-                //todo
-                throw new IllegalArgumentException();
-            } else if (ref.getAddressingMode() == STACK) {
-                //todo
-                throw new IllegalArgumentException();
-            } else {
-                throw new IllegalArgumentException();
-            }
-
-//            // It is an interface, do it the hard way
-//
-//            // Load reference
-//            final RefItem ref = vstack.popRef();
-//            ref.load(eContext);
-//            final GPR refr = ref.getRegister();
-//
-//            // Allocate tmp registers
-//            final GPR classr = (GPR) L1AHelper.requestRegister(eContext,
-//                JvmType.REFERENCE, false);
-//            final GPR cntr = (GPR) L1AHelper.requestRegister(eContext,
-//                JvmType.INT, false);
-//            final GPR tmpr = (GPR) L1AHelper.requestRegister(eContext,
-//                JvmType.REFERENCE, false);
-//            final Label curInstrLabel = currentLabel;
-//
-//            /* Objectref is already on the stack */
-//            writeResolveAndLoadClassToReg(classRef, classr);
-//            stackFrame.getHelper().writeClassInitialize(curInstrLabel, classr, tmpr, resolvedType);
-//
-//            final Label trueLabel = new Label(curInstrLabel + "io-true");
-//            final Label endLabel = new Label(curInstrLabel + "io-end");
-//
-//            /* Is instanceof? */
-//            instanceOf(refr, classr, tmpr, cntr, trueLabel, false, currentLabel);
-//
-//            final IntItem result = (IntItem) L1AHelper.requestWordRegister(eContext, JvmType.INT, false);
-//            final GPR resultr = result.getRegister();
-//
-//            /* Not instanceof */
-//            // TODO: use setcc instead of jumps
-//            os.writeXOR(resultr, resultr);
-//            os.writeJMP(endLabel);
-//
-//            os.setObjectRef(trueLabel);
-//            os.writeMOV_Const(resultr, 1);
-//
-//            // Push result
-//            os.setObjectRef(endLabel);
-//            ref.release(eContext);
-//
-//            vstack.push(result);
-//
-//            // Release
-//            pool.release(classr);
-//            pool.release(tmpr);
-//            pool.release(cntr);
+        final Label trueLabel = new Label(currentLabel + "io_true");
+        final Label endLabel = new Label(currentLabel + "io_end");
+        if (lhs.getAddressingMode() == REGISTER) {
+            GPR resultr = (GPR) ((RegisterLocation) lhs.getLocation()).getRegister();
+            os.writeXOR(resultr, resultr);
+        } else if (lhs.getAddressingMode() == STACK) {
+            int disp = ((StackLocation) lhs.getLocation()).getDisplacement();
+            os.writeMOV_Const(BITS32, X86Register.EBP, disp, 0);
         } else {
-            // It is a class, do the fast way
-//            if (ref.getAddressingMode() == REGISTER) {
-//                GPR refr = (GPR) ((RegisterLocation) ((Variable) ref).getLocation()).getRegister();
-//                if (lhs.getAddressingMode() == REGISTER) {
-//                    GPR resultr = (GPR) ((RegisterLocation) lhs.getLocation()).getRegister();
-//                    instanceOfClass(refr, (VmClassType<?>) clazz.getResolvedVmClass(),
-//                        SR1, resultr, null, false, currentLabel);
-//                } else if (lhs.getAddressingMode() == STACK) {
-//                    //todo
-//                    throw new IllegalArgumentException();
-//                } else {
-//                    throw new IllegalArgumentException();
-//                }
-//            } else if (ref.getAddressingMode() == STACK) {
-//                if (lhs.getAddressingMode() == REGISTER) {
-//                    //todo
-//                    throw new IllegalArgumentException();
-//                } else if (lhs.getAddressingMode() == STACK) {
-//                    //todo
-//                    throw new IllegalArgumentException();
-//                } else {
-//                    throw new IllegalArgumentException();
-//                }
-//            } else {
-//                throw new IllegalArgumentException();
-//            }
+            throw new IllegalArgumentException();
         }
+        writeInstanceTest(ref, clazz, resolvedType, currentLabel, trueLabel, endLabel);
+        // False fallthrough.
+        os.writePOP(X86Register.EBX);
+        os.writePOP(X86Register.ECX);
+        os.writeJMP(endLabel);
+        os.setObjectRef(trueLabel);
+        os.writePOP(X86Register.EBX);
+        os.writePOP(X86Register.ECX);
+        if (lhs.getAddressingMode() == REGISTER) {
+            GPR resultr = (GPR) ((RegisterLocation) lhs.getLocation()).getRegister();
+            os.writeMOV_Const(resultr, 1);
+        } else {
+            int disp = ((StackLocation) lhs.getLocation()).getDisplacement();
+            os.writeMOV_Const(BITS32, X86Register.EBP, disp, 1);
+        }
+        os.setObjectRef(endLabel);
     }
 
     /**
@@ -5249,7 +5300,11 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
         /* Setup a call to SoftByteCodes.allocObject */
         os.writePUSH(SR1); /* vmClass */
         os.writePUSH(-1); /* Size */
-        stackFrame.getHelper().invokeJavaMethod(stackFrame.getEntryPoints().getAllocObjectMethod());
+        // ANCHOR-L2-074 (CG-4c): EAX-result model + preserve caller-saved ECX
+        // (shared invokeJavaMethod NPEs with L2's null stackMgr, B18).
+        os.writePUSH(X86Register.ECX);
+        callJavaMethod(stackFrame.getEntryPoints().getAllocObjectMethod());
+        os.writePOP(X86Register.ECX);
         Variable lhs = quad.getLHS();
         if (lhs.getAddressingMode() == REGISTER) {
             os.writeMOV(BITS32, (GPR) ((RegisterLocation) lhs.getLocation()).getRegister(), X86Register.EAX);

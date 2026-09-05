@@ -21,6 +21,7 @@
 package org.jnode.vm.compiler.ir;
 
 import org.jnode.vm.JvmType;
+import org.jnode.vm.classmgr.VmConstClass;
 import org.jnode.vm.compiler.ir.quad.BranchCondition;
 import org.jnode.vm.compiler.ir.quad.VariableRefAssignQuad;
 import org.jnode.vm.x86.compiler.l2.L2ByteCodeSupportChecker;
@@ -267,6 +268,19 @@ public class L2HostTest {
         assertCheckerThrows("lmul", 0);
         assertCheckerThrows("ldiv", 1);
         assertCheckerThrows("lrem", 2);
+    }
+
+    /**
+     * CG-4c (ANCHOR-L2-074): enabled type bytecodes pass the gate.
+     */
+    @Test
+    public void testCheckerAllowsTypeOps() {
+        L2ByteCodeSupportChecker c = new L2ByteCodeSupportChecker();
+        c.visit_new(null);
+        c.visit_multianewarray(null, 0);
+        c.visit_checkcast(null);
+        c.visit_instanceof(null);
+        c.visit_ldc((VmConstClass) null);
     }
 
     /**

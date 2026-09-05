@@ -227,6 +227,23 @@ public class L2PipelineTest {
         assertCompiles("dret");
     }
 
+    /**
+     * CG-4c (ANCHOR-L2-074): type ops through the real pipeline (class /
+     * interface / array instanceof paths, checkcasts, ldc, multianewarray).
+     * Object `new` needs invokespecial (CG-4e) for the ctor call.
+     */
+    @Test
+    public void testCompileTypeOps() throws Exception {
+        assertCompiles("isString");
+        assertCompiles("isSerializable");
+        assertCompiles("isIntArray");
+        assertCompiles("castString");
+        assertCompiles("castSer");
+        assertCompiles("hello");
+        assertCompiles("stringClass");
+        assertCompiles("multi");
+    }
+
     // ---------------- T1: dominator-tree exactness (ANCHOR-L2-004) ----------------
 
     private static void assertDominatedTreeExact(String name) throws Exception {

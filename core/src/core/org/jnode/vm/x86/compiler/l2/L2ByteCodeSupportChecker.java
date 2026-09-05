@@ -37,7 +37,7 @@ public class L2ByteCodeSupportChecker extends BytecodeVisitorSupport {
 
 
     public final void visit_ldc(VmConstClass value) {
-        notSupported();
+        // CG-4c (ANCHOR-L2-074): ConstantClassAssign emitter (resolve + load).
     }
 
     // CG-4b (ANCHOR-L2-071): iaload/faload/aaload/iastore/fastore/aastore
@@ -158,19 +158,9 @@ public class L2ByteCodeSupportChecker extends BytecodeVisitorSupport {
         notSupported();
     }
 
-    public void visit_new(VmConstClass clazz) {
-        notSupported();
-    }
+    // CG-4c (ANCHOR-L2-074): new/multianewarray/checkcast/instanceof enabled.
 
     public void visit_athrow() {
-        notSupported();
-    }
-
-    public void visit_checkcast(VmConstClass clazz) {
-        notSupported();
-    }
-
-    public void visit_instanceof(VmConstClass clazz) {
         notSupported();
     }
 
@@ -182,9 +172,7 @@ public class L2ByteCodeSupportChecker extends BytecodeVisitorSupport {
         notSupported();
     }
 
-    public void visit_multianewarray(VmConstClass clazz, int dimensions) {
-        notSupported();
-    }
+    // CG-4c (ANCHOR-L2-074): multianewarray enabled (dims array + helper).
     
     private void notSupported() {
         supported = false;
