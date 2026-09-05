@@ -54,6 +54,8 @@ import org.jnode.vm.compiler.ir.AddressingMode;
 import org.jnode.vm.compiler.ir.CodeGenerator;
 import org.jnode.vm.compiler.ir.Constant;
 import org.jnode.vm.compiler.ir.IRBasicBlock;
+import org.jnode.vm.compiler.ir.DoubleConstant;
+import org.jnode.vm.compiler.ir.FloatConstant;
 import org.jnode.vm.compiler.ir.IntConstant;
 import org.jnode.vm.compiler.ir.LongConstant;
 import org.jnode.vm.compiler.ir.Operand;
@@ -260,14 +262,48 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
     public void generateCodeFor(ConstantRefAssignQuad<T> quad) {
         checkLabel(quad.getAddress());
         Variable<T> lhs = quad.getLHS();
+        // ANCHOR-L2-073 (CG-4b): the RHS type decides. Only int constants can
+        // land in a register (wide values always spill); anything else here is
+        // a backend bug — fail loud instead of ClassCastException. (A spilled
+        // int const-def emits nothing by design: its uses were substituted
+        // with immediates and DCE collects it; see VariableRefAssign S<-C.)
         if (lhs.getAddressingMode() == REGISTER) {
             T reg1 = ((RegisterLocation<T>) lhs.getLocation()).getRegister();
+            if (!(quad.getRHS() instanceof IntConstant)) {
+                throw new IllegalArgumentException("Non-int constant to register: " + quad.getRHS());
+            }
             IntConstant<T> rhs = (IntConstant<T>) quad.getRHS();
             os.writeMOV_Const((GPR) reg1, rhs.getValue());
         } else if (lhs.getAddressingMode() == STACK) {
-            IntConstant<T> rhs = (IntConstant<T>) quad.getRHS();
             int disp1 = ((StackLocation<T>) lhs.getLocation()).getDisplacement();
-            // TODO os.writeMOV_Const(X86Register.EBP, disp1, rhs.getValue());
+            Constant<T> rhs = quad.getRHS();
+            if (rhs instanceof IntConstant) {
+                // Int const uses were substituted with immediates (and DCE
+                // collects the unused def), so nothing is written here. Wide
+                // consts below are pinned live by the substitution gate
+                // (BinaryQuad.doPass2) and MUST be materialized.
+                // TODO os.writeMOV_Const(X86Register.EBP, disp1, ((IntConstant<T>) rhs).getValue());
+            } else if (rhs instanceof LongConstant) {
+                // ANCHOR-L2-073 (CG-4b): halves layout, like S<-C moves.
+                long value = ((LongConstant<T>) rhs).getValue();
+                os.writeMOV_Const(BITS32, X86Register.EBP, disp1 - stackFrame.getHelper().SLOTSIZE,
+                    (int) (value & 0xFFFFFFFFL));
+                os.writeMOV_Const(BITS32, X86Register.EBP, disp1, (int) ((value >>> 32) & 0xFFFFFFFFL));
+            } else if (rhs instanceof FloatConstant) {
+                // ANCHOR-L2-073 (CG-4b).
+                os.writeMOV_Const(X86Constants.BITS32, X86Register.EBP, disp1,
+                    ((FloatConstant<T>) rhs).getIntBits());
+            } else if (rhs instanceof DoubleConstant) {
+                // ANCHOR-L2-073 (CG-4b): qword-at-disp via the x87 stack.
+                final long bits = Double.doubleToRawLongBits(((DoubleConstant<T>) rhs).getValue());
+                os.writePUSH((int) ((bits >>> 32) & 0xFFFFFFFFL));
+                os.writePUSH((int) (bits & 0xFFFFFFFFL));
+                os.writeFLD64(X86Register.ESP, 0);
+                os.writeFSTP64(X86Register.EBP, disp1);
+                os.writeADD(X86Register.ESP, 8);
+            } else {
+                throw new IllegalArgumentException("Non-int constant def: " + rhs);
+            }
         } else {
             throw new IllegalArgumentException("Unknown operation");
         }
@@ -294,6 +330,22 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
         new FPX86CodeGenerator<T>(os, this).generateBinaryOP(quad);
     }
 
+    /**
+     * Call a runtime helper method, leaving a non-void result in EAX for the
+     * caller to move (L2 reads EAX directly). Unlike
+     * {@code X86CompilerHelper.invokeJavaMethod} this does NOT push the result
+     * onto the L1 virtual stack: L2 constructs its helper with a null
+     * stack manager, so the shared method NPE'd on every non-void call
+     * (ANCHOR-L2-072, CG-4b/B18). Void calls are unaffected either way.
+     *
+     * @param method the runtime helper to call
+     */
+    private void callJavaMethod(VmMethod method) {
+        final X86CompilerHelper helper = stackFrame.getHelper();
+        final int offset = helper.getSharedStaticsOffset(method);
+        os.writeCALL(helper.STATICS, offset);
+    }
+
     public void generateCodeFor(UnconditionalBranchQuad<T> quad) {
         checkLabel(quad.getAddress());
         if (quad.getTargetAddress() < quad.getAddress()) {
@@ -311,6 +363,11 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
             Operand<T> rhs = quad.getRHS();
             AddressingMode mode = rhs.getAddressingMode();
             if (mode == CONSTANT) {
+                // Only int constants can land in a register (long/double/float
+                // always spill; anything else is a backend bug, not a cast).
+                if (!(rhs instanceof IntConstant)) {
+                    throw new IllegalArgumentException("Non-int constant to register: " + rhs);
+                }
                 os.writeMOV_Const((GPR) reg1, ((IntConstant<T>) rhs).getValue());
             } else if (mode == REGISTER) {
                 T reg2 = ((RegisterLocation<T>) ((Variable<T>) rhs).getLocation()).getRegister();
@@ -350,6 +407,17 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
                     final int v_msb = (int) ((value >>> 32) & 0xFFFFFFFFL);
                     os.writeMOV_Const(BITS32,  X86Register.EBP, disp1 - stackFrame.getHelper().SLOTSIZE, v_lsb);
                     os.writeMOV_Const(BITS32,  X86Register.EBP, disp1, v_msb);
+                } else if (rhs instanceof FloatConstant) {
+                    // ANCHOR-L2-073 (CG-4b): float stores (fconst_0 hits this).
+                    os.writeMOV_Const(X86Constants.BITS32, X86Register.EBP, disp1,
+                        ((FloatConstant<T>) rhs).getIntBits());
+                } else if (rhs instanceof DoubleConstant) {
+                    // ANCHOR-L2-073 (CG-4b): doubles live qword-at-disp
+                    // (FSTP64 convention), unlike the long halves layout.
+                    final long bits = Double.doubleToRawLongBits(((DoubleConstant<T>) rhs).getValue());
+                    os.writeMOV_Const(BITS32, X86Register.EBP, disp1, (int) (bits & 0xFFFFFFFFL));
+                    os.writeMOV_Const(BITS32, X86Register.EBP, disp1 + stackFrame.getHelper().SLOTSIZE,
+                        (int) ((bits >>> 32) & 0xFFFFFFFFL));
                 } else {
                     throw new IllegalArgumentException("Type: " + lhs.getType());
                 }
@@ -408,6 +476,13 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
                 int disp2 = disp1 - stackFrame.getHelper().SLOTSIZE;
                 os.writeMOV(X86Constants.BITS32, X86Register.EAX, X86Register.EBP, disp2);
                 os.writeMOV(X86Constants.BITS32, X86Register.EDX, X86Register.EBP, disp1);
+            } else if (op.getType() == Operand.DOUBLE) {
+                // ANCHOR-L2-073 (CG-4b): doubles live qword-at-disp (low half
+                // at [disp], matching FSTP64), unlike the long halves layout.
+                int disp1 = ((StackLocation<T>) ((Variable<T>) op).getLocation()).getDisplacement();
+                os.writeMOV(X86Constants.BITS32, X86Register.EAX, X86Register.EBP, disp1);
+                os.writeMOV(X86Constants.BITS32, X86Register.EDX, X86Register.EBP,
+                    disp1 + stackFrame.getHelper().SLOTSIZE);
             } else {
                 throw new IllegalArgumentException();
             }
@@ -4168,7 +4243,7 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
             throw new IllegalArgumentException();
         }
 
-        helper.invokeJavaMethod(stackFrame.getEntryPoints().getAllocPrimitiveArrayMethod());
+        callJavaMethod(stackFrame.getEntryPoints().getAllocPrimitiveArrayMethod());
         Variable lhs = quad.getLHS();
         if (lhs.getAddressingMode() == REGISTER) {
             os.writeMOV(BITS32, (GPR) ((RegisterLocation) lhs.getLocation()).getRegister(), X86Register.EAX);
@@ -4198,7 +4273,7 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
         } else {
             throw new IllegalArgumentException();
         }
-        stackFrame.getHelper().invokeJavaMethod(stackFrame.getEntryPoints().getAnewarrayMethod());
+        callJavaMethod(stackFrame.getEntryPoints().getAnewarrayMethod());
         Variable lhs = quad.getLHS();
         if (lhs.getAddressingMode() == REGISTER) {
             os.writeMOV(BITS32, (GPR) ((RegisterLocation) lhs.getLocation()).getRegister(), X86Register.EAX);
@@ -4220,7 +4295,7 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
         helper.writePushStaticsEntry(label, currentMethod.getDeclaringClass()); /* currentClass */
         os.writePUSH(10); /* type=int */
         os.writePUSH(sizes.length); /* elements */
-        helper.invokeJavaMethod(stackFrame.getEntryPoints().getAllocPrimitiveArrayMethod());
+        callJavaMethod(stackFrame.getEntryPoints().getAllocPrimitiveArrayMethod());
         final GPR dimsr = SR1;
         if (SR1 != X86Register.EAX) {
             os.writeMOV(BITS32, SR1, X86Register.EAX);
@@ -4256,7 +4331,7 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
         // Now call the multianewarrayhelper
         os.writeXCHG(X86Register.ESP, 0, dimsr);
         os.writePUSH(dimsr); // dimensions[]
-        helper.invokeJavaMethod(stackFrame.getEntryPoints().getAllocMultiArrayMethod());
+        callJavaMethod(stackFrame.getEntryPoints().getAllocMultiArrayMethod());
         Variable lhs = quad.getLHS();
         if (lhs.getAddressingMode() == REGISTER) {
             os.writeMOV(BITS32, (GPR) ((RegisterLocation) lhs.getLocation()).getRegister(), X86Register.EAX);
@@ -4307,6 +4382,14 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
     @Override
     public void generateCodeFor(ArrayAssignQuad quad) {
         checkLabel(quad.getAddress());
+
+        // ANCHOR-L2-071 (CG-4b): only 4-byte element types so far (scale is
+        // hardcoded 4 below). Sub-word and 8-byte widths stay checker-gated;
+        // fail loud here so a future gating slip can never silently miscompile.
+        final int elemType = quad.getType();
+        if (elemType != Operand.INT && elemType != Operand.FLOAT && elemType != Operand.REFERENCE) {
+            throw new IllegalArgumentException("CG-4b defers array element type: " + elemType);
+        }
 
         Variable lhs = quad.getLHS();
         Variable ref = quad.getRef();
@@ -4432,6 +4515,12 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
     @Override
     public void generateCodeFor(ArrayStoreQuad quad) {
         checkLabel(quad.getAddress());
+
+        // ANCHOR-L2-071 (CG-4b): see generateCodeFor(ArrayAssignQuad).
+        final int elemType = quad.getType();
+        if (elemType != Operand.INT && elemType != Operand.FLOAT && elemType != Operand.REFERENCE) {
+            throw new IllegalArgumentException("CG-4b defers array element type: " + elemType);
+        }
 
         Variable ref = quad.getRef();
         Operand ind = quad.getInd();

@@ -495,4 +495,43 @@ public class PrimitiveTest {
             default: return -1;
         }
     }
+
+    // CG-4b array corpus (ANCHOR-L2-071; 4-byte element types only)
+    public static int[] newIntArray(int n) {
+        return new int[n];
+    }
+
+    public static int arraySum(int[] a) {
+        int s = 0;
+        for (int i = 0; i < a.length; i++) {
+            s += a[i];
+        }
+        return s;
+    }
+
+    public static void arrayFill(int[] a, int v) {
+        for (int i = 0; i < a.length; i++) {
+            a[i] = v;
+        }
+    }
+
+    public static int arrayLength(int[] a) {
+        return a.length;
+    }
+
+    public static float floatArraySum(float[] a) {
+        float s = 0.0f;
+        for (int i = 0; i < a.length; i++) {
+            s += a[i];
+        }
+        return s;
+    }
+
+    public static int objArrayNull(Object[] a) {
+        return (a[0] == null) ? 1 : 0;
+    }
+
+    public static double dret(double a0) {
+        return a0 + 1.0;
+    }
 }

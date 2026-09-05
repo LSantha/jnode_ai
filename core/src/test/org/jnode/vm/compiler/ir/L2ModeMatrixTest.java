@@ -34,6 +34,7 @@ import org.jnode.vm.classmgr.VmMethod;
 import org.jnode.vm.classmgr.VmType;
 import org.jnode.vm.compiler.CompiledMethod;
 import org.jnode.vm.compiler.EntryPoints;
+import org.jnode.vm.compiler.ir.quad.ArrayAssignQuad;
 import org.jnode.vm.compiler.ir.quad.BinaryOperation;
 import org.jnode.vm.compiler.ir.quad.BinaryQuad;
 import org.jnode.vm.compiler.ir.quad.UnaryOperation;
@@ -421,6 +422,55 @@ public class L2ModeMatrixTest {
         EmitterHarness h = new EmitterHarness();
         h.cg.generateCodeFor(dummyUnaryQuad(0), -8, UnaryOperation.I2D, (Object) X86Register.EBX);
         assertTrue("I2D (S,R) must FILD, got:\n" + h.text(), h.text().contains("fild"));
+    }
+
+    /**
+     * CG-4b (ANCHOR-L2-071): an int array load must be preceded by the bounds
+     * check (length vs index compare) in every shape.
+     */
+    @Test
+    public void testArrayLoadEmitsBoundsCheck() throws Exception {
+        EmitterHarness h = new EmitterHarness();
+        IRBasicBlock block = new IRBasicBlock(0);
+        StackVariable lhs = new StackVariable(JvmType.INT, 0);
+        StackVariable ind = new StackVariable(JvmType.INT, 1);
+        StackVariable ref = new StackVariable(JvmType.REFERENCE, 2);
+        lhs.setLocation(new StackLocation(-8));
+        ind.setLocation(new StackLocation(-12));
+        ref.setLocation(new StackLocation(-16));
+        Variable[] vars = new Variable[]{lhs, ind, ref};
+        block.setVariables(vars);
+        ArrayAssignQuad q = new ArrayAssignQuad(0, block, 0, 1, 2, JvmType.INT);
+        q.generateCode(h.cg);
+        String text = h.text();
+        assertTrue("array load must bounds-check (CMP), got:\n" + text, text.contains("cmp "));
+        assertTrue("array load must scale by 4, got:\n" + text, text.contains("*4"));
+    }
+
+    /**
+     * CG-4b: deferred element widths must fail loud at the emitter (never
+     * silently use scale 4).
+     */
+    @Test
+    public void testArrayLoadDeferredWidthThrows() throws Exception {
+        EmitterHarness h = new EmitterHarness();
+        IRBasicBlock block = new IRBasicBlock(0);
+        StackVariable lhs = new StackVariable(JvmType.LONG, 0);
+        StackVariable ind = new StackVariable(JvmType.INT, 1);
+        StackVariable ref = new StackVariable(JvmType.REFERENCE, 2);
+        lhs.setLocation(new StackLocation(-8));
+        ind.setLocation(new StackLocation(-16));
+        ref.setLocation(new StackLocation(-20));
+        Variable[] vars = new Variable[]{lhs, ind, ref};
+        block.setVariables(vars);
+        ArrayAssignQuad q = new ArrayAssignQuad(0, block, 0, 1, 2, JvmType.LONG);
+        boolean thrown = false;
+        try {
+            q.generateCode(h.cg);
+        } catch (IllegalArgumentException e) {
+            thrown = true;
+        }
+        assertTrue("long array load must throw (CG-4b defers widths)", thrown);
     }
 
     private static void assertBinaryThrows(BinaryOperation op, String why) throws Exception {        EmitterHarness h = new EmitterHarness();

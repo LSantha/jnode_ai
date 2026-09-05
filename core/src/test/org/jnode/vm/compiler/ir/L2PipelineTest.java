@@ -199,8 +199,7 @@ public class L2PipelineTest {
     /**
      * CG-4a: pin which lowering each switch shape takes (PIC jump table vs
      * linear compare chains).
-     */
-    @Test
+     */    @Test
     public void testSwitchEmissionShapes() throws Exception {
         String dense = compileToText(findMethod("switchDense"));
         assertTrue("dense tableswitch must use the PIC jump table, got:\n" + dense,
@@ -211,6 +210,21 @@ public class L2PipelineTest {
         String sparse = compileToText(findMethod("switchSparse"));
         assertTrue("lookupswitch must use compare chains, got:\n" + sparse,
             sparse.contains("cmp "));
+    }
+
+    /**
+     * CG-4b (ANCHOR-L2-071): arrays through the real pipeline (4-byte
+     * element types: int/float/object; bounds checks; allocation).
+     */
+    @Test
+    public void testCompileArrays() throws Exception {
+        assertCompiles("newIntArray");
+        assertCompiles("arraySum");
+        assertCompiles("arrayFill");
+        assertCompiles("arrayLength");
+        assertCompiles("floatArraySum");
+        assertCompiles("objArrayNull");
+        assertCompiles("dret");
     }
 
     // ---------------- T1: dominator-tree exactness (ANCHOR-L2-004) ----------------

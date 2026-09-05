@@ -40,23 +40,15 @@ public class L2ByteCodeSupportChecker extends BytecodeVisitorSupport {
         notSupported();
     }
 
-    public void visit_iaload() {
-        notSupported();
-    }
+    // CG-4b (ANCHOR-L2-071): iaload/faload/aaload/iastore/fastore/aastore
+    // enabled (4-byte scale); sub-word and 8-byte widths stay gated.
+    // CG-4b: arraylength/newarray/anewarray enabled (SoftByteCodes paths).
 
     public void visit_laload() {
         notSupported();
     }
 
-    public void visit_faload() {
-        notSupported();
-    }
-
     public void visit_daload() {
-        notSupported();
-    }
-
-    public void visit_aaload() {
         notSupported();
     }
 
@@ -72,23 +64,11 @@ public class L2ByteCodeSupportChecker extends BytecodeVisitorSupport {
         notSupported();
     }
 
-    public void visit_iastore() {
-        notSupported();
-    }
-
     public void visit_lastore() {
         notSupported();
     }
 
-    public void visit_fastore() {
-        notSupported();
-    }
-
     public void visit_dastore() {
-        notSupported();
-    }
-
-    public void visit_aastore() {
         notSupported();
     }
 
@@ -179,18 +159,6 @@ public class L2ByteCodeSupportChecker extends BytecodeVisitorSupport {
     }
 
     public void visit_new(VmConstClass clazz) {
-        notSupported();
-    }
-
-    public void visit_newarray(int type) {
-        notSupported();
-    }
-
-    public void visit_anewarray(VmConstClass clazz) {
-        notSupported();
-    }
-
-    public void visit_arraylength() {
         notSupported();
     }
 

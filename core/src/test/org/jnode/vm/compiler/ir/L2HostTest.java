@@ -269,6 +269,67 @@ public class L2HostTest {
         assertCheckerThrows("lrem", 2);
     }
 
+    /**
+     * CG-4b (ANCHOR-L2-071): enabled array bytecodes pass; sub-word and
+     * 8-byte widths stay rejected.
+     */
+    @Test
+    public void testCheckerArrayGates() {
+        L2ByteCodeSupportChecker c = new L2ByteCodeSupportChecker();
+        c.visit_iaload();
+        c.visit_faload();
+        c.visit_aaload();
+        c.visit_iastore();
+        c.visit_fastore();
+        c.visit_aastore();
+        c.visit_arraylength();
+        c.visit_newarray(10);
+        c.visit_anewarray(null);
+        String[] deferredLoads = {"laload", "daload", "baload", "caload", "saload"};
+        for (int i = 0; i < deferredLoads.length; i++) {
+            assertArrayOpThrows(deferredLoads[i], true, i);
+        }
+        String[] deferredStores = {"lastore", "dastore", "bastore", "castore", "sastore"};
+        for (int i = 0; i < deferredStores.length; i++) {
+            assertArrayOpThrows(deferredStores[i], false, i);
+        }
+    }
+
+    private static void assertArrayOpThrows(String op, boolean load, int which) {
+        L2ByteCodeSupportChecker c = new L2ByteCodeSupportChecker();
+        boolean thrown = false;
+        try {
+            if (load) {
+                if (which == 0) {
+                    c.visit_laload();
+                } else if (which == 1) {
+                    c.visit_daload();
+                } else if (which == 2) {
+                    c.visit_baload();
+                } else if (which == 3) {
+                    c.visit_caload();
+                } else {
+                    c.visit_saload();
+                }
+            } else {
+                if (which == 0) {
+                    c.visit_lastore();
+                } else if (which == 1) {
+                    c.visit_dastore();
+                } else if (which == 2) {
+                    c.visit_bastore();
+                } else if (which == 3) {
+                    c.visit_castore();
+                } else {
+                    c.visit_sastore();
+                }
+            }
+        } catch (UnsupportedOperationException e) {
+            thrown = true;
+        }
+        assertTrue(op + " must stay rejected (CG-4b defers widths)", thrown);
+    }
+
     private static void assertCheckerThrows(String op, int which) {
         L2ByteCodeSupportChecker c = new L2ByteCodeSupportChecker();
         boolean thrown = false;
