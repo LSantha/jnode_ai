@@ -271,6 +271,18 @@ public class L2HostTest {
     }
 
     /**
+     * CG-4d (ANCHOR-L2-075): field bytecodes pass the gate.
+     */
+    @Test
+    public void testCheckerAllowsFields() {
+        L2ByteCodeSupportChecker c = new L2ByteCodeSupportChecker();
+        c.visit_getstatic(null);
+        c.visit_putstatic(null);
+        c.visit_getfield(null);
+        c.visit_putfield(null);
+    }
+
+    /**
      * CG-4c (ANCHOR-L2-074): enabled type bytecodes pass the gate.
      */
     @Test

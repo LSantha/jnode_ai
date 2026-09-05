@@ -130,21 +130,8 @@ public class L2ByteCodeSupportChecker extends BytecodeVisitorSupport {
     // CG-4a (ANCHOR-L2-070): tableswitch/lookupswitch enabled — emitters
     // resolve targets via targetBlocks[] (dense) with a block-based default.
 
-    public void visit_getstatic(VmConstFieldRef fieldRef) {
-        notSupported();
-    }
-
-    public void visit_putstatic(VmConstFieldRef fieldRef) {
-        notSupported();
-    }
-
-    public void visit_getfield(VmConstFieldRef fieldRef) {
-        notSupported();
-    }
-
-    public void visit_putfield(VmConstFieldRef fieldRef) {
-        notSupported();
-    }
+    // CG-4d (ANCHOR-L2-075): getstatic/putstatic/getfield/putfield enabled
+    // (all widths, R/S shapes, init, barriers).
 
     public void visit_invokevirtual(VmConstMethodRef methodRef) {
         notSupported();

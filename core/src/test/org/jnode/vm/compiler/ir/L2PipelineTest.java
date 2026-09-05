@@ -244,6 +244,27 @@ public class L2PipelineTest {
         assertCompiles("multi");
     }
 
+    /**
+     * CG-4d (ANCHOR-L2-075): static/instance fields through the real pipeline
+     * (narrow + wide, init checks, barriers).
+     */
+    @Test
+    public void testCompileFields() throws Exception {
+        assertCompiles("getSInt");
+        assertCompiles("setSInt");
+        assertCompiles("getSLong");
+        assertCompiles("setSLong");
+        assertCompiles("getSObj");
+        assertCompiles("getSInit");
+        assertCompiles("getIInt");
+        assertCompiles("setIInt");
+        assertCompiles("getILong");
+        assertCompiles("setILong");
+        assertCompiles("getIFloat");
+        assertCompiles("setIFloat");
+        assertCompiles("getIObj");
+    }
+
     // ---------------- T1: dominator-tree exactness (ANCHOR-L2-004) ----------------
 
     private static void assertDominatedTreeExact(String name) throws Exception {

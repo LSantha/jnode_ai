@@ -44,6 +44,7 @@ import org.jnode.vm.classmgr.VmConstFieldRef;
 import org.jnode.vm.classmgr.VmConstMethodRef;
 import org.jnode.vm.classmgr.VmField;
 import org.jnode.vm.classmgr.VmInstanceField;
+import org.jnode.vm.classmgr.VmIsolatedStaticsEntry;
 import org.jnode.vm.classmgr.VmInstanceMethod;
 import org.jnode.vm.classmgr.VmMethod;
 import org.jnode.vm.classmgr.VmSharedStaticsEntry;
@@ -4684,6 +4685,12 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
         } else {
             throw new IllegalArgumentException();
         }
+
+        // ANCHOR-L2-075 (CG-4d): GC barrier for reference stores (completes
+        // CG-4b; same conditions as L1A, no-op unless the GC provides one).
+        if (quad.getType() == Operand.REFERENCE) {
+            writeArrayBarrier(ref, ind, rhs);
+        }
     }
 
     private final void checkBounds(Variable ref, Operand index, int address) {
@@ -5358,6 +5365,114 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
         }
     }
 
+    /**
+     * Emit declaring-class initialization for a static field access
+     * (ANCHOR-L2-075, CG-4d). Mirror of L1A writeInitializeClass; EDX doubles
+     * as classReg+tmp (never allocated, no save needed). The slow-path CALL
+     * is inside, so callers on fall-through paths must preserve caller-saved
+     * ECX around this (they do).
+     */
+    private void writeInitializeClass(VmConstFieldRef fieldRef, Label curInstrLabel) {
+        final VmType<?> declClass = fieldRef.getResolvedVmField().getDeclaringClass();
+        if (!declClass.isAlwaysInitialized()) {
+            X86CompilerHelper helper = stackFrame.getHelper();
+            if (os.isCode32()) {
+                helper.writeGetStaticsEntry(new Label(curInstrLabel + "$$ic"), X86Register.EDX, declClass);
+            } else {
+                throw new IllegalArgumentException("64-bit statics init deferred (CG-5)");
+            }
+            helper.writeClassInitialize(curInstrLabel, X86Register.EDX, X86Register.EDX, declClass);
+        }
+    }
+
+    /**
+     * GC write barrier after a putfield of a reference (ANCHOR-L2-075, CG-4d).
+     * Mirror of {@code X86CompilerHelper.writePutfieldWriteBarrier}, which
+     * cannot be reused (L1-model invokeJavaMethod, B18). No-op unless the
+     * active GC provides a barrier (same conditions as L1A). Values are
+     * materialized to EAX/EDX (never allocated); ECX is preserved across the
+     * barrier call (caller-saved).
+     */
+    private void writeFieldBarrier(VmInstanceField field, Operand ref, Operand val) {
+        X86CompilerHelper helper = stackFrame.getHelper();
+        if (field.isPrimitive() || !helper.needsWriteBarrier() || !field.isObjectRef()) {
+            return;
+        }
+        loadBarrierOperand(ref, X86Register.EAX);
+        loadBarrierOperand(val, X86Register.EDX);
+        os.writePUSH(X86Register.ECX);
+        os.writeMOV_Const(X86Register.ECX, stackFrame.getEntryPoints().getWriteBarrier());
+        os.writePUSH(X86Register.ECX);
+        os.writePUSH(X86Register.EAX);
+        os.writePUSH(field.getOffset());
+        os.writePUSH(X86Register.EDX);
+        callJavaMethod(stackFrame.getEntryPoints().getPutfieldWriteBarrier());
+        os.writePOP(X86Register.ECX);
+    }
+
+    /**
+     * GC write barrier after a putstatic of a reference (ANCHOR-L2-075, CG-4d).
+     * Mirror of {@code X86CompilerHelper.writePutstaticWriteBarrier}.
+     */
+    private void writeStaticBarrier(VmStaticField field, Operand val) {
+        X86CompilerHelper helper = stackFrame.getHelper();
+        if (field.isPrimitive() || !helper.needsWriteBarrier() || !field.isObjectRef()) {
+            return;
+        }
+        loadBarrierOperand(val, X86Register.EDX);
+        os.writePUSH(X86Register.ECX);
+        os.writeMOV_Const(X86Register.ECX, stackFrame.getEntryPoints().getWriteBarrier());
+        os.writePUSH(X86Register.ECX);
+        os.writePUSH(X86Register.EDX);
+        callJavaMethod(stackFrame.getEntryPoints().getPutstaticWriteBarrier());
+        os.writePOP(X86Register.ECX);
+    }
+
+    /**
+     * GC write barrier after an aastore of a reference (ANCHOR-L2-075, CG-4d;
+     * completes CG-4b). Mirror of {@code writeArrayStoreWriteBarrier}.
+     */
+    private void writeArrayBarrier(Operand ref, Operand index, Operand val) {
+        X86CompilerHelper helper = stackFrame.getHelper();
+        if (!helper.needsWriteBarrier()) {
+            return;
+        }
+        os.writePUSH(X86Register.ECX);
+        os.writePUSH(X86Register.EBX);
+        loadBarrierOperand(ref, X86Register.EAX);
+        loadBarrierOperand(index, X86Register.EDX);
+        loadBarrierOperand(val, X86Register.EBX);
+        os.writeMOV_Const(X86Register.ECX, stackFrame.getEntryPoints().getWriteBarrier());
+        os.writePUSH(X86Register.ECX);
+        os.writePUSH(X86Register.EAX);
+        os.writePUSH(X86Register.EDX);
+        os.writePUSH(X86Register.EBX);
+        callJavaMethod(stackFrame.getEntryPoints().getArrayStoreWriteBarrier());
+        os.writePOP(X86Register.EBX);
+        os.writePOP(X86Register.ECX);
+    }
+
+    /**
+     * Materialize a barrier operand (register, spill or null constant) into a
+     * free register for the sequences above.
+     */
+    private void loadBarrierOperand(Operand op, GPR dst) {
+        if (op.getAddressingMode() == REGISTER) {
+            GPR src = (GPR) ((RegisterLocation) ((Variable) op).getLocation()).getRegister();
+            if (src != dst) {
+                os.writeMOV(BITS32, dst, src);
+            }
+        } else if (op.getAddressingMode() == STACK) {
+            int disp = ((StackLocation) ((Variable) op).getLocation()).getDisplacement();
+            os.writeMOV(BITS32, dst, X86Register.EBP, disp);
+        } else if (op.getAddressingMode() == CONSTANT) {
+            // Only null constants occur here; anything else fails loud below.
+            os.writeMOV_Const(dst, ((IntConstant) op).getValue());
+        } else {
+            throw new IllegalArgumentException();
+        }
+    }
+
     @Override
     public void generateCodeFor(StaticRefAssignQuad<T> quad) {
         checkLabel(quad.getAddress());
@@ -5367,10 +5482,12 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
         final int type = JvmType.SignatureToType(fieldRef.getSignature());
         final VmStaticField sf = (VmStaticField) fieldRef.getResolvedVmField();
 
-        // Initialize if needed
-//        if (!sf.getDeclaringClass().isAlwaysInitialized()) {
-//            writeInitializeClass(fieldRef);
-//        }
+        // Initialize if needed (JLS 12.4; slow path CALLs: preserve ECX).
+        if (!sf.getDeclaringClass().isAlwaysInitialized()) {
+            os.writePUSH(X86Register.ECX);
+            writeInitializeClass(fieldRef, curInstrLabel);
+            os.writePOP(X86Register.ECX);
+        }
 
         // Get static field object
 //        if (JvmType.isFloat(type)) {
@@ -5397,51 +5514,54 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
                     if (lhs.getAddressingMode() == REGISTER) {
                         stackFrame.getHelper().writeGetStaticsEntry(curInstrLabel,
                             (GPR) ((RegisterLocation) lhs.getLocation()).getRegister(), sf);
+                    } else if (lhs.getAddressingMode() == STACK) {
+                        // ANCHOR-L2-075 (CG-4d): spilled destination (was a
+                        // silent no-op). Floats ride the int path: exact bits.
+                        int disp = ((StackLocation) lhs.getLocation()).getDisplacement();
+                        stackFrame.getHelper().writeGetStaticsEntry(curInstrLabel, SR1, sf);
+                        os.writeMOV(BITS32, X86Register.EBP, disp, SR1);
                     } else {
-                        //todo
+                        throw new IllegalArgumentException();
                     }
                 } else {
                     if (lhs.getAddressingMode() == REGISTER) {
-                        //todo ESI ??
-                        GPR tmp = GPR.ESI;
+                        // ANCHOR-L2-075 (CG-4d): tmp EDX (was hardcoded ESI,
+                        // which may hold a live allocated value — B19).
                         stackFrame.getHelper().writeGetStaticsEntry(curInstrLabel,
-                            (GPR) ((RegisterLocation) lhs.getLocation()).getRegister(), sf, tmp);
+                            (GPR) ((RegisterLocation) lhs.getLocation()).getRegister(), sf,
+                            X86Register.EDX);
+                    } else if (lhs.getAddressingMode() == STACK) {
+                        // ANCHOR-L2-075 (CG-4d): spilled destination.
+                        int disp = ((StackLocation) lhs.getLocation()).getDisplacement();
+                        stackFrame.getHelper().writeGetStaticsEntry(curInstrLabel, SR1, sf,
+                            X86Register.EDX);
+                        os.writeMOV(BITS32, X86Register.EBP, disp, SR1);
                     } else {
-                        //todo
+                        throw new IllegalArgumentException();
                     }
                 }
+            } else {
+                throw new IllegalArgumentException("64-bit reference statics deferred (CG-5)");
             }
-//            else {
-//                if (sf.isShared()) {
-//                    stackFrame.getHelper().writeGetStaticsEntry64(curInstrLabel, (GPR64) resultr,
-// (VmSharedStaticsEntry) sf);
-//                } else {
-//                    stackFrame.getHelper().writeGetStaticsEntry64(curInstrLabel, (GPR64) resultr,
-// (VmIsolatedStaticsEntry) sf);
-//                }
-//            }
+        } else {
+            // ANCHOR-L2-075 (CG-4d): wide statics (long/double spill halves).
+            Variable<T> lhsW = quad.getLHS();
+            if (lhsW.getAddressingMode() != STACK) {
+                // Wide values always spill; a register here is unreachable.
+                throw new IllegalArgumentException("Wide static to register");
+            }
+            int dispW = ((StackLocation) lhsW.getLocation()).getDisplacement();
+            int dispLoW = dispW - stackFrame.getHelper().SLOTSIZE;
+            if (sf.isShared()) {
+                stackFrame.getHelper().writeGetStaticsEntry64(curInstrLabel, SR1, X86Register.EDX,
+                    (VmSharedStaticsEntry) sf);
+            } else {
+                stackFrame.getHelper().writeGetStaticsEntry64(curInstrLabel, SR1, X86Register.EDX,
+                    (VmIsolatedStaticsEntry) sf);
+            }
+            os.writeMOV(BITS32, X86Register.EBP, dispLoW, SR1);
+            os.writeMOV(BITS32, X86Register.EBP, dispW, X86Register.EDX);
         }
-//        else {
-//            final DoubleWordItem result = L1AHelper.requestDoubleWordRegisters(
-//                eContext, type);
-//            if (os.isCode32()) {
-//                final GPR lsb = result.getLsbRegister(eContext);
-//                final GPR msb = result.getMsbRegister(eContext);
-//                if (sf.isShared()) {
-//                    helper.writeGetStaticsEntry64(curInstrLabel, lsb, msb, (VmSharedStaticsEntry) sf);
-//                } else {
-//                    helper.writeGetStaticsEntry64(curInstrLabel, lsb, msb, (VmIsolatedStaticsEntry) sf);
-//                }
-//            } else {
-//                final GPR64 reg = result.getRegister(eContext);
-//                if (sf.isShared()) {
-//                    helper.writeGetStaticsEntry64(curInstrLabel, reg, (VmSharedStaticsEntry) sf);
-//                } else {
-//                    helper.writeGetStaticsEntry64(curInstrLabel, reg, (VmIsolatedStaticsEntry) sf);
-//                }
-//            }
-//            vstack.push(result);
-//        }
     }
 
     public void generateCodeFor(StaticRefStoreQuad<T> quad) {
@@ -5452,6 +5572,13 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
         final int type = JvmType.SignatureToType(fieldRef.getSignature());
         final VmStaticField sf = (VmStaticField) fieldRef.getResolvedVmField();
 
+        // Initialize if needed (JLS 12.4; slow path CALLs: preserve ECX).
+        if (!sf.getDeclaringClass().isAlwaysInitialized()) {
+            os.writePUSH(X86Register.ECX);
+            writeInitializeClass(fieldRef, curInstrLabel);
+            os.writePOP(X86Register.ECX);
+        }
+
         if (!fieldRef.isWide()) {
 
             if (os.isCode32() || (type != JvmType.REFERENCE)) {
@@ -5459,59 +5586,57 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
                     if (quad.getOperand().getAddressingMode() == REGISTER) {
                         stackFrame.getHelper().writePutStaticsEntry(curInstrLabel,
                             (GPR) ((RegisterLocation) ((Variable) quad.getOperand()).getLocation()).getRegister(), sf);
+                    } else if (quad.getOperand().getAddressingMode() == STACK) {
+                        // ANCHOR-L2-075 (CG-4d): spilled value (was silent no-op).
+                        int disp = ((StackLocation) ((Variable) quad.getOperand()).getLocation())
+                            .getDisplacement();
+                        os.writeMOV(BITS32, SR1, X86Register.EBP, disp);
+                        stackFrame.getHelper().writePutStaticsEntry(curInstrLabel, SR1, sf);
                     } else {
-                        //todo
+                        throw new IllegalArgumentException();
                     }
                 } else {
                     if (quad.getOperand().getAddressingMode() == REGISTER) {
-                        //todo ESI ??
-                        GPR tmp = GPR.ESI;
+                        // ANCHOR-L2-075 (CG-4d): tmp EDX (was hardcoded ESI — B19).
                         stackFrame.getHelper().writePutStaticsEntry(curInstrLabel,
                             (GPR) ((RegisterLocation) ((Variable) quad.getOperand()).getLocation()).getRegister(),
-                            sf, tmp);
+                            sf, X86Register.EDX);
+                    } else if (quad.getOperand().getAddressingMode() == STACK) {
+                        // ANCHOR-L2-075 (CG-4d): spilled value.
+                        int disp = ((StackLocation) ((Variable) quad.getOperand()).getLocation())
+                            .getDisplacement();
+                        os.writeMOV(BITS32, SR1, X86Register.EBP, disp);
+                        stackFrame.getHelper().writePutStaticsEntry(curInstrLabel, SR1, sf,
+                            X86Register.EDX);
                     } else {
-                        //todo
+                        throw new IllegalArgumentException();
                     }
                 }
+            } else {
+                throw new IllegalArgumentException("64-bit reference statics deferred (CG-5)");
             }
-//            else {
-//                if (sf.isShared()) {
-//                    helper.writePutStaticsEntry64(curInstrLabel, (GPR64) valr, sf);
-//                } else {
-//                    final GPR tmp = (GPR) L1AHelper.requestRegister(eContext, JvmType.REFERENCE, false);
-//                    helper.writePutStaticsEntry64(curInstrLabel, (GPR64) valr, sf, tmp);
-//                    L1AHelper.releaseRegister(eContext, tmp);
-//                }
-//            }
-//            if (!sf.isPrimitive() && helper.needsWriteBarrier()) {
-//                final GPR tmp = (GPR) L1AHelper.requestRegister(eContext, JvmType.INT, false);
-//                helper.writePutstaticWriteBarrier(sf, valr, tmp);
-//                L1AHelper.releaseRegister(eContext, tmp);
-//            }
+            writeStaticBarrier(sf, quad.getOperand());
+        } else {
+            // ANCHOR-L2-075 (CG-4d): wide statics from spill halves.
+            Operand val = quad.getOperand();
+            if (val.getAddressingMode() != STACK) {
+                // Wide values always spill; a register here is unreachable.
+                throw new IllegalArgumentException("Wide static from register");
+            }
+            int disp = ((StackLocation) ((Variable) val).getLocation()).getDisplacement();
+            int dispLo = disp - stackFrame.getHelper().SLOTSIZE;
+            os.writeMOV(BITS32, SR1, X86Register.EBP, dispLo);
+            os.writeMOV(BITS32, X86Register.EDX, X86Register.EBP, disp);
+            if (sf.isShared()) {
+                stackFrame.getHelper().writePutStaticsEntry64(curInstrLabel, SR1, X86Register.EDX,
+                    (VmSharedStaticsEntry) sf);
+            } else {
+                os.writePUSH(X86Register.EBX);
+                stackFrame.getHelper().writePutStaticsEntry64(curInstrLabel, SR1, X86Register.EDX,
+                    (VmIsolatedStaticsEntry) sf, X86Register.EBX);
+                os.writePOP(X86Register.EBX);
+            }
         }
-
-//        else {
-//            final DoubleWordItem dval = (DoubleWordItem) val;
-//            if (os.isCode32()) {
-//                if (sf.isShared()) {
-//                    helper.writePutStaticsEntry64(curInstrLabel, dval.getLsbRegister(eContext), dval
-//                        .getMsbRegister(eContext), sf);
-//                } else {
-//                    final GPR tmp = (GPR) L1AHelper.requestRegister(eContext, JvmType.REFERENCE, false);
-//                    helper.writePutStaticsEntry64(curInstrLabel, dval.getLsbRegister(eContext),
-//                        dval.getMsbRegister(eContext), sf, tmp);
-//                    L1AHelper.releaseRegister(eContext, tmp);
-//                }
-//            } else {
-//                if (sf.isShared()) {
-//                    helper.writePutStaticsEntry64(curInstrLabel, dval.getRegister(eContext), sf);
-//                } else {
-//                    final GPR tmp = (GPR) L1AHelper.requestRegister(eContext, JvmType.REFERENCE, false);
-//                    helper.writePutStaticsEntry64(curInstrLabel, dval.getRegister(eContext), sf, tmp);
-//                    L1AHelper.releaseRegister(eContext, tmp);
-//                }
-//            }
-//        }
 
     }
 
@@ -5531,16 +5656,43 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
         final boolean isfloat = JvmType.isFloat(type);
 
         Variable dest = quad.getLHS();
+
+        if (quad.getRef().getAddressingMode() == CONSTANT) {
+            // ANCHOR-L2-075 (CG-4d): only null reaches here; fault exactly
+            // like L1A's trap model (no explicit null check anywhere).
+            Operand refOp = quad.getRef();
+            if (!(refOp instanceof IntConstant)) {
+                throw new IllegalArgumentException("Non-null constant ref: " + refOp);
+            }
+            os.writeMOV_Const(SR1, ((IntConstant) refOp).getValue());
+            os.writeMOV(BITS32, SR1, SR1, fieldOffset);
+            return;
+        }
         Variable ref = (Variable) quad.getRef();
 
         // get field
         if (!fieldRef.isWide()) {
             if (isfloat) {
-                //todo
-                throw new IllegalArgumentException();
-//                result = ifac.createFPUStack(JvmType.FLOAT);
-//                os.writeFLD32(refr, fieldOffset);
-//                pushFloat(result);
+                // ANCHOR-L2-075 (CG-4d): float loads (dest always spills
+                // post-pinning; a register dest is unreachable).
+                if (dest.getAddressingMode() == REGISTER) {
+                    throw new IllegalArgumentException("Float field to register");
+                } else if (dest.getAddressingMode() == STACK) {
+                    int destd = ((StackLocation) dest.getLocation()).getDisplacement();
+                    if (ref.getAddressingMode() == REGISTER) {
+                        GPR refr = (GPR) ((RegisterLocation) ref.getLocation()).getRegister();
+                        os.writeFLD32(refr, fieldOffset);
+                    } else if (ref.getAddressingMode() == STACK) {
+                        int disp = ((StackLocation) ref.getLocation()).getDisplacement();
+                        os.writeMOV(BITS32, SR1, X86Register.EBP, disp);
+                        os.writeFLD32(SR1, fieldOffset);
+                    } else {
+                        throw new IllegalArgumentException();
+                    }
+                    os.writeFSTP32(X86Register.EBP, destd);
+                } else {
+                    throw new IllegalArgumentException();
+                }
             } else {
                 final char fieldType = field.getSignature().charAt(0);
                 //todo check 8bits support for registers
@@ -5727,26 +5879,42 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
                 }
             }
         } else {
-//            if (isfloat) {
-//                result = ifac.createFPUStack(JvmType.DOUBLE);
-//                os.writeFLD64(refr, fieldOffset);
-//                pushFloat(result);
-//            } else {
-//                final DoubleWordItem idw = L1AHelper
-//                    .requestDoubleWordRegisters(eContext, type);
-//                if (os.isCode32()) {
-//                    final GPR lsb = idw.getLsbRegister(eContext);
-//                    final GPR msb = idw.getMsbRegister(eContext);
-//                    os.writeMOV(BITS32, lsb, refr, fieldOffset + LSB);
-//                    os.writeMOV(BITS32, msb, refr, fieldOffset + MSB);
-//                } else {
-//                    final GPR64 reg = idw.getRegister(eContext);
-//                    os.writeMOV(BITS64, reg, refr, fieldOffset);
-//                }
-//                result = idw;
-//            }
-            //todo
-            throw new IllegalArgumentException();
+            // ANCHOR-L2-075 (CG-4d): wide instance fields. Field halves live
+            // [off+0]=LSB (L1A MSB/LSB shape); spill halves [d-SLOT]=LSB.
+            // EDX holds the ref (SR1 is the data temp; both free).
+            if (dest.getAddressingMode() != STACK) {
+                // Wide values always spill; a register here is unreachable.
+                throw new IllegalArgumentException("Wide field to register");
+            }
+            int destd = ((StackLocation) dest.getLocation()).getDisplacement();
+            int destLo = destd - stackFrame.getHelper().SLOTSIZE;
+            if (ref.getAddressingMode() == REGISTER) {
+                GPR refr = (GPR) ((RegisterLocation) ref.getLocation()).getRegister();
+                if (type == JvmType.LONG) {
+                    // Field halves [off+0]=LSB, [off+4]=MSB (L1A shape).
+                    os.writeMOV(BITS32, SR1, refr, fieldOffset);
+                    os.writeMOV(BITS32, X86Register.EBP, destLo, SR1);
+                    os.writeMOV(BITS32, SR1, refr, fieldOffset + 4);
+                    os.writeMOV(BITS32, X86Register.EBP, destd, SR1);
+                } else {
+                    os.writeFLD64(refr, fieldOffset);
+                    os.writeFSTP64(X86Register.EBP, destd);
+                }
+            } else if (ref.getAddressingMode() == STACK) {
+                int disp = ((StackLocation) ref.getLocation()).getDisplacement();
+                os.writeMOV(BITS32, X86Register.EDX, X86Register.EBP, disp);
+                if (type == JvmType.LONG) {
+                    os.writeMOV(BITS32, SR1, X86Register.EDX, fieldOffset);
+                    os.writeMOV(BITS32, X86Register.EBP, destLo, SR1);
+                    os.writeMOV(BITS32, SR1, X86Register.EDX, fieldOffset + 4);
+                    os.writeMOV(BITS32, X86Register.EBP, destd, SR1);
+                } else {
+                    os.writeFLD64(X86Register.EDX, fieldOffset);
+                    os.writeFSTP64(X86Register.EBP, destd);
+                }
+            } else {
+                throw new IllegalArgumentException();
+            }
         }
     }
 
@@ -5771,6 +5939,17 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
 
         Operand ref = quad.getRef();
         Operand val = quad.getValue();
+
+        if (ref.getAddressingMode() == CONSTANT) {
+            // ANCHOR-L2-075 (CG-4d): only null reaches here; fault exactly
+            // like L1A's trap model.
+            if (!(ref instanceof IntConstant)) {
+                throw new IllegalArgumentException("Non-null constant ref: " + ref);
+            }
+            os.writeMOV_Const(SR1, ((IntConstant) ref).getValue());
+            os.writeMOV(BITS32, SR1, SR1, offset);
+            return;
+        }
 
         if (!wide) {
             final char fieldType = field.getSignature().charAt(0);
@@ -5902,24 +6081,38 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
                 default:
                     throw new IllegalArgumentException("Unknown fieldType: " + fieldType);
             }
-            // Writebarrier
-//            if (!inf.isPrimitive() && helper.needsWriteBarrier()) {
-//                final GPR tmp = (GPR) L1AHelper.requestRegister(eContext,
-//                    JvmType.REFERENCE, false);
-//                helper.writePutfieldWriteBarrier(inf, refr, valr, tmp);
-//                L1AHelper.releaseRegister(eContext, tmp);
-//            }
+            // Writebarrier (L1A parity; no-op unless the GC provides one).
+            writeFieldBarrier(inf, ref, val);
         } else {
-//            final DoubleWordItem dval = (DoubleWordItem) val;
-//            if (os.isCode32()) {
-//                os.writeMOV(BITS32, refr, offset + MSB, dval
-//                    .getMsbRegister(eContext));
-//                os.writeMOV(BITS32, refr, offset + LSB, dval
-//                    .getLsbRegister(eContext));
-//            } else {
-//                os.writeMOV(BITS64, refr, offset, dval.getRegister(eContext));
-//            }
-            throw new IllegalArgumentException();
+            // ANCHOR-L2-075 (CG-4d): wide stores from spill halves/qword.
+            // EDX holds the ref (SR1 is the data temp; both free).
+            GPR refrW;
+            if (ref.getAddressingMode() == REGISTER) {
+                refrW = (GPR) ((RegisterLocation) ((Variable) ref).getLocation()).getRegister();
+            } else if (ref.getAddressingMode() == STACK) {
+                int disp = ((StackLocation) ((Variable) ref).getLocation()).getDisplacement();
+                os.writeMOV(BITS32, X86Register.EDX, X86Register.EBP, disp);
+                refrW = X86Register.EDX;
+            } else {
+                throw new IllegalArgumentException();
+            }
+            if (val.getAddressingMode() != STACK) {
+                // Wide values always spill; a register here is unreachable.
+                throw new IllegalArgumentException("Wide value from register");
+            }
+            int vdisp = ((StackLocation) ((Variable) val).getLocation()).getDisplacement();
+            if (field.getSignature().charAt(0) == 'J') {
+                // Field halves [off+0]=LSB, [off+4]=MSB (L1A shape).
+                int vdispLo = vdisp - stackFrame.getHelper().SLOTSIZE;
+                os.writeMOV(BITS32, SR1, X86Register.EBP, vdispLo);
+                os.writeMOV(BITS32, refrW, offset, SR1);
+                os.writeMOV(BITS32, SR1, X86Register.EBP, vdisp);
+                os.writeMOV(BITS32, refrW, offset + 4, SR1);
+            } else {
+                os.writeFLD64(X86Register.EBP, vdisp);
+                os.writeFSTP64(refrW, offset);
+            }
+            // No barrier: long/double fields never hold references.
         }
     }
 

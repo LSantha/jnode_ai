@@ -567,4 +567,66 @@ public class PrimitiveTest {
     public static int[][] multi(int n) {
         return new int[n][2];
     }
+
+    // CG-4d field corpus (ANCHOR-L2-075)
+    static int sInt;
+    static long sLong;
+    static Object sObj;
+    static int sInit = 42;
+    int iInt;
+    long iLong;
+    float iFloat;
+    Object iObj;
+
+    public static int getSInt() {
+        return sInt;
+    }
+
+    public static void setSInt(int v) {
+        sInt = v;
+    }
+
+    public static long getSLong() {
+        return sLong;
+    }
+
+    public static void setSLong(long v) {
+        sLong = v;
+    }
+
+    public static Object getSObj() {
+        return sObj;
+    }
+
+    public static int getSInit() {
+        return sInit;
+    }
+
+    public static int getIInt(PrimitiveTest t) {
+        return t.iInt;
+    }
+
+    public static void setIInt(PrimitiveTest t, int v) {
+        t.iInt = v;
+    }
+
+    public static long getILong(PrimitiveTest t) {
+        return t.iLong;
+    }
+
+    public static void setILong(PrimitiveTest t, long v) {
+        t.iLong = v;
+    }
+
+    public static float getIFloat(PrimitiveTest t) {
+        return t.iFloat;
+    }
+
+    public static void setIFloat(PrimitiveTest t, float v) {
+        t.iFloat = v;
+    }
+
+    public static Object getIObj(PrimitiveTest t) {
+        return t.iObj;
+    }
 }
