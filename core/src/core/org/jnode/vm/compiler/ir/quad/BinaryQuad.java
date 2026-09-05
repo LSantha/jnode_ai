@@ -23,7 +23,10 @@ package org.jnode.vm.compiler.ir.quad;
 import org.jnode.vm.compiler.ir.AddressingMode;
 import org.jnode.vm.compiler.ir.CodeGenerator;
 import org.jnode.vm.compiler.ir.Constant;
+import org.jnode.vm.compiler.ir.DoubleConstant;
+import org.jnode.vm.compiler.ir.FloatConstant;
 import org.jnode.vm.compiler.ir.IRBasicBlock;
+import org.jnode.vm.compiler.ir.LongConstant;
 import org.jnode.vm.compiler.ir.Operand;
 import org.jnode.vm.compiler.ir.RegisterLocation;
 import org.jnode.vm.compiler.ir.StackLocation;
@@ -378,9 +381,35 @@ public class BinaryQuad<T> extends AssignQuad<T> {
      * @see org.jnode.vm.compiler.ir.quad.Quad#doPass2()
      */
     public void doPass2() {
-        refs[0] = refs[0].simplify();
-        refs[1] = refs[1].simplify();
+        refs[0] = maybeKeepVariable(refs[0]);
+        refs[1] = maybeKeepVariable(refs[1]);
         getLHS().setAssignQuad(this);
+    }
+
+    /**
+     * Simplify an operand, except: never substitute a wide (long/double/float)
+     * constant into a binary op (ANCHOR-L2-060, CG-3). The wide backend only
+     * implements stack-stack shapes, so a substituted constant would dispatch
+     * to a missing constant mode and throw at emission. The defining quad is
+     * pinned live instead (same idiom as {@code PhiAssignQuad.doPass2}).
+     * Narrow (int) constants still substitute: int modes exist everywhere.
+     *
+     * @param ref the operand to simplify
+     * @return the simplified operand, or the original variable
+     */
+    private Operand<T> maybeKeepVariable(Operand<T> ref) {
+        Operand<T> simplified = ref.simplify();
+        if (ref instanceof Variable && simplified instanceof Constant) {
+            Constant<T> c = (Constant<T>) simplified;
+            if (c instanceof LongConstant || c instanceof DoubleConstant || c instanceof FloatConstant) {
+                AssignQuad<T> def = ((Variable<T>) ref).getAssignQuad();
+                if (def != null) {
+                    def.setDeadCode(false);
+                }
+                return ref;
+            }
+        }
+        return simplified;
     }
 
     /**

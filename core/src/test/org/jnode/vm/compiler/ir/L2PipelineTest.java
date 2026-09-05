@@ -124,6 +124,9 @@ public class L2PipelineTest {
         cfg.constructSSA();
         cfg.optimize();
         cfg.removeUnusedVars();
+        // Closure pair mirroring X86Level2Compiler.doCompile (ANCHOR-L2-060).
+        cfg.optimize();
+        cfg.removeUnusedVars();
         cfg.deconstrucSSA();
         cfg.fixupAddresses();
         cfg.removeDefUseChains();
@@ -167,6 +170,19 @@ public class L2PipelineTest {
         assertCompiles("terniary22");
         assertCompiles("terniary1");
         assertCompiles("discriminant");
+    }
+
+    /**
+     * CG-3 (ANCHOR-L2-064): long arithmetic through the real pipeline
+     * (spills, halves convention, SSS backend).
+     */
+    @Test
+    public void testCompileLongArithmetic() throws Exception {
+        assertCompiles("ladd");
+        assertCompiles("lsub");
+        assertCompiles("land");
+        assertCompiles("lor");
+        assertCompiles("lxor");
     }
 
     // ---------------- T1: dominator-tree exactness (ANCHOR-L2-004) ----------------
@@ -229,6 +245,9 @@ public class L2PipelineTest {
         cfg.constructSSA();
         cfg.optimize();
         cfg.removeUnusedVars();
+        // Closure pair mirroring X86Level2Compiler.doCompile (ANCHOR-L2-060).
+        cfg.optimize();
+        cfg.removeUnusedVars();
         cfg.deconstrucSSA();
         cfg.fixupAddresses();
         cfg.removeDefUseChains();
@@ -263,6 +282,9 @@ public class L2PipelineTest {
         IRGenerator irg = new IRGenerator(cfg, typeSizeInfo, m.getDeclaringClass().getLoader());
         BytecodeParser.parse(code, irg);
         cfg.constructSSA();
+        cfg.optimize();
+        cfg.removeUnusedVars();
+        // Closure pair mirroring X86Level2Compiler.doCompile (ANCHOR-L2-060).
         cfg.optimize();
         cfg.removeUnusedVars();
         return cfg;

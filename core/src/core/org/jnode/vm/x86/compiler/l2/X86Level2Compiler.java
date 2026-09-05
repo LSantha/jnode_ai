@@ -188,6 +188,17 @@ public class X86Level2Compiler extends AbstractX86Compiler {
                 cfg.constructSSA();
                 cfg.optimize();
                 cfg.removeUnusedVars();
+                // ANCHOR-L2-060 (CG-3): closure pair. Simplification during the
+                // first optimize() can kill a def that a later-processed quad
+                // keeps referencing: the wide-const gate in BinaryQuad.doPass2
+                // and the phi pin in PhiAssignQuad.doPass2 revive/keep such
+                // defs, but a subsequent copy-propagation in the SAME pass can
+                // kill them again, stranding a live use on a dead def (slot
+                // never written). Re-running both passes converges the
+                // kill/revive interplay: revived defs have live uses so the
+                // second DCE keeps them, and anything stranded is collected.
+                cfg.optimize();
+                cfg.removeUnusedVars();
                 cfg.deconstrucSSA();
                 cfg.removeDefUseChains();
                 cfg.fixupAddresses();

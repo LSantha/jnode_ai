@@ -136,29 +136,8 @@ public class L2ByteCodeSupportChecker extends BytecodeVisitorSupport {
         notSupported();
     }
 
-    public void visit_d2f() {
-        notSupported();
-    }
-
-    public void visit_lcmp() {
-        notSupported();
-    }
-
-    public void visit_fcmpl() {
-        notSupported();
-    }
-
-    public void visit_fcmpg() {
-        notSupported();
-    }
-
-    public void visit_dcmpl() {
-        notSupported();
-    }
-
-    public void visit_dcmpg() {
-        notSupported();
-    }
+    // CG-3 (ANCHOR-L2-064): d2f/lcmp/fcmp*/dcmp* enabled — D2F (S,S) and the
+    // FP-compare wiring (generateCompareOP) cover them.
 
     public void visit_jsr(int address) {
         notSupported();
@@ -249,85 +228,22 @@ public class L2ByteCodeSupportChecker extends BytecodeVisitorSupport {
         throw new UnsupportedOperationException();
     }
 
-    //unsupported in GenericX86CodeGenerator
+    // CG-3 (ANCHOR-L2-062/064): lmul/ldiv/lrem deferred — full 64-bit
+    // mul/div needs multi-precision sequences or a runtime helper. Reject
+    // explicitly so methods fall back to L1 instead of crashing the backend.
 
     @Override
-    public void visit_lneg() {
+    public void visit_lmul() {
         notSupported();
     }
 
     @Override
-    public void visit_i2l() {
+    public void visit_ldiv() {
         notSupported();
     }
 
     @Override
-    public void visit_i2d() {
-        notSupported();
-    }
-
-    @Override
-    public void visit_l2i() {
-        notSupported();
-    }
-
-    @Override
-    public void visit_l2f() {
-        notSupported();
-    }
-
-    @Override
-    public void visit_l2d() {
-        notSupported();
-    }
-
-    @Override
-    public void visit_f2l() {
-        notSupported();
-    }
-
-    @Override
-    public void visit_f2d() {
-        notSupported();
-    }
-
-    @Override
-    public void visit_d2i() {
-        notSupported();
-    }
-
-    @Override
-    public void visit_d2l() {
-        notSupported();
-    }
-
-    @Override
-    public void visit_dneg() {
-        notSupported();
-    }
-
-    @Override
-    public void visit_dadd() {
-        notSupported();
-    }
-
-    @Override
-    public void visit_ddiv() {
-        notSupported();
-    }
-
-    @Override
-    public void visit_dmul() {
-        notSupported();
-    }
-
-    @Override
-    public void visit_drem() {
-        notSupported();
-    }
-
-    @Override
-    public void visit_dsub() {
+    public void visit_lrem() {
         notSupported();
     }
 }

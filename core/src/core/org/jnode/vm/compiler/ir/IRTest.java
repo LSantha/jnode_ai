@@ -212,6 +212,10 @@ public class IRTest {
         cfg.removeUnusedVars();
         printCFG(cfg, "Unused vars removed SSA");
 
+        // Closure pair, mirroring X86Level2Compiler.doCompile (ANCHOR-L2-060).
+        cfg.optimize();
+        cfg.removeUnusedVars();
+
         cfg.deconstrucSSA();
         cfg.fixupAddresses();
         printCFG(cfg, "Deconstructed SSA");

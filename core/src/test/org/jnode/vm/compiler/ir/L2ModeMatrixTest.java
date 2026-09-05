@@ -38,6 +38,8 @@ import org.jnode.vm.compiler.ir.quad.BinaryOperation;
 import org.jnode.vm.compiler.ir.quad.BinaryQuad;
 import org.jnode.vm.compiler.ir.quad.UnaryOperation;
 import org.jnode.vm.compiler.ir.quad.UnaryQuad;
+import org.jnode.vm.compiler.ir.quad.UnaryOperation;
+import org.jnode.vm.compiler.ir.quad.UnaryQuad;
 import org.jnode.vm.facade.TypeSizeInfo;
 import org.jnode.vm.facade.VmUtils;
 import org.jnode.vm.x86.VmX86Architecture32;
@@ -352,8 +354,76 @@ public class L2ModeMatrixTest {
         assertTrue("DCMPG must FUCOMPP, got:\n" + d, d.contains("fucompp"));
     }
 
-    private static void assertBinaryThrows(BinaryOperation op, String why) throws Exception {
+    private static String emitWideSSS(BinaryOperation op) throws Exception {
+        // Wide values are always spilled: the SSS overload is the only
+        // reachable shape for L*/D* (plus RSS-LCMP, SSR/SSC shifts below).
         EmitterHarness h = new EmitterHarness();
+        h.cg.generateBinaryOP(dummyBinaryQuad(0), -20, -28, op, -36);
+        return h.text();
+    }
+
+    /**
+     * CG-3 (ANCHOR-L2-061): wide integer ops emit in SSS shape.
+     */
+    @Test
+    public void testWideIntegerSSSShapes() throws Exception {
+        assertTrue(emitWideSSS(BinaryOperation.LAND).contains("and "));
+        assertTrue(emitWideSSS(BinaryOperation.LOR).contains("or "));
+        assertTrue(emitWideSSS(BinaryOperation.LXOR).contains("xor "));
+        String shl = emitWideSSS(BinaryOperation.LSHL);
+        assertTrue("LSHL must SHLD, got:\n" + shl, shl.contains("shld"));
+        String shr = emitWideSSS(BinaryOperation.LSHR);
+        assertTrue("LSHR must SHRD, got:\n" + shr, shr.contains("shrd"));
+        String ushr = emitWideSSS(BinaryOperation.LUSHR);
+        assertTrue("LUSHR must SHRD, got:\n" + ushr, ushr.contains("shrd"));
+        String lcmp = emitWideSSS(BinaryOperation.LCMP);
+        assertTrue("LCMP SSS must CMP, got:\n" + lcmp, lcmp.contains("cmp "));
+    }
+
+    /**
+     * CG-3 (ANCHOR-L2-061): LCMP with int result in a register; shifts with
+     * the int count in a register (SSR) or immediate (SSC).
+     */
+    @Test
+    public void testLcmpRSSAndShiftSSRSSC() throws Exception {
+        String lcmp = emitBinary(R, S, S, BinaryOperation.LCMP);
+        assertTrue("LCMP RSS must CMP, got:\n" + lcmp, lcmp.contains("cmp "));
+        String ssr = emitBinary(S, S, R, BinaryOperation.LSHL);
+        assertTrue("LSHL SSR must SHLD, got:\n" + ssr, ssr.contains("shld"));
+        String ssc = emitBinary(S, S, C, BinaryOperation.LSHR);
+        assertTrue("LSHR SSC must SHRD, got:\n" + ssc, ssc.contains("shrd"));
+    }
+
+    private static String emitUnarySS(UnaryOperation op) throws Exception {
+        EmitterHarness h = new EmitterHarness();
+        h.cg.generateCodeFor(dummyUnaryQuad(0), -8, op, -12);
+        return h.text();
+    }
+
+    /**
+     * CG-3 (ANCHOR-L2-063): wide converts in (S,S) shape plus I2D in (S,R).
+     */
+    @Test
+    public void testWideConvertShapes() throws Exception {
+        assertTrue(emitUnarySS(UnaryOperation.I2D).contains("fild"));
+        assertTrue(emitUnarySS(UnaryOperation.L2F).contains("fild"));
+        assertTrue(emitUnarySS(UnaryOperation.L2D).contains("fild"));
+        assertTrue(emitUnarySS(UnaryOperation.F2L).contains("fld"));
+        assertTrue(emitUnarySS(UnaryOperation.F2D).contains("fld"));
+        assertTrue(emitUnarySS(UnaryOperation.D2I).contains("fld"));
+        assertTrue(emitUnarySS(UnaryOperation.D2L).contains("fld"));
+        assertTrue(emitUnarySS(UnaryOperation.D2F).contains("fld"));
+        String lneg = emitUnarySS(UnaryOperation.LNEG);
+        assertTrue("LNEG must NEG, got:\n" + lneg, lneg.contains("neg "));
+        String dneg = emitUnarySS(UnaryOperation.DNEG);
+        assertTrue("DNEG must FCHS, got:\n" + dneg, dneg.contains("fchs"));
+
+        EmitterHarness h = new EmitterHarness();
+        h.cg.generateCodeFor(dummyUnaryQuad(0), -8, UnaryOperation.I2D, (Object) X86Register.EBX);
+        assertTrue("I2D (S,R) must FILD, got:\n" + h.text(), h.text().contains("fild"));
+    }
+
+    private static void assertBinaryThrows(BinaryOperation op, String why) throws Exception {        EmitterHarness h = new EmitterHarness();
         boolean thrown = false;
         try {
             h.cg.generateBinaryOP(X86Register.ECX, X86Register.EBX, op, X86Register.ESI);
@@ -372,6 +442,8 @@ public class L2ModeMatrixTest {
     public void testPinnedLongDoubleLimits() throws Exception {
         assertBinaryThrows(BinaryOperation.LADD, "LADD RRR must still throw (CG-3)");
         assertBinaryThrows(BinaryOperation.LMUL, "LMUL RRR must still throw (CG-3)");
+        assertBinaryThrows(BinaryOperation.LDIV, "LDIV RRR must still throw (CG-3)");
+        assertBinaryThrows(BinaryOperation.LREM, "LREM RRR must still throw (CG-3)");
         assertBinaryThrows(BinaryOperation.DADD, "DADD RRR must still throw (CG-3)");
         assertBinaryThrows(BinaryOperation.DDIV, "DDIV RRR must still throw (CG-3)");
     }

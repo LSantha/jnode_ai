@@ -157,8 +157,7 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
         this.currentMethod = method;
     }
 
-    public final Label getInstrLabel(int address) {
-        // ANCHOR-L2-00D: dense quad addresses can exceed the bytecode length
+    public final Label getInstrLabel(int address) {        // ANCHOR-L2-00D: dense quad addresses can exceed the bytecode length
         // the table was sized with (dup/phi-moves expand one bytecode into
         // several quads), so grow on demand instead of crashing.
         if (address >= addressLabels.length) {
@@ -172,6 +171,18 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
             addressLabels[address] = l;
         }
         return l;
+    }
+
+    /**
+     * Fresh anonymous label for emitters without a quad address (RSS/SSR
+     * overloads). Names are unique per code-generator instance (one instance
+     * per compiled method); {@code Label} equality is name-based, so reuse
+     * would misresolve jumps (ANCHOR-L2-061, CG-3).
+     */
+    private int anonLabelSeq = 0;
+
+    private Label anonLabel(String tag) {
+        return new Label(instrLabelPrefix + tag + "_" + (anonLabelSeq++));
     }
 
     public RegisterPool<T> getRegisterPool() {
@@ -599,9 +610,21 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
                 break;
 
             case I2D:
+                // ANCHOR-L2-063 (CG-3): int in reg to double spill (was grouped
+                // with F2I below, mistaking int bits for float bits — B13).
+                os.writePUSH((GPR) rhsReg);
+                os.writeFILD32(X86Register.ESP, 0);
+                os.writeFSTP64(X86Register.EBP, lhsDisp);
+                os.writeADD(X86Register.ESP, 4);
+                break;
+
             case L2I:
             case L2F:
             case L2D:
+                // Unreachable: long sources are always spilled, never in a
+                // register (X86RegisterPool.request(LONG) is null). Loudly.
+                throw new IllegalArgumentException("Unknown operation: " + operation);
+
             case F2I:
                 os.writeMOV(X86Constants.BITS32, X86Register.EBP, lhsDisp, (GPR) rhsReg);
                 os.writeFLD32(X86Register.EBP, lhsDisp);
@@ -678,14 +701,24 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
                 break;
 
             case I2D:
-                throw new IllegalArgumentException("Unknown operation: " + operation);
+                // ANCHOR-L2-063 (CG-3).
+                os.writeFILD32(X86Register.EBP, rhsDisp);
+                os.writeFSTP64(X86Register.EBP, lhsDisp);
+                break;
             case L2I:
                 os.writeMOV(BITS32, SR1, X86Register.EBP, rhsDisp - stackFrame.getHelper().SLOTSIZE);
                 os.writeMOV(BITS32, X86Register.EBP, lhsDisp, SR1);
                 break;
             case L2F:
+                // ANCHOR-L2-063 (CG-3): FILD reads the 8 bytes at [disp-SLOT].
+                os.writeFILD64(X86Register.EBP, rhsDisp - stackFrame.getHelper().SLOTSIZE);
+                os.writeFSTP32(X86Register.EBP, lhsDisp);
+                break;
             case L2D:
-                throw new IllegalArgumentException("Unknown operation: " + operation);
+                // ANCHOR-L2-063 (CG-3).
+                os.writeFILD64(X86Register.EBP, rhsDisp - stackFrame.getHelper().SLOTSIZE);
+                os.writeFSTP64(X86Register.EBP, lhsDisp);
+                break;
 
             case F2I:
                 os.writeFLD32(X86Register.EBP, rhsDisp);
@@ -693,11 +726,30 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
                 break;
 
             case F2L:
+                // ANCHOR-L2-063 (CG-3): FISTP stores 8 bytes at [disp-SLOT].
+                os.writeFLD32(X86Register.EBP, rhsDisp);
+                os.writeFISTP64(X86Register.EBP, lhsDisp - stackFrame.getHelper().SLOTSIZE);
+                break;
             case F2D:
+                // ANCHOR-L2-063 (CG-3).
+                os.writeFLD32(X86Register.EBP, rhsDisp);
+                os.writeFSTP64(X86Register.EBP, lhsDisp);
+                break;
             case D2I:
+                // ANCHOR-L2-063 (CG-3).
+                os.writeFLD64(X86Register.EBP, rhsDisp);
+                os.writeFISTP32(X86Register.EBP, lhsDisp);
+                break;
             case D2L:
+                // ANCHOR-L2-063 (CG-3).
+                os.writeFLD64(X86Register.EBP, rhsDisp);
+                os.writeFISTP64(X86Register.EBP, lhsDisp - stackFrame.getHelper().SLOTSIZE);
+                break;
             case D2F:
-                throw new IllegalArgumentException("Unknown operation: " + operation);
+                // ANCHOR-L2-063 (CG-3).
+                os.writeFLD64(X86Register.EBP, rhsDisp);
+                os.writeFSTP32(X86Register.EBP, lhsDisp);
+                break;
 
             case I2B:
                 os.writePUSH(SR1);
@@ -728,8 +780,19 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
                 os.writeNEG(BITS32, X86Register.EBP, lhsDisp);
                 break;
 
-            case LNEG:
-                throw new IllegalArgumentException("Unknown operation: " + operation);
+            case LNEG: {
+                // ANCHOR-L2-063 (CG-3): 64-bit negate (neg lo; adc hi; neg hi).
+                int srcLo = rhsDisp - stackFrame.getHelper().SLOTSIZE;
+                int dstLo = lhsDisp - stackFrame.getHelper().SLOTSIZE;
+                os.writeMOV(BITS32, SR1, X86Register.EBP, srcLo);
+                os.writeNEG(SR1);
+                os.writeMOV(BITS32, X86Register.EBP, dstLo, SR1);
+                os.writeMOV(BITS32, SR1, X86Register.EBP, rhsDisp);
+                os.writeADC(SR1, 0);
+                os.writeNEG(SR1);
+                os.writeMOV(BITS32, X86Register.EBP, lhsDisp, SR1);
+                break;
+            }
 
             case FNEG:
                 os.writeFLD32(X86Register.EBP, rhsDisp);
@@ -738,6 +801,11 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
                 break;
 
             case DNEG:
+                // ANCHOR-L2-063 (CG-3).
+                os.writeFLD64(X86Register.EBP, rhsDisp);
+                os.writeFCHS();
+                os.writeFSTP64(X86Register.EBP, lhsDisp);
+                break;
             default:
                 throw new IllegalArgumentException("Unknown operation: " + operation);
         }
@@ -2219,6 +2287,32 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
                 os.writePOP((GPR) reg1);
                 break;
 
+            case LCMP: {
+                // ANCHOR-L2-061 (CG-3): long compare, int result to register.
+                final Label ltLabel = anonLabel("lcmplt");
+                final Label gtLabel = anonLabel("lcmpgt");
+                final Label endLabel = anonLabel("lcmpend");
+                int disp3lsb = disp3 - stackFrame.getHelper().SLOTSIZE;
+                int disp2lsb = disp2 - stackFrame.getHelper().SLOTSIZE;
+                os.writeMOV(BITS32, SR1, X86Register.EBP, disp2);
+                os.writeCMP(SR1, X86Register.EBP, disp3);
+                os.writeJCC(ltLabel, X86Constants.JL); // high1 < high2
+                os.writeJCC(gtLabel, X86Constants.JG); // high1 > high2
+                os.writeMOV(BITS32, SR1, X86Register.EBP, disp2lsb);
+                os.writeCMP(SR1, X86Register.EBP, disp3lsb);
+                os.writeJCC(ltLabel, X86Constants.JB); // low1 < low2
+                os.writeJCC(gtLabel, X86Constants.JA); // low1 > low2
+                os.writeMOV_Const((GPR) reg1, 0);
+                os.writeJMP(endLabel);
+                os.setObjectRef(gtLabel);
+                os.writeMOV_Const((GPR) reg1, 1);
+                os.writeJMP(endLabel);
+                os.setObjectRef(ltLabel);
+                os.writeMOV_Const((GPR) reg1, -1);
+                os.setObjectRef(endLabel);
+                break;
+            }
+
             case LADD:
             case LAND:
             case LDIV:
@@ -3188,8 +3282,12 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
                 break;
 
             case LCMP: {
+                // ANCHOR-L2-061 (CG-3): const-long compare without scratch stores
+                // (old code SUB/SBB'd immediates into the operand slots,
+                // destroying a live spilled long — same class as B6).
                 final Label curInstrLabel = getInstrLabel(quad.getAddress());
                 final Label ltLabel = new Label(curInstrLabel + "lt");
+                final Label gtLabel = new Label(curInstrLabel + "gt");
                 final Label endLabel = new Label(curInstrLabel + "end");
 
                 // Calculate
@@ -3198,28 +3296,40 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
                     final int v_lsb = (int) (value & 0xFFFFFFFFL);
                     final int v_msb = (int) ((value >>> 32) & 0xFFFFFFFFL);
                     int disp2lsb = disp2 - stackFrame.getHelper().SLOTSIZE;
-                    int disp2msb = disp2;
-                    os.writeSUB(BITS32, X86Register.EBP, disp2lsb, v_lsb);
-                    os.writeSBB(BITS32, X86Register.EBP, disp2msb, v_msb);
-                    os.writeJCC(ltLabel, X86Constants.JL); // JL
+                    os.writeMOV(BITS32, SR1, X86Register.EBP, disp2);
+                    os.writeCMP_Const(SR1, v_msb);
+                    os.writeJCC(ltLabel, X86Constants.JL); // high1 < high2
+                    os.writeJCC(gtLabel, X86Constants.JG); // high1 > high2
                     os.writeMOV(BITS32, SR1, X86Register.EBP, disp2lsb);
-                    os.writeOR(SR1, X86Register.EBP, disp2msb);
+                    os.writeCMP_Const(SR1, v_lsb);
+                    os.writeJCC(ltLabel, X86Constants.JB); // low1 < low2
+                    os.writeJCC(gtLabel, X86Constants.JA); // low1 > low2
+                    os.writeMOV_Const(BITS32, X86Register.EBP, disp1, 0);
+                    os.writeJMP(endLabel);
+                    /** GT */
+                    os.setObjectRef(gtLabel);
+                    os.writeMOV_Const(BITS32, X86Register.EBP, disp1, 1);
+                    os.writeJMP(endLabel);
+                    /** LT */
+                    os.setObjectRef(ltLabel);
+                    os.writeMOV_Const(BITS32, X86Register.EBP, disp1, -1);
+                    os.setObjectRef(endLabel);
+                } else {
+                    throw new IllegalArgumentException("Unknown operation: " + operation);
                 }
-//                else {
-//                    final GPR64 v2r = v2.getRegister(eContext);
-//                    final GPR64 v1r = v1.getRegister(eContext);
-//                    os.writeCMP(v1r, v2r);
-//                    os.writeJCC(ltLabel, X86Constants.JL); // JL
-//                }
-                os.writeMOV_Const(BITS32, X86Register.EBP, disp1, 0);
-                os.writeJCC(endLabel, X86Constants.JZ); // value1 == value2
-                /** GT */
-                os.writeINC(BITS32, X86Register.EBP, disp1);
-                os.writeJMP(endLabel);
-                /** LT */
-                os.setObjectRef(ltLabel);
-                os.writeMOV_Const(BITS32, X86Register.EBP, disp1, -1);
-                os.setObjectRef(endLabel);
+                break;
+            }
+            case LSHL:
+            case LSHR:
+            case LUSHR: {
+                // ANCHOR-L2-061 (CG-3): 64-bit shifts; int count immediate.
+                int opLo = disp2 - stackFrame.getHelper().SLOTSIZE;
+                int resLo = disp1 - stackFrame.getHelper().SLOTSIZE;
+                int count = ((IntConstant<T>) c3).getValue();
+                os.writePUSH(X86Register.ECX);
+                os.writeMOV_Const(X86Register.ECX, count);
+                writeLongShift(anonLabel("sh"), operation, resLo, disp1, opLo, disp2);
+                os.writePOP(X86Register.ECX);
                 break;
             }
             case LADD:
@@ -3228,10 +3338,7 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
             case LMUL:
             case LOR:
             case LREM:
-            case LSHL:
-            case LSHR:
             case LSUB:
-            case LUSHR:
             case LXOR:
             default:
                 throw new IllegalArgumentException("Unknown operation: " + operation);
@@ -3404,6 +3511,21 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
                 os.writeFFREE(X86Register.ST0);
                 break;
 
+            case LSHL:
+            case LSHR:
+            case LUSHR: {
+                // ANCHOR-L2-061 (CG-3): 64-bit shifts; int count in reg3.
+                int opLo = disp2 - stackFrame.getHelper().SLOTSIZE;
+                int resLo = disp1 - stackFrame.getHelper().SLOTSIZE;
+                os.writePUSH(X86Register.ECX);
+                if (reg3 != X86Register.ECX) {
+                    os.writeMOV(BITS32, X86Register.ECX, (GPR) reg3);
+                }
+                writeLongShift(anonLabel("sh"), operation, resLo, disp1, opLo, disp2);
+                os.writePOP(X86Register.ECX);
+                break;
+            }
+
             case FSUB:
                 os.writeMOV(X86Constants.BITS32, X86Register.EBP, disp1, (GPR) reg3);
                 os.writeFLD32(X86Register.EBP, disp2);
@@ -3417,10 +3539,7 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
             case LMUL:
             case LOR:
             case LREM:
-            case LSHL:
-            case LSHR:
             case LSUB:
-            case LUSHR:
             case LXOR:
             default:
                 throw new IllegalArgumentException("Unknown operation: " + operation);
@@ -3672,14 +3791,64 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
                 os.writeMOV(BITS32, X86Register.EBP, disp1msb, SR1);
                 break;
             }
-            case LAND:
+            case LAND: {
+                // ANCHOR-L2-061 (CG-3): 64-bit AND as two 32-bit ops.
+                int disp3lsb = disp3 - stackFrame.getHelper().SLOTSIZE;
+                int disp2lsb = disp2 - stackFrame.getHelper().SLOTSIZE;
+                int disp1lsb = disp1 - stackFrame.getHelper().SLOTSIZE;
+                os.writeMOV(BITS32, SR1, X86Register.EBP, disp2lsb);
+                os.writeAND(SR1, X86Register.EBP, disp3lsb);
+                os.writeMOV(BITS32, X86Register.EBP, disp1lsb, SR1);
+                os.writeMOV(BITS32, SR1, X86Register.EBP, disp2);
+                os.writeAND(SR1, X86Register.EBP, disp3);
+                os.writeMOV(BITS32, X86Register.EBP, disp1, SR1);
+                break;
+            }
+            case LOR: {
+                // ANCHOR-L2-061 (CG-3): 64-bit OR as two 32-bit ops.
+                int disp3lsb = disp3 - stackFrame.getHelper().SLOTSIZE;
+                int disp2lsb = disp2 - stackFrame.getHelper().SLOTSIZE;
+                int disp1lsb = disp1 - stackFrame.getHelper().SLOTSIZE;
+                os.writeMOV(BITS32, SR1, X86Register.EBP, disp2lsb);
+                os.writeOR(SR1, X86Register.EBP, disp3lsb);
+                os.writeMOV(BITS32, X86Register.EBP, disp1lsb, SR1);
+                os.writeMOV(BITS32, SR1, X86Register.EBP, disp2);
+                os.writeOR(SR1, X86Register.EBP, disp3);
+                os.writeMOV(BITS32, X86Register.EBP, disp1, SR1);
+                break;
+            }
+            case LXOR: {
+                // ANCHOR-L2-061 (CG-3): 64-bit XOR as two 32-bit ops.
+                int disp3lsb = disp3 - stackFrame.getHelper().SLOTSIZE;
+                int disp2lsb = disp2 - stackFrame.getHelper().SLOTSIZE;
+                int disp1lsb = disp1 - stackFrame.getHelper().SLOTSIZE;
+                os.writeMOV(BITS32, SR1, X86Register.EBP, disp2lsb);
+                os.writeXOR(SR1, X86Register.EBP, disp3lsb);
+                os.writeMOV(BITS32, X86Register.EBP, disp1lsb, SR1);
+                os.writeMOV(BITS32, SR1, X86Register.EBP, disp2);
+                os.writeXOR(SR1, X86Register.EBP, disp3);
+                os.writeMOV(BITS32, X86Register.EBP, disp1, SR1);
+                break;
+            }
             case LDIV:
             case LMUL:
-            case LOR:
             case LREM:
+                // ANCHOR-L2-062 (CG-3): deferred. Full 64-bit mul/div needs
+                // multi-precision sequences or a runtime helper (CG-5);
+                // L2ByteCodeSupportChecker rejects lmul/ldiv/lrem meanwhile.
+                throw new IllegalArgumentException("Unknown operation: " + operation);
             case LSHL:
             case LSHR:
-                throw new IllegalArgumentException("Unknown operation: " + operation);
+            case LUSHR: {
+                // ANCHOR-L2-061 (CG-3): 64-bit shifts; the count is a spilled int.
+                int opLo = disp2 - stackFrame.getHelper().SLOTSIZE;
+                int resLo = disp1 - stackFrame.getHelper().SLOTSIZE;
+                os.writePUSH(X86Register.ECX);
+                os.writeMOV(BITS32, X86Register.ECX, X86Register.EBP, disp3);
+                writeLongShift(quad, operation, resLo, disp1, opLo, disp2);
+                os.writePOP(X86Register.ECX);
+                break;
+            }
             case LSUB:
                 int disp3lsb = disp3 - stackFrame.getHelper().SLOTSIZE;
                 int disp3msb = disp3;
@@ -3695,11 +3864,99 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
                 os.writeSBB(SR1, X86Register.EBP, disp3msb);
                 os.writeMOV(BITS32, X86Register.EBP, disp1msb, SR1);
                 break;
-            case LUSHR:
-            case LXOR:
             default:
                 throw new IllegalArgumentException("Unknown operation: " + operation);
         }
+    }
+
+    /**
+     * Emit a 64-bit shift with the count in ECX. Masks the count to 6 bits
+     * (JVM semantics) and routes counts &gt;= 32 through a second path.
+     * Value halves use the spill convention ([disp-SLOTSIZE] = LSB,
+     * ANCHOR-L2-007). Clobbers SR1 and EDX (saved/restored); ECX preserved.
+     * (ANCHOR-L2-061, CG-3)
+     *
+     * @param quad      the shift quad (address labels)
+     * @param operation LSHL, LSHR or LUSHR
+     * @param resLo     LSB displacement of the result
+     * @param resHi     MSB displacement of the result (disp)
+     * @param opLo      LSB displacement of the value
+     * @param opHi      MSB displacement of the value (disp)
+     */
+    private void writeLongShift(BinaryQuad<T> quad, BinaryOperation operation,
+                                int resLo, int resHi, int opLo, int opHi) {
+        writeLongShift(getInstrLabel(quad.getAddress()), operation, resLo, resHi, opLo, opHi);
+    }
+
+    /**
+     * Emit a 64-bit shift with the count in ECX. Masks the count to 6 bits
+     * (JVM semantics) and routes counts &gt;= 32 through a second path.
+     * Value halves use the spill convention ([disp-SLOTSIZE] = LSB,
+     * ANCHOR-L2-007). Clobbers SR1 and EDX (saved/restored); ECX preserved.
+     * (ANCHOR-L2-061, CG-3)
+     *
+     * @param baseLabel base for the internal labels (address label where the
+     *                  quad address is known, {@link #anonLabel} otherwise)
+     * @param operation LSHL, LSHR or LUSHR
+     * @param resLo     LSB displacement of the result
+     * @param resHi     MSB displacement of the result (disp)
+     * @param opLo      LSB displacement of the value
+     * @param opHi      MSB displacement of the value (disp)
+     */
+    private void writeLongShift(Label baseLabel, BinaryOperation operation,
+                                int resLo, int resHi, int opLo, int opHi) {
+        final Label curLabel = baseLabel;
+        final Label bigLabel = new Label(curLabel + "shbig");
+        final Label endLabel = new Label(curLabel + "shend");
+        os.writeAND(X86Register.ECX, 0x3F);
+        os.writeCMP_Const(X86Register.ECX, 32);
+        os.writeJCC(bigLabel, X86Constants.JAE);
+        os.writePUSH(X86Register.EDX);
+        if (operation == BinaryOperation.LSHL) {
+            os.writeMOV(BITS32, SR1, X86Register.EBP, opLo);
+            os.writeMOV(BITS32, X86Register.EDX, X86Register.EBP, opHi);
+            os.writeSHLD_CL(X86Register.EDX, SR1);
+            os.writeSAL_CL(SR1);
+            os.writeMOV(BITS32, X86Register.EBP, resLo, SR1);
+            os.writeMOV(BITS32, X86Register.EBP, resHi, X86Register.EDX);
+        } else if (operation == BinaryOperation.LSHR) {
+            os.writeMOV(BITS32, SR1, X86Register.EBP, opHi);
+            os.writeMOV(BITS32, X86Register.EDX, X86Register.EBP, opLo);
+            os.writeSHRD_CL(X86Register.EDX, SR1);
+            os.writeSAR_CL(SR1);
+            os.writeMOV(BITS32, X86Register.EBP, resHi, SR1);
+            os.writeMOV(BITS32, X86Register.EBP, resLo, X86Register.EDX);
+        } else {
+            os.writeMOV(BITS32, SR1, X86Register.EBP, opHi);
+            os.writeMOV(BITS32, X86Register.EDX, X86Register.EBP, opLo);
+            os.writeSHRD_CL(X86Register.EDX, SR1);
+            os.writeSHR_CL(SR1);
+            os.writeMOV(BITS32, X86Register.EBP, resHi, SR1);
+            os.writeMOV(BITS32, X86Register.EBP, resLo, X86Register.EDX);
+        }
+        os.writePOP(X86Register.EDX);
+        os.writeJMP(endLabel);
+        os.setObjectRef(bigLabel);
+        os.writeSUB(X86Register.ECX, 32);
+        if (operation == BinaryOperation.LSHL) {
+            os.writeMOV(BITS32, SR1, X86Register.EBP, opLo);
+            os.writeSAL_CL(SR1);
+            os.writeMOV(BITS32, X86Register.EBP, resHi, SR1);
+            os.writeMOV_Const(BITS32, X86Register.EBP, resLo, 0);
+        } else if (operation == BinaryOperation.LSHR) {
+            os.writeMOV(BITS32, SR1, X86Register.EBP, opHi);
+            os.writeMOV(BITS32, X86Register.EDX, SR1);
+            os.writeSAR(X86Register.EDX, 31);
+            os.writeSAR_CL(SR1);
+            os.writeMOV(BITS32, X86Register.EBP, resHi, X86Register.EDX);
+            os.writeMOV(BITS32, X86Register.EBP, resLo, SR1);
+        } else {
+            os.writeMOV(BITS32, SR1, X86Register.EBP, opHi);
+            os.writeSHR_CL(SR1);
+            os.writeMOV(BITS32, X86Register.EBP, resLo, SR1);
+            os.writeMOV_Const(BITS32, X86Register.EBP, resHi, 0);
+        }
+        os.setObjectRef(endLabel);
     }
 
     /** ******** BRANCHES ************************************** */

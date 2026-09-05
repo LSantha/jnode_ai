@@ -23,12 +23,14 @@ package org.jnode.vm.compiler.ir;
 import org.jnode.vm.JvmType;
 import org.jnode.vm.compiler.ir.quad.BranchCondition;
 import org.jnode.vm.compiler.ir.quad.VariableRefAssignQuad;
+import org.jnode.vm.x86.compiler.l2.L2ByteCodeSupportChecker;
 import org.junit.Test;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
+import static org.junit.Assert.fail;
 
 /**
  * Host-runnable T0 unit tests for the L2 (SSA) compiler IR layer.
@@ -211,12 +213,76 @@ public class L2HostTest {
     // ---------------- BranchCondition taxonomy ----------------
 
     @Test
-    public void testBranchConditionArity() {
-        assertTrue(BranchCondition.IFEQ.isUnary());
+    public void testBranchConditionArity() {        assertTrue(BranchCondition.IFEQ.isUnary());
         assertFalse(BranchCondition.IFEQ.isBinary());
         assertTrue(BranchCondition.IF_ICMPEQ.isBinary());
         assertFalse(BranchCondition.IF_ICMPEQ.isUnary());
         assertTrue(BranchCondition.IFNULL.isUnary());
         assertTrue(BranchCondition.IF_ACMPNE.isBinary());
+    }
+
+    // ---------------- Checker gates (L2ByteCodeSupportChecker) ----------------
+
+    /**
+     * CG-3 (ANCHOR-L2-064): enabled long/double/compare bytecodes must pass
+     * the gate (no throw). Deferred lmul/ldiv/lrem must still throw.
+     */
+    @Test
+    public void testCheckerAllowsLongDoubleOps() {
+        L2ByteCodeSupportChecker c = new L2ByteCodeSupportChecker();
+        c.visit_ladd();
+        c.visit_lsub();
+        c.visit_land();
+        c.visit_lor();
+        c.visit_lxor();
+        c.visit_lshl();
+        c.visit_lshr();
+        c.visit_lushr();
+        c.visit_lneg();
+        c.visit_lcmp();
+        c.visit_i2l();
+        c.visit_i2d();
+        c.visit_l2i();
+        c.visit_l2f();
+        c.visit_l2d();
+        c.visit_f2l();
+        c.visit_f2d();
+        c.visit_d2i();
+        c.visit_d2l();
+        c.visit_d2f();
+        c.visit_dneg();
+        c.visit_dadd();
+        c.visit_dsub();
+        c.visit_dmul();
+        c.visit_ddiv();
+        c.visit_drem();
+        c.visit_fcmpl();
+        c.visit_fcmpg();
+        c.visit_dcmpl();
+        c.visit_dcmpg();
+    }
+
+    @Test
+    public void testCheckerRejectsDeferredMulDivRem() {
+        assertCheckerThrows("lmul", 0);
+        assertCheckerThrows("ldiv", 1);
+        assertCheckerThrows("lrem", 2);
+    }
+
+    private static void assertCheckerThrows(String op, int which) {
+        L2ByteCodeSupportChecker c = new L2ByteCodeSupportChecker();
+        boolean thrown = false;
+        try {
+            if (which == 0) {
+                c.visit_lmul();
+            } else if (which == 1) {
+                c.visit_ldiv();
+            } else {
+                c.visit_lrem();
+            }
+        } catch (UnsupportedOperationException e) {
+            thrown = true;
+        }
+        assertTrue(op + " must stay rejected (CG-3 deferred)", thrown);
     }
 }
