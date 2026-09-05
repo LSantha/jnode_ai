@@ -272,6 +272,17 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
         prev_addr = address;
     }
 
+    /**
+     * FP compare quads (FCMPG/FCMPL/DCMPG/DCMPL) are emitted by the x87
+     * helper. Wired from {@code BinaryQuad.generateCode} (ANCHOR-L2-050).
+     *
+     * @param quad the compare quad
+     */
+    @Override
+    public void generateCompareOP(BinaryQuad<T> quad) {
+        new FPX86CodeGenerator<T>(os, this).generateBinaryOP(quad);
+    }
+
     public void generateCodeFor(UnconditionalBranchQuad<T> quad) {
         checkLabel(quad.getAddress());
         if (quad.getTargetAddress() < quad.getAddress()) {
@@ -834,7 +845,8 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
                 if (reg3 != X86Register.ECX) {
                     os.writePUSH(X86Register.ECX);
                     os.writeMOV(X86Constants.BITS32, X86Register.ECX, (GPR) reg3);
-                    os.writeSAL_CL((GPR) reg1);
+                    // ANCHOR-L2-051: arithmetic shift right (was SAL copy-paste).
+                    os.writeSAR_CL((GPR) reg1);
                     os.writePOP(X86Register.ECX);
                 } else {
                     os.writeSAR_CL((GPR) reg1);
@@ -851,7 +863,8 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
                 if (reg3 != X86Register.ECX) {
                     os.writePUSH(X86Register.ECX);
                     os.writeMOV(X86Constants.BITS32, X86Register.ECX, (GPR) reg3);
-                    os.writeSAL_CL((GPR) reg1);
+                    // ANCHOR-L2-051: logical shift right (was SAL copy-paste).
+                    os.writeSHR_CL((GPR) reg1);
                     os.writePOP(X86Register.ECX);
                 } else {
                     os.writeSHR_CL((GPR) reg1);
@@ -1952,7 +1965,8 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
                 if (reg3 != X86Register.ECX) {
                     os.writePUSH(X86Register.ECX);
                     os.writeMOV(X86Constants.BITS32, X86Register.ECX, (GPR) reg3);
-                    os.writeSHR_CL((GPR) reg1);
+                    // ANCHOR-L2-051: shift left (was SHR copy-paste).
+                    os.writeSAL_CL((GPR) reg1);
                     os.writePOP(X86Register.ECX);
                 } else {
                     os.writeSAL_CL((GPR) reg1);
@@ -1964,7 +1978,8 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
                 if (reg3 != X86Register.ECX) {
                     os.writePUSH(X86Register.ECX);
                     os.writeMOV(X86Constants.BITS32, X86Register.ECX, (GPR) reg3);
-                    os.writeSHR_CL((GPR) reg1);
+                    // ANCHOR-L2-051: arithmetic shift right (was SHR copy-paste).
+                    os.writeSAR_CL((GPR) reg1);
                     os.writePOP(X86Register.ECX);
                 } else {
                     os.writeSAR_CL((GPR) reg1);

@@ -24,6 +24,7 @@ import org.jnode.test.threads.ThreadingTestJUnit4;
 import org.jnode.test.util.NumberUtilsTest;
 import org.jnode.test.util.VersionTest;
 import org.jnode.vm.compiler.ir.L2HostTest;
+import org.jnode.vm.compiler.ir.L2ModeMatrixTest;
 import org.jnode.vm.compiler.ir.L2PipelineTest;
 import org.jnode.vm.x86.compiler.l1a.X86RegisterPoolTest;
 import org.junit.runner.RunWith;
@@ -46,6 +47,7 @@ import org.junit.runners.Suite.SuiteClasses;
     ThreadingTestJUnit4.class,
     X86RegisterPoolTest.class,
     L2HostTest.class,
+    L2ModeMatrixTest.class,
     L2PipelineTest.class,
 }
 )

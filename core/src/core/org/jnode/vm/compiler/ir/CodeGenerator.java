@@ -130,6 +130,16 @@ public abstract class CodeGenerator<T> {
     public abstract void generateCodeFor(VoidReturnQuad<T> quad);
 
     /**
+     * Emit an FP compare quad (FCMPG/FCMPL/DCMPG/DCMPL) producing -1/0/1.
+     * Routed here from {@code BinaryQuad.generateCode} because compare quads
+     * need the whole quad (both operands plus address), unlike the
+     * mode-split arithmetic paths (ANCHOR-L2-050).
+     *
+     * @param quad the compare quad
+     */
+    public abstract void generateCompareOP(BinaryQuad<T> quad);
+
+    /**
      * @param quad
      * @param lhsReg
      * @param operation

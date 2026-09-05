@@ -391,6 +391,19 @@ public class BinaryQuad<T> extends AssignQuad<T> {
      */
     public void generateCode(CodeGenerator<T> cg) {
         cg.checkLabel(getAddress());
+        // ANCHOR-L2-050: FP compares go to the x87 helper. Nothing ever
+        // instantiated FPX86CodeGenerator, so FCMP*/DCMP* fell through to the
+        // Mode dispatch below and threw "Unknown operation".
+        switch (operation) {
+            case FCMPG:
+            case FCMPL:
+            case DCMPG:
+            case DCMPL:
+                cg.generateCompareOP(this);
+                return;
+            default:
+                break;
+        }
         Variable<T> lhs = getLHS();
         final AddressingMode lhsMode = lhs.getAddressingMode();
         final AddressingMode op1Mode = refs[0].getAddressingMode();

@@ -79,15 +79,10 @@ public class L2PipelineTest {
 
     @BeforeClass
     public static void initVm() throws Exception {
-        String root = System.getProperty("jnode.root", ".");
-        VmX86Architecture32 arch = new VmX86Architecture32();
-        loader = new VmSystemClassLoader(new URL[]{
-            new File(root + "/core/build/classes").toURL(),
-            new File(root + "/distr/build/classes").toURL(),
-            new File(root + "/local/classlib").toURL()}, arch);
-        new VmImpl("?", arch, loader.getSharedStatics(), true, loader, null);
-        VmType.initializeForBootImage(loader);
-        cpuId = X86CpuID.createID("pentium");
+        // Shared bootstrap: VmImpl allows a single instantiation per JVM.
+        L2TestVm.init();
+        loader = L2TestVm.getLoader();
+        cpuId = L2TestVm.getCpuId();
     }
 
     private static VmMethod findMethod(String name) throws Exception {
