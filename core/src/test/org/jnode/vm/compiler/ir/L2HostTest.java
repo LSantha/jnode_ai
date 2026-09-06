@@ -263,11 +263,16 @@ public class L2HostTest {
         c.visit_dcmpg();
     }
 
+    /**
+     * Extra (ANCHOR-L2-080): lmul/ldiv/lrem pass the gate (inline sequence /
+     * shared helpers).
+     */
     @Test
-    public void testCheckerRejectsDeferredMulDivRem() {
-        assertCheckerThrows("lmul", 0);
-        assertCheckerThrows("ldiv", 1);
-        assertCheckerThrows("lrem", 2);
+    public void testCheckerAllowsLongMulDivRem() {
+        L2ByteCodeSupportChecker c = new L2ByteCodeSupportChecker();
+        c.visit_lmul();
+        c.visit_ldiv();
+        c.visit_lrem();
     }
 
     /**
@@ -357,20 +362,4 @@ public class L2HostTest {
         c.visit_anewarray(null);
     }
 
-    private static void assertCheckerThrows(String op, int which) {
-        L2ByteCodeSupportChecker c = new L2ByteCodeSupportChecker();
-        boolean thrown = false;
-        try {
-            if (which == 0) {
-                c.visit_lmul();
-            } else if (which == 1) {
-                c.visit_ldiv();
-            } else {
-                c.visit_lrem();
-            }
-        } catch (UnsupportedOperationException e) {
-            thrown = true;
-        }
-        assertTrue(op + " must stay rejected (CG-3 deferred)", thrown);
-    }
 }

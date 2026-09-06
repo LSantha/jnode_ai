@@ -389,15 +389,17 @@ public class PrimitiveTest {
         return a0 - a1;
     }
 
-    // CG-3 deferred (ANCHOR-L2-062): lmul/ldiv/lrem need multi-precision
-    // sequences or a runtime helper; L2ByteCodeSupportChecker rejects them.
-//    public static long lmul(long a0, long a1) {
-//        return a0 * a1;
-//    }
-//
-//    public static long ldiv(long a0, long a1) {
-//        return a0 / a1;
-//    }
+    public static long lmul(long a0, long a1) {
+        return a0 * a1;
+    }
+
+    public static long ldiv(long a0, long a1) {
+        return a0 / a1;
+    }
+
+    public static long lrem(long a0, long a1) {
+        return a0 % a1;
+    }
 
     public static long land(long a0, long a1) {
         return a0 & a1;

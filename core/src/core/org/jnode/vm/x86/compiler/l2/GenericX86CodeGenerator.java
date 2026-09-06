@@ -3953,13 +3953,82 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
                 os.writeMOV(BITS32, X86Register.EBP, disp1, SR1);
                 break;
             }
-            case LDIV:
-            case LMUL:
-            case LREM:
-                // ANCHOR-L2-062 (CG-3): deferred. Full 64-bit mul/div needs
-                // multi-precision sequences or a runtime helper (CG-5);
-                // L2ByteCodeSupportChecker rejects lmul/ldiv/lrem meanwhile.
-                throw new IllegalArgumentException("Unknown operation: " + operation);
+            case LDIV: {
+                // ANCHOR-L2-080: 64-bit division via the shared Java helper
+                // (the same one L1A calls: exact JVM edge semantics, including
+                // divide-by-zero and MIN_VALUE/-1).
+                writeParameters(quad);
+                os.writePUSH(X86Register.ECX);
+                callJavaMethod(stackFrame.getEntryPoints().getLdivMethod());
+                os.writePOP(X86Register.ECX);
+                os.writeMOV(BITS32, X86Register.EBP, disp1 - stackFrame.getHelper().SLOTSIZE,
+                    X86Register.EAX);
+                os.writeMOV(BITS32, X86Register.EBP, disp1, X86Register.EDX);
+                break;
+            }
+            case LMUL: {
+                // ANCHOR-L2-080: 64-bit multiply, ported from L1A visit_lmul
+                // (fast path when both high words are zero, else the full
+                // 4-MUL computation). EBX/ECX/ESI may hold live values
+                // (PUSH/POP); EDI doubles as v1hi and the statics base is
+                // reloaded after, exactly like L1A.
+                final Label curInstrLabel = getInstrLabel(quad.getAddress());
+                final Label tmp1 = new Label(curInstrLabel + "$tmp1");
+                final Label tmp2 = new Label(curInstrLabel + "$tmp2");
+                int disp3lsb = disp3 - stackFrame.getHelper().SLOTSIZE;
+                int disp2lsb = disp2 - stackFrame.getHelper().SLOTSIZE;
+                int disp1lsb = disp1 - stackFrame.getHelper().SLOTSIZE;
+                final GPR v2_lsb = X86Register.EBX;
+                final GPR v2_msb = X86Register.ECX;
+                final GPR v1_lsb = X86Register.ESI;
+                final GPR v1_msb = X86Register.EDI;
+                final GPR EAX = X86Register.EAX;
+                final GPR EDX = X86Register.EDX;
+                os.writePUSH(X86Register.EBX);
+                os.writePUSH(X86Register.ECX);
+                os.writePUSH(X86Register.ESI);
+                os.writeMOV(BITS32, v2_lsb, X86Register.EBP, disp3lsb);
+                os.writeMOV(BITS32, v2_msb, X86Register.EBP, disp3);
+                os.writeMOV(BITS32, v1_lsb, X86Register.EBP, disp2lsb);
+                os.writeMOV(BITS32, v1_msb, X86Register.EBP, disp2);
+                os.writeMOV(INTSIZE, EAX, v1_msb); // hi2
+                os.writeOR(EAX, v2_msb); // hi1 | hi2
+                os.writeJCC(tmp1, X86Constants.JNZ);
+                os.writeMOV(INTSIZE, EAX, v1_lsb); // lo2
+                os.writeMUL_EAX(v2_lsb); // lo1*lo2
+                os.writeJMP(tmp2);
+                os.setObjectRef(tmp1);
+                os.writeMOV(INTSIZE, EAX, v1_lsb); // lo2
+                os.writeMUL_EAX(v2_msb); // hi1*lo2
+                os.writeMOV(INTSIZE, v2_msb, EAX);
+                os.writeMOV(INTSIZE, EAX, v1_msb); // hi2
+                os.writeMUL_EAX(v2_lsb); // hi2*lo1
+                os.writeADD(v2_msb, EAX); // hi2*lo1 + hi1*lo2
+                os.writeMOV(INTSIZE, EAX, v1_lsb); // lo2
+                os.writeMUL_EAX(v2_lsb); // lo1*lo2
+                os.writeADD(EDX, v2_msb); // hi2*lo1 + hi1*lo2 + hi(lo1*lo2)
+                os.setObjectRef(tmp2);
+                // Reload the statics table, since EDI was destroyed above.
+                stackFrame.getHelper().writeLoadSTATICS(curInstrLabel, "lmul", false);
+                os.writeMOV(BITS32, X86Register.EBP, disp1lsb, EAX);
+                os.writeMOV(BITS32, X86Register.EBP, disp1, EDX);
+                os.writePOP(X86Register.ESI);
+                os.writePOP(X86Register.ECX);
+                os.writePOP(X86Register.EBX);
+                break;
+            }
+            case LREM: {
+                // ANCHOR-L2-080: 64-bit remainder via the shared Java helper
+                // (same one L1A calls).
+                writeParameters(quad);
+                os.writePUSH(X86Register.ECX);
+                callJavaMethod(stackFrame.getEntryPoints().getLremMethod());
+                os.writePOP(X86Register.ECX);
+                os.writeMOV(BITS32, X86Register.EBP, disp1 - stackFrame.getHelper().SLOTSIZE,
+                    X86Register.EAX);
+                os.writeMOV(BITS32, X86Register.EBP, disp1, X86Register.EDX);
+                break;
+            }
             case LSHL:
             case LSHR:
             case LUSHR: {

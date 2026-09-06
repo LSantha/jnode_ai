@@ -564,6 +564,42 @@ public class L2ModeMatrixTest {
         assertTrue("char load must zero-extend, got:\n" + c, c.contains("movzx"));
     }
 
+    /**
+     * Extra (ANCHOR-L2-080): LMUL emits the multi-precision sequence,
+     * LDIV/LREM call the shared helpers.
+     */
+    @Test
+    public void testLongMulDivRemShapes() throws Exception {
+        String mul = emitWideSSS(BinaryOperation.LMUL);
+        assertTrue("LMUL must MUL, got:\n" + mul, mul.contains("mul "));
+        assertTrue("LMUL must combine partials, got:\n" + mul, mul.contains("add "));
+
+        String div = emitWideHelperCall(BinaryOperation.LDIV);
+        assertTrue("LDIV must call the helper, got:\n" + div, div.contains("call "));
+        String rem = emitWideHelperCall(BinaryOperation.LREM);
+        assertTrue("LREM must call the helper, got:\n" + rem, rem.contains("call "));
+    }
+
+    /**
+     * LDIV/LREM route operands through writeParameters, which reads operand
+     * locations: build located spill quads (unlike the location-free dummies
+     * elsewhere in this class).
+     */
+    private static String emitWideHelperCall(BinaryOperation op) throws Exception {
+        EmitterHarness h = new EmitterHarness();
+        IRBasicBlock block = new IRBasicBlock(0);
+        StackVariable lhs = new StackVariable(JvmType.LONG, 0);
+        StackVariable op1 = new StackVariable(JvmType.LONG, 1);
+        StackVariable op2 = new StackVariable(JvmType.LONG, 2);
+        lhs.setLocation(new StackLocation(-20));
+        op1.setLocation(new StackLocation(-28));
+        op2.setLocation(new StackLocation(-36));
+        block.setVariables(new Variable[]{lhs, op1, op2});
+        BinaryQuad q = new BinaryQuad(0, block, 0, 1, op, 2);
+        h.cg.generateBinaryOP(q, -20, -28, op, -36);
+        return h.text();
+    }
+
     private static void assertBinaryThrows(BinaryOperation op, String why) throws Exception {        EmitterHarness h = new EmitterHarness();
         boolean thrown = false;
         try {

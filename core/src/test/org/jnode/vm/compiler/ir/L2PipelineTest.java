@@ -183,6 +183,9 @@ public class L2PipelineTest {
     public void testCompileLongArithmetic() throws Exception {
         assertCompiles("ladd");
         assertCompiles("lsub");
+        assertCompiles("lmul");
+        assertCompiles("ldiv");
+        assertCompiles("lrem");
         assertCompiles("land");
         assertCompiles("lor");
         assertCompiles("lxor");

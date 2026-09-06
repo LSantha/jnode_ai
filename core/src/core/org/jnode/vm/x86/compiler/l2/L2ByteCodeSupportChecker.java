@@ -77,22 +77,7 @@ public class L2ByteCodeSupportChecker extends BytecodeVisitorSupport {
         throw new UnsupportedOperationException();
     }
 
-    // CG-3 (ANCHOR-L2-062/064): lmul/ldiv/lrem deferred -- full 64-bit
-    // mul/div needs multi-precision sequences or a runtime helper. Reject
-    // explicitly so methods fall back to L1 instead of crashing the backend.
-
-    @Override
-    public void visit_lmul() {
-        notSupported();
-    }
-
-    @Override
-    public void visit_ldiv() {
-        notSupported();
-    }
-
-    @Override
-    public void visit_lrem() {
-        notSupported();
-    }
+    // CG-3 (ANCHOR-L2-062/064) + Extra (ANCHOR-L2-080): lmul is an inline
+    // multi-precision sequence, ldiv/lrem call the shared Java helpers
+    // (L1A parity). No rejections remain.
 }
