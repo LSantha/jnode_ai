@@ -629,4 +629,63 @@ public class PrimitiveTest {
     public static Object getIObj(PrimitiveTest t) {
         return t.iObj;
     }
+
+    // CG-4e call corpus (ANCHOR-L2-076)
+    public static int idStatic(int x) {
+        return x * 2;
+    }
+
+    public static int callStatic(int x) {
+        return idStatic(x) + 1;
+    }
+
+    public int idVirt(int x) {
+        return x + 10;
+    }
+
+    public final int idFinal(int x) {
+        return x + 20;
+    }
+
+    private int idPriv(int x) {
+        return x + 30;
+    }
+
+    public static int callVirt(PrimitiveTest t, int x) {
+        return t.idVirt(x);
+    }
+
+    public static int callFinal(PrimitiveTest t, int x) {
+        return t.idFinal(x);
+    }
+
+    public static int callPriv(PrimitiveTest t, int x) {
+        return t.idPriv(x);
+    }
+
+    public static String strOf(java.io.Serializable s) {
+        return s.toString();
+    }
+
+    public static long idLong(long x) {
+        return x + 1L;
+    }
+
+    public static long callLong(long x) {
+        return idLong(x) + 2L;
+    }
+
+    public static double idDouble(double x) {
+        return x * 2.0;
+    }
+
+    public static double callDouble(double x) {
+        return idDouble(x) + 0.5;
+    }
+
+    public static int makeAndGet(int v) {
+        PrimitiveTest t = new PrimitiveTest();
+        t.iInt = v;
+        return t.iInt;
+    }
 }

@@ -249,8 +249,7 @@ public class L2PipelineTest {
      * (narrow + wide, init checks, barriers).
      */
     @Test
-    public void testCompileFields() throws Exception {
-        assertCompiles("getSInt");
+    public void testCompileFields() throws Exception {        assertCompiles("getSInt");
         assertCompiles("setSInt");
         assertCompiles("getSLong");
         assertCompiles("setSLong");
@@ -263,6 +262,23 @@ public class L2PipelineTest {
         assertCompiles("getIFloat");
         assertCompiles("setIFloat");
         assertCompiles("getIObj");
+    }
+
+    /**
+     * CG-4e (ANCHOR-L2-076): calls through the real pipeline — static,
+     * virtual (VMT), final/private (fast path), interface (IMT), long/double
+     * args and returns, and new+ctor+field roundtrip.
+     */
+    @Test
+    public void testCompileCalls() throws Exception {
+        assertCompiles("callStatic");
+        assertCompiles("callVirt");
+        assertCompiles("callFinal");
+        assertCompiles("callPriv");
+        assertCompiles("strOf");
+        assertCompiles("callLong");
+        assertCompiles("callDouble");
+        assertCompiles("makeAndGet");
     }
 
     // ---------------- T1: dominator-tree exactness (ANCHOR-L2-004) ----------------

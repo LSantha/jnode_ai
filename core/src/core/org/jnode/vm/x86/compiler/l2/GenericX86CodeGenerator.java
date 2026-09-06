@@ -6116,26 +6116,17 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
         }
     }
 
-    @Override
-    public void generateCodeFor(SpecialCallAssignQuad quad) {
-        checkLabel(quad.getAddress()); // ANCHOR-L2-00C: position this quad's label
-        VmConstMethodRef methodRef = quad.getMethodRef();
-        methodRef.resolve(currentMethod.getDeclaringClass().getLoader());
-        try {
-            final VmMethod sm = methodRef.getResolvedVmMethod();
-
-            //dropParameters(sm, true);
-            writeParameters(quad);
-            // Call the methods code from the statics table
-            stackFrame.getHelper().invokeJavaMethod(sm);
-            // Result is already on the stack.
-        } catch (ClassCastException ex) {
-            BootLogInstance.get().error(methodRef.getResolvedVmMethod().getClass().getName() + '#' +
-                methodRef.getName());
-            throw ex;
-        }
-        Variable lhs = quad.getLHS();
+    /**
+     * Move a call result from EAX (+EDX for wide) to the lhs (ANCHOR-L2-076,
+     * CG-4e). Long spills keep halves at [d-SLOT]=LSB; double spills are
+     * qword-at-[d] (FSTP64 convention, like VarReturn). A wide result in a
+     * register is unreachable (never allocated).
+     */
+    private void storeCallResult(Variable lhs) {
         if (lhs.getAddressingMode() == REGISTER) {
+            if (lhs.getType() == Operand.LONG || lhs.getType() == Operand.DOUBLE) {
+                throw new IllegalArgumentException("Wide call result in register");
+            }
             GPR reg = (GPR) ((RegisterLocation) lhs.getLocation()).getRegister();
             if (reg != GPR.EAX) {
                 os.writeMOV(X86Constants.BITS32, reg, GPR.EAX);
@@ -6143,8 +6134,48 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
         } else if (lhs.getAddressingMode() == STACK) {
             int disp = ((StackLocation) lhs.getLocation()).getDisplacement();
             // ANCHOR-L2-008: spills are EBP-relative (was ESP).
-            os.writeMOV(X86Constants.BITS32, X86Register.EBP, disp, GPR.EAX);
+            if (lhs.getType() == Operand.LONG) {
+                os.writeMOV(X86Constants.BITS32, X86Register.EBP,
+                    disp - stackFrame.getHelper().SLOTSIZE, GPR.EAX);
+                os.writeMOV(X86Constants.BITS32, X86Register.EBP, disp, GPR.EDX);
+            } else if (lhs.getType() == Operand.DOUBLE) {
+                os.writeMOV(X86Constants.BITS32, X86Register.EBP, disp, GPR.EAX);
+                os.writeMOV(X86Constants.BITS32, X86Register.EBP,
+                    disp + stackFrame.getHelper().SLOTSIZE, GPR.EDX);
+            } else {
+                os.writeMOV(X86Constants.BITS32, X86Register.EBP, disp, GPR.EAX);
+            }
         }
+    }
+
+    @Override
+    public void generateCodeFor(SpecialCallAssignQuad quad) {
+        checkLabel(quad.getAddress()); // ANCHOR-L2-00C: position this quad's label
+        VmConstMethodRef methodRef = quad.getMethodRef();
+        methodRef.resolve(currentMethod.getDeclaringClass().getLoader());
+        try {
+            final VmMethod sm = methodRef.getResolvedVmMethod();
+            if (sm.getDeclaringClass().isMagicType()) {
+                // ANCHOR-L2-076 (CG-4e): L2 has no magic emitter (CG-5 port);
+                // fail loud, never silently skip the call (stack imbalance).
+                throw new IllegalArgumentException("L2 magic not implemented: " + methodRef.getName());
+            }
+
+            //dropParameters(sm, true);
+            writeParameters(quad);
+            // Call the methods code from the statics table (EAX-result model;
+            // ECX is caller-saved, ANCHOR-L2-076).
+            os.writePUSH(X86Register.ECX);
+            callJavaMethod(sm);
+            os.writePOP(X86Register.ECX);
+            // Result is already on the stack.
+        } catch (ClassCastException ex) {
+            BootLogInstance.get().error(methodRef.getResolvedVmMethod().getClass().getName() + '#' +
+                methodRef.getName());
+            throw ex;
+        }
+        Variable lhs = quad.getLHS();
+        storeCallResult(lhs);
     }
 
     @Override
@@ -6154,11 +6185,17 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
         methodRef.resolve(currentMethod.getDeclaringClass().getLoader());
         try {
             final VmMethod sm = methodRef.getResolvedVmMethod();
+            if (sm.getDeclaringClass().isMagicType()) {
+                // ANCHOR-L2-076 (CG-4e): fail loud, never silently skip.
+                throw new IllegalArgumentException("L2 magic not implemented: " + methodRef.getName());
+            }
 
             //dropParameters(sm, true);
             writeParameters(quad);
-            // Call the methods code from the statics table
-            stackFrame.getHelper().invokeJavaMethod(sm);
+            // Call the methods code from the statics table (ECX preserved).
+            os.writePUSH(X86Register.ECX);
+            callJavaMethod(sm);
+            os.writePOP(X86Register.ECX);
             // Result is already on the stack.
         } catch (ClassCastException ex) {
 //            BootLogInstance.get().error(methodRef.getResolvedVmMethod().getClass().getName() + '#' +
@@ -6182,7 +6219,8 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
         final VmInstanceMethod method = (VmInstanceMethod) mts;
         final VmType<?> declClass = method.getDeclaringClass();
         if (declClass.isMagicType()) {
-//            magicHelper.emitMagic(eContext, method, false, this, currentMethod);
+            // ANCHOR-L2-076 (CG-4e): fail loud, never silently skip.
+            throw new IllegalArgumentException("L2 magic not implemented: " + methodRef.getName());
         } else {
             // TODO: port to ORP style (http://orp.sourceforge.net/)
 //            vstack.push(eContext);
@@ -6194,8 +6232,11 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
                 // Do a fast invocation
 //                counters.getCounter("virtual-final").inc();
 
-                // Call the methods native code from the statics table
-                stackFrame.getHelper().invokeJavaMethod(method);
+                // Call the methods native code from the statics table.
+                // ECX is caller-saved across the call (ANCHOR-L2-076).
+                os.writePUSH(X86Register.ECX);
+                callJavaMethod(method);
+                os.writePOP(X86Register.ECX);
                 // Result is already on the stack.
             } else {
                 // Do a virtual method table invocation
@@ -6210,8 +6251,10 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
                 int arrayDataOffset = VmArray.DATA_OFFSET * slotSize;
                 int tibOffset = ObjectLayout.TIB_SLOT * slotSize;
 
-                /* Get objectref -> EAX */
+                /* Get objectref -> EAX (before pushing: SP math, ANCHOR-L2-076) */
                 os.writeMOV(asize, stackFrame.getHelper().AAX, stackFrame.getHelper().SP, argSlotCount * slotSize);
+                // ECX is caller-saved across the dispatch below.
+                os.writePUSH(X86Register.ECX);
                 /* Get VMT of objectref -> EAX */
                 os.writeMOV(asize, stackFrame.getHelper().AAX, stackFrame.getHelper().AAX, tibOffset);
                 /* Get entry in VMT -> EAX */
@@ -6223,21 +6266,13 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
                     stackFrame.getEntryPoints().getVmMethodNativeCodeField().getOffset());
 //                stackFrame.getHelper().pushReturnValue(methodRef.getSignature());
                 // Result is already on the stack.
+                os.writePOP(X86Register.ECX);
             }
         }
 
 
         Variable lhs = quad.getLHS();
-        if (lhs.getAddressingMode() == REGISTER) {
-            GPR reg = (GPR) ((RegisterLocation) lhs.getLocation()).getRegister();
-            if (reg != GPR.EAX) {
-                os.writeMOV(X86Constants.BITS32, reg, GPR.EAX);
-            }
-        } else if (lhs.getAddressingMode() == STACK) {
-            int disp = ((StackLocation) lhs.getLocation()).getDisplacement();
-            // ANCHOR-L2-008: spills are EBP-relative (was ESP).
-            os.writeMOV(X86Constants.BITS32, X86Register.EBP, disp, GPR.EAX);
-        }
+        storeCallResult(lhs);
     }
 
     @Override
@@ -6255,7 +6290,8 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
         final VmInstanceMethod method = (VmInstanceMethod) mts;
         final VmType<?> declClass = method.getDeclaringClass();
         if (declClass.isMagicType()) {
-//            magicHelper.emitMagic(eContext, method, false, this, currentMethod);
+            // ANCHOR-L2-076 (CG-4e): fail loud, never silently skip.
+            throw new IllegalArgumentException("L2 magic not implemented: " + methodRef.getName());
         } else {
             // TODO: port to ORP style (http://orp.sourceforge.net/)
 //            vstack.push(eContext);
@@ -6267,8 +6303,11 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
                 // Do a fast invocation
 //                counters.getCounter("virtual-final").inc();
 
-                // Call the methods native code from the statics table
-                stackFrame.getHelper().invokeJavaMethod(method);
+                // Call the methods native code from the statics table.
+                // ECX is caller-saved across the call (ANCHOR-L2-076).
+                os.writePUSH(X86Register.ECX);
+                callJavaMethod(method);
+                os.writePOP(X86Register.ECX);
                 // Result is already on the stack.
             } else {
                 // Do a virtual method table invocation
@@ -6283,8 +6322,10 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
                 int arrayDataOffset = VmArray.DATA_OFFSET * slotSize;
                 int tibOffset = ObjectLayout.TIB_SLOT * slotSize;
 
-                /* Get objectref -> EAX */
+                /* Get objectref -> EAX (before pushing: SP math, ANCHOR-L2-076) */
                 os.writeMOV(asize, stackFrame.getHelper().AAX, stackFrame.getHelper().SP, argSlotCount * slotSize);
+                // ECX is caller-saved across the dispatch below.
+                os.writePUSH(X86Register.ECX);
                 /* Get VMT of objectref -> EAX */
                 os.writeMOV(asize, stackFrame.getHelper().AAX, stackFrame.getHelper().AAX, tibOffset);
                 /* Get entry in VMT -> EAX */
@@ -6296,6 +6337,7 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
                     stackFrame.getEntryPoints().getVmMethodNativeCodeField().getOffset());
 //                stackFrame.getHelper().pushReturnValue(methodRef.getSignature());
                 // Result is already on the stack.
+                os.writePOP(X86Register.ECX);
             }
         }
     }
@@ -6307,23 +6349,18 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
         methodRef.resolve(currentMethod.getDeclaringClass().getLoader());
         final VmStaticMethod method = (VmStaticMethod) methodRef.getResolvedVmMethod();
         if (method.getDeclaringClass().isMagicType()) {
-//todo            magicHelper.emitMagic(eContext, method, true, this, currentMethod);
+            // ANCHOR-L2-076 (CG-4e): fail loud, never silently skip.
+            throw new IllegalArgumentException("L2 magic not implemented: " + methodRef.getName());
         } else {
             writeParameters(quad);
             //todo handle return types
             final int offset = stackFrame.getHelper().getSharedStaticsOffset(method);
+            // ECX is caller-saved across the call (ANCHOR-L2-076).
+            os.writePUSH(X86Register.ECX);
             os.writeCALL(stackFrame.getHelper().STATICS, offset);
+            os.writePOP(X86Register.ECX);
             Variable lhs = quad.getLHS();
-            if (lhs.getAddressingMode() == REGISTER) {
-                GPR reg = (GPR) ((RegisterLocation) lhs.getLocation()).getRegister();
-                if (reg != GPR.EAX) {
-                    os.writeMOV(X86Constants.BITS32, reg, GPR.EAX);
-                }
-            } else if (lhs.getAddressingMode() == STACK) {
-                int disp = ((StackLocation) lhs.getLocation()).getDisplacement();
-                // ANCHOR-L2-008: spills are EBP-relative (was ESP).
-                os.writeMOV(X86Constants.BITS32, X86Register.EBP, disp, GPR.EAX);
-            }
+            storeCallResult(lhs);
         }
     }
 
@@ -6334,11 +6371,15 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
         methodRef.resolve(currentMethod.getDeclaringClass().getLoader());
         final VmStaticMethod method = (VmStaticMethod) methodRef.getResolvedVmMethod();
         if (method.getDeclaringClass().isMagicType()) {
-//todo            magicHelper.emitMagic(eContext, method, true, this, currentMethod);
+            // ANCHOR-L2-076 (CG-4e): fail loud, never silently skip.
+            throw new IllegalArgumentException("L2 magic not implemented: " + methodRef.getName());
         } else {
             writeParameters(quad);
             final int offset = stackFrame.getHelper().getSharedStaticsOffset(method);
+            // ECX is caller-saved across the call (ANCHOR-L2-076).
+            os.writePUSH(X86Register.ECX);
             os.writeCALL(stackFrame.getHelper().STATICS, offset);
+            os.writePOP(X86Register.ECX);
         }
     }
 
@@ -6348,24 +6389,22 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
         VmConstMethodRef methodRef = quad.getMethodRef();
         methodRef.resolve(currentMethod.getDeclaringClass().getLoader());
         final VmMethod method = methodRef.getResolvedVmMethod();
-        final int argSlotCount = quad.getReferencedOps().length - 1;
+        // ANCHOR-L2-076 (CG-4e): slot-based count (was refs.length-1, which
+        // undercounts wide args: one Variable can occupy two slots, so the
+        // receiver fetch below read the wrong slot). Matches VirtualCall.
+        final int argSlotCount = Signature.getArgSlotCount(typeSizeInfo, methodRef.getSignature());
         writeParameters(quad);
-        // Get objectref -> EAX
+        // Get objectref -> EAX (before pushing: SP math, ANCHOR-L2-076).
+        // emitInvokeInterface takes EAX and uses no SP math itself.
         X86CompilerHelper helper = stackFrame.getHelper();
         os.writeMOV(helper.ADDRSIZE, helper.AAX, helper.SP, argSlotCount * helper.SLOTSIZE);
+        // ECX is caller-saved across the IMT dispatch (ANCHOR-L2-076).
+        os.writePUSH(X86Register.ECX);
         X86IMTCompiler32.emitInvokeInterface(os, method);
+        os.writePOP(X86Register.ECX);
 
         Variable lhs = quad.getLHS();
-        if (lhs.getAddressingMode() == REGISTER) {
-            GPR reg = (GPR) ((RegisterLocation) lhs.getLocation()).getRegister();
-            if (reg != GPR.EAX) {
-                os.writeMOV(X86Constants.BITS32, reg, GPR.EAX);
-            }
-        } else if (lhs.getAddressingMode() == STACK) {
-            int disp = ((StackLocation) lhs.getLocation()).getDisplacement();
-            // ANCHOR-L2-008: spills are EBP-relative (was ESP).
-            os.writeMOV(X86Constants.BITS32, X86Register.EBP, disp, GPR.EAX);
-        }
+        storeCallResult(lhs);
     }
 
     @Override
@@ -6376,19 +6415,23 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
         methodRef.resolve(currentMethod.getDeclaringClass().getLoader());
 
         final VmMethod method = methodRef.getResolvedVmMethod();
-        final int argSlotCount = quad.getReferencedOps().length - 1;
+        // ANCHOR-L2-076 (CG-4e): slot-based receiver depth (see above).
+        final int argSlotCount = Signature.getArgSlotCount(typeSizeInfo, methodRef.getSignature());
 
         // remove parameters from vstack
         writeParameters(quad);
-        // Get objectref -> EAX
+        // Get objectref -> EAX (before pushing: SP math, ANCHOR-L2-076).
         X86CompilerHelper helper = stackFrame.getHelper();
         os.writeMOV(helper.ADDRSIZE, helper.AAX, helper.SP, argSlotCount * helper.SLOTSIZE);
+        // ECX is caller-saved across the IMT dispatch (ANCHOR-L2-076).
+        os.writePUSH(X86Register.ECX);
         // Write the actual invokeinterface
 //        if (os.isCode32()) {
         X86IMTCompiler32.emitInvokeInterface(os, method);
 //        } else {
 //            X86IMTCompiler64.emitInvokeInterface(os, method);
 //        }
+        os.writePOP(X86Register.ECX);
         // Test the stack alignment
         //stackFrame.writeStackAlignmentTest(getInstrLabel(quad.getAddress()));
     }
@@ -6398,17 +6441,39 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
         for (int i = 0; i < referencedOps.length; i++) {
             Operand operand = referencedOps[i];
             if (operand.getAddressingMode() == CONSTANT) {
-                //todo handle other types
-                int c = ((IntConstant) operand).getValue();
-                os.writePUSH(c);
+                // ANCHOR-L2-076 (CG-4e, B14): all constant kinds, halves in
+                // callee order (MSB/high pushed first, like L1A and the spill
+                // paths above — cross-compiler consistent).
+                if (operand instanceof IntConstant) {
+                    os.writePUSH(((IntConstant) operand).getValue());
+                } else if (operand instanceof LongConstant) {
+                    final long value = ((LongConstant) operand).getValue();
+                    os.writePUSH((int) ((value >>> 32) & 0xFFFFFFFFL));
+                    os.writePUSH((int) (value & 0xFFFFFFFFL));
+                } else if (operand instanceof FloatConstant) {
+                    os.writePUSH(((FloatConstant) operand).getIntBits());
+                } else if (operand instanceof DoubleConstant) {
+                    final long bits = Double.doubleToRawLongBits(((DoubleConstant) operand).getValue());
+                    os.writePUSH((int) ((bits >>> 32) & 0xFFFFFFFFL));
+                    os.writePUSH((int) (bits & 0xFFFFFFFFL));
+                } else {
+                    throw new IllegalArgumentException("Unsupported constant arg: " + operand);
+                }
             } else if (operand.getAddressingMode() == REGISTER) {
                 GPR reg = (GPR) ((RegisterLocation) ((Variable) operand).getLocation()).getRegister();
                 os.writePUSH(reg);
             } else if (operand.getAddressingMode() == STACK) {
                 int disp = ((StackLocation) ((Variable) operand).getLocation()).getDisplacement();
-                os.writePUSH(GPR.EBP, disp);
                 if (operand.getType() == Operand.LONG) {
+                    os.writePUSH(GPR.EBP, disp);
                     os.writePUSH(GPR.EBP, disp - stackFrame.getHelper().SLOTSIZE);
+                } else if (operand.getType() == Operand.DOUBLE) {
+                    // ANCHOR-L2-076 (CG-4e): doubles live qword-at-disp (high
+                    // half second); the old code pushed a single slot.
+                    os.writePUSH(GPR.EBP, disp + stackFrame.getHelper().SLOTSIZE);
+                    os.writePUSH(GPR.EBP, disp);
+                } else {
+                    os.writePUSH(GPR.EBP, disp);
                 }
             } else {
                 throw new IllegalArgumentException();

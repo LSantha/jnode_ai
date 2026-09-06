@@ -133,17 +133,8 @@ public class L2ByteCodeSupportChecker extends BytecodeVisitorSupport {
     // CG-4d (ANCHOR-L2-075): getstatic/putstatic/getfield/putfield enabled
     // (all widths, R/S shapes, init, barriers).
 
-    public void visit_invokevirtual(VmConstMethodRef methodRef) {
-        notSupported();
-    }
-
-    public void visit_invokespecial(VmConstMethodRef methodRef) {
-        notSupported();
-    }
-
-    public void visit_invokeinterface(VmConstIMethodRef methodRef, int count) {
-        notSupported();
-    }
+    // CG-4e (ANCHOR-L2-076): invokevirtual/invokespecial/invokeinterface
+    // enabled (direct/VMT/IMT dispatch, ECX preserved, magic fails loud).
 
     // CG-4c (ANCHOR-L2-074): new/multianewarray/checkcast/instanceof enabled.
 

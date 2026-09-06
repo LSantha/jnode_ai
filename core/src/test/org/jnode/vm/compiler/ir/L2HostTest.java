@@ -271,6 +271,17 @@ public class L2HostTest {
     }
 
     /**
+     * CG-4e (ANCHOR-L2-076): call bytecodes pass the gate.
+     */
+    @Test
+    public void testCheckerAllowsCalls() {
+        L2ByteCodeSupportChecker c = new L2ByteCodeSupportChecker();
+        c.visit_invokevirtual(null);
+        c.visit_invokespecial(null);
+        c.visit_invokeinterface(null, 0);
+    }
+
+    /**
      * CG-4d (ANCHOR-L2-075): field bytecodes pass the gate.
      */
     @Test
