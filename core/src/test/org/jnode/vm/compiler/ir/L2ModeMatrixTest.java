@@ -37,6 +37,8 @@ import org.jnode.vm.compiler.EntryPoints;
 import org.jnode.vm.compiler.ir.quad.ArrayAssignQuad;
 import org.jnode.vm.compiler.ir.quad.BinaryOperation;
 import org.jnode.vm.compiler.ir.quad.BinaryQuad;
+import org.jnode.vm.compiler.ir.quad.JsrQuad;
+import org.jnode.vm.compiler.ir.quad.RetQuad;
 import org.jnode.vm.compiler.ir.quad.UnaryOperation;
 import org.jnode.vm.compiler.ir.quad.UnaryQuad;
 import org.jnode.vm.compiler.ir.quad.UnaryOperation;
@@ -355,6 +357,47 @@ public class L2ModeMatrixTest {
         assertTrue("DCMPG must FUCOMPP, got:\n" + d, d.contains("fucompp"));
     }
 
+    private static IRBasicBlock jsrBlock(int address, Variable var) {
+        IRBasicBlock block = new IRBasicBlock(address);
+        block.setVariables(new Variable[]{var});
+        return block;
+    }
+
+    /**
+     * Subroutine emission shapes (ANCHOR-L2-079): jsr materializes the
+     * address (CALL/POP/store) and jumps; ret jumps indirectly.
+     */
+    @Test
+    public void testJsrRetShapes() throws Exception {
+        EmitterHarness h = new EmitterHarness();
+        StackVariable lhs = new StackVariable(JvmType.INT, 0);
+        lhs.setLocation(new StackLocation(-8));
+        IRBasicBlock block = jsrBlock(0, lhs);
+        JsrQuad jsr = new JsrQuad(0, block, 0, 7);
+        jsr.generateCode(h.cg);
+        String t = h.text();
+        assertTrue("jsr must CALL, got:\n" + t, t.contains("call "));
+        assertTrue("jsr must enter the subroutine, got:\n" + t, t.contains("jmp "));
+
+        EmitterHarness h2 = new EmitterHarness();
+        LocalVariable local = new LocalVariable(JvmType.INT, 2);
+        local.setLocation(new RegisterLocation(X86Register.ECX));
+        IRBasicBlock block2 = jsrBlock(11, local);
+        RetQuad ret = new RetQuad(11, block2, 0);
+        ret.generateCode(h2.cg);
+        String r = h2.text();
+        assertTrue("ret must jump indirectly, got:\n" + r, r.contains("jmp "));
+
+        EmitterHarness h3 = new EmitterHarness();
+        LocalVariable localS = new LocalVariable(JvmType.INT, 2);
+        localS.setLocation(new StackLocation(-12));
+        IRBasicBlock block3 = jsrBlock(11, localS);
+        RetQuad retS = new RetQuad(11, block3, 0);
+        retS.generateCode(h3.cg);
+        String rs = h3.text();
+        assertTrue("stack ret must load and jump, got:\n" + rs, rs.contains("jmp "));
+    }
+
     private static String emitWideSSS(BinaryOperation op) throws Exception {
         // Wide values are always spilled: the SSS overload is the only
         // reachable shape for L*/D* (plus RSS-LCMP, SSR/SSC shifts below).
@@ -447,30 +490,46 @@ public class L2ModeMatrixTest {
         assertTrue("array load must scale by 4, got:\n" + text, text.contains("*4"));
     }
 
-    /**
-     * CG-4b: deferred element widths must fail loud at the emitter (never
-     * silently use scale 4).
-     */
-    @Test
-    public void testArrayLoadDeferredWidthThrows() throws Exception {
-        EmitterHarness h = new EmitterHarness();
-        IRBasicBlock block = new IRBasicBlock(0);
-        StackVariable lhs = new StackVariable(JvmType.LONG, 0);
+    private static ArrayAssignQuad arrayLoadQuad(int address, int lhsType, int lhsDisp,
+                                                 int indDisp, int refDisp, int elemType) {
+        IRBasicBlock block = new IRBasicBlock(address);
+        StackVariable lhs = new StackVariable(lhsType, 0);
         StackVariable ind = new StackVariable(JvmType.INT, 1);
         StackVariable ref = new StackVariable(JvmType.REFERENCE, 2);
-        lhs.setLocation(new StackLocation(-8));
-        ind.setLocation(new StackLocation(-16));
-        ref.setLocation(new StackLocation(-20));
+        lhs.setLocation(new StackLocation(lhsDisp));
+        ind.setLocation(new StackLocation(indDisp));
+        ref.setLocation(new StackLocation(refDisp));
         Variable[] vars = new Variable[]{lhs, ind, ref};
         block.setVariables(vars);
-        ArrayAssignQuad q = new ArrayAssignQuad(0, block, 0, 1, 2, JvmType.LONG);
-        boolean thrown = false;
-        try {
-            q.generateCode(h.cg);
-        } catch (IllegalArgumentException e) {
-            thrown = true;
-        }
-        assertTrue("long array load must throw (CG-4b defers widths)", thrown);
+        return new ArrayAssignQuad(address, block, 0, 1, 2, elemType);
+    }
+
+    /**
+     * Extra widths (ANCHOR-L2-078): 8-byte loads use scale-8 SIB traffic,
+     * sub-word loads sign/zero-extend; all preceded by the bounds CMP.
+     */
+    @Test
+    public void testArrayLoadWideShapes() throws Exception {
+        EmitterHarness h = new EmitterHarness();
+        arrayLoadQuad(0, JvmType.LONG, -8, -16, -20, JvmType.LONG).generateCode(h.cg);
+        String l = h.text();
+        assertTrue("long load must bounds-check, got:\n" + l, l.contains("cmp "));
+        assertTrue("long load must scale by 8, got:\n" + l, l.contains("*8"));
+
+        EmitterHarness h2 = new EmitterHarness();
+        arrayLoadQuad(0, JvmType.DOUBLE, -8, -16, -20, JvmType.DOUBLE).generateCode(h2.cg);
+        String d = h2.text();
+        assertTrue("double load must FLD, got:\n" + d, d.contains("fld"));
+
+        EmitterHarness h3 = new EmitterHarness();
+        arrayLoadQuad(0, JvmType.INT, -8, -16, -20, JvmType.BYTE).generateCode(h3.cg);
+        String b = h3.text();
+        assertTrue("byte load must sign-extend, got:\n" + b, b.contains("movsx"));
+
+        EmitterHarness h4 = new EmitterHarness();
+        arrayLoadQuad(0, JvmType.INT, -8, -16, -20, JvmType.CHAR).generateCode(h4.cg);
+        String c = h4.text();
+        assertTrue("char load must zero-extend, got:\n" + c, c.contains("movzx"));
     }
 
     private static void assertBinaryThrows(BinaryOperation op, String why) throws Exception {        EmitterHarness h = new EmitterHarness();

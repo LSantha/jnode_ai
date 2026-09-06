@@ -294,8 +294,8 @@ public class L2HostTest {
     }
 
     /**
-     * CG-4f (ANCHOR-L2-077): enabled shuffle/exception/monitor bytecodes pass;
-     * exotic dup forms and jsr/ret stay rejected.
+     * Shuffles/exceptions/monitors (CG-4f + Extra): all pass, including
+     * jsr/ret (CALL-model subroutines, ANCHOR-L2-079).
      */
     @Test
     public void testCheckerShuffleExceptionMonitorGates() {
@@ -304,39 +304,16 @@ public class L2HostTest {
         c.visit_pop2();
         c.visit_dup();
         c.visit_dup_x1();
+        c.visit_dup_x2();
         c.visit_dup2();
+        c.visit_dup2_x1();
+        c.visit_dup2_x2();
+        c.visit_swap();
         c.visit_athrow();
         c.visit_monitorenter();
         c.visit_monitorexit();
-        assertShuffleThrows("dup_x2", 0);
-        assertShuffleThrows("dup2_x1", 1);
-        assertShuffleThrows("dup2_x2", 2);
-        assertShuffleThrows("swap", 3);
-        assertShuffleThrows("jsr", 4);
-        assertShuffleThrows("ret", 5);
-    }
-
-    private static void assertShuffleThrows(String op, int which) {
-        L2ByteCodeSupportChecker c = new L2ByteCodeSupportChecker();
-        boolean thrown = false;
-        try {
-            if (which == 0) {
-                c.visit_dup_x2();
-            } else if (which == 1) {
-                c.visit_dup2_x1();
-            } else if (which == 2) {
-                c.visit_dup2_x2();
-            } else if (which == 3) {
-                c.visit_swap();
-            } else if (which == 4) {
-                c.visit_jsr(0);
-            } else {
-                c.visit_ret(0);
-            }
-        } catch (UnsupportedOperationException e) {
-            thrown = true;
-        }
-        assertTrue(op + " must stay rejected", thrown);
+        c.visit_jsr(0);
+        c.visit_ret(0);
     }
 
     /**
@@ -353,64 +330,31 @@ public class L2HostTest {
     }
 
     /**
-     * CG-4b (ANCHOR-L2-071): enabled array bytecodes pass; sub-word and
-     * 8-byte widths stay rejected.
+     * Array gates: all element widths pass (int/float/object since CG-4b,
+     * 8-byte and sub-word since Extra/ANCHOR-L2-078).
      */
     @Test
     public void testCheckerArrayGates() {
         L2ByteCodeSupportChecker c = new L2ByteCodeSupportChecker();
         c.visit_iaload();
+        c.visit_laload();
         c.visit_faload();
+        c.visit_daload();
         c.visit_aaload();
+        c.visit_baload();
+        c.visit_caload();
+        c.visit_saload();
         c.visit_iastore();
+        c.visit_lastore();
         c.visit_fastore();
+        c.visit_dastore();
         c.visit_aastore();
+        c.visit_bastore();
+        c.visit_castore();
+        c.visit_sastore();
         c.visit_arraylength();
         c.visit_newarray(10);
         c.visit_anewarray(null);
-        String[] deferredLoads = {"laload", "daload", "baload", "caload", "saload"};
-        for (int i = 0; i < deferredLoads.length; i++) {
-            assertArrayOpThrows(deferredLoads[i], true, i);
-        }
-        String[] deferredStores = {"lastore", "dastore", "bastore", "castore", "sastore"};
-        for (int i = 0; i < deferredStores.length; i++) {
-            assertArrayOpThrows(deferredStores[i], false, i);
-        }
-    }
-
-    private static void assertArrayOpThrows(String op, boolean load, int which) {
-        L2ByteCodeSupportChecker c = new L2ByteCodeSupportChecker();
-        boolean thrown = false;
-        try {
-            if (load) {
-                if (which == 0) {
-                    c.visit_laload();
-                } else if (which == 1) {
-                    c.visit_daload();
-                } else if (which == 2) {
-                    c.visit_baload();
-                } else if (which == 3) {
-                    c.visit_caload();
-                } else {
-                    c.visit_saload();
-                }
-            } else {
-                if (which == 0) {
-                    c.visit_lastore();
-                } else if (which == 1) {
-                    c.visit_dastore();
-                } else if (which == 2) {
-                    c.visit_bastore();
-                } else if (which == 3) {
-                    c.visit_castore();
-                } else {
-                    c.visit_sastore();
-                }
-            }
-        } catch (UnsupportedOperationException e) {
-            thrown = true;
-        }
-        assertTrue(op + " must stay rejected (CG-4b defers widths)", thrown);
     }
 
     private static void assertCheckerThrows(String op, int which) {

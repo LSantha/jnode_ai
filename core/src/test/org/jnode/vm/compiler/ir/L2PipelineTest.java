@@ -228,6 +228,24 @@ public class L2PipelineTest {
     }
 
     /**
+     * Extra widths (ANCHOR-L2-078): 8-byte and sub-word arrays through the
+     * real pipeline.
+     */
+    @Test
+    public void testCompileWideArrays() throws Exception {
+        assertCompiles("larraySum");
+        assertCompiles("larrayFill");
+        assertCompiles("darraySum");
+        assertCompiles("darrayFill");
+        assertCompiles("barraySum");
+        assertCompiles("barrayFill");
+        assertCompiles("carrayGet");
+        assertCompiles("carraySet");
+        assertCompiles("sarraySet");
+        assertCompiles("sarrayGet");
+    }
+
+    /**
      * CG-4c (ANCHOR-L2-074): type ops through the real pipeline (class /
      * interface / array instanceof paths, checkcasts, ldc, multianewarray).
      * Object `new` needs invokespecial (CG-4e) for the ctor call.
@@ -294,6 +312,51 @@ public class L2PipelineTest {
         assertCompiles("dupExpr");
         assertCompiles("discard");
         assertCompiles("concat");
+    }
+
+    /**
+     * Extra dup shapes (ANCHOR-L2-078): dup2_x2 form 2 via real javac output
+     * (dupArrAssign/dupArrUse). Correctness beyond completion is verified by
+     * trace + the execution oracle (wrong shuffles produce wrong values).
+     */
+    @Test
+    public void testCompileDupShapes() throws Exception {
+        assertCompiles("dupArrAssign");
+        assertCompiles("dupArrUse");
+    }
+
+    /**
+     * Subroutines (ANCHOR-L2-079): the hand-built JsrProbe class carries real
+     * jsr/ret bytecodes (javac cannot generate them). Loaded through a child
+     * loader, then compiled through the real pipeline: Finder splits,
+     * SSA renames the resume under the ret block, DCE keeps the JsrQuad,
+     * emission produces the CALL/POP/JMP shape.
+     */
+    @Test
+    public void testCompileJsr() throws Exception {
+        java.io.File dir = java.io.File.createTempFile("jsrprobe", "");
+        dir.delete();
+        dir.mkdirs();
+        java.io.FileOutputStream fos = new java.io.FileOutputStream(new java.io.File(dir, "JsrProbe.class"));
+        fos.write(JsrProbeBuilder.build());
+        fos.close();
+        VmSystemClassLoader child = new VmSystemClassLoader(
+            new java.net.URL[]{dir.toURL(), new java.io.File("core/build/classes").toURL(),
+                new java.io.File("distr/build/classes").toURL(),
+                new java.io.File("local/classlib").toURL()},
+            loader.getArchitecture());
+        VmType type = child.loadClass("JsrProbe", true);
+        VmMethod found = null;
+        for (int i = 0; i < type.getNoDeclaredMethods(); i++) {
+            VmMethod m = type.getDeclaredMethod(i);
+            if ("jsrDemo".equals(m.getName())) {
+                found = m;
+            }
+        }
+        assertNotNull("jsrDemo not found", found);
+        String text = compileToText(found);
+        assertTrue("no code emitted for jsrDemo", text.length() > 0);
+        assertTrue("jsr must CALL the subroutine, got:\n" + text, text.contains("call "));
     }
 
     // ---------------- T1: dominator-tree exactness (ANCHOR-L2-004) ----------------

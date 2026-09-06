@@ -41,85 +41,23 @@ public class L2ByteCodeSupportChecker extends BytecodeVisitorSupport {
     }
 
     // CG-4b (ANCHOR-L2-071): iaload/faload/aaload/iastore/fastore/aastore
-    // enabled (4-byte scale); sub-word and 8-byte widths stay gated.
-    // CG-4b: arraylength/newarray/anewarray enabled (SoftByteCodes paths).
-
-    public void visit_laload() {
-        notSupported();
-    }
-
-    public void visit_daload() {
-        notSupported();
-    }
-
-    public void visit_baload() {
-        notSupported();
-    }
-
-    public void visit_caload() {
-        notSupported();
-    }
-
-    public void visit_saload() {
-        notSupported();
-    }
-
-    public void visit_lastore() {
-        notSupported();
-    }
-
-    public void visit_dastore() {
-        notSupported();
-    }
-
-    public void visit_bastore() {
-        notSupported();
-    }
-
-    public void visit_castore() {
-        notSupported();
-    }
-
-    public void visit_sastore() {
-        notSupported();
-    }
+    // enabled (4-byte scale).
+    // Extra (ANCHOR-L2-078): all remaining widths enabled (8-byte via
+    // scratch-reg paths, sub-word via width ops).
 
     // CG-4f (ANCHOR-L2-077): pop/pop2/dup/dup_x1/dup2 fully implemented in
-    // IRGenerator (single-form or both-forms). dup_x2 (form 2), dup2_x1
-    // (form 1), dup2_x2 and swap stay gated: unimplemented exotic shapes
-    // would crash translation instead of falling back.
-    public void visit_dup_x2() {
-        notSupported();
-    }
-
-    public void visit_dup2_x1() {
-        notSupported();
-    }
-
-    public void visit_dup2_x2() {
-        notSupported();
-    }
-
-    public void visit_swap() {
-        notSupported();
-    }
+    // IRGenerator (single-form or both-forms).
+    // Extra (ANCHOR-L2-078): dup_x2 (both forms, condition fixed), dup2_x1
+    // (both forms, f2 rewritten), dup2_x2 (both forms), swap.
 
     // CG-3 (ANCHOR-L2-064): d2f/lcmp/fcmp*/dcmp* enabled — D2F (S,S) and the
     // FP-compare wiring (generateCompareOP) cover them.
 
-    public void visit_jsr(int address) {
-        notSupported();
-    }
-
-    public void visit_ret(int index) {
-        notSupported();
-    }
+    // jsr/ret supported via L1A-style CALL-model subroutines (JsrQuad/RetQuad,
+    // ANCHOR-L2-079). No depth analysis needed: the address is a value.
 
     // CG-4a (ANCHOR-L2-070): tableswitch/lookupswitch enabled — emitters
     // resolve targets via targetBlocks[] (dense) with a block-based default.
-
-    // jsr/ret stay rejected permanently: javac has not emitted subroutines
-    // since 1.5; only hand-built or ancient classes contain them.
 
     // CG-4d (ANCHOR-L2-075): getstatic/putstatic/getfield/putfield enabled
     // (all widths, R/S shapes, init, barriers).

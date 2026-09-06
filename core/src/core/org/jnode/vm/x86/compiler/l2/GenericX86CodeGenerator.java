@@ -79,6 +79,7 @@ import org.jnode.vm.compiler.ir.quad.ConstantStringAssignQuad;
 import org.jnode.vm.compiler.ir.quad.InstanceofAssignQuad;
 import org.jnode.vm.compiler.ir.quad.InterfaceCallAssignQuad;
 import org.jnode.vm.compiler.ir.quad.InterfaceCallQuad;
+import org.jnode.vm.compiler.ir.quad.JsrQuad;
 import org.jnode.vm.compiler.ir.quad.LookupswitchQuad;
 import org.jnode.vm.compiler.ir.quad.MonitorenterQuad;
 import org.jnode.vm.compiler.ir.quad.MonitorexitQuad;
@@ -89,6 +90,7 @@ import org.jnode.vm.compiler.ir.quad.NewPrimitiveArrayAssignQuad;
 import org.jnode.vm.compiler.ir.quad.Quad;
 import org.jnode.vm.compiler.ir.quad.RefAssignQuad;
 import org.jnode.vm.compiler.ir.quad.RefStoreQuad;
+import org.jnode.vm.compiler.ir.quad.RetQuad;
 import org.jnode.vm.compiler.ir.quad.SpecialCallAssignQuad;
 import org.jnode.vm.compiler.ir.quad.SpecialCallQuad;
 import org.jnode.vm.compiler.ir.quad.StaticCallAssignQuad;
@@ -354,6 +356,50 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
             stackFrame.getHelper().writeYieldPoint(getInstrLabel(quad.getAddress()));
         }
         os.writeJMP(getInstrLabel(quad.getTargetAddress()));
+    }
+
+    @Override
+    public void generateCodeFor(JsrQuad<T> quad) {
+        checkLabel(quad.getAddress());
+        // ANCHOR-L2-079: L1A-style subroutine call. CALL pushes the native
+        // resume address; POP it to a scratch and store it to the quad's lhs
+        // (an int-typed spill or register — never a GC root), then enter the
+        // subroutine. Back-edge jsr gets a yield point like branches.
+        final Label nextLabel = anonLabel("jsrnext");
+        os.writeCALL(nextLabel);
+        os.setObjectRef(nextLabel);
+        Variable<T> lhs = quad.getLHS();
+        if (lhs.getAddressingMode() == REGISTER) {
+            GPR reg = (GPR) ((RegisterLocation<T>) lhs.getLocation()).getRegister();
+            os.writePOP(reg);
+        } else if (lhs.getAddressingMode() == STACK) {
+            int disp = ((StackLocation<T>) lhs.getLocation()).getDisplacement();
+            os.writePOP(SR1);
+            os.writeMOV(BITS32, X86Register.EBP, disp, SR1);
+        } else {
+            throw new IllegalArgumentException();
+        }
+        if (quad.getTargetAddress() < quad.getAddress()) {
+            stackFrame.getHelper().writeYieldPoint(getInstrLabel(quad.getAddress()));
+        }
+        os.writeJMP(getInstrLabel(quad.getTargetAddress()));
+    }
+
+    @Override
+    public void generateCodeFor(RetQuad<T> quad) {
+        checkLabel(quad.getAddress());
+        // ANCHOR-L2-079: indirect jump through the local (L1A shape).
+        Operand<T> op = quad.getReferencedOps()[0];
+        if (op.getAddressingMode() == REGISTER) {
+            GPR reg = (GPR) ((RegisterLocation<T>) ((Variable<T>) op).getLocation()).getRegister();
+            os.writeJMP(reg);
+        } else if (op.getAddressingMode() == STACK) {
+            int disp = ((StackLocation<T>) ((Variable<T>) op).getLocation()).getDisplacement();
+            os.writeMOV(BITS32, SR1, X86Register.EBP, disp);
+            os.writeJMP(SR1);
+        } else {
+            throw new IllegalArgumentException("ret of constant");
+        }
     }
 
     public void generateCodeFor(VariableRefAssignQuad<T> quad) {
@@ -4397,16 +4443,106 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
         }
     }
 
+    /**
+     * Non-4-byte array loads (ANCHOR-L2-078). Materializes ref->EAX and
+     * index->ECX (PUSH/POP-protected; EAX never holds a live allocated
+     * value), then one width-specific sequence. Long/double results always
+     * spill; sub-word results are ints (R/S).
+     */
+    private void loadWideOrNarrowArray(ArrayAssignQuad quad, Variable lhs, Variable ref, Operand ind,
+                                       int arrayDataOffset) {
+        if (ref.getAddressingMode() == REGISTER) {
+            GPR refr = (GPR) ((RegisterLocation) ref.getLocation()).getRegister();
+            os.writeMOV(BITS32, X86Register.EAX, refr);
+        } else if (ref.getAddressingMode() == STACK) {
+            int disp = ((StackLocation) ref.getLocation()).getDisplacement();
+            os.writeMOV(BITS32, X86Register.EAX, X86Register.EBP, disp);
+        } else {
+            throw new IllegalArgumentException();
+        }
+        os.writePUSH(X86Register.ECX);
+        if (ind.getAddressingMode() == REGISTER) {
+            GPR indr = (GPR) ((RegisterLocation) ((Variable) ind).getLocation()).getRegister();
+            if (indr != X86Register.ECX) {
+                os.writeMOV(BITS32, X86Register.ECX, indr);
+            }
+        } else if (ind.getAddressingMode() == STACK) {
+            int disp = ((StackLocation) ((Variable) ind).getLocation()).getDisplacement();
+            os.writeMOV(BITS32, X86Register.ECX, X86Register.EBP, disp);
+        } else if (ind.getAddressingMode() == CONSTANT) {
+            os.writeMOV_Const(X86Register.ECX, ((IntConstant) ind).getValue());
+        } else {
+            os.writePOP(X86Register.ECX);
+            throw new IllegalArgumentException();
+        }
+        final int elemType = quad.getType();
+        if (elemType == Operand.LONG) {
+            if (lhs.getAddressingMode() != STACK) {
+                // Wide values always spill; a register here is unreachable.
+                os.writePOP(X86Register.ECX);
+                throw new IllegalArgumentException("Wide array load to register");
+            }
+            int resd = ((StackLocation) lhs.getLocation()).getDisplacement();
+            int resLo = resd - stackFrame.getHelper().SLOTSIZE;
+            os.writeMOV(BITS32, X86Register.EDX, X86Register.EAX, X86Register.ECX, 8, arrayDataOffset);
+            os.writeMOV(BITS32, X86Register.EBP, resLo, X86Register.EDX);
+            os.writeMOV(BITS32, X86Register.EDX, X86Register.EAX, X86Register.ECX, 8, arrayDataOffset + 4);
+            os.writeMOV(BITS32, X86Register.EBP, resd, X86Register.EDX);
+        } else if (elemType == Operand.DOUBLE) {
+            if (lhs.getAddressingMode() != STACK) {
+                os.writePOP(X86Register.ECX);
+                throw new IllegalArgumentException("Wide array load to register");
+            }
+            int resd = ((StackLocation) lhs.getLocation()).getDisplacement();
+            os.writeLEA(X86Register.EDX, X86Register.EAX, X86Register.ECX, 8, arrayDataOffset);
+            os.writeFLD64(X86Register.EDX, 0);
+            os.writeFSTP64(X86Register.EBP, resd);
+        } else {
+            // BYTE (signed), CHAR (unsigned), SHORT (signed) -> int result.
+            os.writeLEA(X86Register.EDX, X86Register.EAX, X86Register.ECX, 1, arrayDataOffset);
+            final boolean signed = (elemType != Operand.CHAR);
+            final int size = (elemType == Operand.BYTE) ? BYTESIZE : WORDSIZE;
+            if (lhs.getAddressingMode() == REGISTER) {
+                GPR resultr = (GPR) ((RegisterLocation) lhs.getLocation()).getRegister();
+                if (signed) {
+                    os.writeMOVSX(resultr, X86Register.EDX, 0, size);
+                } else {
+                    os.writeMOVZX(resultr, X86Register.EDX, 0, size);
+                }
+            } else if (lhs.getAddressingMode() == STACK) {
+                int resd = ((StackLocation) lhs.getLocation()).getDisplacement();
+                if (signed) {
+                    os.writeMOVSX(SR1, X86Register.EDX, 0, size);
+                } else {
+                    os.writeMOVZX(SR1, X86Register.EDX, 0, size);
+                }
+                os.writeMOV(BITS32, X86Register.EBP, resd, SR1);
+            } else {
+                os.writePOP(X86Register.ECX);
+                throw new IllegalArgumentException();
+            }
+        }
+        os.writePOP(X86Register.ECX);
+    }
+
     @Override
     public void generateCodeFor(ArrayAssignQuad quad) {
         checkLabel(quad.getAddress());
 
-        // ANCHOR-L2-071 (CG-4b): only 4-byte element types so far (scale is
-        // hardcoded 4 below). Sub-word and 8-byte widths stay checker-gated;
-        // fail loud here so a future gating slip can never silently miscompile.
-        final int elemType = quad.getType();
-        if (elemType != Operand.INT && elemType != Operand.FLOAT && elemType != Operand.REFERENCE) {
-            throw new IllegalArgumentException("CG-4b defers array element type: " + elemType);
+        final int slotSize = stackFrame.getHelper().SLOTSIZE;
+        int arrayDataOffset = VmArray.DATA_OFFSET * slotSize;
+
+        if (quad.getReferencedOps()[1].getAddressingMode() == CONSTANT) {
+            // ANCHOR-L2-078: only null reaches here (copy-propagated); getRef()
+            // would CCE on it, so read via getReferencedOps. Fault exactly
+            // like L1A's trap model.
+            Operand rawRef = quad.getReferencedOps()[1];
+            if (!(rawRef instanceof IntConstant)) {
+                throw new IllegalArgumentException("Non-null constant array ref: " + rawRef);
+            }
+            os.writeMOV_Const(SR1, ((IntConstant) rawRef).getValue());
+            os.writeMOV(BITS32, SR1, SR1, arrayDataOffset);
+            return;
         }
 
         Variable lhs = quad.getLHS();
@@ -4415,8 +4551,13 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
 
         checkBounds(ref, ind, quad.getAddress());
 
-        final int slotSize = stackFrame.getHelper().SLOTSIZE;
-        int arrayDataOffset = VmArray.DATA_OFFSET * slotSize;
+        final int elemType = quad.getType();
+        if (elemType != Operand.INT && elemType != Operand.FLOAT && elemType != Operand.REFERENCE) {
+            // ANCHOR-L2-078: 8-byte and sub-word loads (the cube below stays
+            // 4-byte only, byte-identical to the reviewed CG-4b shape).
+            loadWideOrNarrowArray(quad, lhs, ref, ind, arrayDataOffset);
+            return;
+        }
 
         // Load data
 //        if (idx.isConstant()) {
@@ -4530,14 +4671,113 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
         }
     }
 
+    /**
+     * Non-4-byte array stores (ANCHOR-L2-078). Materializes ref->EAX and
+     * index->ECX (PUSH/POP-protected), then one width-specific sequence.
+     * Long/double values always spill; sub-word int values are R/S/C.
+     */
+    private void storeWideOrNarrowArray(ArrayStoreQuad quad, Variable ref, Operand ind, Operand rhs,
+                                        int arrayDataOffset) {
+        if (ref.getAddressingMode() == REGISTER) {
+            GPR refr = (GPR) ((RegisterLocation) ref.getLocation()).getRegister();
+            os.writeMOV(BITS32, X86Register.EAX, refr);
+        } else if (ref.getAddressingMode() == STACK) {
+            int disp = ((StackLocation) ref.getLocation()).getDisplacement();
+            os.writeMOV(BITS32, X86Register.EAX, X86Register.EBP, disp);
+        } else {
+            throw new IllegalArgumentException();
+        }
+        os.writePUSH(X86Register.ECX);
+        if (ind.getAddressingMode() == REGISTER) {
+            GPR indr = (GPR) ((RegisterLocation) ((Variable) ind).getLocation()).getRegister();
+            if (indr != X86Register.ECX) {
+                os.writeMOV(BITS32, X86Register.ECX, indr);
+            }
+        } else if (ind.getAddressingMode() == STACK) {
+            int disp = ((StackLocation) ((Variable) ind).getLocation()).getDisplacement();
+            os.writeMOV(BITS32, X86Register.ECX, X86Register.EBP, disp);
+        } else if (ind.getAddressingMode() == CONSTANT) {
+            os.writeMOV_Const(X86Register.ECX, ((IntConstant) ind).getValue());
+        } else {
+            os.writePOP(X86Register.ECX);
+            throw new IllegalArgumentException();
+        }
+        final int elemType = quad.getType();
+        if (elemType == Operand.LONG) {
+            if (rhs.getAddressingMode() != STACK) {
+                // Wide values always spill; a register here is unreachable.
+                os.writePOP(X86Register.ECX);
+                throw new IllegalArgumentException("Wide array value from register");
+            }
+            // EDX as value temp (EAX still holds the base; both free).
+            int vdisp = ((StackLocation) ((Variable) rhs).getLocation()).getDisplacement();
+            int vdispLo = vdisp - stackFrame.getHelper().SLOTSIZE;
+            os.writeMOV(BITS32, X86Register.EDX, X86Register.EBP, vdispLo);
+            os.writeMOV(BITS32, X86Register.EAX, X86Register.ECX, 8, arrayDataOffset, X86Register.EDX);
+            os.writeMOV(BITS32, X86Register.EDX, X86Register.EBP, vdisp);
+            os.writeMOV(BITS32, X86Register.EAX, X86Register.ECX, 8, arrayDataOffset + 4, X86Register.EDX);
+        } else if (elemType == Operand.DOUBLE) {
+            if (rhs.getAddressingMode() != STACK) {
+                os.writePOP(X86Register.ECX);
+                throw new IllegalArgumentException("Wide array value from register");
+            }
+            int vdisp = ((StackLocation) ((Variable) rhs).getLocation()).getDisplacement();
+            os.writeLEA(X86Register.EDX, X86Register.EAX, X86Register.ECX, 8, arrayDataOffset);
+            os.writeFLD64(X86Register.EBP, vdisp);
+            os.writeFSTP64(X86Register.EDX, 0);
+        } else {
+            // BYTE/CHAR/SHORT stores narrow the int value to 1/2 bytes.
+            os.writeLEA(X86Register.EDX, X86Register.EAX, X86Register.ECX, 1, arrayDataOffset);
+            final int size = (elemType == Operand.BYTE) ? BYTESIZE : WORDSIZE;
+            if (rhs.getAddressingMode() == REGISTER) {
+                GPR valr = (GPR) ((RegisterLocation) ((Variable) rhs).getLocation()).getRegister();
+                if (size == BYTESIZE) {
+                    os.writeMOV(BITS8, X86Register.EDX, 0, valr);
+                } else {
+                    os.writeMOV(BITS16, X86Register.EDX, 0, valr);
+                }
+            } else if (rhs.getAddressingMode() == STACK) {
+                int disp = ((StackLocation) ((Variable) rhs).getLocation()).getDisplacement();
+                os.writeMOV(BITS32, SR1, X86Register.EBP, disp);
+                if (size == BYTESIZE) {
+                    os.writeMOV(BITS8, X86Register.EDX, 0, SR1);
+                } else {
+                    os.writeMOV(BITS16, X86Register.EDX, 0, SR1);
+                }
+            } else if (rhs.getAddressingMode() == CONSTANT) {
+                // LEA first (EAX holds the base), then the immediate narrow store.
+                os.writeMOV_Const(SR1, ((IntConstant) rhs).getValue());
+                if (size == BYTESIZE) {
+                    os.writeMOV(BITS8, X86Register.EDX, 0, SR1);
+                } else {
+                    os.writeMOV(BITS16, X86Register.EDX, 0, SR1);
+                }
+            } else {
+                os.writePOP(X86Register.ECX);
+                throw new IllegalArgumentException();
+            }
+        }
+        os.writePOP(X86Register.ECX);
+    }
+
     @Override
     public void generateCodeFor(ArrayStoreQuad quad) {
         checkLabel(quad.getAddress());
 
-        // ANCHOR-L2-071 (CG-4b): see generateCodeFor(ArrayAssignQuad).
-        final int elemType = quad.getType();
-        if (elemType != Operand.INT && elemType != Operand.FLOAT && elemType != Operand.REFERENCE) {
-            throw new IllegalArgumentException("CG-4b defers array element type: " + elemType);
+        final int slotSize = stackFrame.getHelper().SLOTSIZE;
+        int arrayDataOffset = VmArray.DATA_OFFSET * slotSize;
+
+        if (quad.getReferencedOps()[2].getAddressingMode() == CONSTANT) {
+            // ANCHOR-L2-078: only null reaches here (copy-propagated); getRef()
+            // would CCE on it, so read via getReferencedOps. Fault exactly
+            // like L1A's trap model.
+            Operand rawRef = quad.getReferencedOps()[2];
+            if (!(rawRef instanceof IntConstant)) {
+                throw new IllegalArgumentException("Non-null constant array ref: " + rawRef);
+            }
+            os.writeMOV_Const(SR1, ((IntConstant) rawRef).getValue());
+            os.writeMOV(BITS32, SR1, SR1, arrayDataOffset);
+            return;
         }
 
         Variable ref = quad.getRef();
@@ -4546,8 +4786,13 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
 
         checkBounds(ref, ind, quad.getAddress());
 
-        final int slotSize = stackFrame.getHelper().SLOTSIZE;
-        int arrayDataOffset = VmArray.DATA_OFFSET * slotSize;
+        final int elemType = quad.getType();
+        if (elemType != Operand.INT && elemType != Operand.FLOAT && elemType != Operand.REFERENCE) {
+            // ANCHOR-L2-078: 8-byte and sub-word stores (the cube below stays
+            // 4-byte only, byte-identical to the reviewed CG-4b shape).
+            storeWideOrNarrowArray(quad, ref, ind, rhs, arrayDataOffset);
+            return;
+        }
 
         // Load data
 //        if (idx.isConstant()) {

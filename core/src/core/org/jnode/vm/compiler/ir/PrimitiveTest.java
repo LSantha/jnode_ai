@@ -726,4 +726,72 @@ public class PrimitiveTest {
     public static String concat(int x) {
         return "v=" + x;
     }
+
+    // dup shape probes (ANCHOR-L2-078; shapes verified with javap below)
+    public static long dupArrAssign(long[] a, int i, long v) {
+        return a[i] = v;
+    }
+
+    public static long dupArrUse(long[] a, int i) {
+        return a[i] = a[i];
+    }
+
+    // Extra array widths (ANCHOR-L2-078)
+    public static long larraySum(long[] a) {
+        long s = 0L;
+        for (int i = 0; i < a.length; i++) {
+            s += a[i];
+        }
+        return s;
+    }
+
+    public static void larrayFill(long[] a, long v) {
+        for (int i = 0; i < a.length; i++) {
+            a[i] = v;
+        }
+    }
+
+    public static double darraySum(double[] a) {
+        double s = 0.0;
+        for (int i = 0; i < a.length; i++) {
+            s += a[i];
+        }
+        return s;
+    }
+
+    public static int barraySum(byte[] a) {
+        int s = 0;
+        for (int i = 0; i < a.length; i++) {
+            s += a[i];
+        }
+        return s;
+    }
+
+    public static void barrayFill(byte[] a, byte v) {
+        for (int i = 0; i < a.length; i++) {
+            a[i] = v;
+        }
+    }
+
+    public static int carrayGet(char[] a, int i) {
+        return a[i];
+    }
+
+    public static void sarraySet(short[] a, int i, short v) {
+        a[i] = v;
+    }
+
+    public static int sarrayGet(short[] a, int i) {
+        return a[i];
+    }
+
+    public static void darrayFill(double[] a, double v) {
+        for (int i = 0; i < a.length; i++) {
+            a[i] = v;
+        }
+    }
+
+    public static void carraySet(char[] a, int i, char v) {
+        a[i] = v;
+    }
 }

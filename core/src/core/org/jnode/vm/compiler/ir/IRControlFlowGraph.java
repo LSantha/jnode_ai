@@ -33,6 +33,7 @@ import org.jnode.vm.classmgr.VmByteCode;
 import org.jnode.vm.classmgr.VmInterpretedExceptionHandler;
 import org.jnode.vm.compiler.ir.quad.AssignQuad;
 import org.jnode.vm.compiler.ir.quad.CallAssignQuad;
+import org.jnode.vm.compiler.ir.quad.JsrQuad;
 import org.jnode.vm.compiler.ir.quad.NewAssignQuad;
 import org.jnode.vm.compiler.ir.quad.NewMultiArrayAssignQuad;
 import org.jnode.vm.compiler.ir.quad.NewObjectArrayAssignQuad;
@@ -53,6 +54,7 @@ public class IRControlFlowGraph<T> implements Iterable<IRBasicBlock<T>> {
     private final IRBasicBlock<T>[] bblocks;
     private List<IRBasicBlock<T>> postOrderList;
     private IRBasicBlock<T> startBlock;
+    private final IRBasicBlockFinder<T> finder;
 
     /**
      * Create a new instance
@@ -64,8 +66,17 @@ public class IRControlFlowGraph<T> implements Iterable<IRBasicBlock<T>> {
         final IRBasicBlockFinder<T> bbf = new IRBasicBlockFinder<T>();
         BytecodeParser.parse(bytecode, bbf);
         this.bblocks = bbf.createBasicBlocks();
+        this.finder = bbf;
         startBlock = bblocks[0];
         computeDominance(bytecode);
+    }
+
+    /**
+     * @return the jsr sites recorded by the finder as {jsrAddr, subTarget,
+     * resumeAddr}, for subroutine dataflow (ANCHOR-L2-079).
+     */
+    public List<int[]> getJsrSites() {
+        return finder.getJsrSites();
     }
 
     //todo use set
@@ -103,8 +114,11 @@ public class IRControlFlowGraph<T> implements Iterable<IRBasicBlock<T>> {
                     dq instanceof NewAssignQuad ||
                     dq instanceof NewObjectArrayAssignQuad ||
                     dq instanceof NewPrimitiveArrayAssignQuad ||
-                    dq instanceof NewMultiArrayAssignQuad) {
+                    dq instanceof NewMultiArrayAssignQuad ||
+                    dq instanceof JsrQuad) {
                     //todo optimize it, could be transformed to CallQuad
+                    // (JsrQuad: control effects — entering the subroutine.
+                    // ANCHOR-L2-079.)
                     continue;
                 }
 
