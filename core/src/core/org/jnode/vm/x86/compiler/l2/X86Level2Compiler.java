@@ -28,6 +28,7 @@ import org.jnode.assembler.ObjectResolver;
 import org.jnode.assembler.x86.X86Assembler;
 import org.jnode.assembler.x86.X86BinaryAssembler;
 import org.jnode.vm.bytecode.BytecodeParser;
+import org.jnode.vm.bytecode.BytecodeVisitorSupport;
 import org.jnode.vm.classmgr.VmByteCode;
 import org.jnode.vm.classmgr.VmMethod;
 import org.jnode.vm.compiler.CompiledMethod;
@@ -59,7 +60,12 @@ public class X86Level2Compiler extends AbstractX86Compiler {
 
     public static boolean canCompile(VmMethod method) {
         try {
-            BytecodeParser.parse(method.getBytecode(), new L2ByteCodeSupportChecker());
+            // The per-opcode gate (L2ByteCodeSupportChecker) was retired once
+            // the backend covered all bytecodes: this parse only rejects
+            // malformed bytecode now. Shapes that cannot occur in loadable
+            // classes fail loud in translation instead.
+            BytecodeParser.parse(method.getBytecode(), new BytecodeVisitorSupport() {
+            });
             return true;
         } catch (Exception x) {
             //ignore

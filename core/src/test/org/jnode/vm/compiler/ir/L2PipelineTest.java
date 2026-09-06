@@ -333,6 +333,22 @@ public class L2PipelineTest {
     }
 
     /**
+     * The per-opcode gate is retired: canCompile accepts every loadable
+     * method (it only rejects malformed bytecode now). Pins the open gate
+     * over previously-gated families.
+     */
+    @Test
+    public void testCanCompileAcceptsAll() throws Exception {
+        String[] names = {"add", "ldiv", "lrem", "dupArrAssign", "switchDense",
+            "arraySum", "castString", "getSLong", "callVirt", "tryCatch",
+            "syncBlock", "concat", "dret", "hello"};
+        for (int i = 0; i < names.length; i++) {
+            assertTrue("canCompile(" + names[i] + ")",
+                X86Level2Compiler.canCompile(findMethod(names[i])));
+        }
+    }
+
+    /**
      * Subroutines (ANCHOR-L2-079): the hand-built JsrProbe class carries real
      * jsr/ret bytecodes (javac cannot generate them). Loaded through a child
      * loader, then compiled through the real pipeline: Finder splits,
