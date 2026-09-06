@@ -157,7 +157,9 @@ public class IRTest {
         int nMethods = type.getNoDeclaredMethods();
         for (int i = 0; i < nMethods; i += 1) {
             VmMethod method1 = type.getDeclaredMethod(i);
-            // ANCHOR-L2-00F: corpus spells it "terniary22" (was "terniary22", never matched).
+            // ANCHOR-L2-00F: look up the corpus spelling "terniary22"
+            // (the previous literal matched no method, so this manual-only
+            // driver would NPE at method.getBytecode() below if run).
             if ("terniary22".equals(method1.getName())) {
 //            if ("darken".equals(method1.getName())) {
                 arithMethod = method1;
@@ -217,7 +219,6 @@ public class IRTest {
         cfg.removeUnusedVars();
 
         cfg.deconstrucSSA();
-        cfg.fixupAddresses();
         printCFG(cfg, "Deconstructed SSA");
 
         cfg.removeDefUseChains();

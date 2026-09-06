@@ -598,6 +598,10 @@ public class PrimitiveTest {
         return sObj;
     }
 
+    public static void setSObj(Object v) {
+        sObj = v;
+    }
+
     public static int getSInit() {
         return sInit;
     }

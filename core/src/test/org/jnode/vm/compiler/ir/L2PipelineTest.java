@@ -66,13 +66,13 @@ import static org.junit.Assert.fail;
  * <p/>
  * Replicates the {@code IRTest} manual driver (stage by stage, mirroring
  * {@code X86Level2Compiler.doCompile}) inside JUnit, compiling real methods
- * from {@code PrimitiveTest} to x86 <em>text</em> on the host JDK — no JNode
+ * from {@code PrimitiveTest} to x86 <em>text</em> on the host JDK -- no JNode
  * boot required. See {@code local/docs/L2_COMPILER_DEEP_DIVE.md} 10B.1
  * (measurement protocol) and sections 22-23 (ANCHOR-L2-040...044).
  * <p/>
  * NOTE: the corpus spells the ternary methods {@code terniary*} (with an
- * extra 'i'); {@code IRTest} looks up {@code "terniary22"}, which does not
- * exist (ANCHOR-L2-041 hardens the lookup).
+ * extra 'i' vs English "ternary"); use those exact names when adding corpus
+ * methods here (see ANCHOR-L2-00F for the same spelling trap in IRTest).
  */
 public class L2PipelineTest {
 
@@ -102,8 +102,12 @@ public class L2PipelineTest {
 
     /**
      * Run the full L2 pipeline for one corpus method and return the emitted
-     * x86 text. Stage order mirrors {@code X86Level2Compiler.doCompile} and
-     * {@code IRTest.generateCode}.
+     * x86 text. Stage order is literally {@code X86Level2Compiler.doCompile}:
+     * bytecode, CFG, IRGenerator, parse, initMethodArguments, constructSSA,
+     * optimize, removeUnusedVars, optimize, removeUnusedVars (closure),
+     * deconstrucSSA, removeDefUseChains, fixupAddresses, CodeGenerator,
+     * computeLiveVariables, getLiveRanges, allocate, generateCode.
+     * (Also mirrors {@code IRTest.generateCode}.)
      */
     private static String compileToText(VmMethod method) throws Exception {
         StringWriter sw = new StringWriter();
@@ -115,7 +119,6 @@ public class L2PipelineTest {
         CompiledMethod cm = new CompiledMethod(1);
         TypeSizeInfo typeSizeInfo = loader.getArchitecture().getTypeSizeInfo();
         X86StackFrame stackFrame = new X86StackFrame(os, helper, method, context, cm);
-        X86CodeGenerator x86cg = new X86CodeGenerator(method, os, code.getLength(), typeSizeInfo, stackFrame);
 
         IRControlFlowGraph cfg = new IRControlFlowGraph(code);
         IRGenerator irg = new IRGenerator(cfg, typeSizeInfo, method.getDeclaringClass().getLoader());
@@ -128,9 +131,9 @@ public class L2PipelineTest {
         cfg.optimize();
         cfg.removeUnusedVars();
         cfg.deconstrucSSA();
-        cfg.fixupAddresses();
         cfg.removeDefUseChains();
         cfg.fixupAddresses();
+        X86CodeGenerator x86cg = new X86CodeGenerator(method, os, code.getLength(), typeSizeInfo, stackFrame);
         List liveVariables = cfg.computeLiveVariables();
         LiveRange[] liveRanges = X86Level2Compiler.getLiveRanges(liveVariables);
         LinearScanAllocator lsa = X86Level2Compiler.allocate(liveRanges);
@@ -186,7 +189,7 @@ public class L2PipelineTest {
     }
 
     /**
-     * CG-4a (ANCHOR-L2-070): switches through the real pipeline —
+     * CG-4a (ANCHOR-L2-070): switches through the real pipeline --
      * tableswitch PIC (dense), tableswitch linear (small), lookupswitch.
      */
     @Test
@@ -272,6 +275,7 @@ public class L2PipelineTest {
         assertCompiles("getSLong");
         assertCompiles("setSLong");
         assertCompiles("getSObj");
+        assertCompiles("setSObj");
         assertCompiles("getSInit");
         assertCompiles("getIInt");
         assertCompiles("setIInt");
@@ -283,7 +287,7 @@ public class L2PipelineTest {
     }
 
     /**
-     * CG-4e (ANCHOR-L2-076): calls through the real pipeline — static,
+     * CG-4e (ANCHOR-L2-076): calls through the real pipeline -- static,
      * virtual (VMT), final/private (fast path), interface (IMT), long/double
      * args and returns, and new+ctor+field roundtrip.
      */
@@ -423,7 +427,6 @@ public class L2PipelineTest {
         cfg.optimize();
         cfg.removeUnusedVars();
         cfg.deconstrucSSA();
-        cfg.fixupAddresses();
         cfg.removeDefUseChains();
         cfg.fixupAddresses();
         List liveVariables = cfg.computeLiveVariables();
@@ -446,15 +449,25 @@ public class L2PipelineTest {
     // ---------------- T1: post-DCE phi-use invariant (OPT-03 analysis pin) ----------------
 
     /**
-     * Run the pipeline up to and including removeUnusedVars (no allocation,
-     * no emission) and return the CFG.
+     * Run the pipeline up to and including the second removeUnusedVars (no
+     * allocation, no emission) and return the CFG. Prefix of
+     * {@code X86Level2Compiler.doCompile}, same order (arg locations do not
+     * affect the use invariant, but the call is kept for fidelity).
      */
     private static IRControlFlowGraph runToPostDce(VmMethod m) throws Exception {
         VmByteCode code = m.getBytecode();
+        StringWriter sw = new StringWriter();
+        X86TextAssembler os = new X86TextAssembler(sw, cpuId, Mode.CODE32);
+        EntryPoints context = new EntryPoints(loader, VmUtils.getVm().getHeapManager(), 1);
+        X86CompilerHelper helper = new X86CompilerHelper(os, null, context, true);
+        helper.setMethod(m);
+        CompiledMethod cm = new CompiledMethod(1);
         TypeSizeInfo typeSizeInfo = loader.getArchitecture().getTypeSizeInfo();
+        X86StackFrame stackFrame = new X86StackFrame(os, helper, m, context, cm);
         IRControlFlowGraph cfg = new IRControlFlowGraph(code);
         IRGenerator irg = new IRGenerator(cfg, typeSizeInfo, m.getDeclaringClass().getLoader());
         BytecodeParser.parse(code, irg);
+        X86Level2Compiler.initMethodArguments(m, stackFrame, typeSizeInfo, irg);
         cfg.constructSSA();
         cfg.optimize();
         cfg.removeUnusedVars();
@@ -483,7 +496,7 @@ public class L2PipelineTest {
     /**
      * ANCHOR-L2-022: after iterative DCE every surviving phi must have a live
      * use (mirroring getVariableUsage: refs of live quads, phis included).
-     * This pins the OPT-03 analysis — a live-gated deconstruction filter can
+     * This pins the OPT-03 analysis -- a live-gated deconstruction filter can
      * only fire if this ever fails, i.e. DCE was incomplete. If it fails,
      * wire the filtering deconstrucSSA overload (now sort- and null-safe)
      * into doCompile instead of dismissing it.

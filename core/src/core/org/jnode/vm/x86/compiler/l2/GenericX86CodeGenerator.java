@@ -268,7 +268,7 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
         Variable<T> lhs = quad.getLHS();
         // ANCHOR-L2-073 (CG-4b): the RHS type decides. Only int constants can
         // land in a register (wide values always spill); anything else here is
-        // a backend bug — fail loud instead of ClassCastException. (A spilled
+        // a backend bug -- fail loud instead of ClassCastException. (A spilled
         // int const-def emits nothing by design: its uses were substituted
         // with immediates and DCE collects it; see VariableRefAssign S<-C.)
         if (lhs.getAddressingMode() == REGISTER) {
@@ -363,7 +363,7 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
         checkLabel(quad.getAddress());
         // ANCHOR-L2-079: L1A-style subroutine call. CALL pushes the native
         // resume address; POP it to a scratch and store it to the quad's lhs
-        // (an int-typed spill or register — never a GC root), then enter the
+        // (an int-typed spill or register -- never a GC root), then enter the
         // subroutine. Back-edge jsr gets a yield point like branches.
         final Label nextLabel = anonLabel("jsrnext");
         os.writeCALL(nextLabel);
@@ -734,7 +734,7 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
 
             case I2D:
                 // ANCHOR-L2-063 (CG-3): int in reg to double spill (was grouped
-                // with F2I below, mistaking int bits for float bits — B13).
+                // with F2I below, mistaking int bits for float bits -- B13).
                 os.writePUSH((GPR) rhsReg);
                 os.writeFILD32(X86Register.ESP, 0);
                 os.writeFSTP64(X86Register.EBP, lhsDisp);
@@ -3407,7 +3407,7 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
             case LCMP: {
                 // ANCHOR-L2-061 (CG-3): const-long compare without scratch stores
                 // (old code SUB/SBB'd immediates into the operand slots,
-                // destroying a live spilled long — same class as B6).
+                // destroying a live spilled long -- same class as B6).
                 final Label curInstrLabel = getInstrLabel(quad.getAddress());
                 final Label ltLabel = new Label(curInstrLabel + "lt");
                 final Label gtLabel = new Label(curInstrLabel + "gt");
@@ -5665,7 +5665,8 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
 
     /**
      * GC write barrier after a putstatic of a reference (ANCHOR-L2-075, CG-4d).
-     * Mirror of {@code X86CompilerHelper.writePutstaticWriteBarrier}.
+     * Mirror of {@code X86CompilerHelper.writePutstaticWriteBarrier} (same
+     * five pushes: wb, shared-flag, statics index, value).
      */
     private void writeStaticBarrier(VmStaticField field, Operand val) {
         X86CompilerHelper helper = stackFrame.getHelper();
@@ -5676,6 +5677,13 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
         os.writePUSH(X86Register.ECX);
         os.writeMOV_Const(X86Register.ECX, stackFrame.getEntryPoints().getWriteBarrier());
         os.writePUSH(X86Register.ECX);
+        if (field.isShared()) {
+            os.writePUSH(1); // shared = true
+            os.writePUSH(field.getSharedStaticsIndex());
+        } else {
+            os.writePUSH(0); // shared = false
+            os.writePUSH(field.getIsolatedStaticsIndex());
+        }
         os.writePUSH(X86Register.EDX);
         callJavaMethod(stackFrame.getEntryPoints().getPutstaticWriteBarrier());
         os.writePOP(X86Register.ECX);
@@ -5779,7 +5787,7 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
                 } else {
                     if (lhs.getAddressingMode() == REGISTER) {
                         // ANCHOR-L2-075 (CG-4d): tmp EDX (was hardcoded ESI,
-                        // which may hold a live allocated value — B19).
+                        // which may hold a live allocated value -- B19).
                         stackFrame.getHelper().writeGetStaticsEntry(curInstrLabel,
                             (GPR) ((RegisterLocation) lhs.getLocation()).getRegister(), sf,
                             X86Register.EDX);
@@ -5850,7 +5858,7 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
                     }
                 } else {
                     if (quad.getOperand().getAddressingMode() == REGISTER) {
-                        // ANCHOR-L2-075 (CG-4d): tmp EDX (was hardcoded ESI — B19).
+                        // ANCHOR-L2-075 (CG-4d): tmp EDX (was hardcoded ESI -- B19).
                         stackFrame.getHelper().writePutStaticsEntry(curInstrLabel,
                             (GPR) ((RegisterLocation) ((Variable) quad.getOperand()).getLocation()).getRegister(),
                             sf, X86Register.EDX);
@@ -6696,7 +6704,7 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
             if (operand.getAddressingMode() == CONSTANT) {
                 // ANCHOR-L2-076 (CG-4e, B14): all constant kinds, halves in
                 // callee order (MSB/high pushed first, like L1A and the spill
-                // paths above — cross-compiler consistent).
+                // paths above -- cross-compiler consistent).
                 if (operand instanceof IntConstant) {
                     os.writePUSH(((IntConstant) operand).getValue());
                 } else if (operand instanceof LongConstant) {

@@ -50,13 +50,13 @@ public class L2ByteCodeSupportChecker extends BytecodeVisitorSupport {
     // Extra (ANCHOR-L2-078): dup_x2 (both forms, condition fixed), dup2_x1
     // (both forms, f2 rewritten), dup2_x2 (both forms), swap.
 
-    // CG-3 (ANCHOR-L2-064): d2f/lcmp/fcmp*/dcmp* enabled — D2F (S,S) and the
+    // CG-3 (ANCHOR-L2-064): d2f/lcmp/fcmp*/dcmp* enabled -- D2F (S,S) and the
     // FP-compare wiring (generateCompareOP) cover them.
 
     // jsr/ret supported via L1A-style CALL-model subroutines (JsrQuad/RetQuad,
     // ANCHOR-L2-079). No depth analysis needed: the address is a value.
 
-    // CG-4a (ANCHOR-L2-070): tableswitch/lookupswitch enabled — emitters
+    // CG-4a (ANCHOR-L2-070): tableswitch/lookupswitch enabled -- emitters
     // resolve targets via targetBlocks[] (dense) with a block-based default.
 
     // CG-4d (ANCHOR-L2-075): getstatic/putstatic/getfield/putfield enabled
@@ -77,7 +77,7 @@ public class L2ByteCodeSupportChecker extends BytecodeVisitorSupport {
         throw new UnsupportedOperationException();
     }
 
-    // CG-3 (ANCHOR-L2-062/064): lmul/ldiv/lrem deferred — full 64-bit
+    // CG-3 (ANCHOR-L2-062/064): lmul/ldiv/lrem deferred -- full 64-bit
     // mul/div needs multi-precision sequences or a runtime helper. Reject
     // explicitly so methods fall back to L1 instead of crashing the backend.
 

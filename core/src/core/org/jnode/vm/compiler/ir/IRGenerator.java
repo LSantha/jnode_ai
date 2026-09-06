@@ -1548,9 +1548,9 @@ public class IRGenerator<T> extends BytecodeVisitor {
 
     public void visit_ret(int index) {
         // ANCHOR-L2-079: indirect jump through the local (no stack effect,
-        // no fallthrough — the Finder already ends the block). Propagate the
+        // no fallthrough -- the Finder already ends the block). Propagate the
         // (unchanged) depth to the resume blocks (same value the jsr set;
-        // harmless if already set — depths agree by verification).
+        // harmless if already set -- depths agree by verification).
         currentBlock.add(new RetQuad<T>(address, currentBlock, index));
         setSuccessorStackOffset();
     }

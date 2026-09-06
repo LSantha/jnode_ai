@@ -117,7 +117,7 @@ public class IRControlFlowGraph<T> implements Iterable<IRBasicBlock<T>> {
                     dq instanceof NewMultiArrayAssignQuad ||
                     dq instanceof JsrQuad) {
                     //todo optimize it, could be transformed to CallQuad
-                    // (JsrQuad: control effects — entering the subroutine.
+                    // (JsrQuad: control effects -- entering the subroutine.
                     // ANCHOR-L2-079.)
                     continue;
                 }

@@ -224,8 +224,10 @@ public class FPX86CodeGenerator<T> {
 //                os.writeLEA(X86Register.ESP, X86Register.ESP, context.stackFrame.getHelper().SLOTSIZE);
 //                break;
             case STACK:
+                // Doubles live qword-at-disp (FSTP64 convention, like every
+                // other double emitter); the old code subtracted a SLOTSIZE
+                // here, reading a shifted 8 bytes (review fix).
                 int displacement = ((StackLocation) ((Variable) operand).getLocation()).getDisplacement();
-                displacement -= context.stackFrame.getHelper().SLOTSIZE;      //todo OK - follow this
                 os.writeFLD64(X86Register.EBP, displacement);
                 break;
             default:
