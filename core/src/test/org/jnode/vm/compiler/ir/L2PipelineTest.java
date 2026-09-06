@@ -281,6 +281,21 @@ public class L2PipelineTest {
         assertCompiles("makeAndGet");
     }
 
+    /**
+     * CG-4f (ANCHOR-L2-077): exceptions, monitors and stack shuffles through
+     * the real pipeline (handler edges, throw, monitor calls, dup/pop).
+     */
+    @Test
+    public void testCompileExceptionsMonitorsShuffles() throws Exception {
+        assertCompiles("tryCatch");
+        assertCompiles("throwIt");
+        assertCompiles("syncMethod");
+        assertCompiles("syncBlock");
+        assertCompiles("dupExpr");
+        assertCompiles("discard");
+        assertCompiles("concat");
+    }
+
     // ---------------- T1: dominator-tree exactness (ANCHOR-L2-004) ----------------
 
     private static void assertDominatedTreeExact(String name) throws Exception {

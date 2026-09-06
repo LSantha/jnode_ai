@@ -5281,7 +5281,12 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
         } else {
             throw new IllegalArgumentException();
         }
-        stackFrame.getHelper().invokeJavaMethod(stackFrame.getEntryPoints().getMonitorEnterMethod());
+        // ANCHOR-L2-077 (CG-4f): EAX-result model + ECX preserved (monitor
+        // calls return normally; shared invokeJavaMethod happens to work for
+        // void, but the uniform L2 shape is used).
+        os.writePUSH(X86Register.ECX);
+        callJavaMethod(stackFrame.getEntryPoints().getMonitorEnterMethod());
+        os.writePOP(X86Register.ECX);
     }
 
     @Override
@@ -5295,7 +5300,10 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
         } else {
             throw new IllegalArgumentException();
         }
-        stackFrame.getHelper().invokeJavaMethod(stackFrame.getEntryPoints().getMonitorExitMethod());
+        // ANCHOR-L2-077 (CG-4f): see MonitorenterQuad above.
+        os.writePUSH(X86Register.ECX);
+        callJavaMethod(stackFrame.getEntryPoints().getMonitorExitMethod());
+        os.writePOP(X86Register.ECX);
     }
 
     @Override

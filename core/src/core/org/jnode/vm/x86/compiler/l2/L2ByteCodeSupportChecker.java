@@ -84,23 +84,11 @@ public class L2ByteCodeSupportChecker extends BytecodeVisitorSupport {
         notSupported();
     }
 
-    public void visit_pop() {
-        notSupported();
-    }
-
-    public void visit_pop2() {
-        notSupported();
-    }
-
-    public void visit_dup_x1() {
-        notSupported();
-    }
-
+    // CG-4f (ANCHOR-L2-077): pop/pop2/dup/dup_x1/dup2 fully implemented in
+    // IRGenerator (single-form or both-forms). dup_x2 (form 2), dup2_x1
+    // (form 1), dup2_x2 and swap stay gated: unimplemented exotic shapes
+    // would crash translation instead of falling back.
     public void visit_dup_x2() {
-        notSupported();
-    }
-
-    public void visit_dup2() {
         notSupported();
     }
 
@@ -130,6 +118,9 @@ public class L2ByteCodeSupportChecker extends BytecodeVisitorSupport {
     // CG-4a (ANCHOR-L2-070): tableswitch/lookupswitch enabled — emitters
     // resolve targets via targetBlocks[] (dense) with a block-based default.
 
+    // jsr/ret stay rejected permanently: javac has not emitted subroutines
+    // since 1.5; only hand-built or ancient classes contain them.
+
     // CG-4d (ANCHOR-L2-075): getstatic/putstatic/getfield/putfield enabled
     // (all widths, R/S shapes, init, barriers).
 
@@ -138,17 +129,8 @@ public class L2ByteCodeSupportChecker extends BytecodeVisitorSupport {
 
     // CG-4c (ANCHOR-L2-074): new/multianewarray/checkcast/instanceof enabled.
 
-    public void visit_athrow() {
-        notSupported();
-    }
-
-    public void visit_monitorenter() {
-        notSupported();
-    }
-
-    public void visit_monitorexit() {
-        notSupported();
-    }
+    // CG-4f (ANCHOR-L2-077): athrow/monitorenter/monitorexit enabled
+    // (throw path exempt from ECX preservation; monitor calls preserve it).
 
     // CG-4c (ANCHOR-L2-074): multianewarray enabled (dims array + helper).
     

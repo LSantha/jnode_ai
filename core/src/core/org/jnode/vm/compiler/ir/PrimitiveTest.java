@@ -688,4 +688,42 @@ public class PrimitiveTest {
         t.iInt = v;
         return t.iInt;
     }
+
+    // CG-4f corpus (ANCHOR-L2-077)
+    public static int tryCatch(int x) {
+        try {
+            return 10 / x;
+        } catch (ArithmeticException e) {
+            return -1;
+        }
+    }
+
+    public static int throwIt(int x) {
+        if (x < 0) {
+            throw new IllegalArgumentException();
+        }
+        return x;
+    }
+
+    public static synchronized int syncMethod(int x) {
+        return x + 1;
+    }
+
+    public static int syncBlock(Object lock, int x) {
+        synchronized (lock) {
+            return x + 2;
+        }
+    }
+
+    public static int dupExpr(PrimitiveTest t, int v) {
+        return t.iInt = v;
+    }
+
+    public static void discard(int x) {
+        idStatic(x);
+    }
+
+    public static String concat(int x) {
+        return "v=" + x;
+    }
 }
