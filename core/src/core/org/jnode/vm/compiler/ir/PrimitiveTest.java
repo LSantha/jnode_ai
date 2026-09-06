@@ -381,33 +381,37 @@ public class PrimitiveTest {
 //    }
 
 
-//    public static long ladd(long a0, long a1) {
-//        return a0 + a1;
-//    }
-//
-//    public static long lsub(long a0, long a1) {
-//        return a0 - a1;
-//    }
-//
-//    public static long lmul(long a0, long a1) {
-//        return a0 * a1;
-//    }
-//
-//    public static long ldiv(long a0, long a1) {
-//        return a0 / a1;
-//    }
-//
-//    public static long land(long a0, long a1) {
-//        return a0 & a1;
-//    }
-//
-//    public static long lor(long a0, long a1) {
-//        return a0 | a1;
-//    }
-//
-//    public static long lxor(long a0, long a1) {
-//        return a0 ^ a1;
-//    }
+    public static long ladd(long a0, long a1) {
+        return a0 + a1;
+    }
+
+    public static long lsub(long a0, long a1) {
+        return a0 - a1;
+    }
+
+    public static long lmul(long a0, long a1) {
+        return a0 * a1;
+    }
+
+    public static long ldiv(long a0, long a1) {
+        return a0 / a1;
+    }
+
+    public static long lrem(long a0, long a1) {
+        return a0 % a1;
+    }
+
+    public static long land(long a0, long a1) {
+        return a0 & a1;
+    }
+
+    public static long lor(long a0, long a1) {
+        return a0 | a1;
+    }
+
+    public static long lxor(long a0, long a1) {
+        return a0 ^ a1;
+    }
 
     public static int add(int a0, int a1) {
         return a0 + a1;
@@ -461,5 +465,339 @@ public class PrimitiveTest {
             sum += i;
         }
         return sum;
+    }
+
+    // CG-4a switch corpus (ANCHOR-L2-070)
+    public static int switchDense(int a0) {
+        switch (a0) {
+            case 0: return 10;
+            case 1: return 11;
+            case 2: return 12;
+            case 3: return 13;
+            case 4: return 14;
+            case 5: return 15;
+            default: return -1;
+        }
+    }
+
+    public static int switchSparse(int a0) {
+        switch (a0) {
+            case -100: return 1;
+            case 7: return 2;
+            case 1000: return 3;
+            default: return -1;
+        }
+    }
+
+    public static int switchSmall(int a0) {
+        switch (a0) {
+            case 0: return 100;
+            case 1: return 200;
+            case 2: return 300;
+            default: return -1;
+        }
+    }
+
+    // CG-4b array corpus (ANCHOR-L2-071; 4-byte element types only)
+    public static int[] newIntArray(int n) {
+        return new int[n];
+    }
+
+    public static int arraySum(int[] a) {
+        int s = 0;
+        for (int i = 0; i < a.length; i++) {
+            s += a[i];
+        }
+        return s;
+    }
+
+    public static void arrayFill(int[] a, int v) {
+        for (int i = 0; i < a.length; i++) {
+            a[i] = v;
+        }
+    }
+
+    public static int arrayLength(int[] a) {
+        return a.length;
+    }
+
+    public static float floatArraySum(float[] a) {
+        float s = 0.0f;
+        for (int i = 0; i < a.length; i++) {
+            s += a[i];
+        }
+        return s;
+    }
+
+    public static int objArrayNull(Object[] a) {
+        return (a[0] == null) ? 1 : 0;
+    }
+
+    public static double dret(double a0) {
+        return a0 + 1.0;
+    }
+
+    // CG-4c type corpus (ANCHOR-L2-074; `new` needs invokespecial, CG-4e)
+    public static int isString(Object o) {
+        return (o instanceof String) ? 1 : 0;
+    }
+
+    public static int isSerializable(Object o) {
+        return (o instanceof java.io.Serializable) ? 1 : 0;
+    }
+
+    public static int isIntArray(Object o) {
+        return (o instanceof int[]) ? 1 : 0;
+    }
+
+    public static String castString(Object o) {
+        return (String) o;
+    }
+
+    public static java.io.Serializable castSer(Object o) {
+        return (java.io.Serializable) o;
+    }
+
+    public static String hello() {
+        return "hi";
+    }
+
+    public static Class stringClass() {
+        return String.class;
+    }
+
+    public static int[][] multi(int n) {
+        return new int[n][2];
+    }
+
+    // CG-4d field corpus (ANCHOR-L2-075)
+    static int sInt;
+    static long sLong;
+    static Object sObj;
+    static int sInit = 42;
+    int iInt;
+    long iLong;
+    float iFloat;
+    Object iObj;
+
+    public static int getSInt() {
+        return sInt;
+    }
+
+    public static void setSInt(int v) {
+        sInt = v;
+    }
+
+    public static long getSLong() {
+        return sLong;
+    }
+
+    public static void setSLong(long v) {
+        sLong = v;
+    }
+
+    public static Object getSObj() {
+        return sObj;
+    }
+
+    public static void setSObj(Object v) {
+        sObj = v;
+    }
+
+    public static int getSInit() {
+        return sInit;
+    }
+
+    public static int getIInt(PrimitiveTest t) {
+        return t.iInt;
+    }
+
+    public static void setIInt(PrimitiveTest t, int v) {
+        t.iInt = v;
+    }
+
+    public static long getILong(PrimitiveTest t) {
+        return t.iLong;
+    }
+
+    public static void setILong(PrimitiveTest t, long v) {
+        t.iLong = v;
+    }
+
+    public static float getIFloat(PrimitiveTest t) {
+        return t.iFloat;
+    }
+
+    public static void setIFloat(PrimitiveTest t, float v) {
+        t.iFloat = v;
+    }
+
+    public static Object getIObj(PrimitiveTest t) {
+        return t.iObj;
+    }
+
+    // CG-4e call corpus (ANCHOR-L2-076)
+    public static int idStatic(int x) {
+        return x * 2;
+    }
+
+    public static int callStatic(int x) {
+        return idStatic(x) + 1;
+    }
+
+    public int idVirt(int x) {
+        return x + 10;
+    }
+
+    public final int idFinal(int x) {
+        return x + 20;
+    }
+
+    private int idPriv(int x) {
+        return x + 30;
+    }
+
+    public static int callVirt(PrimitiveTest t, int x) {
+        return t.idVirt(x);
+    }
+
+    public static int callFinal(PrimitiveTest t, int x) {
+        return t.idFinal(x);
+    }
+
+    public static int callPriv(PrimitiveTest t, int x) {
+        return t.idPriv(x);
+    }
+
+    public static String strOf(java.io.Serializable s) {
+        return s.toString();
+    }
+
+    public static long idLong(long x) {
+        return x + 1L;
+    }
+
+    public static long callLong(long x) {
+        return idLong(x) + 2L;
+    }
+
+    public static double idDouble(double x) {
+        return x * 2.0;
+    }
+
+    public static double callDouble(double x) {
+        return idDouble(x) + 0.5;
+    }
+
+    public static int makeAndGet(int v) {
+        PrimitiveTest t = new PrimitiveTest();
+        t.iInt = v;
+        return t.iInt;
+    }
+
+    // CG-4f corpus (ANCHOR-L2-077)
+    public static int tryCatch(int x) {
+        try {
+            return 10 / x;
+        } catch (ArithmeticException e) {
+            return -1;
+        }
+    }
+
+    public static int throwIt(int x) {
+        if (x < 0) {
+            throw new IllegalArgumentException();
+        }
+        return x;
+    }
+
+    public static synchronized int syncMethod(int x) {
+        return x + 1;
+    }
+
+    public static int syncBlock(Object lock, int x) {
+        synchronized (lock) {
+            return x + 2;
+        }
+    }
+
+    public static int dupExpr(PrimitiveTest t, int v) {
+        return t.iInt = v;
+    }
+
+    public static void discard(int x) {
+        idStatic(x);
+    }
+
+    public static String concat(int x) {
+        return "v=" + x;
+    }
+
+    // dup shape probes (ANCHOR-L2-078; shapes verified with javap below)
+    public static long dupArrAssign(long[] a, int i, long v) {
+        return a[i] = v;
+    }
+
+    public static long dupArrUse(long[] a, int i) {
+        return a[i] = a[i];
+    }
+
+    // Extra array widths (ANCHOR-L2-078)
+    public static long larraySum(long[] a) {
+        long s = 0L;
+        for (int i = 0; i < a.length; i++) {
+            s += a[i];
+        }
+        return s;
+    }
+
+    public static void larrayFill(long[] a, long v) {
+        for (int i = 0; i < a.length; i++) {
+            a[i] = v;
+        }
+    }
+
+    public static double darraySum(double[] a) {
+        double s = 0.0;
+        for (int i = 0; i < a.length; i++) {
+            s += a[i];
+        }
+        return s;
+    }
+
+    public static int barraySum(byte[] a) {
+        int s = 0;
+        for (int i = 0; i < a.length; i++) {
+            s += a[i];
+        }
+        return s;
+    }
+
+    public static void barrayFill(byte[] a, byte v) {
+        for (int i = 0; i < a.length; i++) {
+            a[i] = v;
+        }
+    }
+
+    public static int carrayGet(char[] a, int i) {
+        return a[i];
+    }
+
+    public static void sarraySet(short[] a, int i, short v) {
+        a[i] = v;
+    }
+
+    public static int sarrayGet(short[] a, int i) {
+        return a[i];
+    }
+
+    public static void darrayFill(double[] a, double v) {
+        for (int i = 0; i < a.length; i++) {
+            a[i] = v;
+        }
+    }
+
+    public static void carraySet(char[] a, int i, char v) {
+        a[i] = v;
     }
 }

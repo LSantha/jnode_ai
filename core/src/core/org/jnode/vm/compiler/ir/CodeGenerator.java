@@ -34,6 +34,7 @@ import org.jnode.vm.compiler.ir.quad.ConstantStringAssignQuad;
 import org.jnode.vm.compiler.ir.quad.InstanceofAssignQuad;
 import org.jnode.vm.compiler.ir.quad.InterfaceCallAssignQuad;
 import org.jnode.vm.compiler.ir.quad.InterfaceCallQuad;
+import org.jnode.vm.compiler.ir.quad.JsrQuad;
 import org.jnode.vm.compiler.ir.quad.LookupswitchQuad;
 import org.jnode.vm.compiler.ir.quad.MonitorenterQuad;
 import org.jnode.vm.compiler.ir.quad.MonitorexitQuad;
@@ -43,6 +44,7 @@ import org.jnode.vm.compiler.ir.quad.NewObjectArrayAssignQuad;
 import org.jnode.vm.compiler.ir.quad.NewPrimitiveArrayAssignQuad;
 import org.jnode.vm.compiler.ir.quad.RefAssignQuad;
 import org.jnode.vm.compiler.ir.quad.RefStoreQuad;
+import org.jnode.vm.compiler.ir.quad.RetQuad;
 import org.jnode.vm.compiler.ir.quad.SpecialCallAssignQuad;
 import org.jnode.vm.compiler.ir.quad.SpecialCallQuad;
 import org.jnode.vm.compiler.ir.quad.StaticCallAssignQuad;
@@ -128,6 +130,32 @@ public abstract class CodeGenerator<T> {
      * @param quad
      */
     public abstract void generateCodeFor(VoidReturnQuad<T> quad);
+
+    /**
+     * Emit a {@code jsr} subroutine call: materialize the pushed return
+     * address (CALL/POP/store) and jump to the subroutine (ANCHOR-L2-079).
+     *
+     * @param quad the jsr quad
+     */
+    public abstract void generateCodeFor(JsrQuad<T> quad);
+
+    /**
+     * Emit a {@code ret} subroutine return: indirect jump through the
+     * address held in a local (ANCHOR-L2-079).
+     *
+     * @param quad the ret quad
+     */
+    public abstract void generateCodeFor(RetQuad<T> quad);
+
+    /**
+     * Emit an FP compare quad (FCMPG/FCMPL/DCMPG/DCMPL) producing -1/0/1.
+     * Routed here from {@code BinaryQuad.generateCode} because compare quads
+     * need the whole quad (both operands plus address), unlike the
+     * mode-split arithmetic paths (ANCHOR-L2-050).
+     *
+     * @param quad the compare quad
+     */
+    public abstract void generateCompareOP(BinaryQuad<T> quad);
 
     /**
      * @param quad

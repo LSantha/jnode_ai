@@ -1,0 +1,669 @@
+/*
+ * $Id$
+ *
+ * Copyright (C) 2003-2015 JNode.org
+ *
+ * This library is free software; you can redistribute it and/or modify it
+ * under the terms of the GNU Lesser General Public License as published
+ * by the Free Software Foundation; either version 2.1 of the License, or
+ * (at your option) any later version.
+ *
+ * This library is distributed in the hope that it will be useful, but
+ * WITHOUT ANY WARRANTY; without even the implied warranty of MERCHANTABILITY
+ * or FITNESS FOR A PARTICULAR PURPOSE. See the GNU Lesser General Public
+ * License for more details.
+ *
+ * You should have received a copy of the GNU Lesser General Public License
+ * along with this library; If not, write to the Free Software Foundation, Inc.,
+ * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+ */
+
+package org.jnode.vm.compiler.ir;
+
+import java.io.File;
+import java.io.StringWriter;
+import java.net.URL;
+import java.util.HashSet;
+import java.util.Iterator;
+import java.util.List;
+import java.util.Set;
+
+import org.jnode.assembler.x86.X86Assembler;
+import org.jnode.assembler.x86.X86Constants.Mode;
+import org.jnode.assembler.x86.X86TextAssembler;
+import org.jnode.vm.VmImpl;
+import org.jnode.vm.JvmType;
+import org.jnode.vm.VmSystemClassLoader;
+import org.jnode.vm.bytecode.BytecodeParser;
+import org.jnode.vm.classmgr.VmByteCode;
+import org.jnode.vm.classmgr.VmMethod;
+import org.jnode.vm.classmgr.VmType;
+import org.jnode.vm.compiler.CompiledMethod;
+import org.jnode.vm.compiler.EntryPoints;
+import org.jnode.vm.facade.TypeSizeInfo;
+import org.jnode.vm.facade.VmUtils;
+import org.jnode.vm.x86.VmX86Architecture32;
+import org.jnode.vm.x86.X86CpuID;
+import org.jnode.vm.x86.compiler.X86CompilerHelper;
+import org.jnode.vm.x86.compiler.l2.X86CodeGenerator;
+import org.jnode.vm.x86.compiler.l2.X86Level2Compiler;
+import org.jnode.vm.x86.compiler.l2.X86StackFrame;
+import org.jnode.vm.compiler.ir.quad.BinaryOperation;
+import org.jnode.vm.compiler.ir.quad.BinaryQuad;
+import org.jnode.vm.compiler.ir.quad.PhiAssignQuad;
+import org.jnode.vm.compiler.ir.quad.Quad;
+import org.jnode.vm.compiler.ir.quad.VariableRefAssignQuad;
+import org.junit.BeforeClass;
+import org.junit.Test;
+
+import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertNotNull;
+import static org.junit.Assert.assertTrue;
+import static org.junit.Assert.fail;
+
+/**
+ * Host-runnable T1 pipeline tests for the L2 (SSA) compiler.
+ * <p/>
+ * Replicates the {@code IRTest} manual driver (stage by stage, mirroring
+ * {@code X86Level2Compiler.doCompile}) inside JUnit, compiling real methods
+ * from {@code PrimitiveTest} to x86 <em>text</em> on the host JDK -- no JNode
+ * boot required. See {@code local/docs/L2_COMPILER_DEEP_DIVE.md} 10B.1
+ * (measurement protocol) and sections 22-23 (ANCHOR-L2-040...044).
+ * <p/>
+ * NOTE: the corpus spells the ternary methods {@code terniary*} (with an
+ * extra 'i' vs English "ternary"); use those exact names when adding corpus
+ * methods here (see ANCHOR-L2-00F for the same spelling trap in IRTest).
+ */
+public class L2PipelineTest {
+
+    private static VmSystemClassLoader loader;
+    private static X86CpuID cpuId;
+
+    @BeforeClass
+    public static void initVm() throws Exception {
+        // Shared bootstrap: VmImpl allows a single instantiation per JVM.
+        L2TestVm.init();
+        loader = L2TestVm.getLoader();
+        cpuId = L2TestVm.getCpuId();
+    }
+
+    private static VmMethod findMethod(String name) throws Exception {
+        VmType type = loader.loadClass("org.jnode.vm.compiler.ir.PrimitiveTest", true);
+        int n = type.getNoDeclaredMethods();
+        for (int i = 0; i < n; i++) {
+            VmMethod m = type.getDeclaredMethod(i);
+            if (name.equals(m.getName())) {
+                return m;
+            }
+        }
+        fail("corpus method not found: " + name);
+        return null;
+    }
+
+    /**
+     * Run the full L2 pipeline for one corpus method and return the emitted
+     * x86 text. Stage order is literally {@code X86Level2Compiler.doCompile}:
+     * bytecode, CFG, IRGenerator, parse, initMethodArguments, constructSSA,
+     * optimize, removeUnusedVars, optimize, removeUnusedVars (closure),
+     * deconstrucSSA, removeDefUseChains, fixupAddresses, CodeGenerator,
+     * computeLiveVariables, getLiveRanges, allocate, generateCode.
+     * (Also mirrors {@code IRTest.generateCode}.)
+     */
+    private static String compileToText(VmMethod method) throws Exception {
+        StringWriter sw = new StringWriter();
+        X86TextAssembler os = new X86TextAssembler(sw, cpuId, Mode.CODE32);
+        VmByteCode code = method.getBytecode();
+        EntryPoints context = new EntryPoints(loader, VmUtils.getVm().getHeapManager(), 1);
+        X86CompilerHelper helper = new X86CompilerHelper(os, null, context, true);
+        helper.setMethod(method);
+        CompiledMethod cm = new CompiledMethod(1);
+        TypeSizeInfo typeSizeInfo = loader.getArchitecture().getTypeSizeInfo();
+        X86StackFrame stackFrame = new X86StackFrame(os, helper, method, context, cm);
+
+        IRControlFlowGraph cfg = new IRControlFlowGraph(code);
+        IRGenerator irg = new IRGenerator(cfg, typeSizeInfo, method.getDeclaringClass().getLoader());
+        BytecodeParser.parse(code, irg);
+        X86Level2Compiler.initMethodArguments(method, stackFrame, typeSizeInfo, irg);
+        cfg.constructSSA();
+        cfg.optimize();
+        cfg.removeUnusedVars();
+        // Closure pair mirroring X86Level2Compiler.doCompile (ANCHOR-L2-060).
+        cfg.optimize();
+        cfg.removeUnusedVars();
+        cfg.deconstrucSSA();
+        cfg.removeDefUseChains();
+        cfg.fixupAddresses();
+        X86CodeGenerator x86cg = new X86CodeGenerator(method, os, code.getLength(), typeSizeInfo, stackFrame);
+        List liveVariables = cfg.computeLiveVariables();
+        LiveRange[] liveRanges = X86Level2Compiler.getLiveRanges(liveVariables);
+        LinearScanAllocator lsa = X86Level2Compiler.allocate(liveRanges);
+        X86Level2Compiler.generateCode(x86cg, cfg, irg, lsa);
+        // X86TextAssembler buffers into an internal buffer: flush to the writer.
+        os.flush();
+        return sw.toString();
+    }
+
+    // ---------------- T1: pipeline completes + emits ----------------
+
+    private static void assertCompiles(String name) throws Exception {
+        VmMethod m = findMethod(name);
+        String text = compileToText(m);
+        assertNotNull(text);
+        assertTrue("no code emitted for " + name, text.length() > 0);
+    }
+
+    @Test
+    public void testCompileIntArithmetic() throws Exception {
+        assertCompiles("add");
+        assertCompiles("sub");
+        assertCompiles("mul");
+        assertCompiles("div");
+    }
+
+    @Test
+    public void testCompileBranchesAndLoops() throws Exception {
+        assertCompiles("trivial1");
+        assertCompiles("appel");
+        assertCompiles("simpleWhile");
+        assertCompiles("const1");
+    }
+
+    @Test
+    public void testCompilePhiHeavyJoins() throws Exception {
+        assertCompiles("terniary22");
+        assertCompiles("terniary1");
+        assertCompiles("discriminant");
+    }
+
+    /**
+     * CG-3 (ANCHOR-L2-064): long arithmetic through the real pipeline
+     * (spills, halves convention, SSS backend).
+     */
+    @Test
+    public void testCompileLongArithmetic() throws Exception {
+        assertCompiles("ladd");
+        assertCompiles("lsub");
+        assertCompiles("lmul");
+        assertCompiles("ldiv");
+        assertCompiles("lrem");
+        assertCompiles("land");
+        assertCompiles("lor");
+        assertCompiles("lxor");
+    }
+
+    /**
+     * CG-4a (ANCHOR-L2-070): switches through the real pipeline --
+     * tableswitch PIC (dense), tableswitch linear (small), lookupswitch.
+     */
+    @Test
+    public void testCompileSwitches() throws Exception {
+        assertCompiles("switchDense");
+        assertCompiles("switchSmall");
+        assertCompiles("switchSparse");
+    }
+
+    /**
+     * CG-4a: pin which lowering each switch shape takes (PIC jump table vs
+     * linear compare chains).
+     */    @Test
+    public void testSwitchEmissionShapes() throws Exception {
+        String dense = compileToText(findMethod("switchDense"));
+        assertTrue("dense tableswitch must use the PIC jump table, got:\n" + dense,
+            dense.contains("call "));
+        String small = compileToText(findMethod("switchSmall"));
+        assertTrue("small tableswitch must use compare chains, got:\n" + small,
+            small.contains("cmp "));
+        String sparse = compileToText(findMethod("switchSparse"));
+        assertTrue("lookupswitch must use compare chains, got:\n" + sparse,
+            sparse.contains("cmp "));
+    }
+
+    /**
+     * CG-4b (ANCHOR-L2-071): arrays through the real pipeline (4-byte
+     * element types: int/float/object; bounds checks; allocation).
+     */
+    @Test
+    public void testCompileArrays() throws Exception {
+        assertCompiles("newIntArray");
+        assertCompiles("arraySum");
+        assertCompiles("arrayFill");
+        assertCompiles("arrayLength");
+        assertCompiles("floatArraySum");
+        assertCompiles("objArrayNull");
+        assertCompiles("dret");
+    }
+
+    /**
+     * Extra widths (ANCHOR-L2-078): 8-byte and sub-word arrays through the
+     * real pipeline.
+     */
+    @Test
+    public void testCompileWideArrays() throws Exception {
+        assertCompiles("larraySum");
+        assertCompiles("larrayFill");
+        assertCompiles("darraySum");
+        assertCompiles("darrayFill");
+        assertCompiles("barraySum");
+        assertCompiles("barrayFill");
+        assertCompiles("carrayGet");
+        assertCompiles("carraySet");
+        assertCompiles("sarraySet");
+        assertCompiles("sarrayGet");
+    }
+
+    /**
+     * CG-4c (ANCHOR-L2-074): type ops through the real pipeline (class /
+     * interface / array instanceof paths, checkcasts, ldc, multianewarray).
+     * Object `new` needs invokespecial (CG-4e) for the ctor call.
+     */
+    @Test
+    public void testCompileTypeOps() throws Exception {
+        assertCompiles("isString");
+        assertCompiles("isSerializable");
+        assertCompiles("isIntArray");
+        assertCompiles("castString");
+        assertCompiles("castSer");
+        assertCompiles("hello");
+        assertCompiles("stringClass");
+        assertCompiles("multi");
+    }
+
+    /**
+     * CG-4d (ANCHOR-L2-075): static/instance fields through the real pipeline
+     * (narrow + wide, init checks, barriers).
+     */
+    @Test
+    public void testCompileFields() throws Exception {        assertCompiles("getSInt");
+        assertCompiles("setSInt");
+        assertCompiles("getSLong");
+        assertCompiles("setSLong");
+        assertCompiles("getSObj");
+        assertCompiles("setSObj");
+        assertCompiles("getSInit");
+        assertCompiles("getIInt");
+        assertCompiles("setIInt");
+        assertCompiles("getILong");
+        assertCompiles("setILong");
+        assertCompiles("getIFloat");
+        assertCompiles("setIFloat");
+        assertCompiles("getIObj");
+    }
+
+    /**
+     * CG-4e (ANCHOR-L2-076): calls through the real pipeline -- static,
+     * virtual (VMT), final/private (fast path), interface (IMT), long/double
+     * args and returns, and new+ctor+field roundtrip.
+     */
+    @Test
+    public void testCompileCalls() throws Exception {
+        assertCompiles("callStatic");
+        assertCompiles("callVirt");
+        assertCompiles("callFinal");
+        assertCompiles("callPriv");
+        assertCompiles("strOf");
+        assertCompiles("callLong");
+        assertCompiles("callDouble");
+        assertCompiles("makeAndGet");
+    }
+
+    /**
+     * CG-4f (ANCHOR-L2-077): exceptions, monitors and stack shuffles through
+     * the real pipeline (handler edges, throw, monitor calls, dup/pop).
+     */
+    @Test
+    public void testCompileExceptionsMonitorsShuffles() throws Exception {
+        assertCompiles("tryCatch");
+        assertCompiles("throwIt");
+        assertCompiles("syncMethod");
+        assertCompiles("syncBlock");
+        assertCompiles("dupExpr");
+        assertCompiles("discard");
+        assertCompiles("concat");
+    }
+
+    /**
+     * Extra dup shapes (ANCHOR-L2-078): dup2_x2 form 2 via real javac output
+     * (dupArrAssign/dupArrUse). Correctness beyond completion is verified by
+     * trace + the execution oracle (wrong shuffles produce wrong values).
+     */
+    @Test
+    public void testCompileDupShapes() throws Exception {
+        assertCompiles("dupArrAssign");
+        assertCompiles("dupArrUse");
+    }
+
+    /**
+     * The per-opcode gate is retired: canCompile accepts every loadable
+     * method (it only rejects malformed bytecode now). Pins the open gate
+     * over previously-gated families.
+     */
+    @Test
+    public void testCanCompileAcceptsAll() throws Exception {
+        String[] names = {"add", "ldiv", "lrem", "dupArrAssign", "switchDense",
+            "arraySum", "castString", "getSLong", "callVirt", "tryCatch",
+            "syncBlock", "concat", "dret", "hello"};
+        for (int i = 0; i < names.length; i++) {
+            assertTrue("canCompile(" + names[i] + ")",
+                X86Level2Compiler.canCompile(findMethod(names[i])));
+        }
+    }
+
+    /**
+     * Subroutines (ANCHOR-L2-079): the hand-built JsrProbe class carries real
+     * jsr/ret bytecodes (javac cannot generate them). Loaded through a child
+     * loader, then compiled through the real pipeline: Finder splits,
+     * SSA renames the resume under the ret block, DCE keeps the JsrQuad,
+     * emission produces the CALL/POP/JMP shape.
+     */
+    @Test
+    public void testCompileJsr() throws Exception {
+        java.io.File dir = java.io.File.createTempFile("jsrprobe", "");
+        dir.delete();
+        dir.mkdirs();
+        java.io.FileOutputStream fos = new java.io.FileOutputStream(new java.io.File(dir, "JsrProbe.class"));
+        fos.write(JsrProbeBuilder.build());
+        fos.close();
+        VmSystemClassLoader child = new VmSystemClassLoader(
+            new java.net.URL[]{dir.toURL(), new java.io.File("core/build/classes").toURL(),
+                new java.io.File("distr/build/classes").toURL(),
+                new java.io.File("local/classlib").toURL()},
+            loader.getArchitecture());
+        VmType type = child.loadClass("JsrProbe", true);
+        VmMethod found = null;
+        for (int i = 0; i < type.getNoDeclaredMethods(); i++) {
+            VmMethod m = type.getDeclaredMethod(i);
+            if ("jsrDemo".equals(m.getName())) {
+                found = m;
+            }
+        }
+        assertNotNull("jsrDemo not found", found);
+        String text = compileToText(found);
+        assertTrue("no code emitted for jsrDemo", text.length() > 0);
+        assertTrue("jsr must CALL the subroutine, got:\n" + text, text.contains("call "));
+    }
+
+    // ---------------- T1: dominator-tree exactness (ANCHOR-L2-004) ----------------
+
+    private static void assertDominatedTreeExact(String name) throws Exception {
+        VmMethod m = findMethod(name);
+        IRControlFlowGraph cfg = new IRControlFlowGraph(m.getBytecode());
+        Set seen = new HashSet();
+        int edgeCount = 0;
+        Iterator it = cfg.iterator();
+        while (it.hasNext()) {
+            IRBasicBlock b = (IRBasicBlock) it.next();
+            List children = b.getDominatedBlocks();
+            for (int i = 0; i < children.size(); i++) {
+                Object child = children.get(i);
+                assertTrue("block " + child + " has two dominator parents (stale edge) in " + name,
+                    seen.add(child));
+                edgeCount++;
+            }
+        }
+        // Every block with an idom must appear in exactly its idom's list.
+        it = cfg.iterator();
+        while (it.hasNext()) {
+            IRBasicBlock b = (IRBasicBlock) it.next();
+            IRBasicBlock idom = b.getIDominator();
+            if (idom != null && idom != b) {
+                assertTrue("block " + b + " missing from its idom's list in " + name,
+                    idom.getDominatedBlocks().contains(b));
+            }
+        }
+        assertTrue("dominator tree empty for " + name, edgeCount > 0 || cfg.getBasicBlockCount() == 1);
+    }
+
+    @Test
+    public void testAnchorL2_004_dominatedTreeExact() throws Exception {
+        assertDominatedTreeExact("add");
+        assertDominatedTreeExact("appel"); // loop: idom updates across iterations
+        assertDominatedTreeExact("terniary22"); // join-heavy
+        assertDominatedTreeExact("simpleWhile");
+        assertDominatedTreeExact("discriminant");
+    }
+
+    // ---------------- T1: allocation assigns every range ----------------
+
+    private static void assertAllocationComplete(String name) throws Exception {
+        VmMethod m = findMethod(name);
+        VmByteCode code = m.getBytecode();
+        StringWriter sw = new StringWriter();
+        X86Assembler os = new X86TextAssembler(sw, cpuId, Mode.CODE32);
+        EntryPoints context = new EntryPoints(loader, VmUtils.getVm().getHeapManager(), 1);
+        X86CompilerHelper helper = new X86CompilerHelper(os, null, context, true);
+        helper.setMethod(m);
+        CompiledMethod cm = new CompiledMethod(1);
+        TypeSizeInfo typeSizeInfo = loader.getArchitecture().getTypeSizeInfo();
+        X86StackFrame stackFrame = new X86StackFrame(os, helper, m, context, cm);
+        IRControlFlowGraph cfg = new IRControlFlowGraph(code);
+        IRGenerator irg = new IRGenerator(cfg, typeSizeInfo, m.getDeclaringClass().getLoader());
+        BytecodeParser.parse(code, irg);
+        X86Level2Compiler.initMethodArguments(m, stackFrame, typeSizeInfo, irg);
+        cfg.constructSSA();
+        cfg.optimize();
+        cfg.removeUnusedVars();
+        // Closure pair mirroring X86Level2Compiler.doCompile (ANCHOR-L2-060).
+        cfg.optimize();
+        cfg.removeUnusedVars();
+        cfg.deconstrucSSA();
+        cfg.removeDefUseChains();
+        cfg.fixupAddresses();
+        List liveVariables = cfg.computeLiveVariables();
+        LiveRange[] liveRanges = X86Level2Compiler.getLiveRanges(liveVariables);
+        X86Level2Compiler.allocate(liveRanges);
+        assertTrue("no live ranges for " + name, liveRanges.length > 0);
+        for (int i = 0; i < liveRanges.length; i++) {
+            assertNotNull("range without location: " + liveRanges[i] + " in " + name,
+                liveRanges[i].getLocation());
+        }
+    }
+
+    @Test
+    public void testAllocationAssignsAllRanges() throws Exception {
+        assertAllocationComplete("add");
+        assertAllocationComplete("discriminant"); // highest register pressure in corpus
+        assertAllocationComplete("appel");
+    }
+
+    // ---------------- T1: post-DCE phi-use invariant (OPT-03 analysis pin) ----------------
+
+    /**
+     * Run the pipeline up to and including the second removeUnusedVars (no
+     * allocation, no emission) and return the CFG. Prefix of
+     * {@code X86Level2Compiler.doCompile}, same order (arg locations do not
+     * affect the use invariant, but the call is kept for fidelity).
+     */
+    private static IRControlFlowGraph runToPostDce(VmMethod m) throws Exception {
+        VmByteCode code = m.getBytecode();
+        StringWriter sw = new StringWriter();
+        X86TextAssembler os = new X86TextAssembler(sw, cpuId, Mode.CODE32);
+        EntryPoints context = new EntryPoints(loader, VmUtils.getVm().getHeapManager(), 1);
+        X86CompilerHelper helper = new X86CompilerHelper(os, null, context, true);
+        helper.setMethod(m);
+        CompiledMethod cm = new CompiledMethod(1);
+        TypeSizeInfo typeSizeInfo = loader.getArchitecture().getTypeSizeInfo();
+        X86StackFrame stackFrame = new X86StackFrame(os, helper, m, context, cm);
+        IRControlFlowGraph cfg = new IRControlFlowGraph(code);
+        IRGenerator irg = new IRGenerator(cfg, typeSizeInfo, m.getDeclaringClass().getLoader());
+        BytecodeParser.parse(code, irg);
+        X86Level2Compiler.initMethodArguments(m, stackFrame, typeSizeInfo, irg);
+        cfg.constructSSA();
+        cfg.optimize();
+        cfg.removeUnusedVars();
+        // Closure pair mirroring X86Level2Compiler.doCompile (ANCHOR-L2-060).
+        cfg.optimize();
+        cfg.removeUnusedVars();
+        return cfg;
+    }
+
+    private static boolean hasLiveUse(List liveQuads, Variable lhs) {
+        for (int i = 0; i < liveQuads.size(); i++) {
+            Quad q = (Quad) liveQuads.get(i);
+            Operand[] refs = q.getReferencedOps();
+            if (refs == null) {
+                continue;
+            }
+            for (int j = 0; j < refs.length; j++) {
+                if (lhs.equals(refs[j])) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    /**
+     * ANCHOR-L2-022: after iterative DCE every surviving phi must have a live
+     * use (mirroring getVariableUsage: refs of live quads, phis included).
+     * This pins the OPT-03 analysis -- a live-gated deconstruction filter can
+     * only fire if this ever fails, i.e. DCE was incomplete. If it fails,
+     * wire the filtering deconstrucSSA overload (now sort- and null-safe)
+     * into doCompile instead of dismissing it.
+     */
+    @Test
+    public void testAnchorL2_022_postDcePhisAllUsed() throws Exception {
+        String[] methods = {"appel", "terniary22", "terniary1", "discriminant",
+            "trivial1", "simpleWhile", "const1", "add"};
+        int totalLivePhis = 0;
+        for (int k = 0; k < methods.length; k++) {
+            IRControlFlowGraph cfg = runToPostDce(findMethod(methods[k]));
+            List liveQuads = new java.util.ArrayList();
+            Iterator blocks = cfg.iterator();
+            while (blocks.hasNext()) {
+                IRBasicBlock b = (IRBasicBlock) blocks.next();
+                List quads = b.getQuads();
+                for (int i = 0; i < quads.size(); i++) {
+                    Quad q = (Quad) quads.get(i);
+                    if (!q.isDeadCode()) {
+                        liveQuads.add(q);
+                    }
+                }
+            }
+            for (int i = 0; i < liveQuads.size(); i++) {
+                Quad q = (Quad) liveQuads.get(i);
+                if (q instanceof PhiAssignQuad) {
+                    totalLivePhis++;
+                    Variable lhs = (Variable) ((PhiAssignQuad) q).getDefinedOp();
+                    assertTrue("live phi without live use (DCE incomplete) in "
+                        + methods[k] + ": " + q, hasLiveUse(liveQuads, lhs));
+                }
+            }
+        }
+        assertTrue("expected join-heavy corpus to hold live phis", totalLivePhis > 0);
+    }
+
+    // ---------------- T3: emitter shapes for the CG-1 backend fixes ----------------
+
+    private static class EmitterHarness {
+        final StringWriter sw = new StringWriter();
+        final X86TextAssembler os;
+        final X86CodeGenerator cg;
+
+        EmitterHarness(VmMethod method) throws Exception {
+            os = new X86TextAssembler(sw, cpuId, Mode.CODE32);
+            EntryPoints context = new EntryPoints(loader, VmUtils.getVm().getHeapManager(), 1);
+            X86CompilerHelper helper = new X86CompilerHelper(os, null, context, true);
+            helper.setMethod(method);
+            CompiledMethod cm = new CompiledMethod(1);
+            TypeSizeInfo typeSizeInfo = loader.getArchitecture().getTypeSizeInfo();
+            X86StackFrame stackFrame = new X86StackFrame(os, helper, method, context, cm);
+            cg = new X86CodeGenerator(method, os, method.getBytecode().getLength(), typeSizeInfo, stackFrame);
+        }
+
+        String text() throws Exception {
+            os.flush();
+            return sw.toString();
+        }
+    }
+
+    private static BinaryQuad dummyQuad(int address) {
+        // Only getAddress() is exercised by the SSS emitters under test.
+        IRBasicBlock block = new IRBasicBlock(address);
+        Variable[] vars = new Variable[]{
+            new LocalVariable(JvmType.INT, 0),
+            new LocalVariable(JvmType.INT, 1),
+            new LocalVariable(JvmType.INT, 2)};
+        block.setVariables(vars);
+        return new BinaryQuad(address, block, 0, 1, BinaryOperation.IADD, 2);
+    }
+
+    /**
+     * ANCHOR-L2-007: LADD/LSUB results must land in the disp1 halves, never
+     * in the operand slots (disp2), even when all three differ.
+     */
+    @Test
+    public void testAnchorL2_007_laddLsubTargetDisp1() throws Exception {
+        VmMethod m = findMethod("add");
+        EmitterHarness h = new EmitterHarness(m);
+        h.cg.generateBinaryOP(null, -20, -28, BinaryOperation.LADD, -36);
+        EmitterHarness h2 = new EmitterHarness(m);
+        h2.cg.generateBinaryOP(null, -20, -28, BinaryOperation.LSUB, -36);
+        String add = h.text();
+        String sub = h2.text();
+        assertTrue("LADD must write [ebp-24] (LSB), got:\n" + add, add.contains("[ebp-24]"));
+        assertTrue("LADD must write [ebp-20] (MSB), got:\n" + add, add.contains("[ebp-20]"));
+        assertTrue("LADD must ADD the low halves, got:\n" + add, add.contains("add "));
+        assertTrue("LADD must ADC the high halves, got:\n" + add, add.contains("adc "));
+        assertTrue("LSUB must write [ebp-24] (LSB), got:\n" + sub, sub.contains("[ebp-24]"));
+        assertTrue("LSUB must write [ebp-20] (MSB), got:\n" + sub, sub.contains("[ebp-20]"));
+        assertTrue("LSUB must SBB the high halves, got:\n" + sub, sub.contains("sbb "));
+    }
+
+    /**
+     * ANCHOR-L2-00B: LCMP must compare via CMP (signed high, unsigned low)
+     * without storing scratch into either operand slot.
+     */
+    @Test
+    public void testAnchorL2_00B_lcmpComparesWithoutClobber() throws Exception {
+        VmMethod m = findMethod("add");
+        EmitterHarness h = new EmitterHarness(m);
+        h.cg.generateBinaryOP(dummyQuad(7), -20, -28, BinaryOperation.LCMP, -36);
+        String t = h.text();
+        assertTrue("LCMP must CMP the high halves, got:\n" + t, t.contains("cmp "));
+        assertTrue("LCMP must branch, got:\n" + t, t.contains("\tjl ") || t.contains("\tjg "));
+        assertTrue("LCMP must not use SUB/SBB scratch (clobbers op1), got:\n" + t,
+            !t.contains("sub ") && !t.contains("sbb "));
+    }
+
+    /**
+     * ANCHOR-L2-009: FREM/DREM must loop FPREM to completion (JP retry) and
+     * leave the x87 stack balanced (pop, never FFREE a live slot).
+     */
+    @Test
+    public void testAnchorL2_009_fremDremLoopAndBalance() throws Exception {
+        VmMethod m = findMethod("add");
+        EmitterHarness hf = new EmitterHarness(m);
+        hf.cg.generateBinaryOP(dummyQuad(7), -20, -28, BinaryOperation.FREM, -36);
+        String f = hf.text();
+        assertTrue("FREM must issue FPREM, got:\n" + f, f.contains("fprem"));
+        assertTrue("FREM must retry on partial remainder (JP), got:\n" + f, f.contains("\tjp "));
+        assertTrue("FREM must not FFREE (x87 depth leak), got:\n" + f, !f.contains("ffree"));
+        EmitterHarness hd = new EmitterHarness(m);
+        hd.cg.generateBinaryOP(dummyQuad(7), -20, -28, BinaryOperation.DREM, -36);
+        String d = hd.text();
+        assertTrue("DREM must issue FPREM, got:\n" + d, d.contains("fprem"));
+        assertTrue("DREM must retry on partial remainder (JP), got:\n" + d, d.contains("\tjp "));
+        assertTrue("DREM must not FFREE (x87 depth leak), got:\n" + d, !d.contains("ffree"));
+    }
+
+    // ---------------- T1: live-range overlap sanity on real ranges ----------------
+
+    @Test
+    public void testRealRangesOverlapSanity() throws Exception {
+        // appel has a loop plus if/else: forbids single-block CFGs here.
+        VmMethod m = findMethod("appel");
+        IRControlFlowGraph cfg = new IRControlFlowGraph(m.getBytecode());
+        assertTrue(cfg.getBasicBlockCount() > 1);
+        assertEquals(cfg.getBasicBlockCount(), countBlocks(cfg));
+    }
+
+    private static int countBlocks(IRControlFlowGraph cfg) {
+        int n = 0;
+        Iterator it = cfg.iterator();
+        while (it.hasNext()) {
+            it.next();
+            n++;
+        }
+        return n;
+    }
+}

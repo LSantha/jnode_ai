@@ -140,6 +140,22 @@ public class X86TextAssembler extends X86Assembler implements X86Operation {
             case JG:
                 opc = "g";
                 break;
+            // ANCHOR-L2-00E: the L2 FPREM loop needs JP; complete the set.
+            case JO:
+                opc = "o";
+                break;
+            case JNO:
+                opc = "no";
+                break;
+            case JP:
+                opc = "p";
+                break;
+            case JNP:
+                opc = "np";
+                break;
+            case JNS:
+                opc = "ns";
+                break;
             default:
                 throw new RuntimeException("Unknown jump opcode " + jumpOpcode);
         }

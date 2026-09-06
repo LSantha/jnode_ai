@@ -124,6 +124,7 @@ import org.jnode.vm.compiler.ir.quad.ConstantStringAssignQuad;
 import org.jnode.vm.compiler.ir.quad.InstanceofAssignQuad;
 import org.jnode.vm.compiler.ir.quad.InterfaceCallAssignQuad;
 import org.jnode.vm.compiler.ir.quad.InterfaceCallQuad;
+import org.jnode.vm.compiler.ir.quad.JsrQuad;
 import org.jnode.vm.compiler.ir.quad.MonitorenterQuad;
 import org.jnode.vm.compiler.ir.quad.MonitorexitQuad;
 import org.jnode.vm.compiler.ir.quad.NewMultiArrayAssignQuad;
@@ -133,6 +134,7 @@ import org.jnode.vm.compiler.ir.quad.NewAssignQuad;
 import org.jnode.vm.compiler.ir.quad.Quad;
 import org.jnode.vm.compiler.ir.quad.RefAssignQuad;
 import org.jnode.vm.compiler.ir.quad.RefStoreQuad;
+import org.jnode.vm.compiler.ir.quad.RetQuad;
 import org.jnode.vm.compiler.ir.quad.SpecialCallAssignQuad;
 import org.jnode.vm.compiler.ir.quad.SpecialCallQuad;
 import org.jnode.vm.compiler.ir.quad.StaticCallAssignQuad;
@@ -168,12 +170,14 @@ public class IRGenerator<T> extends BytecodeVisitor {
     private IRBasicBlock<T> currentBlock;
     private TypeSizeInfo typeSizeInfo;
     private VmClassLoader vmClassLoader;
+    private IRControlFlowGraph<T> cfg;
 
     public IRGenerator(IRControlFlowGraph<T> cfg, TypeSizeInfo typeSizeInfo, VmClassLoader loader) {
         basicBlockIterator = cfg.iterator();
         currentBlock = basicBlockIterator.next();
         this.typeSizeInfo = typeSizeInfo;
         this.vmClassLoader = loader;
+        this.cfg = cfg;
     }
 
     public void setParser(BytecodeParser parser) {
@@ -297,6 +301,9 @@ public class IRGenerator<T> extends BytecodeVisitor {
 
     public void visit_dconst(double value) {
         Constant<T> c = Constant.getInstance(value);
+        // ANCHOR-L2-078: type both slots (dup conditions read high halves).
+        variables[stackOffset].setType(Operand.DOUBLE);
+        variables[stackOffset + 1].setType(Operand.DOUBLE);
         currentBlock.add(new ConstantRefAssignQuad<T>(address, currentBlock, stackOffset, c));
         stackOffset += 2;
     }
@@ -460,10 +467,16 @@ public class IRGenerator<T> extends BytecodeVisitor {
     }
 
     public void visit_dup() {
+        // dup requires a category 1 top (verifier-enforced; ANCHOR-L2-078).
+        if (isCategory2(getVariables()[stackOffset - 1].getType())) {
+            throw new IllegalArgumentException("dup of category 2 value");
+        }
         int index = stackOffset;
         stackOffset -= 1;
         currentBlock.add(new VariableRefAssignQuad<T>(address, currentBlock, index, stackOffset));
         fixType(); //todo fix type for other dups like here
+        // ANCHOR-L2-078: type the new slot (dup conditions read slot types).
+        getVariables()[index].setType(getVariables()[index - 1].getType());
         stackOffset += 2;
     }
 
@@ -499,6 +512,11 @@ public class IRGenerator<T> extends BytecodeVisitor {
 //        currentBlock.add(new VariableRefAssignQuad<T>(address, currentBlock, index - 1, stackOffset + 1));
 //        currentBlock.add(new VariableRefAssignQuad<T>(address, currentBlock, index, stackOffset - 1));
 //        stackOffset += 2;
+        // dup_x1 requires category 1 values (verifier-enforced; ANCHOR-L2-078).
+        if (isCategory2(getVariables()[stackOffset - 1].getType()) ||
+            isCategory2(getVariables()[stackOffset - 2].getType())) {
+            throw new IllegalArgumentException("dup_x1 of category 2 values");
+        }
         int index = stackOffset;
         stackOffset -= 1;
         currentBlock.add(new VariableRefAssignQuad<T>(address, currentBlock, index, stackOffset));
@@ -507,13 +525,16 @@ public class IRGenerator<T> extends BytecodeVisitor {
         fixType();
         currentBlock.add(new VariableRefAssignQuad<T>(address, currentBlock, index - 2, stackOffset + 1));
         fixType();
+        // ANCHOR-L2-078: type the new slot (dup conditions read slot types).
+        getVariables()[index].setType(getVariables()[index - 1].getType());
         stackOffset += 2;
     }
 
     public void visit_dup_x2() {
-        //form 1
+        //form 1 [..., v3, v2, v1] (all cat1) -> [..., v1, v3, v2, v1]
         if (!isCategory2(getVariables()[stackOffset - 1].getType()) &&
-            !isCategory2(getVariables()[stackOffset - 2].getType())) {
+            !isCategory2(getVariables()[stackOffset - 2].getType()) &&
+            !isCategory2(getVariables()[stackOffset - 3].getType())) {
             int index = stackOffset;
             stackOffset -= 1;
             currentBlock.add(new VariableRefAssignQuad<T>(address, currentBlock, index, stackOffset));
@@ -524,6 +545,31 @@ public class IRGenerator<T> extends BytecodeVisitor {
             fixType();
             currentBlock.add(new VariableRefAssignQuad<T>(address, currentBlock, index - 3, stackOffset + 1));
             fixType();
+            // ANCHOR-L2-078: type the new slot (dup conditions read slot types).
+            getVariables()[index].setType(getVariables()[index - 1].getType());
+            stackOffset += 2;
+        } else if (!isCategory2(getVariables()[stackOffset - 1].getType()) &&
+            !isCategory2(getVariables()[stackOffset - 2].getType()) &&
+            isCategory2(getVariables()[stackOffset - 3].getType())) {
+            //form 2 [..., v3lo, v3hi, v2, v1] -> [..., v1, v3lo, v3hi, v2, v1]
+            // (ANCHOR-L2-078: the old condition misrouted this shape to form 1.)
+            int index = stackOffset;
+            stackOffset -= 1;
+            currentBlock.add(new VariableRefAssignQuad<T>(address, currentBlock, index, stackOffset));
+            fixType();
+            currentBlock.add(new VariableRefAssignQuad<T>(address, currentBlock, index - 1, stackOffset - 1));
+            fixType();
+            // Source the base (s-4), not the high half (s-3): high halves
+            // have types but no defining quads, so rename cannot version them
+            // (see note below). Backend reads wides via base locations only.
+            currentBlock.add(new VariableRefAssignQuad<T>(address, currentBlock, index - 2, stackOffset - 3));
+            fixType();
+            currentBlock.add(new VariableRefAssignQuad<T>(address, currentBlock, index - 3, stackOffset - 3));
+            fixType();
+            currentBlock.add(new VariableRefAssignQuad<T>(address, currentBlock, index - 4, stackOffset + 1));
+            fixType();
+            // Source the base, not the high half (see dup2 note below).
+            getVariables()[index].setType(getVariables()[index - 1].getType());
             stackOffset += 2;
         } else {
             throw new IllegalArgumentException("byte code not yet supported");
@@ -538,6 +584,15 @@ public class IRGenerator<T> extends BytecodeVisitor {
             stackOffset -= 2;
             currentBlock.add(new VariableRefAssignQuad<T>(address, currentBlock, index, stackOffset));
             fixType();
+            // ANCHOR-L2-078: the high half copy was missing (latent: dup2 was
+            // checker-gated until now, so this never executed). Source the
+            // base slot: high halves have types but no defining quads, so
+            // they cannot be versioned by rename (see dup_x2-f2 note below).
+            currentBlock.add(new VariableRefAssignQuad<T>(address, currentBlock, index + 1, stackOffset));
+            fixType();
+            // ANCHOR-L2-078: type the new slots (dup conditions read slot types).
+            getVariables()[index].setType(getVariables()[index - 2].getType());
+            getVariables()[index + 1].setType(getVariables()[index - 1].getType());
             stackOffset += 4;
         } else {
             stackOffset -= 1;
@@ -546,25 +601,57 @@ public class IRGenerator<T> extends BytecodeVisitor {
             stackOffset -= 1;
             currentBlock.add(new VariableRefAssignQuad<T>(address, currentBlock, index, stackOffset));
             fixType();
+            // ANCHOR-L2-078: type the new slots (dup conditions read slot types).
+            getVariables()[index].setType(getVariables()[index - 2].getType());
+            getVariables()[index + 1].setType(getVariables()[index - 1].getType());
             stackOffset += 4;
         }
     }
 
     public void visit_dup2_x1() {
-        //todo
-        //form 2;
-        if (isCategory2(getVariables()[stackOffset - 1].getType()) &&
+        //form 1 [..., v3, v2, v1] (all cat1) -> [..., v2, v1, v3, v2, v1]
+        //(ANCHOR-L2-078.)
+        if (!isCategory2(getVariables()[stackOffset - 1].getType()) &&
+            !isCategory2(getVariables()[stackOffset - 2].getType()) &&
             !isCategory2(getVariables()[stackOffset - 3].getType())) {
+            int index = stackOffset;
+            stackOffset -= 1;
+            currentBlock.add(new VariableRefAssignQuad<T>(address, currentBlock, index, stackOffset - 1));
+            fixType();
+            currentBlock.add(new VariableRefAssignQuad<T>(address, currentBlock, index + 1, stackOffset));
+            fixType();
+            currentBlock.add(new VariableRefAssignQuad<T>(address, currentBlock, index - 1, stackOffset - 2));
+            fixType();
+            currentBlock.add(new VariableRefAssignQuad<T>(address, currentBlock, index - 2, index));
+            fixType();
+            currentBlock.add(new VariableRefAssignQuad<T>(address, currentBlock, index - 3, index + 1));
+            fixType();
+            // ANCHOR-L2-078: type the new slots (dup conditions read slot types).
+            getVariables()[index].setType(getVariables()[index - 2].getType());
+            getVariables()[index + 1].setType(getVariables()[index - 1].getType());
+            stackOffset += 3;
+        } else if (isCategory2(getVariables()[stackOffset - 1].getType()) &&
+            isCategory2(getVariables()[stackOffset - 2].getType()) &&
+            !isCategory2(getVariables()[stackOffset - 3].getType())) {
+            //form 2 [..., v3, v2lo, v2hi] -> [..., v2lo, v2hi, v3, v2lo, v2hi]
+            // (ANCHOR-L2-078: rewritten; the old sequence dropped a half.)
             int index = stackOffset;
             stackOffset -= 2;
             currentBlock.add(new VariableRefAssignQuad<T>(address, currentBlock, index, stackOffset));
             fixType();
-            //currentBlock.add(new VariableRefAssignQuad<T>(address, currentBlock, index - 1, stackOffset - 1));
+            // Source the base (s-2), not the high half (s-1): high halves
+            // have types but no defining quads (see dup2 note below).
+            currentBlock.add(new VariableRefAssignQuad<T>(address, currentBlock, index + 1, stackOffset));
+            fixType();
             currentBlock.add(new VariableRefAssignQuad<T>(address, currentBlock, index - 1, stackOffset - 1));
             fixType();
-            currentBlock.add(new VariableRefAssignQuad<T>(address, currentBlock, index - 3, stackOffset + 2));
+            currentBlock.add(new VariableRefAssignQuad<T>(address, currentBlock, index - 2, index + 1));
             fixType();
-            //currentBlock.add(new VariableRefAssignQuad<T>(address, currentBlock, index - 4, stackOffset + 1));
+            currentBlock.add(new VariableRefAssignQuad<T>(address, currentBlock, index - 3, index));
+            fixType();
+            // ANCHOR-L2-078: type the new slots (dup conditions read slot types).
+            getVariables()[index].setType(getVariables()[index - 2].getType());
+            getVariables()[index + 1].setType(getVariables()[index - 1].getType());
             stackOffset += 4;
         } else {
             throw new IllegalArgumentException("byte code not yet supported");
@@ -572,11 +659,76 @@ public class IRGenerator<T> extends BytecodeVisitor {
     }
 
     public void visit_dup2_x2() {
-        throw new IllegalArgumentException("byte code not yet supported");
+        //form 1 [..., v4, v3, v2, v1] (all cat1) -> [..., v2, v1, v4, v3, v2, v1]
+        //(ANCHOR-L2-078.)
+        if (!isCategory2(getVariables()[stackOffset - 1].getType()) &&
+            !isCategory2(getVariables()[stackOffset - 2].getType()) &&
+            !isCategory2(getVariables()[stackOffset - 3].getType()) &&
+            !isCategory2(getVariables()[stackOffset - 4].getType())) {
+            int index = stackOffset;
+            stackOffset -= 1;
+            currentBlock.add(new VariableRefAssignQuad<T>(address, currentBlock, index, stackOffset - 1));
+            fixType();
+            currentBlock.add(new VariableRefAssignQuad<T>(address, currentBlock, index + 1, stackOffset));
+            fixType();
+            currentBlock.add(new VariableRefAssignQuad<T>(address, currentBlock, index - 1, stackOffset - 2));
+            fixType();
+            currentBlock.add(new VariableRefAssignQuad<T>(address, currentBlock, index - 2, stackOffset - 3));
+            fixType();
+            currentBlock.add(new VariableRefAssignQuad<T>(address, currentBlock, index - 3, index));
+            fixType();
+            currentBlock.add(new VariableRefAssignQuad<T>(address, currentBlock, index - 4, index + 1));
+            fixType();
+            // ANCHOR-L2-078: type the new slots (dup conditions read slot types).
+            getVariables()[index].setType(getVariables()[index - 2].getType());
+            getVariables()[index + 1].setType(getVariables()[index - 1].getType());
+            stackOffset += 3;
+        } else if (!isCategory2(getVariables()[stackOffset - 4].getType()) &&
+            !isCategory2(getVariables()[stackOffset - 3].getType()) &&
+            isCategory2(getVariables()[stackOffset - 2].getType()) &&
+            isCategory2(getVariables()[stackOffset - 1].getType())) {
+            //form 2 [..., x, y, vlo, vhi] -> [..., vlo, vhi, x, y, vlo, vhi]
+            //(ANCHOR-L2-078: the top two slots form the cat2 value here.)
+            int index = stackOffset;
+            stackOffset -= 1;
+            currentBlock.add(new VariableRefAssignQuad<T>(address, currentBlock, index, stackOffset - 1));
+            fixType();
+            // Source the base (s-2), not the high half (s-1): high halves
+            // have types but no defining quads (see note below).
+            currentBlock.add(new VariableRefAssignQuad<T>(address, currentBlock, index + 1, stackOffset - 1));
+            fixType();
+            currentBlock.add(new VariableRefAssignQuad<T>(address, currentBlock, index - 1, stackOffset - 2));
+            fixType();
+            currentBlock.add(new VariableRefAssignQuad<T>(address, currentBlock, index - 2, stackOffset - 3));
+            fixType();
+            currentBlock.add(new VariableRefAssignQuad<T>(address, currentBlock, index - 3, index));
+            fixType();
+            currentBlock.add(new VariableRefAssignQuad<T>(address, currentBlock, index - 4, index + 1));
+            fixType();
+            // ANCHOR-L2-078: type the new slots (dup conditions read slot types).
+            getVariables()[index].setType(getVariables()[index - 2].getType());
+            getVariables()[index + 1].setType(getVariables()[index - 1].getType());
+            stackOffset += 3;
+        } else {
+            throw new IllegalArgumentException("byte code not yet supported");
+        }
     }
 
     public void visit_swap() {
-        throw new IllegalArgumentException("byte code not yet supported");
+        // [..., v2, v1] (both cat1) -> [..., v1, v2] (ANCHOR-L2-078.)
+        if (isCategory2(getVariables()[stackOffset - 1].getType()) ||
+            isCategory2(getVariables()[stackOffset - 2].getType())) {
+            throw new IllegalArgumentException("swap of category 2 values");
+        }
+        int index = stackOffset;
+        stackOffset -= 1;
+        currentBlock.add(new VariableRefAssignQuad<T>(address, currentBlock, index, stackOffset));
+        fixType();
+        currentBlock.add(new VariableRefAssignQuad<T>(address, currentBlock, index - 1, stackOffset - 1));
+        fixType();
+        currentBlock.add(new VariableRefAssignQuad<T>(address, currentBlock, index - 2, stackOffset + 1));
+        fixType();
+        stackOffset += 1;
     }
 
     public void visit_iadd() {
@@ -668,6 +820,8 @@ public class IRGenerator<T> extends BytecodeVisitor {
     public void visit_lneg() {
         int s1 = stackOffset - 2;
         variables[s1].setType(Operand.LONG);
+        // ANCHOR-L2-078: type both slots (dup conditions read high halves).
+        variables[s1 + 1].setType(Operand.LONG);
         currentBlock.add(new UnaryQuad<T>(address, currentBlock, s1, LNEG, s1));
     }
 
@@ -680,6 +834,8 @@ public class IRGenerator<T> extends BytecodeVisitor {
     public void visit_dneg() {
         int s1 = stackOffset - 2;
         variables[s1].setType(Operand.DOUBLE);
+        // ANCHOR-L2-078: type both slots (dup conditions read high halves).
+        variables[s1 + 1].setType(Operand.DOUBLE);
         currentBlock.add(new UnaryQuad<T>(address, currentBlock, s1, DNEG, s1));
     }
 
@@ -691,6 +847,8 @@ public class IRGenerator<T> extends BytecodeVisitor {
         stackOffset -= 1;
         int s1 = stackOffset - 2;
         variables[s1].setType(Operand.LONG);
+        // ANCHOR-L2-078: type the result high half too (dup conditions).
+        variables[s1 + 1].setType(Operand.LONG);
         variables[stackOffset].setType(Operand.INT);
         currentBlock.add(new BinaryQuad<T>(address, currentBlock, s1, s1, LSHL, stackOffset));
     }
@@ -703,6 +861,8 @@ public class IRGenerator<T> extends BytecodeVisitor {
         stackOffset -= 1;
         int s1 = stackOffset - 2;
         variables[s1].setType(Operand.LONG);
+        // ANCHOR-L2-078: type the result high half too (dup conditions).
+        variables[s1 + 1].setType(Operand.LONG);
         variables[stackOffset].setType(Operand.INT);
         currentBlock.add(new BinaryQuad<T>(address, currentBlock, s1, s1, LSHR, stackOffset));
     }
@@ -755,6 +915,8 @@ public class IRGenerator<T> extends BytecodeVisitor {
     public void visit_i2l() {
         stackOffset -= 1;
         variables[stackOffset].setType(Operand.LONG);
+        // ANCHOR-L2-078: type both slots (dup conditions read high halves).
+        variables[stackOffset + 1].setType(Operand.LONG);
         currentBlock.add(new UnaryQuad<T>(address, currentBlock, stackOffset, I2L, stackOffset));
         stackOffset += 2;
     }
@@ -769,6 +931,8 @@ public class IRGenerator<T> extends BytecodeVisitor {
     public void visit_i2d() {
         stackOffset -= 1;
         variables[stackOffset].setType(Operand.DOUBLE);
+        // ANCHOR-L2-078: type both slots (dup conditions read high halves).
+        variables[stackOffset + 1].setType(Operand.DOUBLE);
         currentBlock.add(new UnaryQuad<T>(address, currentBlock, stackOffset, I2D, stackOffset));
         stackOffset += 2;
     }
@@ -790,6 +954,8 @@ public class IRGenerator<T> extends BytecodeVisitor {
     public void visit_l2d() {
         stackOffset -= 2;
         variables[stackOffset].setType(Operand.DOUBLE);
+        // ANCHOR-L2-078: type both slots (dup conditions read high halves).
+        variables[stackOffset + 1].setType(Operand.DOUBLE);
         currentBlock.add(new UnaryQuad<T>(address, currentBlock, stackOffset, L2D, stackOffset));
         stackOffset += 2;
     }
@@ -804,6 +970,8 @@ public class IRGenerator<T> extends BytecodeVisitor {
     public void visit_f2l() {
         stackOffset -= 1;
         variables[stackOffset].setType(Operand.LONG);
+        // ANCHOR-L2-078: type both slots (dup conditions read high halves).
+        variables[stackOffset + 1].setType(Operand.LONG);
         currentBlock.add(new UnaryQuad<T>(address, currentBlock, stackOffset, F2L, stackOffset));
         stackOffset += 2;
     }
@@ -811,6 +979,8 @@ public class IRGenerator<T> extends BytecodeVisitor {
     public void visit_f2d() {
         stackOffset -= 1;
         variables[stackOffset].setType(Operand.DOUBLE);
+        // ANCHOR-L2-078: type both slots (dup conditions read high halves).
+        variables[stackOffset + 1].setType(Operand.DOUBLE);
         currentBlock.add(new UnaryQuad<T>(address, currentBlock, stackOffset, F2D, stackOffset));
         stackOffset += 2;
     }
@@ -825,6 +995,8 @@ public class IRGenerator<T> extends BytecodeVisitor {
     public void visit_d2l() {
         stackOffset -= 2;
         variables[stackOffset].setType(Operand.LONG);
+        // ANCHOR-L2-078: type both slots (dup conditions read high halves).
+        variables[stackOffset + 1].setType(Operand.LONG);
         currentBlock.add(new UnaryQuad<T>(address, currentBlock, stackOffset, D2L, stackOffset));
         stackOffset += 2;
     }
@@ -991,6 +1163,10 @@ public class IRGenerator<T> extends BytecodeVisitor {
         int jvmType = fieldRef.getResolvedVmField().getType().getJvmType();
         variables[stackOffset].setTypeFromJvmType(jvmType);
         currentBlock.add(new StaticRefAssignQuad<T>(address, currentBlock, stackOffset, fieldRef));
+        if (getCategory(jvmType) == 2) {
+            // ANCHOR-L2-078: type the wide result high half too (dup conditions).
+            variables[stackOffset + 1].setTypeFromJvmType(jvmType);
+        }
         stackOffset += getCategory(jvmType);
     }
 
@@ -1007,6 +1183,10 @@ public class IRGenerator<T> extends BytecodeVisitor {
         int jvmType = fieldRef.getResolvedVmField().getType().getJvmType();
         variables[stackOffset].setTypeFromJvmType(jvmType);
         currentBlock.add(new RefAssignQuad<T>(address, currentBlock, stackOffset, fieldRef, stackOffset));
+        if (getCategory(jvmType) == 2) {
+            // ANCHOR-L2-078: type the wide result high half too (dup conditions).
+            variables[stackOffset + 1].setTypeFromJvmType(jvmType);
+        }
         stackOffset += getCategory(jvmType);
     }
 
@@ -1048,6 +1228,12 @@ public class IRGenerator<T> extends BytecodeVisitor {
             currentBlock.add(new VirtualCallQuad(address, currentBlock, methodRef, varOffs));
         } else {
             currentBlock.add(new VirtualCallAssignQuad(address, currentBlock, stackOffset, methodRef, varOffs));
+            // ANCHOR-L2-078: type both halves of a wide result (base slot may
+            // still carry an operand type; dup conditions read categories).
+            if (returnType == JvmType.LONG || returnType == JvmType.DOUBLE) {
+                variables[stackOffset].setTypeFromJvmType(returnType);
+                variables[stackOffset + 1].setTypeFromJvmType(returnType);
+            }
             stackOffset += typeSizeInfo.getStackSlots(returnType);
         }
 //        int argSlotCount = Signature.getArgSlotCount(typeSizeInfo, methodRef.getSignature());
@@ -1107,6 +1293,12 @@ public class IRGenerator<T> extends BytecodeVisitor {
             currentBlock.add(new SpecialCallQuad(address, currentBlock, methodRef, varOffs));
         } else {
             currentBlock.add(new SpecialCallAssignQuad(address, currentBlock, stackOffset, methodRef, varOffs));
+            // ANCHOR-L2-078: type both halves of a wide result (base slot may
+            // still carry an operand type; dup conditions read categories).
+            if (returnType == JvmType.LONG || returnType == JvmType.DOUBLE) {
+                variables[stackOffset].setTypeFromJvmType(returnType);
+                variables[stackOffset + 1].setTypeFromJvmType(returnType);
+            }
             stackOffset += typeSizeInfo.getStackSlots(returnType);
         }
 //        int argSlotCount = Signature.getArgSlotCount(typeSizeInfo, methodRef.getSignature());
@@ -1162,6 +1354,12 @@ public class IRGenerator<T> extends BytecodeVisitor {
             currentBlock.add(new StaticCallQuad(address, currentBlock, methodRef, varOffs));
         } else {
             currentBlock.add(new StaticCallAssignQuad(address, currentBlock, stackOffset, methodRef, varOffs));
+            // ANCHOR-L2-078: type both halves of a wide result (base slot may
+            // still carry an operand type; dup conditions read categories).
+            if (returnType == JvmType.LONG || returnType == JvmType.DOUBLE) {
+                variables[stackOffset].setTypeFromJvmType(returnType);
+                variables[stackOffset + 1].setTypeFromJvmType(returnType);
+            }
             stackOffset += typeSizeInfo.getStackSlots(returnType);
         }
 //        int argSlotCount = Signature.getArgSlotCount(typeSizeInfo, methodRef.getSignature());
@@ -1215,6 +1413,12 @@ public class IRGenerator<T> extends BytecodeVisitor {
             currentBlock.add(new InterfaceCallQuad(address, currentBlock, methodRef, varOffs));
         } else {
             currentBlock.add(new InterfaceCallAssignQuad(address, currentBlock, stackOffset, methodRef, varOffs));
+            // ANCHOR-L2-078: type both halves of a wide result (base slot may
+            // still carry an operand type; dup conditions read categories).
+            if (returnType == JvmType.LONG || returnType == JvmType.DOUBLE) {
+                variables[stackOffset].setTypeFromJvmType(returnType);
+                variables[stackOffset + 1].setTypeFromJvmType(returnType);
+            }
             stackOffset += typeSizeInfo.getStackSlots(returnType);
         }
 
@@ -1319,11 +1523,36 @@ public class IRGenerator<T> extends BytecodeVisitor {
     }
 
     public void visit_jsr(int address) {
-        throw new UnsupportedOperationException("Byte code not supported: jsr");
+        // ANCHOR-L2-079: L1A-style subroutine call. Push the return address as
+        // an int-typed value (never a GC root; JsrQuad materializes the
+        // native address at emission). The subroutine entry (the only
+        // successor) sees the pushed depth; the resume block keeps the
+        // pre-jsr depth (the subroutine consumes the address via astore),
+        // set explicitly below since no edge leads to it.
+        variables[stackOffset].setType(Operand.INT);
+        currentBlock.add(new JsrQuad<T>(this.address, currentBlock, stackOffset, address));
+        stackOffset += 1;
+        setSuccessorStackOffset();
+        stackOffset -= 1;
+        for (int[] site : cfg.getJsrSites()) {
+            if (site[0] == this.address && site[2] >= 0) {
+                IRBasicBlock<T> resume = cfg.getBasicBlock(site[2]);
+                // A handler entry sets its own offset on translation; never
+                // clobber it (shared-address edge case).
+                if (resume != null && !resume.isStartOfExceptionHandler()) {
+                    resume.setStackOffset(stackOffset);
+                }
+            }
+        }
     }
 
     public void visit_ret(int index) {
-        throw new UnsupportedOperationException("Byte code not supported: ret");
+        // ANCHOR-L2-079: indirect jump through the local (no stack effect,
+        // no fallthrough -- the Finder already ends the block). Propagate the
+        // (unchanged) depth to the resume blocks (same value the jsr set;
+        // harmless if already set -- depths agree by verification).
+        currentBlock.add(new RetQuad<T>(address, currentBlock, index));
+        setSuccessorStackOffset();
     }
 
     // TODO
@@ -1337,6 +1566,12 @@ public class IRGenerator<T> extends BytecodeVisitor {
         Variable[] variables = currentBlock.getVariables();
         variables[s1].setType(type);
         variables[stackOffset].setType(type);
+        if (sCount == 2 && op != BinaryOperation.LCMP && op != BinaryOperation.DCMPL &&
+            op != BinaryOperation.DCMPG) {
+            // ANCHOR-L2-078: type the wide result high half too (dup
+            // conditions). Compares yield int despite wide operands.
+            variables[s1 + 1].setType(type);
+        }
         BinaryQuad<T> bop = new BinaryQuad<T>(address, currentBlock, s1, s1, op, stackOffset);
         if (op == BinaryOperation.LCMP || op == BinaryOperation.DCMPL || op == BinaryOperation.DCMPG) {
             stackOffset -= 1;
@@ -1375,6 +1610,12 @@ public class IRGenerator<T> extends BytecodeVisitor {
         variables[ref].setType(Operand.REFERENCE);
         currentBlock.add(new ArrayAssignQuad(address, currentBlock, ref, ind, ref, arrayType));
         if (arrayType ==  Operand.LONG || arrayType == Operand.DOUBLE) {
+            // ANCHOR-L2-078: retype BOTH halves (the base still carries the
+            // array reference type; dup conditions read slot categories).
+            variables[ref].setType(arrayType);
+            // ANCHOR-L2-078: the high half reuses the index slot: retype it
+            // (dup conditions read high halves).
+            variables[ind].setType(arrayType);
             stackOffset += 1;
         }
     }
