@@ -3957,8 +3957,13 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
                 // ANCHOR-L2-080: 64-bit division via the shared Java helper
                 // (the same one L1A calls: exact JVM edge semantics, including
                 // divide-by-zero and MIN_VALUE/-1).
-                writeParameters(quad);
+                // The ECX preserve goes BELOW the arguments: the callee pops
+                // its own 16 arg bytes and reads them EBP-relative, so a word
+                // pushed between args and return address shifts every slot
+                // (oracle: MIN/-1 came back -1, x/0 came back garbage with no
+                // throw). Push-args-call-pop preserves and rebalances.
                 os.writePUSH(X86Register.ECX);
+                writeParameters(quad);
                 callJavaMethod(stackFrame.getEntryPoints().getLdivMethod());
                 os.writePOP(X86Register.ECX);
                 os.writeMOV(BITS32, X86Register.EBP, disp1 - stackFrame.getHelper().SLOTSIZE,
@@ -4019,9 +4024,9 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
             }
             case LREM: {
                 // ANCHOR-L2-080: 64-bit remainder via the shared Java helper
-                // (same one L1A calls).
-                writeParameters(quad);
+                // (same one L1A calls). Preserve-below-args, same as LDIV.
                 os.writePUSH(X86Register.ECX);
+                writeParameters(quad);
                 callJavaMethod(stackFrame.getEntryPoints().getLremMethod());
                 os.writePOP(X86Register.ECX);
                 os.writeMOV(BITS32, X86Register.EBP, disp1 - stackFrame.getHelper().SLOTSIZE,
