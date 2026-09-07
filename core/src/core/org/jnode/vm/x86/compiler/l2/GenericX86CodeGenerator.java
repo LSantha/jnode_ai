@@ -4778,11 +4778,20 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
         }
         final int elemType = quad.getType();
         if (elemType == Operand.LONG) {
-            if (rhs.getAddressingMode() != STACK) {
+            if (rhs.getAddressingMode() == CONSTANT) {
+                // ANCHOR-L2-081: copy-prop folds constants into the store
+                // (the "always spill" gate only sees STACK); store the
+                // halves as immediates, low word first like the path below.
+                final long value = ((LongConstant) rhs).getValue();
+                os.writeMOV_Const(BITS32, X86Register.EAX, X86Register.ECX, 8, arrayDataOffset,
+                    (int) (value & 0xFFFFFFFFL));
+                os.writeMOV_Const(BITS32, X86Register.EAX, X86Register.ECX, 8, arrayDataOffset + 4,
+                    (int) ((value >>> 32) & 0xFFFFFFFFL));
+            } else if (rhs.getAddressingMode() != STACK) {
                 // Wide values always spill; a register here is unreachable.
                 os.writePOP(X86Register.ECX);
                 throw new IllegalArgumentException("Wide array value from register");
-            }
+            } else {
             // EDX as value temp (EAX still holds the base; both free).
             int vdisp = ((StackLocation) ((Variable) rhs).getLocation()).getDisplacement();
             int vdispLo = vdisp - stackFrame.getHelper().SLOTSIZE;
@@ -4790,15 +4799,26 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
             os.writeMOV(BITS32, X86Register.EAX, X86Register.ECX, 8, arrayDataOffset, X86Register.EDX);
             os.writeMOV(BITS32, X86Register.EDX, X86Register.EBP, vdisp);
             os.writeMOV(BITS32, X86Register.EAX, X86Register.ECX, 8, arrayDataOffset + 4, X86Register.EDX);
+            }
         } else if (elemType == Operand.DOUBLE) {
-            if (rhs.getAddressingMode() != STACK) {
+            if (rhs.getAddressingMode() == CONSTANT) {
+                // ANCHOR-L2-081: folded double constant; raw bits as two
+                // immediates (low word at the element address).
+                final long bits =
+                    Double.doubleToRawLongBits(((DoubleConstant) rhs).getValue());
+                os.writeMOV_Const(BITS32, X86Register.EAX, X86Register.ECX, 8, arrayDataOffset,
+                    (int) (bits & 0xFFFFFFFFL));
+                os.writeMOV_Const(BITS32, X86Register.EAX, X86Register.ECX, 8, arrayDataOffset + 4,
+                    (int) ((bits >>> 32) & 0xFFFFFFFFL));
+            } else if (rhs.getAddressingMode() != STACK) {
                 os.writePOP(X86Register.ECX);
                 throw new IllegalArgumentException("Wide array value from register");
-            }
+            } else {
             int vdisp = ((StackLocation) ((Variable) rhs).getLocation()).getDisplacement();
             os.writeLEA(X86Register.EDX, X86Register.EAX, X86Register.ECX, 8, arrayDataOffset);
             os.writeFLD64(X86Register.EBP, vdisp);
             os.writeFSTP64(X86Register.EDX, 0);
+            }
         } else {
             // BYTE/CHAR/SHORT stores narrow the int value to 1/2 bytes.
             os.writeLEA(X86Register.EDX, X86Register.EAX, X86Register.ECX, 1, arrayDataOffset);

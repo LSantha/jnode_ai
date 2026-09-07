@@ -797,6 +797,18 @@ public class PrimitiveTest {
         }
     }
 
+    /**
+     * ANCHOR-L2-081: folded wide-constant stores (javac emits the constant
+     * inline, so the store rhs is CONSTANT, never a spilled variable).
+     */
+    public static void larrayConstStore(long[] a, int i) {
+        a[i] = 0x123456789ABCDEF0L;
+    }
+
+    public static void darrayConstStore(double[] a, int i) {
+        a[i] = 1.5;
+    }
+
     public static void carraySet(char[] a, int i, char v) {
         a[i] = v;
     }

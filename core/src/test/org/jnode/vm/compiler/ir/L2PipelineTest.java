@@ -249,6 +249,9 @@ public class L2PipelineTest {
         assertCompiles("carraySet");
         assertCompiles("sarraySet");
         assertCompiles("sarrayGet");
+        // ANCHOR-L2-081: folded wide-constant stores (CONSTANT rhs).
+        assertCompiles("larrayConstStore");
+        assertCompiles("darrayConstStore");
     }
 
     /**
