@@ -358,28 +358,30 @@ public class L2ModeMatrixTest {
     }
 
     /**
-     * Review fix: double operands live qword-at-disp, so FLD64 must use the
-     * operand displacement verbatim (the old code subtracted a SLOTSIZE and
-     * read a shifted 8 bytes). Pins both polarities and FCMPL.
+     * ANCHOR-L2-082: doubles share the long disp convention (disp addresses
+     * the HIGH half), so FLD64 uses disp-4 as the qword base. Operands at
+     * -12/-16 therefore FLD [ebp-16]/[ebp-20]. (An earlier review pinned
+     * qword-at-disp; the live oracle proved it read every double one slot
+     * high.) Floats are single-slot and unaffected.
      */
     @Test
     public void testFpCompareDoubleOffsets() throws Exception {
         EmitterHarness h = new EmitterHarness();
-        // Operands at -12/-16 (see fpCompareQuad): FLD64 must show exactly
-        // those displacements, not -16/-20.
+        // Operands at -12/-16 (see fpCompareQuad): FLD64 must show the
+        // high-base qword bases -16/-20.
         BinaryQuad dcmpg = fpCompareQuad(0, JvmType.DOUBLE, BinaryOperation.DCMPG);
         dcmpg.generateCode(h.cg);
         String g = h.text();
-        assertTrue("DCMPG must FLD [ebp-12], got:\n" + g, g.contains("[ebp-12]"));
         assertTrue("DCMPG must FLD [ebp-16], got:\n" + g, g.contains("[ebp-16]"));
+        assertTrue("DCMPG must FLD [ebp-20], got:\n" + g, g.contains("[ebp-20]"));
 
         EmitterHarness h2 = new EmitterHarness();
         BinaryQuad dcmpl = fpCompareQuad(0, JvmType.DOUBLE, BinaryOperation.DCMPL);
         dcmpl.generateCode(h2.cg);
         String l = h2.text();
         assertTrue("DCMPL must FUCOMPP, got:\n" + l, l.contains("fucompp"));
-        assertTrue("DCMPL must FLD [ebp-12], got:\n" + l, l.contains("[ebp-12]"));
         assertTrue("DCMPL must FLD [ebp-16], got:\n" + l, l.contains("[ebp-16]"));
+        assertTrue("DCMPL must FLD [ebp-20], got:\n" + l, l.contains("[ebp-20]"));
 
         EmitterHarness h3 = new EmitterHarness();
         BinaryQuad fcmpl = fpCompareQuad(0, JvmType.FLOAT, BinaryOperation.FCMPL);

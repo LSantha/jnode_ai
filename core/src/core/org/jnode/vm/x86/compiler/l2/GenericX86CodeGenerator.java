@@ -298,12 +298,13 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
                 os.writeMOV_Const(X86Constants.BITS32, X86Register.EBP, disp1,
                     ((FloatConstant<T>) rhs).getIntBits());
             } else if (rhs instanceof DoubleConstant) {
-                // ANCHOR-L2-073 (CG-4b): qword-at-disp via the x87 stack.
+                // ANCHOR-L2-073 (CG-4b): high-base convention (ANCHOR-L2-082):
+                // store the qword at disp-4 via the x87 stack.
                 final long bits = Double.doubleToRawLongBits(((DoubleConstant<T>) rhs).getValue());
                 os.writePUSH((int) ((bits >>> 32) & 0xFFFFFFFFL));
                 os.writePUSH((int) (bits & 0xFFFFFFFFL));
                 os.writeFLD64(X86Register.ESP, 0);
-                os.writeFSTP64(X86Register.EBP, disp1);
+                os.writeFSTP64(X86Register.EBP, disp1 - stackFrame.getHelper().SLOTSIZE);
                 os.writeADD(X86Register.ESP, 8);
             } else {
                 throw new IllegalArgumentException("Non-int constant def: " + rhs);
@@ -460,11 +461,12 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
                     os.writeMOV_Const(X86Constants.BITS32, X86Register.EBP, disp1,
                         ((FloatConstant<T>) rhs).getIntBits());
                 } else if (rhs instanceof DoubleConstant) {
-                    // ANCHOR-L2-073 (CG-4b): doubles live qword-at-disp
-                    // (FSTP64 convention), unlike the long halves layout.
+                    // ANCHOR-L2-082: high-base convention (see DADD): low
+                    // half at disp-4, high half at disp (long halves layout).
                     final long bits = Double.doubleToRawLongBits(((DoubleConstant<T>) rhs).getValue());
-                    os.writeMOV_Const(BITS32, X86Register.EBP, disp1, (int) (bits & 0xFFFFFFFFL));
-                    os.writeMOV_Const(BITS32, X86Register.EBP, disp1 + stackFrame.getHelper().SLOTSIZE,
+                    os.writeMOV_Const(BITS32, X86Register.EBP, disp1 - stackFrame.getHelper().SLOTSIZE,
+                        (int) (bits & 0xFFFFFFFFL));
+                    os.writeMOV_Const(BITS32, X86Register.EBP, disp1,
                         (int) ((bits >>> 32) & 0xFFFFFFFFL));
                 } else {
                     throw new IllegalArgumentException("Type: " + lhs.getType());
@@ -476,8 +478,18 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
                 //todo optimize it
                 int disp2 = ((StackLocation) ((Variable) rhs).getLocation()).getDisplacement();
                 if (disp1 != disp2) {
-                    os.writePUSH(X86Register.EBP, disp2);
-                    os.writePOP(X86Register.EBP, disp1);
+                    if (lhs.getType() == Operand.LONG || lhs.getType() == Operand.DOUBLE) {
+                        // ANCHOR-L2-082: wide moves copy both halves (high
+                        // half at [disp], low half at [disp-4]); the old
+                        // single-slot move dropped half the value.
+                        os.writePUSH(X86Register.EBP, disp2);
+                        os.writePUSH(X86Register.EBP, disp2 - stackFrame.getHelper().SLOTSIZE);
+                        os.writePOP(X86Register.EBP, disp1 - stackFrame.getHelper().SLOTSIZE);
+                        os.writePOP(X86Register.EBP, disp1);
+                    } else {
+                        os.writePUSH(X86Register.EBP, disp2);
+                        os.writePOP(X86Register.EBP, disp1);
+                    }
                 }
             } else if (mode == TOPS) {
                 os.writePOP(X86Register.EBP, disp1);
@@ -525,12 +537,12 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
                 os.writeMOV(X86Constants.BITS32, X86Register.EAX, X86Register.EBP, disp2);
                 os.writeMOV(X86Constants.BITS32, X86Register.EDX, X86Register.EBP, disp1);
             } else if (op.getType() == Operand.DOUBLE) {
-                // ANCHOR-L2-073 (CG-4b): doubles live qword-at-disp (low half
-                // at [disp], matching FSTP64), unlike the long halves layout.
+                // ANCHOR-L2-082: high-base convention (see DADD): EAX takes
+                // the low half at disp-4, EDX the high half at disp.
                 int disp1 = ((StackLocation<T>) ((Variable<T>) op).getLocation()).getDisplacement();
-                os.writeMOV(X86Constants.BITS32, X86Register.EAX, X86Register.EBP, disp1);
-                os.writeMOV(X86Constants.BITS32, X86Register.EDX, X86Register.EBP,
-                    disp1 + stackFrame.getHelper().SLOTSIZE);
+                os.writeMOV(X86Constants.BITS32, X86Register.EAX, X86Register.EBP,
+                    disp1 - stackFrame.getHelper().SLOTSIZE);
+                os.writeMOV(X86Constants.BITS32, X86Register.EDX, X86Register.EBP, disp1);
             } else {
                 throw new IllegalArgumentException();
             }
@@ -735,9 +747,10 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
             case I2D:
                 // ANCHOR-L2-063 (CG-3): int in reg to double spill (was grouped
                 // with F2I below, mistaking int bits for float bits -- B13).
+                // ANCHOR-L2-082: high-base double convention (see DADD).
                 os.writePUSH((GPR) rhsReg);
                 os.writeFILD32(X86Register.ESP, 0);
-                os.writeFSTP64(X86Register.EBP, lhsDisp);
+                os.writeFSTP64(X86Register.EBP, lhsDisp - stackFrame.getHelper().SLOTSIZE);
                 os.writeADD(X86Register.ESP, 4);
                 break;
 
@@ -824,9 +837,9 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
                 break;
 
             case I2D:
-                // ANCHOR-L2-063 (CG-3).
+                // ANCHOR-L2-063 (CG-3). ANCHOR-L2-082: high-base double dest.
                 os.writeFILD32(X86Register.EBP, rhsDisp);
-                os.writeFSTP64(X86Register.EBP, lhsDisp);
+                os.writeFSTP64(X86Register.EBP, lhsDisp - stackFrame.getHelper().SLOTSIZE);
                 break;
             case L2I:
                 os.writeMOV(BITS32, SR1, X86Register.EBP, rhsDisp - stackFrame.getHelper().SLOTSIZE);
@@ -838,9 +851,10 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
                 os.writeFSTP32(X86Register.EBP, lhsDisp);
                 break;
             case L2D:
-                // ANCHOR-L2-063 (CG-3).
+                // ANCHOR-L2-063 (CG-3). ANCHOR-L2-082: high-base double dest
+                // (the FILD source is a long: [disp-SLOT] is its low half).
                 os.writeFILD64(X86Register.EBP, rhsDisp - stackFrame.getHelper().SLOTSIZE);
-                os.writeFSTP64(X86Register.EBP, lhsDisp);
+                os.writeFSTP64(X86Register.EBP, lhsDisp - stackFrame.getHelper().SLOTSIZE);
                 break;
 
             case F2I:
@@ -854,23 +868,24 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
                 os.writeFISTP64(X86Register.EBP, lhsDisp - stackFrame.getHelper().SLOTSIZE);
                 break;
             case F2D:
-                // ANCHOR-L2-063 (CG-3).
+                // ANCHOR-L2-063 (CG-3). ANCHOR-L2-082: high-base double dest.
                 os.writeFLD32(X86Register.EBP, rhsDisp);
-                os.writeFSTP64(X86Register.EBP, lhsDisp);
+                os.writeFSTP64(X86Register.EBP, lhsDisp - stackFrame.getHelper().SLOTSIZE);
                 break;
             case D2I:
-                // ANCHOR-L2-063 (CG-3).
-                os.writeFLD64(X86Register.EBP, rhsDisp);
+                // ANCHOR-L2-063 (CG-3). ANCHOR-L2-082: high-base double source.
+                os.writeFLD64(X86Register.EBP, rhsDisp - stackFrame.getHelper().SLOTSIZE);
                 os.writeFISTP32(X86Register.EBP, lhsDisp);
                 break;
             case D2L:
-                // ANCHOR-L2-063 (CG-3).
-                os.writeFLD64(X86Register.EBP, rhsDisp);
+                // ANCHOR-L2-063 (CG-3). ANCHOR-L2-082: high-base double source
+                // (the FISTP dest is a long: [disp-SLOT] is its low half).
+                os.writeFLD64(X86Register.EBP, rhsDisp - stackFrame.getHelper().SLOTSIZE);
                 os.writeFISTP64(X86Register.EBP, lhsDisp - stackFrame.getHelper().SLOTSIZE);
                 break;
             case D2F:
-                // ANCHOR-L2-063 (CG-3).
-                os.writeFLD64(X86Register.EBP, rhsDisp);
+                // ANCHOR-L2-063 (CG-3). ANCHOR-L2-082: high-base double source.
+                os.writeFLD64(X86Register.EBP, rhsDisp - stackFrame.getHelper().SLOTSIZE);
                 os.writeFSTP32(X86Register.EBP, lhsDisp);
                 break;
 
@@ -924,10 +939,10 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
                 break;
 
             case DNEG:
-                // ANCHOR-L2-063 (CG-3).
-                os.writeFLD64(X86Register.EBP, rhsDisp);
+                // ANCHOR-L2-063 (CG-3). ANCHOR-L2-082: high-base convention.
+                os.writeFLD64(X86Register.EBP, rhsDisp - stackFrame.getHelper().SLOTSIZE);
                 os.writeFCHS();
-                os.writeFSTP64(X86Register.EBP, lhsDisp);
+                os.writeFSTP64(X86Register.EBP, lhsDisp - stackFrame.getHelper().SLOTSIZE);
                 break;
             default:
                 throw new IllegalArgumentException("Unknown operation: " + operation);
@@ -3774,22 +3789,26 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
                 os.writePOP(SR1);
                 break;
 
+            // ANCHOR-L2-082: doubles share the long disp convention (disp
+            // addresses the HIGH half); the x87 qword base is disp-4, not
+            // disp. The old qword-at-disp read every double one slot high
+            // (oracle: id_d returned hi=input-hi, lo=garbage).
             case DADD:
-                os.writeFLD64(X86Register.EBP, disp2);
-                os.writeFADD64(X86Register.EBP, disp3);
-                os.writeFSTP64(X86Register.EBP, disp1);
+                os.writeFLD64(X86Register.EBP, disp2 - stackFrame.getHelper().SLOTSIZE);
+                os.writeFADD64(X86Register.EBP, disp3 - stackFrame.getHelper().SLOTSIZE);
+                os.writeFSTP64(X86Register.EBP, disp1 - stackFrame.getHelper().SLOTSIZE);
                 break;
 
             case DDIV:
-                os.writeFLD64(X86Register.EBP, disp2);
-                os.writeFDIV64(X86Register.EBP, disp3);
-                os.writeFSTP64(X86Register.EBP, disp1);
+                os.writeFLD64(X86Register.EBP, disp2 - stackFrame.getHelper().SLOTSIZE);
+                os.writeFDIV64(X86Register.EBP, disp3 - stackFrame.getHelper().SLOTSIZE);
+                os.writeFSTP64(X86Register.EBP, disp1 - stackFrame.getHelper().SLOTSIZE);
                 break;
 
             case DMUL:
-                os.writeFLD64(X86Register.EBP, disp2);
-                os.writeFMUL64(X86Register.EBP, disp3);
-                os.writeFSTP64(X86Register.EBP, disp1);
+                os.writeFLD64(X86Register.EBP, disp2 - stackFrame.getHelper().SLOTSIZE);
+                os.writeFMUL64(X86Register.EBP, disp3 - stackFrame.getHelper().SLOTSIZE);
+                os.writeFSTP64(X86Register.EBP, disp1 - stackFrame.getHelper().SLOTSIZE);
                 break;
 
             case DREM: {
@@ -3799,22 +3818,22 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
                 // operands 2^64 apart) and leaked a stack slot via FFREE.
                 final Label curInstrLabel = getInstrLabel(quad.getAddress());
                 final Label againLabel = new Label(curInstrLabel + "again");
-                os.writeFLD64(X86Register.EBP, disp3);
-                os.writeFLD64(X86Register.EBP, disp2);
+                os.writeFLD64(X86Register.EBP, disp3 - stackFrame.getHelper().SLOTSIZE);
+                os.writeFLD64(X86Register.EBP, disp2 - stackFrame.getHelper().SLOTSIZE);
                 os.setObjectRef(againLabel);
                 os.writeFPREM();
                 os.writeFNSTSW_AX();
                 os.writeSAHF();
                 os.writeJCC(againLabel, X86Constants.JP);
-                os.writeFSTP64(X86Register.EBP, disp1);
+                os.writeFSTP64(X86Register.EBP, disp1 - stackFrame.getHelper().SLOTSIZE);
                 os.writeFSTP(X86Register.ST0);
                 break;
             }
 
             case DSUB:
-                os.writeFLD64(X86Register.EBP, disp2);
-                os.writeFSUB64(X86Register.EBP, disp3);
-                os.writeFSTP64(X86Register.EBP, disp1);
+                os.writeFLD64(X86Register.EBP, disp2 - stackFrame.getHelper().SLOTSIZE);
+                os.writeFSUB64(X86Register.EBP, disp3 - stackFrame.getHelper().SLOTSIZE);
+                os.writeFSTP64(X86Register.EBP, disp1 - stackFrame.getHelper().SLOTSIZE);
                 break;
 
             case FADD:
@@ -4349,6 +4368,13 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
         checkLabel(quad.getAddress()); // ANCHOR-L2-00C: position this quad's label
         // Setup a call to SoftByteCodes.allocArray
         X86CompilerHelper helper = stackFrame.getHelper();
+        // ANCHOR-L2-074 (CG-4c): ECX is caller-saved (L1A pool marks EBX/ESI
+        // callee-saved, ECX not); a live ECX-allocated value would not survive
+        // the call, so preserve it. EBX/ESI need nothing (JNode convention).
+        // The preserve goes BELOW the arguments: the callee pops its own arg
+        // bytes and reads them EBP-relative (oracle: newarray got the length
+        // as its type, "Unknown type N").
+        os.writePUSH(X86Register.ECX);
         helper.writePushStaticsEntry(getInstrLabel(quad.getAddress()),
             helper.getMethod().getDeclaringClass()); /* currentClass */
         os.writePUSH(quad.getType()); /* type */
@@ -4368,7 +4394,6 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
         // ANCHOR-L2-074 (CG-4c): ECX is caller-saved (L1A pool marks EBX/ESI
         // callee-saved, ECX not); a live ECX-allocated value would not survive
         // the call, so preserve it. EBX/ESI need nothing (JNode convention).
-        os.writePUSH(X86Register.ECX);
         callJavaMethod(stackFrame.getEntryPoints().getAllocPrimitiveArrayMethod());
         os.writePOP(X86Register.ECX);
         Variable lhs = quad.getLHS();
@@ -4389,6 +4414,9 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
         VmConstClass clazz = quad.getComponentType();
         Label label = getInstrLabel(quad.getAddress());
         writeResolveAndLoadClassToReg(clazz, SR1, label);
+        // ANCHOR-L2-074 (CG-4c): preserve caller-saved ECX across the call,
+        // below the arguments (same frame-shift reason as above).
+        os.writePUSH(X86Register.ECX);
         os.writePUSH(SR1);
         Operand sizeOp = quad.getSize();
         if (sizeOp.getAddressingMode() == CONSTANT) {
@@ -4401,7 +4429,6 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
             throw new IllegalArgumentException();
         }
         // ANCHOR-L2-074 (CG-4c): preserve caller-saved ECX across the call.
-        os.writePUSH(X86Register.ECX);
         callJavaMethod(stackFrame.getEntryPoints().getAnewarrayMethod());
         os.writePOP(X86Register.ECX);
         Variable lhs = quad.getLHS();
@@ -4422,13 +4449,13 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
         Operand[] sizes = quad.getSizes();
         Label label = getInstrLabel(quad.getAddress());
         X86CompilerHelper helper = stackFrame.getHelper();
+        // ANCHOR-L2-074 (CG-4c): ECX is caller-saved (L1A pool marks EBX/ESI
+        // callee-saved, ECX not); a live ECX-allocated value would not survive
+        // the call, so preserve it below the arguments (frame-shift reason).
+        os.writePUSH(X86Register.ECX);
         helper.writePushStaticsEntry(label, currentMethod.getDeclaringClass()); /* currentClass */
         os.writePUSH(10); /* type=int */
         os.writePUSH(sizes.length); /* elements */
-        // ANCHOR-L2-074 (CG-4c): ECX is caller-saved (L1A pool marks EBX/ESI
-        // callee-saved, ECX not); a live ECX-allocated value would not survive
-        // the call, so preserve it. EBX/ESI need nothing (JNode convention).
-        os.writePUSH(X86Register.ECX);
         callJavaMethod(stackFrame.getEntryPoints().getAllocPrimitiveArrayMethod());
         os.writePOP(X86Register.ECX);
         final GPR dimsr = SR1;
@@ -4459,6 +4486,9 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
                 throw new IllegalArgumentException();
             }
         }
+        // Preserve caller-saved ECX below the call arguments (the XCHG
+        // juggling above assumes the dims word on top; ECX goes under it).
+        os.writePUSH(X86Register.ECX);
         os.writePUSH(dimsr);
         VmConstClass clazz = quad.getComponentType();
         // Resolve the array class
@@ -4467,7 +4497,6 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
         os.writeXCHG(X86Register.ESP, 0, dimsr);
         os.writePUSH(dimsr); // dimensions[]
         // ANCHOR-L2-074 (CG-4c): preserve caller-saved ECX across the call.
-        os.writePUSH(X86Register.ECX);
         callJavaMethod(stackFrame.getEntryPoints().getAllocMultiArrayMethod());
         os.writePOP(X86Register.ECX);
         Variable lhs = quad.getLHS();
@@ -4570,7 +4599,8 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
             int resd = ((StackLocation) lhs.getLocation()).getDisplacement();
             os.writeLEA(X86Register.EDX, X86Register.EAX, X86Register.ECX, 8, arrayDataOffset);
             os.writeFLD64(X86Register.EDX, 0);
-            os.writeFSTP64(X86Register.EBP, resd);
+            // ANCHOR-L2-082: high-base spill convention (see DADD).
+            os.writeFSTP64(X86Register.EBP, resd - stackFrame.getHelper().SLOTSIZE);
         } else {
             // BYTE (signed), CHAR (unsigned), SHORT (signed) -> int result.
             os.writeLEA(X86Register.EDX, X86Register.EAX, X86Register.ECX, 1, arrayDataOffset);
@@ -4816,7 +4846,9 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
             } else {
             int vdisp = ((StackLocation) ((Variable) rhs).getLocation()).getDisplacement();
             os.writeLEA(X86Register.EDX, X86Register.EAX, X86Register.ECX, 8, arrayDataOffset);
-            os.writeFLD64(X86Register.EBP, vdisp);
+            // ANCHOR-L2-082: high-base spill convention (see DADD); the
+            // element itself stays lo-first (heap layout, like LONG above).
+            os.writeFLD64(X86Register.EBP, vdisp - stackFrame.getHelper().SLOTSIZE);
             os.writeFSTP64(X86Register.EDX, 0);
             }
         } else {
@@ -5129,11 +5161,11 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
         // Resolve the class
         Label label = getInstrLabel(quad.getAddress());
         writeResolveAndLoadClassToReg(clazz, SR1, label);
-        // Call SoftByteCodes#getClassForVmType
+        // Call SoftByteCodes#getClassForVmType (preserve ECX below the arg).
+        os.writePUSH(X86Register.ECX);
         os.writePUSH(SR1);
         // ANCHOR-L2-074 (CG-4c): EAX-result model + preserve caller-saved ECX
         // (shared invokeJavaMethod NPEs with L2's null stackMgr, B18).
-        os.writePUSH(X86Register.ECX);
         callJavaMethod(stackFrame.getEntryPoints().getGetClassForVmTypeMethod());
         os.writePOP(X86Register.ECX);
         Variable lhs = quad.getLHS();
@@ -5613,6 +5645,8 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
     public void generateCodeFor(MonitorenterQuad<T> quad) {
         checkLabel(quad.getAddress()); // ANCHOR-L2-00C: position this quad's label
         Operand op = quad.getOperand();
+        // Preserve ECX below the monitor argument (frame-shift reason).
+        os.writePUSH(X86Register.ECX);
         if (op.getAddressingMode() == REGISTER) {
             os.writePUSH((GPR) ((RegisterLocation) ((Variable) op).getLocation()).getRegister());
         } else if (op.getAddressingMode() == STACK) {
@@ -5623,7 +5657,6 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
         // ANCHOR-L2-077 (CG-4f): EAX-result model + ECX preserved (monitor
         // calls return normally; shared invokeJavaMethod happens to work for
         // void, but the uniform L2 shape is used).
-        os.writePUSH(X86Register.ECX);
         callJavaMethod(stackFrame.getEntryPoints().getMonitorEnterMethod());
         os.writePOP(X86Register.ECX);
     }
@@ -5632,6 +5665,8 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
     public void generateCodeFor(MonitorexitQuad<T> quad) {
         checkLabel(quad.getAddress()); // ANCHOR-L2-00C: position this quad's label
         Operand op = quad.getOperand();
+        // Preserve ECX below the monitor argument (frame-shift reason).
+        os.writePUSH(X86Register.ECX);
         if (op.getAddressingMode() == REGISTER) {
             os.writePUSH((GPR) ((RegisterLocation) ((Variable) op).getLocation()).getRegister());
         } else if (op.getAddressingMode() == STACK) {
@@ -5640,7 +5675,6 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
             throw new IllegalArgumentException();
         }
         // ANCHOR-L2-077 (CG-4f): see MonitorenterQuad above.
-        os.writePUSH(X86Register.ECX);
         callJavaMethod(stackFrame.getEntryPoints().getMonitorExitMethod());
         os.writePOP(X86Register.ECX);
     }
@@ -5651,12 +5685,12 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
         VmConstClass clazz = quad.getType();
         Label label = getInstrLabel(quad.getAddress());
         writeResolveAndLoadClassToReg(clazz, SR1, label);
-        /* Setup a call to SoftByteCodes.allocObject */
+        /* Setup a call to SoftByteCodes.allocObject (preserve ECX below args). */
+        os.writePUSH(X86Register.ECX);
         os.writePUSH(SR1); /* vmClass */
         os.writePUSH(-1); /* Size */
         // ANCHOR-L2-074 (CG-4c): EAX-result model + preserve caller-saved ECX
         // (shared invokeJavaMethod NPEs with L2's null stackMgr, B18).
-        os.writePUSH(X86Register.ECX);
         callJavaMethod(stackFrame.getEntryPoints().getAllocObjectMethod());
         os.writePOP(X86Register.ECX);
         Variable lhs = quad.getLHS();
@@ -6253,7 +6287,8 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
                     os.writeMOV(BITS32, X86Register.EBP, destd, SR1);
                 } else {
                     os.writeFLD64(refr, fieldOffset);
-                    os.writeFSTP64(X86Register.EBP, destd);
+                    // ANCHOR-L2-082: high-base spill convention (see DADD).
+                    os.writeFSTP64(X86Register.EBP, destd - stackFrame.getHelper().SLOTSIZE);
                 }
             } else if (ref.getAddressingMode() == STACK) {
                 int disp = ((StackLocation) ref.getLocation()).getDisplacement();
@@ -6265,7 +6300,8 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
                     os.writeMOV(BITS32, X86Register.EBP, destd, SR1);
                 } else {
                     os.writeFLD64(X86Register.EDX, fieldOffset);
-                    os.writeFSTP64(X86Register.EBP, destd);
+                    // ANCHOR-L2-082: high-base spill convention (see DADD).
+                    os.writeFSTP64(X86Register.EBP, destd - stackFrame.getHelper().SLOTSIZE);
                 }
             } else {
                 throw new IllegalArgumentException();
@@ -6464,7 +6500,9 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
                 os.writeMOV(BITS32, SR1, X86Register.EBP, vdisp);
                 os.writeMOV(BITS32, refrW, offset + 4, SR1);
             } else {
-                os.writeFLD64(X86Register.EBP, vdisp);
+                // ANCHOR-L2-082: high-base spill source (see DADD); the field
+                // table itself stays lo-first (matches the field loads).
+                os.writeFLD64(X86Register.EBP, vdisp - stackFrame.getHelper().SLOTSIZE);
                 os.writeFSTP64(refrW, offset);
             }
             // No barrier: long/double fields never hold references.
@@ -6473,9 +6511,9 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
 
     /**
      * Move a call result from EAX (+EDX for wide) to the lhs (ANCHOR-L2-076,
-     * CG-4e). Long spills keep halves at [d-SLOT]=LSB; double spills are
-     * qword-at-[d] (FSTP64 convention, like VarReturn). A wide result in a
-     * register is unreachable (never allocated).
+     * CG-4e). Wide spills keep halves at [d-SLOT]=LSB, [d]=MSB, for LONG and
+     * DOUBLE alike (ANCHOR-L2-082). A wide result in a register is
+     * unreachable (never allocated).
      */
     private void storeCallResult(Variable lhs) {
         if (lhs.getAddressingMode() == REGISTER) {
@@ -6494,9 +6532,10 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
                     disp - stackFrame.getHelper().SLOTSIZE, GPR.EAX);
                 os.writeMOV(X86Constants.BITS32, X86Register.EBP, disp, GPR.EDX);
             } else if (lhs.getType() == Operand.DOUBLE) {
-                os.writeMOV(X86Constants.BITS32, X86Register.EBP, disp, GPR.EAX);
+                // ANCHOR-L2-082: same halves layout as LONG (see DADD).
                 os.writeMOV(X86Constants.BITS32, X86Register.EBP,
-                    disp + stackFrame.getHelper().SLOTSIZE, GPR.EDX);
+                    disp - stackFrame.getHelper().SLOTSIZE, GPR.EAX);
+                os.writeMOV(X86Constants.BITS32, X86Register.EBP, disp, GPR.EDX);
             } else {
                 os.writeMOV(X86Constants.BITS32, X86Register.EBP, disp, GPR.EAX);
             }
@@ -6517,10 +6556,11 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
             }
 
             //dropParameters(sm, true);
+            // Preserve ECX below the arguments (frame-shift reason).
+            os.writePUSH(X86Register.ECX);
             writeParameters(quad);
             // Call the methods code from the statics table (EAX-result model;
             // ECX is caller-saved, ANCHOR-L2-076).
-            os.writePUSH(X86Register.ECX);
             callJavaMethod(sm);
             os.writePOP(X86Register.ECX);
             // Result is already on the stack.
@@ -6546,9 +6586,10 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
             }
 
             //dropParameters(sm, true);
+            // Preserve ECX below the arguments (frame-shift reason).
+            os.writePUSH(X86Register.ECX);
             writeParameters(quad);
             // Call the methods code from the statics table (ECX preserved).
-            os.writePUSH(X86Register.ECX);
             callJavaMethod(sm);
             os.writePOP(X86Register.ECX);
             // Result is already on the stack.
@@ -6707,11 +6748,12 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
             // ANCHOR-L2-076 (CG-4e): fail loud, never silently skip.
             throw new IllegalArgumentException("L2 magic not implemented: " + methodRef.getName());
         } else {
+            // Preserve ECX below the arguments (frame-shift reason).
+            os.writePUSH(X86Register.ECX);
             writeParameters(quad);
             //todo handle return types
             final int offset = stackFrame.getHelper().getSharedStaticsOffset(method);
             // ECX is caller-saved across the call (ANCHOR-L2-076).
-            os.writePUSH(X86Register.ECX);
             os.writeCALL(stackFrame.getHelper().STATICS, offset);
             os.writePOP(X86Register.ECX);
             Variable lhs = quad.getLHS();
@@ -6729,10 +6771,11 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
             // ANCHOR-L2-076 (CG-4e): fail loud, never silently skip.
             throw new IllegalArgumentException("L2 magic not implemented: " + methodRef.getName());
         } else {
+            // Preserve ECX below the arguments (frame-shift reason).
+            os.writePUSH(X86Register.ECX);
             writeParameters(quad);
             final int offset = stackFrame.getHelper().getSharedStaticsOffset(method);
             // ECX is caller-saved across the call (ANCHOR-L2-076).
-            os.writePUSH(X86Register.ECX);
             os.writeCALL(stackFrame.getHelper().STATICS, offset);
             os.writePOP(X86Register.ECX);
         }
@@ -6823,10 +6866,11 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
                     os.writePUSH(GPR.EBP, disp);
                     os.writePUSH(GPR.EBP, disp - stackFrame.getHelper().SLOTSIZE);
                 } else if (operand.getType() == Operand.DOUBLE) {
-                    // ANCHOR-L2-076 (CG-4e): doubles live qword-at-disp (high
-                    // half second); the old code pushed a single slot.
-                    os.writePUSH(GPR.EBP, disp + stackFrame.getHelper().SLOTSIZE);
+                    // ANCHOR-L2-082: high-base convention (see DADD): high
+                    // half at [disp] pushed first, low half at [disp-4]
+                    // second -- same order as the LONG path above.
                     os.writePUSH(GPR.EBP, disp);
+                    os.writePUSH(GPR.EBP, disp - stackFrame.getHelper().SLOTSIZE);
                 } else {
                     os.writePUSH(GPR.EBP, disp);
                 }

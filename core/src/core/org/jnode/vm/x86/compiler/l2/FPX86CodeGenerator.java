@@ -224,11 +224,10 @@ public class FPX86CodeGenerator<T> {
 //                os.writeLEA(X86Register.ESP, X86Register.ESP, context.stackFrame.getHelper().SLOTSIZE);
 //                break;
             case STACK:
-                // Doubles live qword-at-disp (FSTP64 convention, like every
-                // other double emitter); the old code subtracted a SLOTSIZE
-                // here, reading a shifted 8 bytes (review fix).
+                // ANCHOR-L2-082: high-base convention (see DADD in
+                // GenericX86CodeGenerator): the qword base is disp-4.
                 int displacement = ((StackLocation) ((Variable) operand).getLocation()).getDisplacement();
-                os.writeFLD64(X86Register.EBP, displacement);
+                os.writeFLD64(X86Register.EBP, displacement - context.stackFrame.getHelper().SLOTSIZE);
                 break;
             default:
                 throw new IllegalArgumentException("Illegal addressing mode: " + addressingMode);
