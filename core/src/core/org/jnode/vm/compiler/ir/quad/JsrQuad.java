@@ -34,17 +34,41 @@ import org.jnode.vm.compiler.ir.Variable;
  */
 public class JsrQuad<T> extends AssignQuad<T> {
     private final int targetAddress;
+    private final IRBasicBlock<T> targetBlock;
 
     public JsrQuad(int address, IRBasicBlock<T> block, int lhsIndex, int targetAddress) {
         super(address, block, lhsIndex);
         this.targetAddress = targetAddress;
+        // ANCHOR-L2-083: mirror BranchQuad -- resolve the subroutine entry
+        // block now (successors are finder-wired by translation time) and
+        // read its CURRENT startPC at emission. The raw bytecode address
+        // goes stale through fixupAddresses renumbering (silent misjump or
+        // unpositioned label); the block link stays valid.
+        IRBasicBlock<T> found = null;
+        for (IRBasicBlock<T> succ : block.getSuccessors()) {
+            if (succ.getStartPC() == targetAddress) {
+                found = succ;
+                break;
+            }
+        }
+        if (found == null) {
+            throw new AssertionError("unable to find jsr target block!");
+        }
+        this.targetBlock = found;
     }
 
     /**
-     * @return the bytecode address of the subroutine entry
+     * @return the bytecode address of the subroutine entry (construction-time)
      */
     public int getTargetAddress() {
         return targetAddress;
+    }
+
+    /**
+     * @return the subroutine entry block's current start address (emission-time)
+     */
+    public int getTargetBlockStartPC() {
+        return targetBlock.getStartPC();
     }
 
     @Override

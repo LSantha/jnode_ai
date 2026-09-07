@@ -380,10 +380,13 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
         } else {
             throw new IllegalArgumentException();
         }
-        if (quad.getTargetAddress() < quad.getAddress()) {
+        // ANCHOR-L2-083: jump to the target block's CURRENT startPC, not the
+        // stale bytecode address (fixupAddresses renumbers quads). Both sides
+        // are post-fixup here, so the back-edge test stays valid.
+        if (quad.getTargetBlockStartPC() < quad.getAddress()) {
             stackFrame.getHelper().writeYieldPoint(getInstrLabel(quad.getAddress()));
         }
-        os.writeJMP(getInstrLabel(quad.getTargetAddress()));
+        os.writeJMP(getInstrLabel(quad.getTargetBlockStartPC()));
     }
 
     @Override
@@ -2427,6 +2430,11 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
 
             case LCMP: {
                 // ANCHOR-L2-061 (CG-3): long compare, int result to register.
+                // 32-bit EBP-frame shape only; fail loud on 64-bit like the
+                // sibling shapes (round-2 review).
+                if (!os.isCode32()) {
+                    throw new IllegalArgumentException("LCMP RSS 64-bit deferred (CG-5)");
+                }
                 final Label ltLabel = anonLabel("lcmplt");
                 final Label gtLabel = anonLabel("lcmpgt");
                 final Label endLabel = anonLabel("lcmpend");
@@ -4858,7 +4866,10 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
             if (rhs.getAddressingMode() == REGISTER) {
                 GPR valr = (GPR) ((RegisterLocation) ((Variable) rhs).getLocation()).getRegister();
                 if (size == BYTESIZE) {
-                    os.writeMOV(BITS8, X86Register.EDX, 0, valr);
+                    // ANCHOR-L2-084: byte stores need a low-byte source (no
+                    // SIL/DIL pre-REX); route ESI/EDI/EBP/ESP via SR1 (EAX).
+                    os.writeMOV(BITS32, SR1, valr);
+                    os.writeMOV(BITS8, X86Register.EDX, 0, SR1);
                 } else {
                     os.writeMOV(BITS16, X86Register.EDX, 0, valr);
                 }
@@ -6354,8 +6365,11 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
                         if (val.getAddressingMode() == CONSTANT) {
                             os.writeMOV_Const(BITS8, refr, offset, ((IntConstant) val).getValue());
                         } else if (val.getAddressingMode() == REGISTER) {
-                            os.writeMOV(BITS8, refr, offset,
+                            // ANCHOR-L2-084: byte source via SR1 (EAX); the
+                            // value register may lack a low byte (ESI/...).
+                            os.writeMOV(BITS32, SR1,
                                 (GPR) ((RegisterLocation) ((Variable) val).getLocation()).getRegister());
+                            os.writeMOV(BITS8, refr, offset, SR1);
                         } else if (val.getAddressingMode() == STACK) {
                             os.writeMOV(BITS32, SR1, X86Register.EBP,
                                 ((StackLocation) ((Variable) val).getLocation()).getDisplacement());
@@ -6369,9 +6383,15 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
                             os.writeMOV(BITS32, SR1, X86Register.EBP, disp);
                             os.writeMOV_Const(BITS8, SR1, offset, ((IntConstant) val).getValue());
                         } else if (val.getAddressingMode() == REGISTER) {
+                            // ANCHOR-L2-084: SR1 holds the ref here; use a
+                            // pushed scratch with a low byte (EBX/EAX).
+                            GPR sr2b = X86Register.EBX;
+                            os.writePUSH(sr2b);
                             os.writeMOV(BITS32, SR1, X86Register.EBP, disp);
-                            os.writeMOV(BITS8, SR1, offset,
+                            os.writeMOV(BITS32, sr2b,
                                 (GPR) ((RegisterLocation) ((Variable) val).getLocation()).getRegister());
+                            os.writeMOV(BITS8, SR1, offset, sr2b);
+                            os.writePOP(sr2b);
                         } else if (val.getAddressingMode() == STACK) {
                             GPR sr2 = SR1 == X86Register.EAX ? X86Register.EBX : X86Register.EAX;
                             os.writePUSH(sr2);

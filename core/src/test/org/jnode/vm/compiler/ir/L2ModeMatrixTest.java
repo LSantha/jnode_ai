@@ -41,8 +41,6 @@ import org.jnode.vm.compiler.ir.quad.JsrQuad;
 import org.jnode.vm.compiler.ir.quad.RetQuad;
 import org.jnode.vm.compiler.ir.quad.UnaryOperation;
 import org.jnode.vm.compiler.ir.quad.UnaryQuad;
-import org.jnode.vm.compiler.ir.quad.UnaryOperation;
-import org.jnode.vm.compiler.ir.quad.UnaryQuad;
 import org.jnode.vm.facade.TypeSizeInfo;
 import org.jnode.vm.facade.VmUtils;
 import org.jnode.vm.x86.VmX86Architecture32;
@@ -407,6 +405,9 @@ public class L2ModeMatrixTest {
         StackVariable lhs = new StackVariable(JvmType.INT, 0);
         lhs.setLocation(new StackLocation(-8));
         IRBasicBlock block = jsrBlock(0, lhs);
+        // ANCHOR-L2-083: the target block must be wired (production blocks
+        // come finder-wired; the ctor resolves it like BranchQuad).
+        block.addSuccessor(new IRBasicBlock(7));
         JsrQuad jsr = new JsrQuad(0, block, 0, 7);
         jsr.generateCode(h.cg);
         String t = h.text();
