@@ -87,6 +87,24 @@ public class L2PipelineTest {
         cpuId = L2TestVm.getCpuId();
     }
 
+    /**
+     * Classpath for synthetic loaders: probe dir plus the standard roots.
+     * ANCHOR-L2-087: local/classlib is a gitignored developer artifact;
+     * fall back to the packed jar on fresh checkouts (CI).
+     */
+    private static java.net.URL[] classlibUrls(java.io.File dir) throws Exception {
+        java.io.File localClasslib = new java.io.File("local/classlib");
+        java.net.URL classlibUrl;
+        if (localClasslib.isDirectory()) {
+            classlibUrl = localClasslib.toURL();
+        } else {
+            classlibUrl = new java.net.URL("jar:"
+                + new java.io.File("all/lib/classlib.jar").toURL().toString() + "!/");
+        }
+        return new java.net.URL[]{dir.toURL(), new java.io.File("core/build/classes").toURL(),
+            new java.io.File("distr/build/classes").toURL(), classlibUrl};
+    }
+
     private static VmMethod findMethod(String name) throws Exception {
         VmType type = loader.loadClass("org.jnode.vm.compiler.ir.PrimitiveTest", true);
         int n = type.getNoDeclaredMethods();
@@ -367,9 +385,7 @@ public class L2PipelineTest {
         fos.write(JsrProbeBuilder.build());
         fos.close();
         VmSystemClassLoader child = new VmSystemClassLoader(
-            new java.net.URL[]{dir.toURL(), new java.io.File("core/build/classes").toURL(),
-                new java.io.File("distr/build/classes").toURL(),
-                new java.io.File("local/classlib").toURL()},
+            classlibUrls(dir),
             loader.getArchitecture());
         VmType type = child.loadClass("JsrProbe", true);
         VmMethod found = null;

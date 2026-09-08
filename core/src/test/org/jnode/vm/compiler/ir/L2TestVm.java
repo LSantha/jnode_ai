@@ -50,10 +50,23 @@ public final class L2TestVm {
         }
         String root = System.getProperty("jnode.root", ".");
         VmX86Architecture32 arch = new VmX86Architecture32();
+        // ANCHOR-L2-087: local/classlib is a gitignored developer artifact;
+        // fresh checkouts (CI) only have the packed all/lib/classlib.jar.
+        // Prefer the directory when present, else fall back to a jar: URL
+        // into the packed jar (a plain file: URL would resolve against it
+        // as a directory and miss every class).
+        File localClasslib = new File(root + "/local/classlib");
+        URL classlibUrl;
+        if (localClasslib.isDirectory()) {
+            classlibUrl = localClasslib.toURL();
+        } else {
+            classlibUrl = new URL("jar:"
+                + new File(root + "/all/lib/classlib.jar").toURL().toString() + "!/");
+        }
         loader = new VmSystemClassLoader(new URL[]{
             new File(root + "/core/build/classes").toURL(),
             new File(root + "/distr/build/classes").toURL(),
-            new File(root + "/local/classlib").toURL()}, arch);
+            classlibUrl}, arch);
         new VmImpl("?", arch, loader.getSharedStatics(), true, loader, null);
         VmType.initializeForBootImage(loader);
         cpuId = X86CpuID.createID("pentium");
