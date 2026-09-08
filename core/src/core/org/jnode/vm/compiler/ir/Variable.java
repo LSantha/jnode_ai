@@ -40,6 +40,14 @@ public abstract class Variable<T> extends Operand<T> implements Cloneable {
       */
     private int lastUseAddress;
 
+    /*
+     * The lowest address of any non-dead definition, recorded during the
+     * post-fixup liveness pass. A reassigned loop variable is live from its
+     * first definition, but assignQuad only remembers the last one; the
+     * allocator must span the whole hull (ANCHOR-L2-085).
+     */
+    private int firstDefAddress = Integer.MAX_VALUE;
+
     public Variable(int type, int index) {
         super(type);
         this.index = index;
@@ -107,6 +115,26 @@ public abstract class Variable<T> extends Operand<T> implements Cloneable {
         if (address > lastUseAddress) {
             lastUseAddress = address;
         }
+    }
+
+    /**
+     * Record a definition address; keeps the minimum. Called for every
+     * non-dead definition during the post-fixup liveness pass.
+     *
+     * @param address
+     */
+    public void noteDef(int address) {
+        if (address < firstDefAddress) {
+            firstDefAddress = address;
+        }
+    }
+
+    /**
+     * @return the lowest recorded definition address, or Integer.MAX_VALUE
+     *         when no definition was recorded (e.g. method arguments).
+     */
+    public int getFirstDefAddress() {
+        return firstDefAddress;
     }
 
     public Operand<T> simplify() {

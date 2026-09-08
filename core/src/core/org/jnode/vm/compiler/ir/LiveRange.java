@@ -30,7 +30,13 @@ public class LiveRange<T> implements Comparable<LiveRange<T>> {
 
     public LiveRange(Variable<T> v) {
         this.variable = v;
-        this.assignAddress = v.getAssignAddress();
+        int assign = v.getAssignAddress();
+        int first = v.getFirstDefAddress();
+        // ANCHOR-L2-085: span from the first definition (+1, matching the
+        // post-def convention of getAssignAddress). Straight-line variables
+        // are unaffected (first def + 1 == assign); loop-carried ones stop
+        // sharing registers across the loop.
+        this.assignAddress = (first != Integer.MAX_VALUE && first + 1 < assign) ? first + 1 : assign;
         this.lastUseAddress = v.getLastUseAddress();
     }
 
