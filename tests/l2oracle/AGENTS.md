@@ -90,7 +90,7 @@ One shell command per `$JAC` call (no chains around silent-long steps);
 ## Gotchas (paid for in full)
 
 - **Pipe wedge**: rapid `reset` cycles wedge the UART2 pipe server (conn-reset on every attach). Recover with full `poweroff` + `startvm`, never reset.
-- **UART1 pipe must be drained continuously** or the VM blocks on logging. File mode for normal runs; `kdb_mux.py` when KDB is needed: `nohup python3 kdb_mux.py &`, then `echo "W" > /tmp/kdb_cmd.fifo`, read `/tmp/kdb_resp.log`. Canonical copy in the `jnode-kdb-serial` skill (this one mirrors it); kill with `pkill -f "[k]db_mux.py"` (bracketed: plain pattern matches your own shell).
+- **UART1 pipe must be drained continuously** or the VM blocks on logging. File mode for normal runs; `kdb_mux.py` when KDB is needed: `nohup python3 kdb_mux.py &`, then `echo "W" > /tmp/kdb_cmd.fifo`, read `/tmp/kdb_resp.log`. Canonical copy in the `jnode-kdb-serial` skill (this one mirrors it); kill it by PID captured at launch (`... & echo $!`), never by `pkill -f` with a pattern that also appears bare in your own command (file paths, class names) — that kills your shell.
 - **Quarantined**: `dstoreVar_d` (variable double store into a double[] param) wedges the shell under L2 — loop-free disassembly, cause open. Case commented out in `CASES`; probes retained.
 - **Deferred**: virtual/interface dispatch ECX frames (SP-math shapes), jsr runtime probe (needs hand-built bytecode), `FREM`/`DREM` non-SSS shapes, 64-bit (CG-5).
 
