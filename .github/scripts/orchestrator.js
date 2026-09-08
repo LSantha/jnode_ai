@@ -1,16 +1,10 @@
 module.exports = async ({ github, context, core }) => {
-  // Helper to trigger a task
-  async function triggerTask(issueNumber, message = "/oc Please proceed with this task.") {
-    core.info(`Triggering task #${issueNumber} via comment...`);
-    await github.rest.issues.createComment({
-      owner: context.repo.owner,
-      repo: context.repo.repo,
-      issue_number: issueNumber,
-      body: message
-    });
-  }
+  const createHelpers = require('./orchestrator-helpers.js');
+  const h = createHelpers({ github, context, core });
+  const { triggerTask, findPRForIssue, getReviewPrompt, getAgentReviewVerdict,
+          needsHumanReview, isBotUser, mergePR, COMPLETION_LABELS, SHORT_CIRCUIT_LABELS } = h;
 
-  // --- Multi-Step Orchestrator Helpers ---
+  // --- Multi-Step Orchestrator Helpers (orchestrator-specific, not shared) ---
   function isMultiStepTask(task) {
     return typeof task === 'object' && task !== null;
   }
@@ -31,81 +25,6 @@ module.exports = async ({ github, context, core }) => {
     };
   }
 
-  async function findPRForIssue(issueNumber) {
-    const pulls = await github.rest.pulls.list({
-      owner: context.repo.owner,
-      repo: context.repo.repo,
-      state: 'open',
-      per_page: 50
-    });
-    for (const pr of pulls.data) {
-      if (pr.head.ref.startsWith(`opencode/issue${issueNumber}-`) || (pr.body && pr.body.includes(`Closes #${issueNumber}`))) {
-        return pr.number;
-      }
-    }
-    return null;
-  }
-
-  function getReviewPrompt() {
-    return '/oc review\n\nYou are reviewing a pull request for the orchestrator. Your final line must be exactly one of:\nVerdict: approve\nVerdict: request-changes\n\nUse "Verdict: request-changes" if the PR needs code changes. Use "Verdict: approve" only if the PR is correct and ready for the next orchestrator phase.';
-  }
-
-  async function getAgentReviewVerdict(prNumber) {
-    const comments = await github.rest.issues.listComments({
-      owner: context.repo.owner,
-      repo: context.repo.repo,
-      issue_number: prNumber,
-      per_page: 50
-    });
-    // Search backwards for the latest verdict
-    for (let i = comments.data.length - 1; i >= 0; i--) {
-      const body = comments.data[i].body || '';
-      if (body.includes('Verdict: approve')) return 'approve';
-      if (body.includes('Verdict: request-changes')) return 'request-changes';
-    }
-    return null;
-  }
-
-  async function needsHumanReview(issueNumber) {
-    const issue = await github.rest.issues.get({
-      owner: context.repo.owner,
-      repo: context.repo.repo,
-      issue_number: issueNumber
-    });
-    const labels = (issue.data.labels || []).map(l => (typeof l === 'string') ? l : l.name);
-    return !labels.includes('auto-merge');
-  }
-
-  function isBotUser(user) {
-    return !!user && ((user.type || '').toLowerCase() === 'bot' ||
-      (user.login || '').includes('[bot]') ||
-      (user.login || '').startsWith('app/'));
-  }
-
-  async function mergePR(prNumber) {
-    core.info(`Merging PR #${prNumber}...`);
-    const pr = await github.rest.pulls.get({
-      owner: context.repo.owner,
-      repo: context.repo.repo,
-      pull_number: prNumber
-    });
-    await github.rest.pulls.merge({
-      owner: context.repo.owner,
-      repo: context.repo.repo,
-      pull_number: prNumber,
-      merge_method: 'squash'
-    });
-    try {
-      await github.rest.git.deleteRef({
-        owner: context.repo.owner,
-        repo: context.repo.repo,
-        ref: `heads/${pr.data.head.ref}`
-      });
-    } catch (e) {
-      core.warning(`Could not delete branch ${pr.data.head.ref}: ${e.message}`);
-    }
-  }
-  // --- End Helpers ---
 
   // Helper to render a 20-char ASCII progress bar
   function renderBar(percent) {
@@ -462,8 +381,7 @@ module.exports = async ({ github, context, core }) => {
           owner: context.repo.owner, repo: context.repo.repo, issue_number: tNum
         });
         const issueLabels = (currentIssue.data.labels || []).map(l => (typeof l === 'string') ? l : l.name);
-        const completionLabels = ['agent/done', 'agent/investigated', 'agent/skip', 'agent/blocked', 'agent/needs-info'];
-        const isComplete = currentIssue.data.state === 'closed' || completionLabels.some(l => issueLabels.includes(l));
+        const isComplete = currentIssue.data.state === 'closed' || COMPLETION_LABELS.some(l => issueLabels.includes(l));
 
         if (conclusion === 'success' && isComplete) {
           core.info(`Task #${tNum} succeeded (one-shot)!`);
@@ -493,7 +411,7 @@ module.exports = async ({ github, context, core }) => {
             });
             const labels = (currentIssue.data.labels || []).map(l => l.name);
             if (!phaseFailed) {
-              if (labels.includes('agent/skip') || labels.includes('agent/needs-info') || labels.includes('agent/investigated') || labels.includes('agent/blocked')) {
+              if (SHORT_CIRCUIT_LABELS.some(l => labels.includes(l))) {
                 // Short-circuit completion
                 state.completed.push(task.issue);
                 isDone = true;
@@ -523,13 +441,13 @@ module.exports = async ({ github, context, core }) => {
             });
             const labels = (currentPR.data.labels || []).map(l => (typeof l === 'string') ? l : l.name);
             if (!phaseFailed) {
-              if (labels.includes('agent/skip') || labels.includes('agent/needs-info') || labels.includes('agent/investigated') || labels.includes('agent/blocked')) {
+              if (SHORT_CIRCUIT_LABELS.some(l => labels.includes(l))) {
                 state.completed.push(task.issue);
                 isDone = true;
               } else {
                 const verdict = await getAgentReviewVerdict(task.pr);
                 if (verdict === 'approve') {
-                  const needsHuman = await needsHumanReview(task.issue);
+                  const needsHuman = await needsHumanReview(task.issue, task.pr);
                   if (needsHuman) {
                     task.phase = 'HUMAN_REVIEW';
                     task.retries = 0;
@@ -567,7 +485,7 @@ module.exports = async ({ github, context, core }) => {
             });
             const labels = (currentPR.data.labels || []).map(l => (typeof l === 'string') ? l : l.name);
             if (!phaseFailed) {
-              if (labels.includes('agent/skip') || labels.includes('agent/needs-info') || labels.includes('agent/investigated') || labels.includes('agent/blocked')) {
+              if (SHORT_CIRCUIT_LABELS.some(l => labels.includes(l))) {
                 state.completed.push(task.issue);
                 isDone = true;
               } else {
@@ -629,6 +547,12 @@ module.exports = async ({ github, context, core }) => {
       const reviewer = context.payload.review.user || {};
       if (isBotUser(reviewer)) {
         core.info("Ignoring review from bot identity.");
+        return;
+      }
+
+      const assoc = context.payload.review.author_association;
+      if (assoc && !['COLLABORATOR', 'MEMBER', 'OWNER'].includes(assoc)) {
+        core.info(`Ignoring review from non-collaborator: ${assoc}`);
         return;
       }
       

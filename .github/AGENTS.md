@@ -7,10 +7,13 @@ CI infrastructure, agent automation, and label conventions for JNode.
 | Path | Purpose |
 |------|---------|
 | `workflows/opencode.yml` | Single-issue agent runner. Triggered by `/oc <verb>` comments. |
+| `workflows/ticket-runner.yml` | Single-issue multi-turn runner. Triggered by `/run` or by opencode completion. |
 | `workflows/orchestrator.yml` | Multi-task batch runner. Triggered by `/orchestrate` or by opencode completion. |
 | `workflows/ant.yml` | Plain Java CI: build + test + QEMU boot (32-bit and 64-bit) on every push/PR to master. |
 | `scripts/opencode-post-step.js` | JS post-step run by opencode.yml after the agent exits. Applies `agent/*` label, closes investigations. |
 | `scripts/orchestrator.js` | JS state machine run by orchestrator.yml. Drives the queue, updates the master issue, triggers child tasks. |
+| `scripts/ticket-runner.js` | JS state machine run by ticket-runner.yml. Drives single-ticket multi-turn DEV -> REVIEW -> FEEDBACK -> MERGE loop. |
+| `scripts/orchestrator-helpers.js` | Shared GitHub REST helper functions used by orchestrator.js and ticket-runner.js. |
 | `scripts/sync-labels.js` | One-shot label bootstrap. Idempotent. Use `--dry-run` to preview. |
 | `qemu/jnode.properties` | CI build profile (used by opencode.yml and ant.yml). |
 | `qemu/menu-ci-32.lst` | GRUB menu for CI 32-bit boot test (jnode32.gz + tests.jgz). |
@@ -21,6 +24,7 @@ CI infrastructure, agent automation, and label conventions for JNode.
 | Workflow | Trigger | Job-level `if` |
 |----------|---------|----------------|
 | `opencode` | `issue_comment: [created]` and `pull_request_review_comment: [created]` | body matches `/oc ` (prefix or preceded by space) AND author is COLLABORATOR / MEMBER / OWNER |
+| `ticket-runner` | `issue_comment: [created]` (body starts with `/run`), `workflow_run: [opencode, completed]`, `pull_request_review: [submitted]` | startsWith `/run` OR `workflow_run` OR `pull_request_review` |
 | `orchestrator` | `issue_comment: [created]` (body starts with `/orchestrate`) OR `workflow_run: [opencode, completed]` | event is `issue_comment` with `/orchestrate` OR event is `workflow_run` |
 | `ant` (Java CI) | `push: [master]`, `pull_request: [master]` | always |
 
@@ -89,7 +93,7 @@ State lives in the master issue body as a hidden HTML comment:
 - **DEV**: Initial agent run. Agent creates a PR. Transition to `REVIEW`.
 - **REVIEW**: Agent reviews the PR. The orchestrator posts `/oc review` with explicit instructions requiring the final line to be exactly `Verdict: approve` or `Verdict: request-changes`. If approved and no `auto-merge` label, transition to `HUMAN_REVIEW`. If `auto-merge`, transition to `MERGE`. If changes requested, transition to `FEEDBACK`.
 - **FEEDBACK**: Agent addresses review comments. Transition to `REVIEW`.
-- **HUMAN_REVIEW**: Orchestrator waits for native GitHub PR review from a human maintainer. Approval → `MERGE`, Request changes → `FEEDBACK`.
+- **HUMAN_REVIEW**: Orchestrator waits for native GitHub PR review from a human maintainer. Approval -> `MERGE`, Request changes -> `FEEDBACK`.
 - **MERGE**: Orchestrator squashes the PR and deletes the branch inline.
 
 Initialization: on first run, the orchestrator parses the master issue's markdown checklist (`- [ ] #N`, `- [x] #N`, `- [FAIL] #N`) and builds initial state. Subsequent runs load from the hidden JSON block. If `state.order` is empty (older master), it is backfilled from status-grouped arrays.
@@ -97,6 +101,71 @@ Initialization: on first run, the orchestrator parses the master issue's markdow
 Self-healing guard: if the orchestrator wakes up and the `current_task` is already complete (closed or has completion label), it advances immediately and exits. This handles the case where the agent finished but the orchestrator was locked out.
 
 Locking: `orchestrator/locked` label is added at the start of every run and removed in `finally`. If a second run sees the lock, it exits silently (concurrency group `orchestrator-concurrency` enforces single-runner).
+
+## Per-Ticket Runner (ticket-runner.js)
+
+Drives an individual issue through the same multi-turn loop as the orchestrator, without requiring a master issue or queue.
+
+```
+                  +--------------------+
+     /run ------> |  ticket-runner     | ---> posts /oc on issue (DEV phase)
+                  +--------------------+
+                            ^
+                            | workflow_run (opencode completed)
+                            v
+                  +--------------------+
+                  |  ticket-runner     | ---> finds PR, posts /oc review prompt (REVIEW phase)
+                  +--------------------+
+                            ^
+                            | workflow_run (verdict returned)
+                            v
+                  +--------------------+
+                  |  ticket-runner     | ---> verdict: request-changes -> /oc fix (FEEDBACK phase)
+                  +--------------------+      verdict: approve + auto-merge -> squash merge
+                            ^                 verdict: approve -> wait for human (HUMAN_REVIEW phase)
+                            |
+                  pull_request_review (human approved / changes requested)
+```
+
+State is stored in the issue body as a markdown status block and a hidden JSON comment:
+
+```html
+---
+###  Ticket Runner Status
+
+| Field | Value |
+| --- | --- |
+| **Phase** | DEV |
+| **Turn** | 0/3 |
+| **Retries** | 0/3 |
+| **PR** | - |
+| **Started** | 2026-09-06T22:00:00.000Z |
+
+<!-- TICKET_RUNNER_STATE:
+{
+  "phase": "DEV",
+  "pr": null,
+  "turn": 0,
+  "max_turns": 3,
+  "retries": 0,
+  "started": "2026-09-06T22:00:00.000Z",
+  "history": []
+}
+-->
+```
+
+### Commands and Flags
+
+- `/run`: Start a new multi-turn run, or re-trigger an existing run that stalled.
+- `/run --turns <N>`: Start with custom turn limit (default: 3).
+- `/run --reset` or `/run --fresh`: Reset state and start fresh even if a run was already in progress or completed.
+
+### Key Behaviors
+
+- **Guards**: Refuses `/run` if posted on a PR (direct `/oc` should be used instead), or if the issue is managed by the orchestrator (either the master issue itself or an issue currently queued in an active `IN_PROGRESS` master issue).
+- **Concurrency**: Grouped per issue/PR for comment and PR review triggers (`ticket-runner-<id>`). For `workflow_run` events, GitHub Actions does not expose the target issue in concurrency expressions, so runs are keyed by `workflow_run.id`. Parallel completions touching the same issue are rare and self-heal on the next turn or manual `/run`.
+- **Human Review**: If the issue does not have the `auto-merge` label, successful agent review transitions to `HUMAN_REVIEW`. Human approval via the GitHub PR Review UI triggers automatic squash merge and closes the issue.
+- **Retries and Turn Limits**: Up to 3 retries per failed phase. Up to `max_turns` review feedback iterations before marking the issue with `agent/failed`.
 
 ## Label System
 
@@ -129,7 +198,7 @@ Three families (color-coded). `sync-labels.js` ensures they exist.
 | `agent/duplicate` | Issue duplicates another; comment links the original |
 | `agent/investigated` | Agent posted an investigation report |
 
-Five of these (`done`, `investigated`, `skip`, `blocked`, `needs-info`) are recognized by the orchestrator as task completion signals.
+Six of these (`done`, `investigated`, `skip`, `blocked`, `needs-info`, `duplicate`) are recognized by the orchestrator and ticket runner as task completion signals (see `COMPLETION_LABELS` in `orchestrator-helpers.js`).
 
 ### area/*  (subsystem, green)
 
@@ -180,5 +249,5 @@ The `opencode-post-step.js` and `orchestrator.js` modules export a single async 
 Unit tests for the `.github/scripts/` logic use the native `node:test` framework (requires Node.js v18+). They do not require any external dependencies.
 
 ```bash
-node --test .github/scripts/tests/
+node --test .github/scripts/tests/*.test.js
 ```

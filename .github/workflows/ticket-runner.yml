@@ -1,0 +1,39 @@
+name: Ticket Runner
+
+concurrency:
+  group: ticket-runner-${{ github.event.issue.number || github.event.pull_request.number || github.event.workflow_run.id }}
+  cancel-in-progress: false
+
+on:
+  issue_comment:
+    types: [created]
+  workflow_run:
+    workflows: ["opencode"]
+    types: [completed]
+  pull_request_review:
+    types: [submitted]
+
+jobs:
+  run-ticket:
+    if: |
+      (github.event_name == 'issue_comment' && (github.event.comment.body == '/run' || startsWith(github.event.comment.body, '/run ') || startsWith(github.event.comment.body, '/run\n') || startsWith(github.event.comment.body, '/run\r'))) ||
+      (github.event_name == 'workflow_run') ||
+      (github.event_name == 'pull_request_review')
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+      pull-requests: write
+      contents: write
+      actions: read
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+      - name: Process Ticket Runner
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GH_PAT || secrets.GITHUB_TOKEN }}
+          script: |
+            const ticketRunner = require('./.github/scripts/ticket-runner.js');
+            await ticketRunner({ github, context, core });
