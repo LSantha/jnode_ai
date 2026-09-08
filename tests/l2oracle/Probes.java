@@ -1,0 +1,127 @@
+/*
+ * Copyright (C) 2003-2026 JNode.org
+ *
+ * This library is free software; you can redistribute it and/or modify it
+ * under the terms of the GNU Lesser General Public License as published
+ * by the Free Software Foundation; either version 2.1 of the License, or
+ * (at your option) any later version.
+ *
+ * This library is distributed in the hope that it will be useful, but
+ * WITHOUT ANY WARRANTY; without even the implied warranty of MERCHANTABILITY
+ * or FITNESS FOR A PARTICULAR PURPOSE. See the GNU Lesser General Public
+ * License for more details.
+ *
+ * You should have received a copy of the GNU Lesser General Public License
+ * along with this library; If not, write to the Free Software Foundation, Inc.,
+ * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+ */
+
+/**
+ * L2 oracle probes. CONSTRAINT: this class must contain NO try/catch,
+ * NO synchronized, NO finally — L2 does not emit exception-handler tables
+ * yet (CG-5 gap), so any method with handlers fails L2 compilation loud.
+ * Throwing (idiv/lrem by zero, iaastore bounds) is fine; catching is not.
+ * All methods are stateless statics; forcing compiles the whole class.
+ */
+public class Probes {
+
+    public static int add_iii(int a, int b) {
+        return a + b;
+    }
+
+    public static int sub_iii(int a, int b) {
+        return a - b;
+    }
+
+    public static int mul_iii(int a, int b) {
+        return a * b;
+    }
+
+    public static int div_iii(int a, int b) {
+        return a / b;
+    }
+
+    public static int rem_iii(int a, int b) {
+        return a % b;
+    }
+
+    public static int shl_iii(int a, int b) {
+        return a << b;
+    }
+
+    public static long add_jjj(long a, long b) {
+        return a + b;
+    }
+
+    public static long mul_jjj(long a, long b) {
+        return a * b;
+    }
+
+    public static long div_jjj(long a, long b) {
+        return a / b;
+    }
+
+    public static long rem_jjj(long a, long b) {
+        return a % b;
+    }
+
+    public static double add_ddd(double a, double b) {
+        return a + b;
+    }
+
+    public static double mul_ddd(double a, double b) {
+        return a * b;
+    }
+
+    public static double id_d(double a) {
+        return a;
+    }
+
+    public static double ret15_d() {
+        // Array barrier defeats const-folding (constant double return
+        // is a fail-loud gap); isolates const materialization + return.
+        double[] w = new double[1];
+        w[0] = 1.5;
+        return w[0];
+    }
+
+    public static double addCC_d() {
+        // Same, but with local arithmetic: isolates FADD from param read.
+        double[] w = new double[2];
+        w[0] = 1.5;
+        w[1] = 2.25;
+        return w[0] + w[1];
+    }
+
+    public static double dstoreVar_d(double[] a, int i, double v) {
+        // QUARANTINED (oracle-hang): invoking this under L2 wedges the VM
+        // (tight loop, KDB-starved; disasm is loop-free). Kept for diagnosis.
+        a[i] = v;
+        return a[i];
+    }
+
+    public static int istoreVar_aiii(int[] a, int i, int v) {
+        // Int twin of dstoreVar: bisects double-vs-store in the hang.
+        a[i] = v;
+        return a[i];
+    }
+
+    public static double dld_d(double[] a, int i) {
+        // Load-only twin: bisects store-vs-load in the hang.
+        return a[i];
+    }
+
+    public static int newDlen_d(int n) {
+        // Isolates double NEWARRAY from everything else.
+        double[] w = new double[n];
+        return w.length;
+    }
+
+    public static int sumA_aji(int[] a) {
+        int s = 0;
+        for (int i = 0; i < a.length; i++) {
+            s += a[i];
+        }
+        return s;
+    }
+}
