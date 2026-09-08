@@ -26,8 +26,32 @@ L2. Any diff beyond known pre-existing divergences is an L2 codegen bug.
 ```bash
 cd tests/l2oracle
 ./run_oracle.sh            # full loop into /tmp/l2oracle-ref
-./run_oracle.sh /jnode/tmp/ox2   # alternate VM workdir
+./run_oracle.sh /devices/hdb1/ox   # persistent disk (survives reboots/crashes)
 ```
+
+## Persistent oracle disk (this machine)
+
+`/devices/hdb1` (512MB VDI at `local/oracle-disk.vdi`, gitignored) persists
+across reboots and crashes — push once, and post-mortem result files survive.
+Prefer it over RAMFS `/jnode/tmp/ox` for all runs here.
+
+## Hotswap loop (no reboot for body-only compiler changes)
+
+The L2 backend runs from the boot image, but `VmVirtualMachine.redefineClass`
+is implemented and `sh build.sh hotswap` speaks JDI to it (validated live).
+Prerequisites: VM network (`ifconfig eth-pci(0,3,0) 192.168.1.10
+255.255.255.0`), JDWP listener (`debug -p 2000`), `jnode.debugger.host/port`
+in local `jnode.properties` (gitignored). Then: edit → `sh build.sh hotswap`
+(~2 min) → rerun probes. No-op redefines are safe; schema changes are not
+covered. New compiler code runs L1A-compiled (same logic).
+
+## local/ inventory (gitignored, per-machine)
+
+| Path | Purpose |
+|------|---------|
+| `local/l2oracle/conf-x86/` | grub menu copy, `default 1` (all plugins). Use with `sh build.sh -Dmy-conf.dir=<abs path>/local/l2oracle/conf-x86 <target>` for hands-off boots. |
+| `local/l2oracle/oracle-disk.vdi` | persistent JFAT oracle disk (see above). |
+| `local/classlib/` | unpacked classlib for test bootstrapping (populated at env setup). |
 
 ## Manual loop (when the script needs babysitting)
 
