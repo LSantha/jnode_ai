@@ -237,11 +237,18 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
     public void setSpilledVariables(Variable[] variables) {
         this.spilledVariables = variables;
         int n = spilledVariables.length;
-        int noArgs = currentMethod.getNoArguments();
+        // ANCHOR-L2-086: spill homes are JVM slots, not variables. Base the
+        // index on the argument SLOT count (getNoArguments undercounts wide
+        // args, aliasing temps over live arg slots) and advance 2 for wide
+        // values (one index per variable shared 4 bytes between co-live
+        // double temps; oracle: addCC garbage). Narrow temps are unaffected.
+        int slot = currentMethod.getArgSlotCount();
         for (int i = 0; i < n; i += 1) {
             Variable<X86Register> var = (Variable<X86Register>) spilledVariables[i];
             StackLocation loc = (StackLocation) var.getLocation();
-            loc.setDisplacement(stackFrame.getEbpOffset(typeSizeInfo, noArgs + i));
+            loc.setDisplacement(stackFrame.getEbpOffset(typeSizeInfo, slot));
+            int type = var.getType();
+            slot += (type == Operand.LONG || type == Operand.DOUBLE) ? 2 : 1;
         }
     }
 
