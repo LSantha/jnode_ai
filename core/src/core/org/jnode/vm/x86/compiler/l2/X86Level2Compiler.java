@@ -43,7 +43,9 @@ import org.jnode.vm.compiler.ir.LinearScanAllocator;
 import org.jnode.vm.compiler.ir.LiveRange;
 import org.jnode.vm.compiler.ir.StackLocation;
 import org.jnode.vm.compiler.ir.Variable;
+import org.jnode.vm.compiler.ir.quad.AssignQuad;
 import org.jnode.vm.compiler.ir.quad.Quad;
+import org.jnode.vm.compiler.ir.quad.VariableRefAssignQuad;
 import org.jnode.vm.facade.TypeSizeInfo;
 import org.jnode.vm.scheduler.VmProcessor;
 import org.jnode.vm.x86.X86CpuID;
@@ -206,6 +208,13 @@ public class X86Level2Compiler extends AbstractX86Compiler {
                 cfg.optimize();
                 cfg.removeUnusedVars();
                 cfg.deconstrucSSA();
+                // ANCHOR-L2-099: deSSA leaves `x = x` self-copies (slot-merged
+                // variables, e.g. a catch slot reused for a constant). They
+                // are no-ops; killing them lets this DCE cascade to defs kept
+                // alive only by their self-copy (e.g. a wide-constant def to
+                // a register-allocated slot-confused variable).
+                removeSelfCopies(cfg);
+                cfg.removeUnusedVars();
                 cfg.removeDefUseChains();
                 cfg.fixupAddresses();
 
@@ -227,6 +236,52 @@ public class X86Level2Compiler extends AbstractX86Compiler {
         }
 
         return cm;
+    }
+
+    /**
+     * Mark {@code x = x} self-copy quads dead. Same-variable copies are
+     * no-ops (the reg-reg backend already skips them); deSSA emits them for
+     * slot-merged variables and they can keep otherwise-dead defs alive.
+     * Public so the L2Dump dev tool mirrors the production pipeline.
+     */
+    public static void removeSelfCopies(IRControlFlowGraph cfg) {
+        for (IRBasicBlock b : ((Iterable<? extends IRBasicBlock>) cfg)) {
+            for (Quad q : (List<Quad>) b.getQuads()) {
+                if (q instanceof VariableRefAssignQuad && !q.isDeadCode()) {
+                    VariableRefAssignQuad vq = (VariableRefAssignQuad) q;
+                    Object[] refs = vq.getReferencedOps();
+                    if (refs != null && refs.length > 0 && refs[0] == vq.getLHS()) {
+                        q.setDeadCode(true);
+                        // The lhs assignQuad pointer may aim at this dead quad
+                        // (last doPass2 writer wins), which makes DCE skip the
+                        // variable outright. Repoint to another live def.
+                        Variable lhs = vq.getLHS();
+                        if (lhs.getAssignQuad() == q) {
+                            AssignQuad live = findLiveDef(cfg, lhs);
+                            if (live != null) {
+                                lhs.setAssignQuad(live);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /**
+     * Another live AssignQuad defining {@code v}, or null. Raw-type walk;
+     * used only to repair assignQuad pointers after self-copy removal.
+     */
+    private static AssignQuad findLiveDef(IRControlFlowGraph cfg, Variable v) {
+        for (IRBasicBlock b : ((Iterable<? extends IRBasicBlock>) cfg)) {
+            for (Quad q : (List<Quad>) b.getQuads()) {
+                if (!q.isDeadCode() && q instanceof AssignQuad
+                    && ((AssignQuad) q).getLHS() == v) {
+                    return (AssignQuad) q;
+                }
+            }
+        }
+        return null;
     }
 
     public static void initMethodArguments(VmMethod method, X86StackFrame stackFrame, TypeSizeInfo typeSizeInfo,

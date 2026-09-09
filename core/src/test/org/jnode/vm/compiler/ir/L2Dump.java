@@ -150,6 +150,8 @@ public class L2Dump {
             return;
         }
         cfg.deconstrucSSA();
+        X86Level2Compiler.removeSelfCopies(cfg);
+        cfg.removeUnusedVars();
         cfg.removeDefUseChains();
         cfg.fixupAddresses();
         if (args[args.length - 1].equals("--ir")) {
