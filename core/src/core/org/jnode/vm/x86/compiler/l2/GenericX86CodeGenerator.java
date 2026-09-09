@@ -986,7 +986,64 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
 
     public void generateBinaryOP(T reg1, Constant<T> c2,
                                  BinaryOperation operation, Constant<T> c3) {
+        // ANCHOR-L2-098: copy-prop substitutes int constants into binary uses
+        // (BinaryQuad.doPass2) without re-folding the use itself (e.g. count
+        // increments collapsing to `l = 2 + 1`), so const-const reaches
+        // emission. Fold here with the same Constant algebra the parse-time
+        // folder uses (BinaryQuad.compute); the result is identical by construction.
+        if (c2 instanceof IntConstant && c3 instanceof IntConstant) {
+            os.writeMOV_Const((GPR) reg1, foldIntConstants((IntConstant<T>) c2, operation,
+                (IntConstant<T>) c3));
+            return;
+        }
         throw new IllegalArgumentException("Constants should be folded");
+    }
+
+    /**
+     * Emission-time fold of an int const-const binary (ANCHOR-L2-098).
+     * Delegates to the Constant algebra so semantics match the parse-time
+     * folder exactly, including ArithmeticException on divide-by-zero.
+     */
+    private int foldIntConstants(IntConstant<T> c1, BinaryOperation operation, IntConstant<T> c2) {
+        Constant<T> r;
+        switch (operation) {
+            case IADD:
+                r = c1.iAdd(c2);
+                break;
+            case ISUB:
+                r = c1.iSub(c2);
+                break;
+            case IMUL:
+                r = c1.iMul(c2);
+                break;
+            case IDIV:
+                r = c1.iDiv(c2);
+                break;
+            case IREM:
+                r = c1.iRem(c2);
+                break;
+            case IAND:
+                r = c1.iAnd(c2);
+                break;
+            case IOR:
+                r = c1.iOr(c2);
+                break;
+            case IXOR:
+                r = c1.iXor(c2);
+                break;
+            case ISHL:
+                r = c1.iShl(c2);
+                break;
+            case ISHR:
+                r = c1.iShr(c2);
+                break;
+            case IUSHR:
+                r = c1.iUshr(c2);
+                break;
+            default:
+                throw new IllegalArgumentException("Constants should be folded");
+        }
+        return ((IntConstant<T>) r).getValue();
     }
 
     public void generateBinaryOP(T reg1, Constant<T> c2,
@@ -2505,6 +2562,13 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
     // / WE should not get to this method
     public void generateBinaryOP(int disp1, Constant<T> c2,
                                  BinaryOperation operation, Constant<T> c3) {
+        // ANCHOR-L2-098: same copy-prop const-const leak as the reg-lhs
+        // overload above; fold int consts, materialize to the spill slot.
+        if (c2 instanceof IntConstant && c3 instanceof IntConstant) {
+            os.writeMOV_Const(BITS32, X86Register.EBP, disp1, foldIntConstants(
+                (IntConstant<T>) c2, operation, (IntConstant<T>) c3));
+            return;
+        }
         throw new IllegalArgumentException("Constants should be folded");
     }
 
