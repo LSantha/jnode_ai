@@ -348,7 +348,10 @@ public class IRControlFlowGraph<T> implements Iterable<IRBasicBlock<T>> {
             List<IRBasicBlock<T>> predList = b.getPredecessors();
             if (predList.size() >= 2) {
                 for (IRBasicBlock<T> runner : predList) {
-                    while (runner != b.getIDominator()) {
+                    // ANCHOR-L2-096: null-safe walk. Blocks with no idom yet
+                    // (unreachable/handler entries) used to NPE climbing past
+                    // the root; stopping at null only affects those cases.
+                    while (runner != null && runner != b.getIDominator()) {
                         runner.addDominanceFrontier(b);
                         runner = runner.getIDominator();
                     }
