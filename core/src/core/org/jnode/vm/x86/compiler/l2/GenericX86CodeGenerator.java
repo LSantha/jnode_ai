@@ -6039,6 +6039,11 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
                             .getDisplacement();
                         os.writeMOV(BITS32, SR1, X86Register.EBP, disp);
                         stackFrame.getHelper().writePutStaticsEntry(curInstrLabel, SR1, sf);
+                    } else if (quad.getOperand().getAddressingMode() == CONSTANT
+                        && quad.getOperand() instanceof IntConstant) {
+                        // ANCHOR-L2-094: folded int/null constant via SR1.
+                        os.writeMOV_Const(SR1, ((IntConstant) quad.getOperand()).getValue());
+                        stackFrame.getHelper().writePutStaticsEntry(curInstrLabel, SR1, sf);
                     } else {
                         throw new IllegalArgumentException();
                     }
@@ -6055,6 +6060,12 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
                         os.writeMOV(BITS32, SR1, X86Register.EBP, disp);
                         stackFrame.getHelper().writePutStaticsEntry(curInstrLabel, SR1, sf,
                             X86Register.EDX);
+                    } else if (quad.getOperand().getAddressingMode() == CONSTANT
+                        && quad.getOperand() instanceof IntConstant) {
+                        // ANCHOR-L2-094: folded int/null constant via SR1.
+                        os.writeMOV_Const(SR1, ((IntConstant) quad.getOperand()).getValue());
+                        stackFrame.getHelper().writePutStaticsEntry(curInstrLabel, SR1, sf,
+                            X86Register.EDX);
                     } else {
                         throw new IllegalArgumentException();
                     }
@@ -6066,10 +6077,22 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
         } else {
             // ANCHOR-L2-075 (CG-4d): wide statics from spill halves.
             Operand val = quad.getOperand();
-            if (val.getAddressingMode() != STACK) {
+            if (val.getAddressingMode() == CONSTANT
+                && (val instanceof LongConstant || val instanceof DoubleConstant)) {
+                // ANCHOR-L2-095: folded wide constant (copy-prop/ldc); halves
+                // as immediates, low word first (long layout).
+                long bits;
+                if (val instanceof LongConstant) {
+                    bits = ((LongConstant) val).getValue();
+                } else {
+                    bits = Double.doubleToRawLongBits(((DoubleConstant) val).getValue());
+                }
+                os.writeMOV_Const(SR1, (int) (bits & 0xFFFFFFFFL));
+                os.writeMOV_Const(X86Register.EDX, (int) ((bits >>> 32) & 0xFFFFFFFFL));
+            } else if (val.getAddressingMode() != STACK) {
                 // Wide values always spill; a register here is unreachable.
                 throw new IllegalArgumentException("Wide static from register");
-            }
+            } else {
             int disp = ((StackLocation) ((Variable) val).getLocation()).getDisplacement();
             int dispLo = disp - stackFrame.getHelper().SLOTSIZE;
             os.writeMOV(BITS32, SR1, X86Register.EBP, dispLo);
@@ -6082,6 +6105,7 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
                 stackFrame.getHelper().writePutStaticsEntry64(curInstrLabel, SR1, X86Register.EDX,
                     (VmIsolatedStaticsEntry) sf, X86Register.EBX);
                 os.writePOP(X86Register.EBX);
+            }
             }
         }
 

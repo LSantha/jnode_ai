@@ -476,10 +476,10 @@ public class IRGenerator<T> extends BytecodeVisitor {
     }
 
     public void visit_dup() {
-        // dup requires a category 1 top (verifier-enforced; ANCHOR-L2-078).
-        if (isCategory2(getVariables()[stackOffset - 1].getType())) {
-            throw new IllegalArgumentException("dup of category 2 value");
-        }
+        // ANCHOR-L2-093: dup has a single form (top is category 1); the
+        // verifier guarantees it. The old category check read
+        // flow-insensitive slot types, so a stale wide type from an earlier
+        // occupant rejected legal narrow dups. Dropped, not weakened.
         int index = stackOffset;
         stackOffset -= 1;
         currentBlock.add(new VariableRefAssignQuad<T>(address, currentBlock, index, stackOffset));
@@ -521,11 +521,8 @@ public class IRGenerator<T> extends BytecodeVisitor {
 //        currentBlock.add(new VariableRefAssignQuad<T>(address, currentBlock, index - 1, stackOffset + 1));
 //        currentBlock.add(new VariableRefAssignQuad<T>(address, currentBlock, index, stackOffset - 1));
 //        stackOffset += 2;
-        // dup_x1 requires category 1 values (verifier-enforced; ANCHOR-L2-078).
-        if (isCategory2(getVariables()[stackOffset - 1].getType()) ||
-            isCategory2(getVariables()[stackOffset - 2].getType())) {
-            throw new IllegalArgumentException("dup_x1 of category 2 values");
-        }
+        // ANCHOR-L2-093: single form (verifier guarantees category 1);
+        // the slot-type check is dropped, see visit_dup.
         int index = stackOffset;
         stackOffset -= 1;
         currentBlock.add(new VariableRefAssignQuad<T>(address, currentBlock, index, stackOffset));
@@ -725,10 +722,8 @@ public class IRGenerator<T> extends BytecodeVisitor {
 
     public void visit_swap() {
         // [..., v2, v1] (both cat1) -> [..., v1, v2] (ANCHOR-L2-078.)
-        if (isCategory2(getVariables()[stackOffset - 1].getType()) ||
-            isCategory2(getVariables()[stackOffset - 2].getType())) {
-            throw new IllegalArgumentException("swap of category 2 values");
-        }
+        // ANCHOR-L2-093: single form, verifier-guaranteed; slot-type check
+        // dropped, see visit_dup.
         int index = stackOffset;
         stackOffset -= 1;
         currentBlock.add(new VariableRefAssignQuad<T>(address, currentBlock, index, stackOffset));
