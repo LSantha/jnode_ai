@@ -4706,7 +4706,10 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
         int scale = 4;
         if (quad.getInd().getAddressingMode() == CONSTANT) {
             IntConstant indr = (IntConstant) ind;
-            GPR resultr = (GPR) ((RegisterLocation) lhs.getLocation()).getRegister();
+            // ANCHOR-L2-092: constant indexes reach here with spilled results
+            // (the register-only shape below threw CCE); mirror it via SR1.
+            if (lhs.getAddressingMode() == REGISTER) {
+                GPR resultr = (GPR) ((RegisterLocation) lhs.getLocation()).getRegister();
 //            if (os.isCode64()) {
 //                final GPR64 idxr64 = (GPR64) eContext.getGPRPool().getRegisterInSameGroup(idxr, JvmType.LONG);
 //                os.writeMOVSXD(idxr64, (GPR32) idxr);
@@ -4719,6 +4722,23 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
             } else if (ref.getAddressingMode() == STACK) {
                 os.writeMOV(BITS32, SR1, X86Register.EBP, ((StackLocation) ref.getLocation()).getDisplacement());
                 os.writeMOV(BITS32, resultr, SR1, indr.getValue() * scale + arrayDataOffset);
+            } else {
+                throw new IllegalArgumentException();
+            }
+            } else if (lhs.getAddressingMode() == STACK) {
+                int rdisp = ((StackLocation) lhs.getLocation()).getDisplacement();
+                if (ref.getAddressingMode() == REGISTER) {
+                    GPR refr = (GPR) ((RegisterLocation) ref.getLocation()).getRegister();
+                    os.writeMOV(BITS32, SR1, refr, indr.getValue() * scale + arrayDataOffset);
+                    os.writeMOV(BITS32, X86Register.EBP, rdisp, SR1);
+                } else if (ref.getAddressingMode() == STACK) {
+                    os.writeMOV(BITS32, SR1, X86Register.EBP,
+                        ((StackLocation) ref.getLocation()).getDisplacement());
+                    os.writeMOV(BITS32, SR1, SR1, indr.getValue() * scale + arrayDataOffset);
+                    os.writeMOV(BITS32, X86Register.EBP, rdisp, SR1);
+                } else {
+                    throw new IllegalArgumentException();
+                }
             } else {
                 throw new IllegalArgumentException();
             }
