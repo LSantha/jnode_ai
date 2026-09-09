@@ -124,4 +124,76 @@ public class Probes {
         }
         return s;
     }
+
+    // -- virtual/interface dispatch (A1). Objects stay inside the probes
+    // so the reflective driver keeps its primitive-only signatures. --
+    static class VBase {
+        int base;
+        VBase(int b) {
+            base = b;
+        }
+        int add(int x) {
+            return base + x;
+        }
+    }
+
+    static class VSub extends VBase {
+        VSub(int b) {
+            super(b);
+        }
+        int add(int x) {
+            return base + x + 1;
+        }
+    }
+
+    static final class VFin {
+        int base;
+        VFin(int b) {
+            base = b;
+        }
+        final int add(int x) {
+            return base + x;
+        }
+    }
+
+    interface IOp {
+        int apply(int x);
+    }
+
+    static class IAdd implements IOp {
+        int base;
+        IAdd(int b) {
+            base = b;
+        }
+        public int apply(int x) {
+            return base + x;
+        }
+    }
+
+    public static int virt_base(int b, int x) {
+        VBase v = new VBase(b);
+        return v.add(x);
+    }
+
+    public static int newfield(int b) {
+        // Bisect: new + <init> + getfield, no virtual call. If this NPEs,
+        // the bug is in construction; if it passes, in dispatch.
+        VBase v = new VBase(b);
+        return v.base;
+    }    public static int virt_sub(int b, int x) {
+        // True dispatch: static type VBase, runtime type VSub.
+        VBase v = new VSub(b);
+        return v.add(x);
+    }
+
+    public static int virt_fin(int b, int x) {
+        // Final class: fast (non-VMT) path.
+        VFin v = new VFin(b);
+        return v.add(x);
+    }
+
+    public static int iface_add(int b, int x) {
+        IOp o = new IAdd(b);
+        return o.apply(x);
+    }
 }

@@ -6789,6 +6789,11 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
             // TODO: port to ORP style (http://orp.sourceforge.net/)
 //            vstack.push(eContext);
 
+            // ANCHOR-L2-101: ECX goes BELOW the arguments (like the
+            // static/special paths), so the callee frame matches the
+            // convention. The receiver fetch stays: pushes above ECX are
+            // exactly the writeParameters words.
+            os.writePUSH(X86Register.ECX);
             writeParameters(quad);
 //            dropParameters(mts, true);
 
@@ -6798,9 +6803,7 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
 
                 // Call the methods native code from the statics table.
                 // ECX is caller-saved across the call (ANCHOR-L2-076).
-                os.writePUSH(X86Register.ECX);
                 callJavaMethod(method);
-                os.writePOP(X86Register.ECX);
                 // Result is already on the stack.
             } else {
                 // Do a virtual method table invocation
@@ -6815,10 +6818,8 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
                 int arrayDataOffset = VmArray.DATA_OFFSET * slotSize;
                 int tibOffset = ObjectLayout.TIB_SLOT * slotSize;
 
-                /* Get objectref -> EAX (before pushing: SP math, ANCHOR-L2-076) */
+                /* Get objectref -> EAX (ECX already below: SP math holds) */
                 os.writeMOV(asize, stackFrame.getHelper().AAX, stackFrame.getHelper().SP, argSlotCount * slotSize);
-                // ECX is caller-saved across the dispatch below.
-                os.writePUSH(X86Register.ECX);
                 /* Get VMT of objectref -> EAX */
                 os.writeMOV(asize, stackFrame.getHelper().AAX, stackFrame.getHelper().AAX, tibOffset);
                 /* Get entry in VMT -> EAX */
@@ -6830,8 +6831,8 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
                     stackFrame.getEntryPoints().getVmMethodNativeCodeField().getOffset());
 //                stackFrame.getHelper().pushReturnValue(methodRef.getSignature());
                 // Result is already on the stack.
-                os.writePOP(X86Register.ECX);
             }
+            os.writePOP(X86Register.ECX);
         }
 
 
@@ -6860,6 +6861,8 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
             // TODO: port to ORP style (http://orp.sourceforge.net/)
 //            vstack.push(eContext);
 
+            // ANCHOR-L2-101: ECX below the arguments (see VirtualCallAssign).
+            os.writePUSH(X86Register.ECX);
             writeParameters(quad);
 //            dropParameters(mts, true);
 
@@ -6869,9 +6872,7 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
 
                 // Call the methods native code from the statics table.
                 // ECX is caller-saved across the call (ANCHOR-L2-076).
-                os.writePUSH(X86Register.ECX);
                 callJavaMethod(method);
-                os.writePOP(X86Register.ECX);
                 // Result is already on the stack.
             } else {
                 // Do a virtual method table invocation
@@ -6886,10 +6887,8 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
                 int arrayDataOffset = VmArray.DATA_OFFSET * slotSize;
                 int tibOffset = ObjectLayout.TIB_SLOT * slotSize;
 
-                /* Get objectref -> EAX (before pushing: SP math, ANCHOR-L2-076) */
+                /* Get objectref -> EAX (ECX already below: SP math holds) */
                 os.writeMOV(asize, stackFrame.getHelper().AAX, stackFrame.getHelper().SP, argSlotCount * slotSize);
-                // ECX is caller-saved across the dispatch below.
-                os.writePUSH(X86Register.ECX);
                 /* Get VMT of objectref -> EAX */
                 os.writeMOV(asize, stackFrame.getHelper().AAX, stackFrame.getHelper().AAX, tibOffset);
                 /* Get entry in VMT -> EAX */
@@ -6901,8 +6900,8 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
                     stackFrame.getEntryPoints().getVmMethodNativeCodeField().getOffset());
 //                stackFrame.getHelper().pushReturnValue(methodRef.getSignature());
                 // Result is already on the stack.
-                os.writePOP(X86Register.ECX);
             }
+            os.writePOP(X86Register.ECX);
         }
     }
 
@@ -6959,13 +6958,13 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
         // undercounts wide args: one Variable can occupy two slots, so the
         // receiver fetch below read the wrong slot). Matches VirtualCall.
         final int argSlotCount = Signature.getArgSlotCount(typeSizeInfo, methodRef.getSignature());
+        // ANCHOR-L2-101: ECX below the arguments (see VirtualCallAssign).
+        os.writePUSH(X86Register.ECX);
         writeParameters(quad);
-        // Get objectref -> EAX (before pushing: SP math, ANCHOR-L2-076).
+        // Get objectref -> EAX (ECX already below: SP math holds).
         // emitInvokeInterface takes EAX and uses no SP math itself.
         X86CompilerHelper helper = stackFrame.getHelper();
         os.writeMOV(helper.ADDRSIZE, helper.AAX, helper.SP, argSlotCount * helper.SLOTSIZE);
-        // ECX is caller-saved across the IMT dispatch (ANCHOR-L2-076).
-        os.writePUSH(X86Register.ECX);
         X86IMTCompiler32.emitInvokeInterface(os, method);
         os.writePOP(X86Register.ECX);
 
@@ -6985,12 +6984,12 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
         final int argSlotCount = Signature.getArgSlotCount(typeSizeInfo, methodRef.getSignature());
 
         // remove parameters from vstack
+        // ANCHOR-L2-101: ECX below the arguments (see VirtualCallAssign).
+        os.writePUSH(X86Register.ECX);
         writeParameters(quad);
-        // Get objectref -> EAX (before pushing: SP math, ANCHOR-L2-076).
+        // Get objectref -> EAX (ECX already below: SP math holds).
         X86CompilerHelper helper = stackFrame.getHelper();
         os.writeMOV(helper.ADDRSIZE, helper.AAX, helper.SP, argSlotCount * helper.SLOTSIZE);
-        // ECX is caller-saved across the IMT dispatch (ANCHOR-L2-076).
-        os.writePUSH(X86Register.ECX);
         // Write the actual invokeinterface
 //        if (os.isCode32()) {
         X86IMTCompiler32.emitInvokeInterface(os, method);

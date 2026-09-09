@@ -69,6 +69,11 @@ public class OracleDriver {
         {"newDlen_d", "3"},
         {"sumA_aji", "1,2,3,4"},
         {"sumA_aji", ""},
+        {"virt_base", "10", "5"},
+        {"newfield", "10"},
+        {"virt_sub", "10", "5"},
+        {"virt_fin", "10", "5"},
+        {"iface_add", "10", "5"},
     };
 
     /**

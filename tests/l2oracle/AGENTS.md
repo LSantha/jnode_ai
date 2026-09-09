@@ -31,9 +31,13 @@ cd tests/l2oracle
 
 ## Persistent oracle disk (this machine)
 
-`/devices/hdb1` (512MB VDI at `local/oracle-disk.vdi`, gitignored) persists
+/devices/hdb1 (512MB VDI at `local/oracle-disk.vdi`, gitignored) persists
 across reboots and crashes — push once, and post-mortem result files survive.
 Prefer it over RAMFS `/jnode/tmp/ox` for all runs here.
+STATUS 2026-09-09: disk JFAT is corrupt (`free entry in chain` on
+truncate-writes; hard poweroff after a failed push likely caused it).
+Falls back to `/jnode/tmp/ox` until someone reformats it (reformat =
+data loss of old outputs, all of which are pulled to host anyway).
 
 ## Hotswap loop (no reboot for body-only compiler changes)
 
