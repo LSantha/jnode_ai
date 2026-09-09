@@ -21,7 +21,6 @@ package org.jnode.vm.compiler.ir;
 import java.io.File;
 import java.io.StringWriter;
 import java.net.URL;
-import java.util.List;
 
 import org.jnode.assembler.x86.X86Constants.Mode;
 import org.jnode.assembler.x86.X86TextAssembler;
@@ -114,9 +113,7 @@ public class L2Dump {
         // code reads during optimize+allocate. Creating early pins the
         // steady-state instance (see earlier note).
         X86CodeGenerator x86cg = new X86CodeGenerator(method, os, code.getLength(), typeSizeInfo, stackFrame);
-        cfg.constructSSA();
-        cfg.optimize();
-        cfg.removeUnusedVars();
+        X86Level2Compiler.constructAndOptimize(cfg);
         if (args[args.length - 1].equals("--ssa")) {
             for (Object b0 : cfg) {
                 org.jnode.vm.compiler.ir.IRBasicBlock b =
@@ -132,8 +129,7 @@ public class L2Dump {
             }
             return;
         }
-        cfg.optimize();
-        cfg.removeUnusedVars();
+        X86Level2Compiler.optimizeOnce(cfg);
         if (args[args.length - 1].equals("--pre")) {
             for (Object b0 : cfg) {
                 org.jnode.vm.compiler.ir.IRBasicBlock b =
@@ -149,11 +145,7 @@ public class L2Dump {
             }
             return;
         }
-        cfg.deconstrucSSA();
-        X86Level2Compiler.removeSelfCopies(cfg);
-        cfg.removeUnusedVars();
-        cfg.removeDefUseChains();
-        cfg.fixupAddresses();
+        X86Level2Compiler.deSSAAndFixup(cfg);
         if (args[args.length - 1].equals("--ir")) {
             for (Object b0 : cfg) {
                 org.jnode.vm.compiler.ir.IRBasicBlock b =
@@ -169,10 +161,9 @@ public class L2Dump {
             }
             return;
         }
-        List liveVariables = cfg.computeLiveVariables();
-        LiveRange[] liveRanges = X86Level2Compiler.getLiveRanges(liveVariables);
-        LinearScanAllocator lsa = X86Level2Compiler.allocate(liveRanges);
+        LinearScanAllocator lsa = X86Level2Compiler.allocateRanges(cfg);
         if (args[args.length - 1].equals("--ranges")) {
+            Object[] liveRanges = X86Level2Compiler.getLiveRanges(cfg.computeLiveVariables());
             for (int i = 0; i < liveRanges.length; i++) {
                 System.out.println(liveRanges[i]);
             }

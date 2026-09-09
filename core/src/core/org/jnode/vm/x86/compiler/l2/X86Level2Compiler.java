@@ -193,36 +193,13 @@ public class X86Level2Compiler extends AbstractX86Compiler {
 
                 initMethodArguments(method, stackFrame, typeSizeInfo, irg);
 
-                cfg.constructSSA();
-                cfg.optimize();
-                cfg.removeUnusedVars();
-                // ANCHOR-L2-060 (CG-3): closure pair. Simplification during the
-                // first optimize() can kill a def that a later-processed quad
-                // keeps referencing: the wide-const gate in BinaryQuad.doPass2
-                // and the phi pin in PhiAssignQuad.doPass2 revive/keep such
-                // defs, but a subsequent copy-propagation in the SAME pass can
-                // kill them again, stranding a live use on a dead def (slot
-                // never written). Re-running both passes converges the
-                // kill/revive interplay: revived defs have live uses so the
-                // second DCE keeps them, and anything stranded is collected.
-                cfg.optimize();
-                cfg.removeUnusedVars();
-                cfg.deconstrucSSA();
-                // ANCHOR-L2-099: deSSA leaves `x = x` self-copies (slot-merged
-                // variables, e.g. a catch slot reused for a constant). They
-                // are no-ops; killing them lets this DCE cascade to defs kept
-                // alive only by their self-copy (e.g. a wide-constant def to
-                // a register-allocated slot-confused variable).
-                removeSelfCopies(cfg);
-                cfg.removeUnusedVars();
-                cfg.removeDefUseChains();
-                cfg.fixupAddresses();
+                constructAndOptimize(cfg);
+                optimizeOnce(cfg);
+                deSSAAndFixup(cfg);
 
                 X86CodeGenerator x86cg = new X86CodeGenerator(method, (X86Assembler) os, bytecode.getLength(),
                     typeSizeInfo, stackFrame);
-                List<Variable<?>> liveVariables = cfg.computeLiveVariables();
-                LiveRange<?>[] liveRanges = getLiveRanges(liveVariables);
-                LinearScanAllocator<?> lsa = allocate(liveRanges);
+                LinearScanAllocator lsa = allocateRanges(cfg);
                 generateCode(x86cg, cfg, irg, lsa);
 
 //                Unsafe.debug("L2 compiled method: " + method.getFullName() + "\n");
@@ -282,6 +259,51 @@ public class X86Level2Compiler extends AbstractX86Compiler {
             }
         }
         return null;
+    }
+
+    /**
+     * SSA construct + one optimize/DCE pair. The pair runs twice (see
+     * optimizeOnce): simplification during the first optimize() can kill a
+     * def that a later-processed quad keeps referencing (ANCHOR-L2-060,
+     * CG-3): the wide-const gate in BinaryQuad.doPass2 and the phi pin in
+     * PhiAssignQuad.doPass2 revive/keep such defs, but a subsequent
+     * copy-propagation in the SAME pass can kill them again, stranding a
+     * live use on a dead def (slot never written). Re-running converges the
+     * kill/revive interplay: revived defs have live uses so the second DCE
+     * keeps them, and anything stranded is collected.
+     */
+    public static void constructAndOptimize(IRControlFlowGraph cfg) {
+        cfg.constructSSA();
+        optimizeOnce(cfg);
+    }
+
+    /** One optimize/DCE pair (second half of the closure pair above). */
+    public static void optimizeOnce(IRControlFlowGraph cfg) {
+        cfg.optimize();
+        cfg.removeUnusedVars();
+    }
+
+    /**
+     * deSSA + fixup with the post-deSSA DCE pair (ANCHOR-L2-099): deSSA
+     * leaves {@code x = x} self-copies that keep otherwise-dead defs alive,
+     * so drop them (with assignQuad repair) and re-run DCE before the
+     * def-use chains are removed.
+     */
+    public static void deSSAAndFixup(IRControlFlowGraph cfg) {
+        cfg.deconstrucSSA();
+        removeSelfCopies(cfg);
+        cfg.removeUnusedVars();
+        cfg.removeDefUseChains();
+        cfg.fixupAddresses();
+    }
+
+    /**
+     * Live ranges + linear-scan allocation for a fixed-up CFG.
+     */
+    public static LinearScanAllocator allocateRanges(IRControlFlowGraph cfg) {
+        List liveVariables = cfg.computeLiveVariables();
+        LiveRange[] liveRanges = getLiveRanges(liveVariables);
+        return allocate(liveRanges);
     }
 
     public static void initMethodArguments(VmMethod method, X86StackFrame stackFrame, TypeSizeInfo typeSizeInfo,
