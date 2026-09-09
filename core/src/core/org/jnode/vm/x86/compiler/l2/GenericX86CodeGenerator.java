@@ -6578,10 +6578,22 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
             } else {
                 throw new IllegalArgumentException();
             }
-            if (val.getAddressingMode() != STACK) {
+            if (val.getAddressingMode() == CONSTANT
+                && (val instanceof LongConstant || val instanceof DoubleConstant)) {
+                // ANCHOR-L2-097: folded wide constant (copy-prop/ldc); halves
+                // as immediates, lo-first (heap layout, like LONG above).
+                long bits;
+                if (val instanceof LongConstant) {
+                    bits = ((LongConstant) val).getValue();
+                } else {
+                    bits = Double.doubleToRawLongBits(((DoubleConstant) val).getValue());
+                }
+                os.writeMOV_Const(BITS32, refrW, offset, (int) (bits & 0xFFFFFFFFL));
+                os.writeMOV_Const(BITS32, refrW, offset + 4, (int) ((bits >>> 32) & 0xFFFFFFFFL));
+            } else if (val.getAddressingMode() != STACK) {
                 // Wide values always spill; a register here is unreachable.
                 throw new IllegalArgumentException("Wide value from register");
-            }
+            } else {
             int vdisp = ((StackLocation) ((Variable) val).getLocation()).getDisplacement();
             if (field.getSignature().charAt(0) == 'J') {
                 // Field halves [off+0]=LSB, [off+4]=MSB (L1A shape).
@@ -6595,6 +6607,7 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
                 // table itself stays lo-first (matches the field loads).
                 os.writeFLD64(X86Register.EBP, vdisp - stackFrame.getHelper().SLOTSIZE);
                 os.writeFSTP64(refrW, offset);
+            }
             }
             // No barrier: long/double fields never hold references.
         }
