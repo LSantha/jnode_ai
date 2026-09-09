@@ -529,6 +529,14 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
                     os.writeXOR(X86Register.EAX, X86Register.EAX);
                     os.writeXOR(X86Register.EDX, X86Register.EDX);
                 }
+            } else if (op instanceof FloatConstant) {
+                // ANCHOR-L2-088: float constant return (EAX holds the bits).
+                os.writeMOV_Const(X86Register.EAX, ((FloatConstant<T>) op).getIntBits());
+            } else if (op instanceof DoubleConstant) {
+                // ANCHOR-L2-088: double constant return (EAX=lo, EDX=hi).
+                final long bits = Double.doubleToRawLongBits(((DoubleConstant<T>) op).getValue());
+                os.writeMOV_Const(X86Register.EAX, (int) (bits & 0xFFFFFFFFL));
+                os.writeMOV_Const(X86Register.EDX, (int) ((bits >>> 32) & 0xFFFFFFFFL));
             } else {
                 throw new IllegalArgumentException();
             }
@@ -687,10 +695,22 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
 
             case F2L:
             case F2D:
-            case D2I:
             case D2L:
             case D2F:
                 throw new IllegalArgumentException("Unknown operation: " + operation);
+
+            case D2I: {
+                // ANCHOR-L2-091: double stack source to int register dest via
+                // an 8-byte scratch (hi pushed first so lo lands on top).
+                int srcLo = rhsDisp - stackFrame.getHelper().SLOTSIZE;
+                os.writePUSH(X86Register.EBP, rhsDisp);
+                os.writePUSH(X86Register.EBP, srcLo);
+                os.writeFLD64(X86Register.ESP, 0);
+                os.writeFISTP32(X86Register.ESP, 0);
+                os.writePOP((GPR) lhsReg);
+                os.writeADD(X86Register.ESP, 4);
+                break;
+            }
 
             case I2B: {
                 GPR lhsGpr = (GPR) lhsReg;

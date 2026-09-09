@@ -394,6 +394,49 @@ public class IRControlFlowGraph<T> implements Iterable<IRBasicBlock<T>> {
         }
         placePhiFunctions();
         renameVariables(startBlock);
+        typePhiResults();
+    }
+
+    /**
+     * Give every phi result the type of its sources. Without this a merge of
+     * wide values keeps a narrow/unknown type and the allocator hands it a
+     * register the emitters reject (oracle: LAND with a long in ESI).
+     * Sources agree by verifier construction; on conflict prefer wide
+     * (spilling a narrow is safe, registering a wide is fatal).
+     */
+    private void typePhiResults() {
+        for (IRBasicBlock<T> b : bblocks) {
+            for (Quad<T> q : b.getQuads()) {
+                if (!(q instanceof PhiAssignQuad) || q.isDeadCode()) {
+                    continue;
+                }
+                PhiAssignQuad<T> paq = (PhiAssignQuad<T>) q;
+                Variable<T> lhs = paq.getLHS();
+                int type = lhs.getType();
+                if (type == Operand.LONG || type == Operand.DOUBLE) {
+                    continue;
+                }
+                java.util.List<Operand<T>> sources = paq.getPhiOperand().getSources();
+                int found = Operand.UNKNOWN;
+                for (int i = 0; i < sources.size(); i++) {
+                    Operand<T> s = sources.get(i);
+                    if (!(s instanceof Variable)) {
+                        continue;
+                    }
+                    int st = ((Variable<T>) s).getType();
+                    if (st == Operand.LONG || st == Operand.DOUBLE) {
+                        found = st;
+                        break;
+                    }
+                    if (found == Operand.UNKNOWN && st != Operand.UNKNOWN) {
+                        found = st;
+                    }
+                }
+                if (found != Operand.UNKNOWN) {
+                    lhs.setType(found);
+                }
+            }
+        }
     }
 
     /**

@@ -278,6 +278,9 @@ public class IRGenerator<T> extends BytecodeVisitor {
 
     public void visit_iconst(int value) {
         Constant<T> c = Constant.getInstance(value);
+        // ANCHOR-L2-090: type the slot (loads set types but constants did
+        // not; a stale wide type made legal narrow dups fail as category 2).
+        variables[stackOffset].setType(Operand.INT);
         Quad<T> quad = new ConstantRefAssignQuad<T>(address, currentBlock, stackOffset,
             c);
         currentBlock.add(quad);
@@ -294,6 +297,8 @@ public class IRGenerator<T> extends BytecodeVisitor {
 
     public void visit_fconst(float value) {
         Constant<T> c = Constant.getInstance(value);
+        // ANCHOR-L2-090: type the slot (see visit_iconst).
+        variables[stackOffset].setType(Operand.FLOAT);
         currentBlock.add(new ConstantRefAssignQuad<T>(address, currentBlock, stackOffset,
             c));
         stackOffset += 1;
@@ -309,11 +314,15 @@ public class IRGenerator<T> extends BytecodeVisitor {
     }
 
     public void visit_ldc(VmConstString value) {
+        // ANCHOR-L2-090: type the slot (see visit_iconst).
+        variables[stackOffset].setType(Operand.REFERENCE);
         currentBlock.add(new ConstantStringAssignQuad<T>(address, currentBlock, stackOffset, value));
         stackOffset++;
     }
 
     public final void visit_ldc(VmConstClass value) {
+        // ANCHOR-L2-090: type the slot (see visit_iconst).
+        variables[stackOffset].setType(Operand.REFERENCE);
         currentBlock.add(new ConstantClassAssignQuad<T>(address, currentBlock, stackOffset, value));
         stackOffset++;
     }

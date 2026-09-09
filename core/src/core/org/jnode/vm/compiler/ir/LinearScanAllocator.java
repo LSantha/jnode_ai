@@ -99,8 +99,13 @@ public class LinearScanAllocator<T> {
      * @param lr
      */
     private void spillRange(LiveRange<T> lr) {
+        // ANCHOR-L2-089: LONG, DOUBLE and FLOAT spill directly (wide values
+        // need spill homes; floats only implement stack shapes since the
+        // x87 backend needs memory operands -- letting them steal a register
+        // in the swap below reintroduces GPR floats the emitters reject).
         if (active.isEmpty() || lr.getVariable().getType() == Operand.LONG ||
-            lr.getVariable().getType() == Operand.DOUBLE) {
+            lr.getVariable().getType() == Operand.DOUBLE ||
+            lr.getVariable().getType() == Operand.FLOAT) {
             lr.setLocation(new StackLocation<T>());
             this.spilledVariableList.add(lr.getVariable());
             return;
