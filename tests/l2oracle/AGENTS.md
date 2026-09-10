@@ -29,6 +29,10 @@ cd tests/l2oracle
 ./run_oracle.sh /devices/hdb1/ox   # persistent disk (survives reboots/crashes)
 ```
 
+( historical script; the live flow below via `serial_cmd.py` is preferred —
+`run_oracle.sh` still uses the legacy one-shot agent, which must never run
+while the mux holds the pipe. )
+
 ## Persistent oracle disk (this machine)
 
 /devices/hdb1 (512MB VDI at `local/oracle-disk.vdi`, gitignored) persists
@@ -57,7 +61,35 @@ covered. New compiler code runs L1A-compiled (same logic).
 | `local/l2oracle/oracle-disk.vdi` | persistent JFAT oracle disk (see above). |
 | `local/classlib/` | unpacked classlib for test bootstrapping (populated at env setup). |
 
-## Manual loop (when the script needs babysitting)
+## Manual loop (serial_cmd.py via the mux — preferred)
+
+```bash
+S=~/.config/opencode/skills/jnode-serial/scripts
+python3 $S/serial_cmd.py "mkdir /jnode/tmp/ox" "cd /jnode/tmp/ox"
+cat Probes.java | python3 $S/serial_cmd.py --write /jnode/tmp/ox/Probes.java
+cat OracleDriver.java | python3 $S/serial_cmd.py --write /jnode/tmp/ox/OracleDriver.java
+python3 $S/serial_cmd.py --timeout 900 "javac Probes.java OracleDriver.java"
+python3 $S/serial_cmd.py --timeout 1200 "java OracleDriver out-l1.txt noforce" "java OracleDriver out-l2.txt"
+python3 $S/serial_cmd.py "cat out-l2.txt" > /tmp/out-l2.txt   # strip "[batch OK N]" lines
+bash compare.sh <host-out> /tmp/out-l2.txt
+```
+
+One shell command per legacy `$JAC` call is obsolete with the mux
+(multi-command batches work); never run legacy `jnode_agent_cmd.py` or
+raw sockets while the mux holds the pipe. Strip `[batch OK N]` marker
+lines from pulled files before comparing.
+
+## ISO hygiene (learned 2026-09-10)
+
+40s incremental `cd-x86-lite` builds can skip the core recompile, baking
+a STALE backend into a fresh-looking ISO (symptom: VM traces show old
+line numbers, e.g. backend:385 instead of :505). Before every ISO build
+that must carry backend changes: `touch` the edited sources, rebuild,
+then verify the baked classes, e.g.
+`javap -classpath core/build/classes -c ...GenericX86CodeGenerator |
+grep -c TopStackLocation` (expect nonzero after 103).
+
+## Legacy loop (jnode_agent_cmd.py — only with the mux STOPPED)
 
 ```bash
 JAC=~/.config/opencode/skills/jnode-serial/scripts/jnode_agent_cmd.py
@@ -78,10 +110,11 @@ One shell command per `$JAC` call (no chains around silent-long steps);
 ## Driver modes
 
 `java OracleDriver <out> [mode]`:
-- (none) — force whole `Probes` class with L2, run all cases
+- (none) — per-item force (CASES methods + nested callee classes) with L2, run all cases + FALLBACK_CASES (L1 fallback, value coverage)
 - `noforce` — L1 baseline (also the host mode)
 - `one <method>` — force + run a single method (bisect hangs)
 - `forceonly <method>` — force, don't invoke (isolates compile vs run)
+- `forceall` — force each Probes method individually, one `forceone|name|n` row each (isolates batch failures)
 - `disasm <method>` — L2 disassembly of one method to the file (needs `setAccessible`-friendly reflection)
 - `direct <method>` — non-reflective static call (isolates reflection; `dstoreVar_d` only)
 
