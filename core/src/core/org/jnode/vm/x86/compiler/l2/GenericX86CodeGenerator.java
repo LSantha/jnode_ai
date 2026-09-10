@@ -64,6 +64,7 @@ import org.jnode.vm.compiler.ir.Operand;
 import org.jnode.vm.compiler.ir.RegisterLocation;
 import org.jnode.vm.compiler.ir.RegisterPool;
 import org.jnode.vm.compiler.ir.StackLocation;
+import org.jnode.vm.compiler.ir.TopStackLocation;
 import org.jnode.vm.compiler.ir.Variable;
 import org.jnode.vm.compiler.ir.quad.ArrayAssignQuad;
 import org.jnode.vm.compiler.ir.quad.ArrayLengthAssignQuad;
@@ -369,31 +370,23 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
     @Override
     public void generateCodeFor(JsrQuad<T> quad) {
         checkLabel(quad.getAddress());
-        // ANCHOR-L2-079: L1A-style subroutine call. CALL pushes the native
-        // resume address; POP it to a scratch and store it to the quad's lhs
-        // (an int-typed spill or register -- never a GC root), then enter the
-        // subroutine. Back-edge jsr gets a yield point like branches.
-        final Label nextLabel = anonLabel("jsrnext");
-        os.writeCALL(nextLabel);
-        os.setObjectRef(nextLabel);
+        // ANCHOR-L2-103: L1A scheme, not a call/pop trampoline. CALL pushes
+        // the native resume address; the subroutine's entry astore pops it
+        // (the lhs is stack-top: see below), and ret jumps back through the
+        // local. A trampoline is WRONG here: ret would re-enter at the pop
+        // and consume a caller word (stack imbalance + garbage jump; wedges
+        // the VM in a fault flood). Back-edge jsr gets a yield point.
+        // The lhs location is forced to stack-top: whatever the allocator
+        // chose is abandoned (tiny range, register in practice).
         Variable<T> lhs = quad.getLHS();
-        if (lhs.getAddressingMode() == REGISTER) {
-            GPR reg = (GPR) ((RegisterLocation<T>) lhs.getLocation()).getRegister();
-            os.writePOP(reg);
-        } else if (lhs.getAddressingMode() == STACK) {
-            int disp = ((StackLocation<T>) lhs.getLocation()).getDisplacement();
-            os.writePOP(SR1);
-            os.writeMOV(BITS32, X86Register.EBP, disp, SR1);
-        } else {
-            throw new IllegalArgumentException();
-        }
+        lhs.setLocation(new TopStackLocation<T>());
+        os.writeCALL(getInstrLabel(quad.getTargetBlockStartPC()));
         // ANCHOR-L2-083: jump to the target block's CURRENT startPC, not the
         // stale bytecode address (fixupAddresses renumbers quads). Both sides
         // are post-fixup here, so the back-edge test stays valid.
         if (quad.getTargetBlockStartPC() < quad.getAddress()) {
             stackFrame.getHelper().writeYieldPoint(getInstrLabel(quad.getAddress()));
         }
-        os.writeJMP(getInstrLabel(quad.getTargetBlockStartPC()));
     }
 
     @Override

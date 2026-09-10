@@ -101,3 +101,13 @@ One shell command per `$JAC` call (no chains around silent-long steps);
 ## Adding probes
 
 Add a static to `Probes.java` (no try/catch — L2 has no handler tables yet; no objects in signatures keeps reflection simple) + a `{name, args...}` row in `OracleDriver.CASES`. Re-run host ref + `run_oracle.sh`.
+
+## jsr/ret subroutines (`jsr/`)
+
+javac never emits handler-free jsr (only finally, which implies a table),
+so the subroutine probe is a hand-built class: `jsr/mkjsr.py` writes
+`JsrProbe.class` (jsr/ret, no handlers) + `JsrGen.java` (byte-exact
+re-emitter, since binary pushes mangle class files). Guest flow:
+push `JsrGen.java` + `jsr/JsrForce2.java`, `javac`, `java JsrGen`,
+`java JsrForce2` → `force|1` (L2 compiled `run`) + `loopdone|42`
+(1000 subroutine calls). Status: green (103).

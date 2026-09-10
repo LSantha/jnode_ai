@@ -396,8 +396,10 @@ public class L2ModeMatrixTest {
     }
 
     /**
-     * Subroutine emission shapes (ANCHOR-L2-079): jsr materializes the
-     * address (CALL/POP/store) and jumps; ret jumps indirectly.
+     * Subroutine emission shapes (ANCHOR-L2-079, corrected by ANCHOR-L2-103):
+     * jsr CALLs the subroutine directly (the pushed resume address is the
+     * lhs, stack-top); ret jumps indirectly. No pop/jmp trampoline: ret
+     * would re-enter at the pop and consume a caller word.
      */
     @Test
     public void testJsrRetShapes() throws Exception {
@@ -411,8 +413,13 @@ public class L2ModeMatrixTest {
         JsrQuad jsr = new JsrQuad(0, block, 0, 7);
         jsr.generateCode(h.cg);
         String t = h.text();
-        assertTrue("jsr must CALL, got:\n" + t, t.contains("call "));
-        assertTrue("jsr must enter the subroutine, got:\n" + t, t.contains("jmp "));
+        assertTrue("jsr must CALL the subroutine directly, got:\n" + t, t.contains("call "));
+        // NOTE: the quad clones its lhs (AssignQuad index ctor), so assert on
+        // the quad's own object: production downstream reads that clone (via
+        // propagate substitution), never this test-local original.
+        assertTrue("jsr lhs must be stack-top (sub entry pops it), got mode "
+            + jsr.getLHS().getAddressingMode(),
+            jsr.getLHS().getAddressingMode() == AddressingMode.TOPS);
 
         EmitterHarness h2 = new EmitterHarness();
         LocalVariable local = new LocalVariable(JvmType.INT, 2);

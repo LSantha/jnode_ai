@@ -17,11 +17,11 @@
  */
 
 /**
- * L2 oracle probes. CONSTRAINT: this class must contain NO try/catch,
- * NO synchronized, NO finally — L2 does not emit exception-handler tables
- * yet (CG-5 gap), so any method with handlers fails L2 compilation loud.
- * Throwing (idiv/lrem by zero, iaastore bounds) is fine; catching is not.
- * All methods are stateless statics; forcing compiles the whole class.
+ * L2 oracle probes. CONSTRAINT: no try/catch/finally — L2 drops
+ * exception-handler tables silently, so only straight-line behavior is
+ * exercised; throwing (idiv/lrem by zero, iaastore bounds) is fine but
+ * catching is not tested. All methods are stateless statics; forcing
+ * compiles the whole class.
  */
 public class Probes {
 
@@ -195,5 +195,17 @@ public class Probes {
     public static int iface_add(int b, int x) {
         IOp o = new IAdd(b);
         return o.apply(x);
+    }
+
+    public static int sync_add(int a, int b) {
+        // Monitor normal path: enter + exit, uncontended, no throw. The
+        // implicit exception table is dropped (no tables yet); only the
+        // straight-line path is exercised here.
+        Object o = new Object();
+        int r;
+        synchronized (o) {
+            r = a + b;
+        }
+        return r;
     }
 }

@@ -304,6 +304,15 @@ public class IRControlFlowGraph<T> implements Iterable<IRBasicBlock<T>> {
             }
 
         }
+        // ANCHOR-L2-102: unreachable blocks (no predecessors, e.g. padding
+        // after ireturn) skip the fixpoint above and keep a null idom, which
+        // NPEs block-offset queries during parse. Root them at start: their
+        // quads (if any) never execute, and DCE collects their defs.
+        for (IRBasicBlock<T> b : bblocks) {
+            if (b != startBlock && b.getIDominator() == null) {
+                b.setIDominator(startBlock);
+            }
+        }
     }
 
     /**

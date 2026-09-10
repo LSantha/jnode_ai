@@ -74,6 +74,7 @@ public class OracleDriver {
         {"virt_sub", "10", "5"},
         {"virt_fin", "10", "5"},
         {"iface_add", "10", "5"},
+        {"sync_add", "10", "5"},
     };
 
     /**
