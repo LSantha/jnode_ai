@@ -74,6 +74,17 @@ public class OracleDriver {
         {"virt_sub", "10", "5"},
         {"virt_fin", "10", "5"},
         {"iface_add", "10", "5"},
+    };
+
+    /**
+     * Methods that cannot link under L2 yet (missing backend feature, not
+     * a wrong-code bug): sync_add carries an exception table and handler
+     * tables are not emitted (C7). They run here to cover the L1-fallback
+     * path and value correctness; the forced section above must stay
+     * fully L2 (a throw there aborts the batch and would silently mix
+     * L2/L1 rows, voiding the oracle).
+     */
+    static final String[][] FALLBACK_CASES = {
         {"sync_add", "10", "5"},
     };
 
@@ -145,6 +156,21 @@ public class OracleDriver {
         }
     }
 
+    /**
+     * Nested helper types whose methods must also run L2 (virtual/interface
+     * callees). A whole-class force can't cover them (separate VmTypes) and
+     * can't exclude table methods, so forcing is per-item: CASES methods by
+     * name plus these classes wholesale. FALLBACK methods are never forced.
+     */
+    static final String[] FORCE_NESTED = {
+        "Probes$VBase", "Probes$VSub", "Probes$VFin", "Probes$IAdd",
+    };
+
+    static int forceOne(Object type, Method cr1, String name) throws Exception {
+        Object r = cr1.invoke(type, name, Integer.valueOf(0), Boolean.TRUE);
+        return ((Integer) r).intValue();
+    }
+
     static int forceL2(boolean want, String onlyMethod) {
         if (!want) {
             return -1;
@@ -158,13 +184,63 @@ public class OracleDriver {
                 Object n = cr1.invoke(type, onlyMethod, Integer.valueOf(0), Boolean.TRUE);
                 return ((Integer) n).intValue();
             }
+            // Per-item forcing: every CASES method plus the nested callee
+            // classes. Whole-class forcing can't exclude FALLBACK methods
+            // (their tables don't link) and never covered nested callees.
+            Method cr1 = vmType.getMethod("compileRuntime", String.class,
+                int.class, boolean.class);
             Method cr = vmType.getMethod("compileRuntime", int.class, boolean.class);
-            Object n = cr.invoke(type, Integer.valueOf(0), Boolean.TRUE);
-            return ((Integer) n).intValue();
+            int total = 0;
+            java.util.HashSet done = new java.util.HashSet();
+            for (int c = 0; c < CASES.length; c++) {
+                String name = CASES[c][0];
+                if (done.add(name)) {
+                    total += forceOne(type, cr1, name);
+                }
+            }
+            for (int k = 0; k < FORCE_NESTED.length; k++) {
+                Object ntype = fromClass.invoke(null, Class.forName(FORCE_NESTED[k]));
+                Object n = cr.invoke(ntype, Integer.valueOf(0), Boolean.TRUE);
+                total += ((Integer) n).intValue();
+            }
+            return total;
         } catch (ClassNotFoundException e) {
             return -1; // host JDK: reference mode
         } catch (Throwable t) {
             return -2; // forcing failed loudly, never silently
+        }
+    }
+
+    /**
+     * Force each Probes method individually, reporting per-method status.
+     * Isolates batch-context failures (a whole-class force aborts on the
+     * first bad method without naming it). Host-safe: prints -1 per row.
+     */
+    static void forceAll(String outPath) throws Exception {
+        PrintWriter out = new PrintWriter(new FileWriter(outPath), true);
+        try {
+            Method[] ms = Probes.class.getDeclaredMethods();
+            for (int i = 0; i < ms.length; i++) {
+                String name = ms[i].getName();
+                int n;
+                try {
+                    Class<?> vmType = Class.forName("org.jnode.vm.classmgr.VmType");
+                    Method fromClass = vmType.getMethod("fromClass", Class.class);
+                    Object type = fromClass.invoke(null, Probes.class);
+                    Method cr1 = vmType.getMethod("compileRuntime", String.class,
+                        int.class, boolean.class);
+                    Object r = cr1.invoke(type, name, Integer.valueOf(0), Boolean.TRUE);
+                    n = ((Integer) r).intValue();
+                } catch (ClassNotFoundException e) {
+                    n = -1;
+                } catch (Throwable t) {
+                    n = -2;
+                }
+                out.println("forceone|" + name + "|" + n);
+            }
+            out.println("done");
+        } finally {
+            out.close();
         }
     }
 
@@ -245,7 +321,7 @@ public class OracleDriver {
         boolean wantForce = true;
         String onlyMethod = null;
         boolean forceOnly = false;
-        // Usage: java OracleDriver <out.txt> [noforce|one <method>|forceonly <method>|disasm <method>]
+        // Usage: java OracleDriver <out.txt> [noforce|one <method>|forceonly <method>|disasm <method>|forceall]
         for (int i = 1; i < args.length; i++) {
             if (args[i].equals("noforce")) {
                 wantForce = false;
@@ -257,6 +333,9 @@ public class OracleDriver {
                 forceOnly = true;
             } else if (args[i].equals("disasm") && i + 1 < args.length) {
                 disasm(args[++i], outPath);
+                return;
+            } else if (args[i].equals("forceall")) {
+                forceAll(outPath);
                 return;
             } else if (args[i].equals("direct") && i + 1 < args.length) {
                 direct(args[++i], outPath);
@@ -275,8 +354,10 @@ public class OracleDriver {
             // Bisect markers (one-mode only; keep batch output diff-clean).
             final boolean mark = (onlyMethod != null);
             Method[] ms = Probes.class.getDeclaredMethods();
-            for (int c = 0; c < CASES.length; c++) {
-                String[] cs = CASES[c];
+            String[][][] sections = new String[][][]{CASES, FALLBACK_CASES};
+            for (int s = 0; s < sections.length; s++) {
+            for (int c = 0; c < sections[s].length; c++) {
+                String[] cs = sections[s][c];
                 String name = cs[0];
                 if (onlyMethod != null && !onlyMethod.equals(name)) {
                     continue;
@@ -321,6 +402,7 @@ public class OracleDriver {
                     line = name + "|" + flat(cs, 1) + "|DRIVER-EX:" + t;
                 }
                 out.println(line);
+            }
             }
             out.println("done");
         } finally {
