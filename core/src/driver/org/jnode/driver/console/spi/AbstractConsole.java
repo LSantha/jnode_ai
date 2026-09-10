@@ -218,6 +218,17 @@ public abstract class AbstractConsole implements Console {
             });
 
     /**
+     * Enqueue a keyboard event for asynchronous dispatch to listeners,
+     * bypassing the focus check. For consoles that are never focused
+     * (e.g. agent/serial consoles) whose input producer must never block.
+     *
+     * @param event the event to dispatch.
+     */
+    protected void enqueueKeyboardEvent(KeyboardEvent event) {
+        keyboardEventProcessor.getQueue().add(event);
+    }
+
+    /**
      * Dispatch a given keyboard event to all known listeners.
      *
      * @param event
