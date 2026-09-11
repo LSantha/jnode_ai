@@ -21,6 +21,7 @@
 package org.jnode.vm.x86.compiler.l2;
 
 import java.util.Collection;
+import java.util.HashSet;
 import java.util.List;
 import org.jnode.assembler.Label;
 import org.jnode.assembler.NativeStream;
@@ -30,6 +31,7 @@ import org.jnode.assembler.x86.X86BinaryAssembler;
 import org.jnode.vm.bytecode.BytecodeParser;
 import org.jnode.vm.bytecode.BytecodeVisitorSupport;
 import org.jnode.vm.classmgr.VmByteCode;
+import org.jnode.vm.classmgr.VmInterpretedExceptionHandler;
 import org.jnode.vm.classmgr.VmMethod;
 import org.jnode.vm.compiler.CompiledMethod;
 import org.jnode.vm.compiler.CompilerBytecodeVisitor;
@@ -129,14 +131,41 @@ public class X86Level2Compiler extends AbstractX86Compiler {
 //        x86cg.setArgumentVariables(irg.getVariables(), irg.getNoArgs());
         x86cg.setSpilledVariables(lsa.getSpilledVariables());
         x86cg.emitHeader();
+        // 104: position the per-BCI helper labels the exception-table
+        // trailer (X86StackFrame.emitTrailer) resolves start/end/handler
+        // against. Boundaries are bytecode PCs but emission runs on dense
+        // post-fixup addresses; IRControlFlowGraph snapshots each quad's
+        // pre-fixup address for exactly this mapping. Checked per quad
+        // (dead or not: a label position needs no code).
+        final HashSet<Integer> pendingBounds = new HashSet<Integer>();
+        final VmByteCode bc = x86cg.getCurrentMethod().getBytecode();
+        for (VmInterpretedExceptionHandler eh : bc.getExceptionHandlers()) {
+            pendingBounds.add(Integer.valueOf(eh.getStartPC()));
+            pendingBounds.add(Integer.valueOf(eh.getEndPC()));
+            pendingBounds.add(Integer.valueOf(eh.getHandlerPC()));
+        }
+        final X86CompilerHelper helper = x86cg.getHelper();
+        final java.util.Map bcAddrs = cfg.getBcQuadAddresses();
         for (IRBasicBlock b : ((Iterable<? extends IRBasicBlock>) cfg)) {
 //            System.out.println();
 //            System.out.println(b);
             for (Quad q :  (List<Quad>) b.getQuads()) {
+                if (bcAddrs != null) {
+                    final Integer oldPc = (Integer) bcAddrs.get(q);
+                    if (oldPc != null && pendingBounds.remove(oldPc)) {
+                        x86cg.os.setObjectRef(helper.getInstrLabel(oldPc.intValue()));
+                    }
+                }
                 if (!q.isDeadCode()) {
                     q.generateCode(cg);
                 }
             }
+        }
+        // Leftover PCs have no block (endPC == code length): bind at the
+        // footer start. No throwing ops live in the footer, so the
+        // over-coverage is inert.
+        for (Integer pc : pendingBounds) {
+            x86cg.os.setObjectRef(helper.getInstrLabel(pc.intValue()));
         }
         x86cg.endMethod();
     }

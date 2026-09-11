@@ -157,7 +157,11 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
         this.os = x86Stream;
 
         labelPrefix = stackFrame.getHelper().genLabel("").toString();
-        instrLabelPrefix = labelPrefix + "_bci_";
+        // 104: dense quad-address namespace must NOT share the helper's
+        // "_bci_" prefix: assembler ObjectRefs key by label NAME, so same
+        // names would alias table-boundary labels with dense labels and
+        // whichever setObjectRef runs last would misresolve the other.
+        instrLabelPrefix = labelPrefix + "_qb_";
         addressLabels = new Label[lenght];
         this.typeSizeInfo = typeSizeInfo;
         this.stackFrame = stackFrame;
@@ -194,6 +198,21 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
 
     public RegisterPool<T> getRegisterPool() {
         return registerPool;
+    }
+
+    /**
+     * @return the compiler helper (owns the per-BCI label namespace the
+     * exception-table trailer resolves against; 104)
+     */
+    public final X86CompilerHelper getHelper() {
+        return stackFrame.getHelper();
+    }
+
+    /**
+     * @return the method being compiled
+     */
+    public final VmMethod getCurrentMethod() {
+        return currentMethod;
     }
 
     public boolean supports3AddrOps() {
@@ -5254,9 +5273,13 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
                     ((StackLocation) ((Variable) index).getLocation()).getDisplacement());
                 os.writeCMP((GPR) ((RegisterLocation) ref.getLocation()).getRegister(), arrayLengthOffset, SR1);
             } else if (ref.getAddressingMode() == STACK) {
+                // 105: the length field must be DEREFERENCED (all other
+                // paths compare [ref+off]; this one compared ref+off
+                // itself, so OOB indexes sailed through and nulls threw
+                // the wrong exception).
                 os.writeMOV(X86Constants.BITS32, SR1, X86Register.EBP,
                     ((StackLocation) ref.getLocation()).getDisplacement());
-                os.writeADD(SR1, arrayLengthOffset);
+                os.writeMOV(X86Constants.BITS32, SR1, SR1, arrayLengthOffset);
                 os.writeCMP(SR1, X86Register.EBP, ((StackLocation) ((Variable) index).getLocation()).getDisplacement());
             } else {
                 throw new IllegalArgumentException();

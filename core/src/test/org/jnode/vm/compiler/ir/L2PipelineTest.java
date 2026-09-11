@@ -29,6 +29,7 @@ import java.util.List;
 import java.util.Set;
 
 import org.jnode.assembler.x86.X86Assembler;
+import org.jnode.assembler.x86.X86BinaryAssembler;
 import org.jnode.assembler.x86.X86Constants.Mode;
 import org.jnode.assembler.x86.X86TextAssembler;
 import org.jnode.vm.VmImpl;
@@ -38,6 +39,7 @@ import org.jnode.vm.bytecode.BytecodeParser;
 import org.jnode.vm.classmgr.VmByteCode;
 import org.jnode.vm.classmgr.VmMethod;
 import org.jnode.vm.classmgr.VmType;
+import org.jnode.vm.compiler.CompiledExceptionHandler;
 import org.jnode.vm.compiler.CompiledMethod;
 import org.jnode.vm.compiler.EntryPoints;
 import org.jnode.vm.facade.TypeSizeInfo;
@@ -128,6 +130,15 @@ public class L2PipelineTest {
      * (Also mirrors {@code IRTest.generateCode}.)
      */
     private static String compileToText(VmMethod method) throws Exception {
+        return compileMethod(method).text;
+    }
+
+    private static final class CompileResult {
+        String text;
+        CompiledMethod cm;
+    }
+
+    private static CompileResult compileMethod(VmMethod method) throws Exception {
         StringWriter sw = new StringWriter();
         X86TextAssembler os = new X86TextAssembler(sw, cpuId, Mode.CODE32);
         VmByteCode code = method.getBytecode();
@@ -158,7 +169,10 @@ public class L2PipelineTest {
         X86Level2Compiler.generateCode(x86cg, cfg, irg, lsa);
         // X86TextAssembler buffers into an internal buffer: flush to the writer.
         os.flush();
-        return sw.toString();
+        CompileResult r = new CompileResult();
+        r.text = sw.toString();
+        r.cm = cm;
+        return r;
     }
 
     // ---------------- T1: pipeline completes + emits ----------------
@@ -340,6 +354,84 @@ public class L2PipelineTest {
         assertCompiles("dupExpr");
         assertCompiles("discard");
         assertCompiles("concat");
+    }
+
+    /**
+     * 104: exception tables are emitted, not dropped. Every table entry's
+     * start/end/handler labels must resolve to code offsets with a
+     * non-empty range (the runtime rejects unresolved refs and the
+     * unwinder needs [start, end) + handler inside the object).
+     * Uses the binary assembler: the text assembler's refs carry no
+     * offsets (it only prints labels).
+     */
+    @Test
+    public void testExceptionTableEmitted() throws Exception {
+        VmMethod m = findMethod("tryCatch");
+        assertTrue("corpus has no handlers",
+            m.getBytecode().getNoExceptionHandlers() > 0);
+        CompiledMethod cm = compileBinary(m);
+        CompiledExceptionHandler[] table = cm.getExceptionHandlers();
+        assertNotNull("no table emitted", table);
+        assertEquals("table dropped entries",
+            m.getBytecode().getNoExceptionHandlers(), table.length);
+        final int codeStart = cm.getCodeStart().getOffset();
+        final int codeEnd = cm.getCodeEnd().getOffset();
+        for (int i = 0; i < table.length; i++) {
+            CompiledExceptionHandler e = table[i];
+            assertTrue("entry " + i + " start unresolved",
+                e.getStartPc().isResolved());
+            assertTrue("entry " + i + " end unresolved",
+                e.getEndPc().isResolved());
+            assertTrue("entry " + i + " handler unresolved",
+                e.getHandler().isResolved());
+            final int start = e.getStartPc().getOffset();
+            final int end = e.getEndPc().getOffset();
+            final int handler = e.getHandler().getOffset();
+            assertTrue("entry " + i + " empty range", start < end);
+            assertTrue("entry " + i + " start outside code",
+                start >= codeStart && start < codeEnd);
+            assertTrue("entry " + i + " end outside code",
+                end > codeStart && end <= codeEnd);
+            assertTrue("entry " + i + " handler outside code",
+                handler >= codeStart && handler < codeEnd);
+        }
+        assertNotNull("no default handler", cm.getDefExceptionHandler());
+        assertTrue("default handler unresolved",
+            cm.getDefExceptionHandler().isResolved());
+    }
+
+    /**
+     * Same pipeline as {@link #compileMethod} but into the binary
+     * assembler, so label offsets are real (104: table verification).
+     */
+    private static CompiledMethod compileBinary(VmMethod method) throws Exception {
+        X86BinaryAssembler os = new X86BinaryAssembler(cpuId, Mode.CODE32, 0);
+        VmByteCode code = method.getBytecode();
+        EntryPoints context = new EntryPoints(loader, VmUtils.getVm().getHeapManager(), 1);
+        X86CompilerHelper helper = new X86CompilerHelper(os, null, context, true);
+        helper.setMethod(method);
+        CompiledMethod cm = new CompiledMethod(1);
+        TypeSizeInfo typeSizeInfo = loader.getArchitecture().getTypeSizeInfo();
+        X86StackFrame stackFrame = new X86StackFrame(os, helper, method, context, cm);
+
+        IRControlFlowGraph cfg = new IRControlFlowGraph(code);
+        IRGenerator irg = new IRGenerator(cfg, typeSizeInfo, method.getDeclaringClass().getLoader());
+        BytecodeParser.parse(code, irg);
+        X86Level2Compiler.initMethodArguments(method, stackFrame, typeSizeInfo, irg);
+        cfg.constructSSA();
+        cfg.optimize();
+        cfg.removeUnusedVars();
+        cfg.optimize();
+        cfg.removeUnusedVars();
+        cfg.deconstrucSSA();
+        cfg.removeDefUseChains();
+        cfg.fixupAddresses();
+        X86CodeGenerator x86cg = new X86CodeGenerator(method, os, code.getLength(), typeSizeInfo, stackFrame);
+        List liveVariables = cfg.computeLiveVariables();
+        LiveRange[] liveRanges = X86Level2Compiler.getLiveRanges(liveVariables);
+        LinearScanAllocator lsa = X86Level2Compiler.allocate(liveRanges);
+        X86Level2Compiler.generateCode(x86cg, cfg, irg, lsa);
+        return cm;
     }
 
     /**

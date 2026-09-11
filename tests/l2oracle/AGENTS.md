@@ -159,7 +159,7 @@ incidental fix in 097-103. Regression-guarded by `CASES` now.
 
 ## Adding probes
 
-Add a static to `Probes.java` (no try/catch — L2 has no handler tables yet; no objects in signatures keeps reflection simple) + a `{name, args...}` row in `OracleDriver.CASES`. Re-run host ref + `run_oracle.sh`.
+Add a static to `Probes.java` (try/catch/finally supported since 104 — see `tryCatchDiv`, `tryCatchOob`, `tryFinally`; no objects in signatures keeps reflection simple) + a `{name, args...}` row in `OracleDriver.CASES`. Re-run host ref + `run_oracle.sh`.
 
 ## jsr/ret subroutines (`jsr/`)
 

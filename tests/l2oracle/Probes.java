@@ -199,7 +199,7 @@ public class Probes {
 
     public static int sync_add(int a, int b) {
         // Monitor normal path: enter + exit, uncontended, no throw. The
-        // implicit exception table is dropped (no tables yet); only the
+        // implicit exception table is emitted (104); only the
         // straight-line path is exercised here.
         Object o = new Object();
         int r;
@@ -207,5 +207,30 @@ public class Probes {
             r = a + b;
         }
         return r;
+    }
+
+    // 104 corpus: fault -> unwind -> handler, all through L2 frames.
+    public static int tryCatchDiv(int a, int b) {
+        try {
+            return a / b;
+        } catch (ArithmeticException e) {
+            return -999;
+        }
+    }
+
+    public static int tryCatchOob(int[] a, int i) {
+        try {
+            return a[i];
+        } catch (ArrayIndexOutOfBoundsException e) {
+            return -999;
+        }
+    }
+
+    public static int tryFinally(int x) {
+        try {
+            return x * 2;
+        } finally {
+            x = x + 1;
+        }
     }
 }

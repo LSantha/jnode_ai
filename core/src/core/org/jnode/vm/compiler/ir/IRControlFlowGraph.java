@@ -24,6 +24,7 @@ import java.util.Collection;
 import java.util.Collections;
 import java.util.Comparator;
 import java.util.HashMap;
+import java.util.IdentityHashMap;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
@@ -55,6 +56,15 @@ public class IRControlFlowGraph<T> implements Iterable<IRBasicBlock<T>> {
     private List<IRBasicBlock<T>> postOrderList;
     private IRBasicBlock<T> startBlock;
     private final IRBasicBlockFinder<T> finder;
+    /**
+     * Pre-fixup bytecode address per quad (104: exception tables). The
+     * backend's table boundaries are bytecode PCs but emission runs on
+     * dense post-fixup addresses; this snapshot maps each quad back to
+     * the bytecode address it was created for. Identity-keyed: quads are
+     * never cloned between fixup and emission. Null until
+     * {@code fixupAddresses} runs.
+     */
+    private Map<Quad<T>, Integer> bcQuadAddresses;
 
     /**
      * Create a new instance
@@ -559,9 +569,11 @@ public class IRControlFlowGraph<T> implements Iterable<IRBasicBlock<T>> {
 
     public void fixupAddresses() {
         int address = 0;
+        bcQuadAddresses = new IdentityHashMap<Quad<T>, Integer>();
         for (IRBasicBlock<T> b : bblocks) {
             b.setStartPC(address);
             for (Quad<T> q : b.getQuads()) {
+                bcQuadAddresses.put(q, Integer.valueOf(q.getAddress()));
                 q.setAddress(address);
                 if (!q.isDeadCode()) {
                     address += 1;
@@ -569,6 +581,14 @@ public class IRControlFlowGraph<T> implements Iterable<IRBasicBlock<T>> {
             }
             b.setEndPC(address);
         }
+    }
+
+    /**
+     * @return pre-fixup bytecode address per quad (104), or null if
+     * {@code fixupAddresses} has not run
+     */
+    public Map<Quad<T>, Integer> getBcQuadAddresses() {
+        return bcQuadAddresses;
     }
 
     private void placePhiFunctions() {

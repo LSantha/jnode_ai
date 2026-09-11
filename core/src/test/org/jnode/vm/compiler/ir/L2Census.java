@@ -35,6 +35,7 @@ import org.jnode.vm.classmgr.VmByteCode;
 import org.jnode.vm.classmgr.VmMethod;
 import org.jnode.vm.classmgr.VmType;
 import org.jnode.vm.bytecode.BytecodeParser;
+import org.jnode.vm.compiler.CompiledExceptionHandler;
 import org.jnode.vm.compiler.CompiledMethod;
 import org.jnode.vm.compiler.EntryPoints;
 import org.jnode.vm.facade.TypeSizeInfo;
@@ -54,8 +55,9 @@ import org.jnode.vm.x86.compiler.l2.X86StackFrame;
  *
  * <p>Usage (repo root): {@code java ... L2Census core/build/classes [out.txt]}
  * Buckets: OK, SKIP (abstract/native/no-code), MAGIC (fail-loud magic),
- * HANDLERS_SILENT (has exception handlers but compiled anyway -- the
- * dangerous one), FAIL_64, FAIL_OTHER (first example + message each).
+ * HANDLERS (has exception handlers -- compiled WITH tables since 104; a
+ * table-count mismatch throws into FAIL_OTHER), FAIL_64, FAIL_OTHER
+ * (first example + message each).
  */
 public class L2Census {
 
@@ -85,10 +87,10 @@ public class L2Census {
 
         List<String> classes = new ArrayList<String>();
         collect(new File(classDir), "", classes);
-        int ok = 0, skip = 0, magic = 0, silentH = 0, fail64 = 0;
+        int ok = 0, skip = 0, magic = 0, handlersH = 0, fail64 = 0;
         Map<String, Integer> other = new HashMap<String, Integer>();
         List<String> otherExamples = new ArrayList<String>();
-        List<String> silentExamples = new ArrayList<String>();
+        List<String> handlerExamples = new ArrayList<String>();
         List<String> magicExamples = new ArrayList<String>();
         int done = 0;
         for (String cn : classes) {
@@ -123,11 +125,11 @@ public class L2Census {
                     boolean hasHandlers = code.getNoExceptionHandlers() > 0;
                     compileToText(m);
                     ok++;
-                    if (hasHandlers && silentExamples.size() < 20) {
-                        silentExamples.add(full);
+                    if (hasHandlers && handlerExamples.size() < 20) {
+                        handlerExamples.add(full);
                     }
                     if (hasHandlers) {
-                        silentH++;
+                        handlersH++;
                     }
                 } catch (Throwable t) {
                     String msg = String.valueOf(t.getMessage());
@@ -154,7 +156,7 @@ public class L2Census {
         }
         out.println("classes=" + classes.size());
         out.println("OK=" + ok + " SKIP=" + skip + " MAGIC=" + magic
-            + " HANDLERS_SILENT=" + silentH + " FAIL_64=" + fail64);
+            + " HANDLERS=" + handlersH + " FAIL_64=" + fail64);
         out.println("--- OTHER (" + other.size() + " distinct) ---");
         for (Map.Entry<String, Integer> e : other.entrySet()) {
             out.println("[" + e.getValue() + "x] " + e.getKey());
@@ -167,8 +169,8 @@ public class L2Census {
         for (String s : magicExamples) {
             out.println(s);
         }
-        out.println("--- HANDLERS_SILENT examples ---");
-        for (String s : silentExamples) {
+        out.println("--- HANDLERS examples ---");
+        for (String s : handlerExamples) {
             out.println(s);
         }
         out.flush();
@@ -221,6 +223,14 @@ public class L2Census {
         LinearScanAllocator lsa = X86Level2Compiler.allocateRanges(cfg);
         X86Level2Compiler.generateCode(x86cg, cfg, irg, lsa);
         os.flush();
+        // 104: tables are emitted now; a count mismatch means entries were
+        // lost -- fail loud into FAIL_OTHER instead of going silent.
+        CompiledExceptionHandler[] table = cm.getExceptionHandlers();
+        final int wantTables = code.getNoExceptionHandlers();
+        if (table == null || table.length != wantTables) {
+            throw new IllegalStateException("handler table dropped: got "
+                + (table == null ? -1 : table.length) + ", want " + wantTables);
+        }
         return sw.toString();
     }
 }
