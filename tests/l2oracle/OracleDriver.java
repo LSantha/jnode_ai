@@ -63,7 +63,7 @@ public class OracleDriver {
         {"id_d", "0.1"},
         {"ret15_d"},
         {"addCC_d"},
-        // {"dstoreVar_d", "0,0,0", "1", "1.5"}, // QUARANTINED: wedges VM, see Probes
+        {"dstoreVar_d", "0,0,0", "1", "1.5"},
         {"istoreVar_aiii", "0,0,0", "1", "7"},
         {"dld_d", "0,0,0", "1"},
         {"newDlen_d", "3"},

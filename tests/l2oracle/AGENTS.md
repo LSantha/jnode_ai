@@ -57,21 +57,43 @@ covered. New compiler code runs L1A-compiled (same logic).
 
 | Path | Purpose |
 |------|---------|
+| `local/mk-ox-iso.sh` | oracle ISO builder: stub gate, touch hygiene, `cd-x86-lite`, stage `ox/`, mkisofs re-master, `javap` verify. Re-run after any backend or probe change. |
 | `local/l2oracle/conf-x86/` | grub menu copy, `default 1` (all plugins). Use with `sh build.sh -Dmy-conf.dir=<abs path>/local/l2oracle/conf-x86 <target>` for hands-off boots. |
 | `local/l2oracle/oracle-disk.vdi` | persistent JFAT oracle disk (see above). |
 | `local/classlib/` | unpacked classlib for test bootstrapping (populated at env setup). |
 
-## Manual loop (serial_cmd.py via the mux — preferred)
+## Manual loop (CD-staged sources — preferred)
+
+Big `--write` pushes reliably OOM the guest heap (~440 echo lines =
+483-cycle oom/mark/sweep storm, deaf shell, `--interrupt` can't revive).
+Stage sources onto the ISO instead:
+
+```bash
+sh local/mk-ox-iso.sh   # build + stage ox/ + re-master + backend verify
+# boot full plugins (GRUB entry 1: pause-trick + screenshot + scancodes)
+S=~/.config/opencode/skills/jnode-serial/scripts
+python3 $S/serial_cmd.py --timeout 900 "mkdir /jnode/tmp/ox" \
+  "javac -d /jnode/tmp/ox /devices/sg0/ox/Probes.java /devices/sg0/ox/OracleDriver.java"
+python3 $S/serial_cmd.py --timeout 1200 "java OracleDriver out-l1.txt noforce" "java OracleDriver out-l2.txt"
+python3 $S/serial_cmd.py "cat out-l2.txt" > /tmp/out-l2.txt   # strip "[batch OK N]" lines
+bash compare.sh <host-out> /tmp/out-l2.txt
+```
+
+Filenames arrive intact on the CD (no 8.3 mangle); ~10 guest spawns per
+boot. Keep `ox/` file set in sync with `mk-ox-iso.sh` when adding probes.
+
+## Manual loop (serial_cmd.py --write — SMALL files only)
+
+Small files only (~150 lines max; `MiniProbes.java`/`MiniRun.java` size).
+Anything bigger goes on the ISO (see above).
 
 ```bash
 S=~/.config/opencode/skills/jnode-serial/scripts
 python3 $S/serial_cmd.py "mkdir /jnode/tmp/ox" "cd /jnode/tmp/ox"
-cat Probes.java | python3 $S/serial_cmd.py --write /jnode/tmp/ox/Probes.java
-cat OracleDriver.java | python3 $S/serial_cmd.py --write /jnode/tmp/ox/OracleDriver.java
-python3 $S/serial_cmd.py --timeout 900 "javac Probes.java OracleDriver.java"
-python3 $S/serial_cmd.py --timeout 1200 "java OracleDriver out-l1.txt noforce" "java OracleDriver out-l2.txt"
-python3 $S/serial_cmd.py "cat out-l2.txt" > /tmp/out-l2.txt   # strip "[batch OK N]" lines
-bash compare.sh <host-out> /tmp/out-l2.txt
+cat MiniProbes.java | python3 $S/serial_cmd.py --write /jnode/tmp/ox/MiniProbes.java
+cat MiniRun.java | python3 $S/serial_cmd.py --write /jnode/tmp/ox/MiniRun.java
+python3 $S/serial_cmd.py --timeout 900 "javac MiniProbes.java MiniRun.java"
+python3 $S/serial_cmd.py --timeout 300 "java MiniRun noforce" "java MiniRun"
 ```
 
 One shell command per legacy `$JAC` call is obsolete with the mux
@@ -128,7 +150,11 @@ One shell command per `$JAC` call (no chains around silent-long steps);
 
 - **Pipe wedge**: rapid `reset` cycles wedge the UART2 pipe server (conn-reset on every attach). Recover with full `poweroff` + `startvm`, never reset.
 - **UART1 pipe must be drained continuously** or the VM blocks on logging. File mode for normal runs; `kdb_mux.py` when KDB is needed: `nohup python3 kdb_mux.py &`, then `echo "W" > /tmp/kdb_cmd.fifo`, read `/tmp/kdb_resp.log`. Canonical copy in the `jnode-kdb-serial` skill (this one mirrors it); kill it by PID captured at launch (`... & echo $!`), never by `pkill -f` with a pattern that also appears bare in your own command (file paths, class names) — that kills your shell.
-- **Quarantined**: `dstoreVar_d` (variable double store into a double[] param) wedges the shell under L2 — loop-free disassembly, cause open. Case commented out in `CASES`; probes retained.
+- **RESOLVED 2026-09-11**: `dstoreVar_d` wedge is gone on the current tree
+(x3 clean L2 passes of a 9-probe store matrix incl. `lstoreVar`,
+`dsaVoid`, `dsaLocal`; case re-enabled in `CASES`). Prime suspect is a
+stale-ISO artifact (Sep-9 repros predate the ISO-hygiene fix) or an
+incidental fix in 097-103. Regression-guarded by `CASES` now.
 - **Deferred**: virtual/interface dispatch ECX frames (SP-math shapes), jsr runtime probe (needs hand-built bytecode), `FREM`/`DREM` non-SSS shapes, 64-bit (CG-5).
 
 ## Adding probes
