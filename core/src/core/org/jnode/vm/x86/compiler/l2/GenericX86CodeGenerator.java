@@ -6096,7 +6096,18 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
         // block-relative labels resolve. helper.getInstrLabel() labels are
         // never positioned in the L2 flow).
         final Label defaultLabel = getInstrLabel(blocks[n - 1].getStartPC());
-        if ((n > 4) && os.isCode32()) {
+        if (false && (n > 4) && os.isCode32()) {
+            // ANCHOR-L2-109: optimized jump-table path DISABLED. Its
+            // hardcoded l12distance (12) never matches the emitted
+            // CALL/POP/LEA/ADD/LEA/JMP length, which varies by key home
+            // (CONSTANT/REGISTER/STACK) and displacement size -- the
+            // (l2Ofs - l1Ofs) != l12distance guard throws in every binary
+            // stream (text streams skip it, which is why census/oracle
+            // never caught it; first victim: CharacterData00#
+            // getDirectionality at image build). Reviving it needs a
+            // label-difference LEA (l2-l1 as assembler expression), not a
+            // constant. Until then every tableswitch uses the simple
+            // CMP/JE chain below (correct for any n).
             // Optimized version.  Needs some overhead, so only useful for
             // larger tables.
             //counters.getCounter("tableswitch-opt").inc();

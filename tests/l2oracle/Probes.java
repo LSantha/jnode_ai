@@ -317,6 +317,31 @@ public class Probes {
         }
     }
 
+    public static int swBig(int x) {
+        // >4 cases: used to take the (broken, now disabled) jump-table
+        // path; covers the simple CMP/JE chain at scale.
+        switch (x) {
+            case 1:
+                return 10;
+            case 2:
+                return 20;
+            case 3:
+                return 30;
+            case 4:
+                return 40;
+            case 5:
+                return 50;
+            case 6:
+                return 60;
+            case 7:
+                return 70;
+            case 8:
+                return 80;
+            default:
+                return -1;
+        }
+    }
+
     public static int multiArr() {
         int[][] m = new int[2][3];
         m[1][2] = 7;
