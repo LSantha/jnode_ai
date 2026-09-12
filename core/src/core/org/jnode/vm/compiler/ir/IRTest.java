@@ -239,7 +239,8 @@ public class IRTest {
         System.out.println("Live ranges:");
         LiveRange<?>[] liveRanges = X86Level2Compiler.getLiveRanges(liveVariables);
 
-        LinearScanAllocator<?> lsa = X86Level2Compiler.allocate(liveRanges);
+        LinearScanAllocator<?> lsa = X86Level2Compiler.allocate(liveRanges,
+            X86Level2Compiler.forcedSpills(cfg, liveRanges));
 
         for (LiveRange range : liveRanges) {
             System.out.println(range);

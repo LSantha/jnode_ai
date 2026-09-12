@@ -812,4 +812,45 @@ public class PrimitiveTest {
     public static void carraySet(char[] a, int i, char v) {
         a[i] = v;
     }
+
+    /**
+     * 107 corpus: the lock is live across runtime calls (enter, init,
+     * exit) and into the handler; it must take a stack home.
+     */
+    public static int syncThrow(int x) {
+        Object o = new Object();
+        try {
+            synchronized (o) {
+                if (x == 0) {
+                    throw new IllegalArgumentException();
+                }
+                return x;
+            }
+        } catch (IllegalArgumentException e) {
+            return -7;
+        }
+    }
+
+    /**
+     * 107 corpus: array + handler; the array ref is live across the
+     * (conditional) bounds-failure call into the handler.
+     */
+    public static int arrayCatch(int[] a, int i) {
+        try {
+            return a[i];
+        } catch (ArrayIndexOutOfBoundsException e) {
+            return -999;
+        }
+    }
+
+    /**
+     * 108 corpus: instanceof reads its ref and writes its result in one
+     * emission; the homes must differ when the ranges touch.
+     */
+    public static int instOf(Object o) {
+        if (o instanceof String) {
+            return 1;
+        }
+        return 0;
+    }
 }

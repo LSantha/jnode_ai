@@ -3686,7 +3686,8 @@ public class X86BinaryAssembler extends X86Assembler implements X86Operation {
 
     public void writeMOVSX(GPR dstReg, GPR srcReg, int srcDisp, int srcSize) {
         if (srcSize == X86Constants.BITS8) {
-            testSuitableForBits8(dstReg);
+            // 106: any r32 dst is encodable with a mem source (the 8-bit
+            // suitability constraint applies to register sources only).
             write2bOpcodeModRM(0x0F, 0xBE, dstReg.getSize(), srcReg, srcDisp,
                 dstReg.getNr());
         } else if (srcSize == X86Constants.BITS16) {
@@ -3744,7 +3745,7 @@ public class X86BinaryAssembler extends X86Assembler implements X86Operation {
 
     public void writeMOVZX(GPR dstReg, GPR srcReg, int srcDisp, int srcSize) {
         if (srcSize == X86Constants.BITS8) {
-            testSuitableForBits8(dstReg);
+            // 106: see writeMOVSX above.
             write2bOpcodeModRM(0x0F, 0xB6, dstReg.getSize(), srcReg, srcDisp,
                 dstReg.getNr());
         } else if (srcSize == X86Constants.BITS16) {

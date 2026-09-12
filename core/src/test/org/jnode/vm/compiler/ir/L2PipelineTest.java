@@ -23,6 +23,7 @@ package org.jnode.vm.compiler.ir;
 import java.io.File;
 import java.io.StringWriter;
 import java.net.URL;
+import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.Iterator;
 import java.util.List;
@@ -50,15 +51,29 @@ import org.jnode.vm.x86.compiler.X86CompilerHelper;
 import org.jnode.vm.x86.compiler.l2.X86CodeGenerator;
 import org.jnode.vm.x86.compiler.l2.X86Level2Compiler;
 import org.jnode.vm.x86.compiler.l2.X86StackFrame;
+import org.jnode.vm.compiler.ir.quad.ArrayAssignQuad;
+import org.jnode.vm.compiler.ir.quad.ArrayStoreQuad;
+import org.jnode.vm.compiler.ir.quad.AssignQuad;
 import org.jnode.vm.compiler.ir.quad.BinaryOperation;
 import org.jnode.vm.compiler.ir.quad.BinaryQuad;
+import org.jnode.vm.compiler.ir.quad.CallAssignQuad;
+import org.jnode.vm.compiler.ir.quad.CallQuad;
+import org.jnode.vm.compiler.ir.quad.JsrQuad;
+import org.jnode.vm.compiler.ir.quad.MonitorenterQuad;
+import org.jnode.vm.compiler.ir.quad.MonitorexitQuad;
+import org.jnode.vm.compiler.ir.quad.NewAssignQuad;
+import org.jnode.vm.compiler.ir.quad.NewMultiArrayAssignQuad;
+import org.jnode.vm.compiler.ir.quad.NewObjectArrayAssignQuad;
+import org.jnode.vm.compiler.ir.quad.NewPrimitiveArrayAssignQuad;
 import org.jnode.vm.compiler.ir.quad.PhiAssignQuad;
 import org.jnode.vm.compiler.ir.quad.Quad;
+import org.jnode.vm.compiler.ir.quad.ThrowQuad;
 import org.jnode.vm.compiler.ir.quad.VariableRefAssignQuad;
 import org.junit.BeforeClass;
 import org.junit.Test;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertTrue;
 import static org.junit.Assert.fail;
@@ -136,6 +151,8 @@ public class L2PipelineTest {
     private static final class CompileResult {
         String text;
         CompiledMethod cm;
+        IRControlFlowGraph cfg;
+        LiveRange[] liveRanges;
     }
 
     private static CompileResult compileMethod(VmMethod method) throws Exception {
@@ -165,13 +182,16 @@ public class L2PipelineTest {
         X86CodeGenerator x86cg = new X86CodeGenerator(method, os, code.getLength(), typeSizeInfo, stackFrame);
         List liveVariables = cfg.computeLiveVariables();
         LiveRange[] liveRanges = X86Level2Compiler.getLiveRanges(liveVariables);
-        LinearScanAllocator lsa = X86Level2Compiler.allocate(liveRanges);
+        LinearScanAllocator lsa = X86Level2Compiler.allocate(liveRanges,
+            X86Level2Compiler.forcedSpills(cfg, liveRanges));
         X86Level2Compiler.generateCode(x86cg, cfg, irg, lsa);
         // X86TextAssembler buffers into an internal buffer: flush to the writer.
         os.flush();
         CompileResult r = new CompileResult();
         r.text = sw.toString();
         r.cm = cm;
+        r.cfg = cfg;
+        r.liveRanges = liveRanges;
         return r;
     }
 
@@ -401,6 +421,145 @@ public class L2PipelineTest {
     }
 
     /**
+     * 107: no register-held value may span a call-like quad (callers
+     * preserve nothing: saveRegisters is a no-op in every x86 frame) or
+     * end inside a handler block (the native unwinder preserves nothing).
+     * Independent audit of X86Level2Compiler.forcedSpills: the call-like
+     * list below is deliberately duplicated, not shared.
+     */
+    @Test
+    public void testNoRegisterSpansCall() throws Exception {
+        assertNoRegisterSpansCall("syncThrow", true);
+        assertNoRegisterSpansCall("arrayCatch", false);
+        assertNoRegisterSpansCall("tryCatch", false);
+    }
+    private static void assertNoRegisterSpansCall(String name, boolean mustFire) throws Exception {
+        CompileResult r = compileMethod(findMethod(name));
+        Set<LiveRange> forced = X86Level2Compiler.forcedSpills(r.cfg, r.liveRanges);
+        if (mustFire) {
+            assertFalse("rule never fired for " + name, forced.isEmpty());
+        }
+        final HashSet<Integer> callAddrs = new HashSet<Integer>();
+        final ArrayList<int[]> handlerRanges = new ArrayList<int[]>();
+        for (Object b0 : (Iterable<?>) r.cfg) {
+            final IRBasicBlock b = (IRBasicBlock) b0;
+            if (b.isStartOfExceptionHandler()) {
+                handlerRanges.add(new int[]{b.getStartPC(), b.getEndPC()});
+            }
+            for (Object q0 : (List<?>) b.getQuads()) {
+                final Quad q = (Quad) q0;
+                if (q instanceof CallQuad || q instanceof CallAssignQuad
+                    || q instanceof MonitorenterQuad || q instanceof MonitorexitQuad
+                    || q instanceof JsrQuad || q instanceof ThrowQuad
+                    || q instanceof NewAssignQuad || q instanceof NewObjectArrayAssignQuad
+                    || q instanceof NewPrimitiveArrayAssignQuad || q instanceof NewMultiArrayAssignQuad
+                    || q instanceof ArrayAssignQuad || q instanceof ArrayStoreQuad
+                    || (q instanceof BinaryQuad
+                        && (((BinaryQuad) q).getOperation() == BinaryOperation.LDIV
+                            || ((BinaryQuad) q).getOperation() == BinaryOperation.LREM))) {
+                    callAddrs.add(Integer.valueOf(q.getAddress()));
+                }
+            }
+        }
+        for (int i = 0; i < r.liveRanges.length; i++) {
+            final LiveRange lr = r.liveRanges[i];
+            if (!(lr.getLocation() instanceof RegisterLocation)) {
+                continue;
+            }
+            final int def = lr.getAssignAddress();
+            final int last = lr.getLastUseAddress();
+            for (Integer c : callAddrs) {
+                final int call = c.intValue();
+                assertFalse(name + ": register " + lr + " spans call @" + call,
+                    def <= call && call < last);
+            }
+            for (int[] h : handlerRanges) {
+                assertFalse(name + ": register " + lr + " reaches handler",
+                    h[0] <= last && last < h[1]);
+            }
+        }
+    }
+
+    /**
+     * 108: a quad reads its operands and writes its result in one
+     * emission, so a result must never share a home with a ref it
+     * touches (ref.lastUse + 1 == result.assign): the emitter may
+     * destroy the home before reading the ref (instanceof zeroed its
+     * own object). Outcome-level audit on assigned homes.
+     */
+    @Test
+    public void testNoResultSharesRefHome() throws Exception {
+        assertNoResultSharesRefHome("instOf");
+        assertNoResultSharesRefHome("syncThrow");
+        assertNoResultSharesRefHome("discriminant");
+    }
+
+    private static void assertNoResultSharesRefHome(String name) throws Exception {
+        CompileResult r = compileMethod(findMethod(name));
+        final java.util.HashMap<Variable, Location> homes =
+            new java.util.HashMap<Variable, Location>();
+        for (int i = 0; i < r.liveRanges.length; i++) {
+            final LiveRange lr = r.liveRanges[i];
+            if (lr.getLocation() != null) {
+                homes.put(lr.getVariable(), lr.getLocation());
+            }
+        }
+        for (Object b0 : (Iterable<?>) r.cfg) {
+            final IRBasicBlock b = (IRBasicBlock) b0;
+            for (Object q0 : (List<?>) b.getQuads()) {
+                final Quad q = (Quad) q0;
+                if (q.isDeadCode() || !(q instanceof AssignQuad)) {
+                    continue;
+                }
+                final Variable lhs = ((AssignQuad) q).getLHS();
+                final Location lhsLoc = homes.get(lhs);
+                if (!(lhsLoc instanceof RegisterLocation)) {
+                    continue;
+                }
+                final Object lhsReg = ((RegisterLocation) lhsLoc).getRegister();
+                Operand[] refs = q.getReferencedOps();
+                if (refs == null) {
+                    continue;
+                }
+                for (int i = 0; i < refs.length; i++) {
+                    if (!(refs[i] instanceof Variable)) {
+                        continue;
+                    }
+                    final Variable ref = (Variable) refs[i];
+                    final Location refLoc = homes.get(ref);
+                    if (!(refLoc instanceof RegisterLocation)) {
+                        continue;
+                    }
+                    if (((RegisterLocation) refLoc).getRegister() == lhsReg) {
+                        final int refLast = lastUseOf(r.liveRanges, ref);
+                        final int lhsDef = defOf(r.liveRanges, lhs);
+                        assertFalse(name + ": result shares ref home on touch: " + q,
+                            refLast + 1 == lhsDef);
+                    }
+                }
+            }
+        }
+    }
+
+    private static int lastUseOf(LiveRange[] ranges, Variable v) {
+        for (int i = 0; i < ranges.length; i++) {
+            if (ranges[i].getVariable() == v) {
+                return ranges[i].getLastUseAddress();
+            }
+        }
+        return -1;
+    }
+
+    private static int defOf(LiveRange[] ranges, Variable v) {
+        for (int i = 0; i < ranges.length; i++) {
+            if (ranges[i].getVariable() == v) {
+                return ranges[i].getAssignAddress();
+            }
+        }
+        return -1;
+    }
+
+    /**
      * Same pipeline as {@link #compileMethod} but into the binary
      * assembler, so label offsets are real (104: table verification).
      */
@@ -429,7 +588,8 @@ public class L2PipelineTest {
         X86CodeGenerator x86cg = new X86CodeGenerator(method, os, code.getLength(), typeSizeInfo, stackFrame);
         List liveVariables = cfg.computeLiveVariables();
         LiveRange[] liveRanges = X86Level2Compiler.getLiveRanges(liveVariables);
-        LinearScanAllocator lsa = X86Level2Compiler.allocate(liveRanges);
+        LinearScanAllocator lsa = X86Level2Compiler.allocate(liveRanges,
+            X86Level2Compiler.forcedSpills(cfg, liveRanges));
         X86Level2Compiler.generateCode(x86cg, cfg, irg, lsa);
         return cm;
     }
@@ -561,7 +721,8 @@ public class L2PipelineTest {
         cfg.fixupAddresses();
         List liveVariables = cfg.computeLiveVariables();
         LiveRange[] liveRanges = X86Level2Compiler.getLiveRanges(liveVariables);
-        X86Level2Compiler.allocate(liveRanges);
+        X86Level2Compiler.allocate(liveRanges,
+            X86Level2Compiler.forcedSpills(cfg, liveRanges));
         assertTrue("no live ranges for " + name, liveRanges.length > 0);
         for (int i = 0; i < liveRanges.length; i++) {
             assertNotNull("range without location: " + liveRanges[i] + " in " + name,

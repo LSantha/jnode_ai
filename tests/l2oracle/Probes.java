@@ -233,4 +233,103 @@ public class Probes {
             x = x + 1;
         }
     }
+
+    // Proof-gap round: narrow array types (sign/zero extension), casts,
+    // switches, multi-arrays, throwing synchronized. int-only signatures
+    // (driver decodes int only); arrays are locals (no driver change).
+    public static int baIOB(int i) {
+        byte[] a = new byte[3];
+        try {
+            a[i] = -5;
+            return a[i];
+        } catch (ArrayIndexOutOfBoundsException e) {
+            return -999;
+        }
+    }
+
+    public static int caIOB(int i) {
+        char[] a = new char[3];
+        try {
+            a[i] = 0xABCD;
+            return a[i];
+        } catch (ArrayIndexOutOfBoundsException e) {
+            return -999;
+        }
+    }
+
+    public static int saIOB(int i) {
+        short[] a = new short[3];
+        try {
+            a[i] = -30000;
+            return a[i];
+        } catch (ArrayIndexOutOfBoundsException e) {
+            return -999;
+        }
+    }
+
+    public static int blnArr(int x) {
+        boolean[] a = new boolean[2];
+        a[0] = true;
+        if (a[0]) {
+            return x;
+        }
+        return -1;
+    }
+
+    public static int castStr(int x) {
+        Object o = "hi";
+        return ((String) o).length() + x;
+    }
+
+    public static int instStr(int x) {
+        Object o = "hi";
+        if (o instanceof String) {
+            return x + 1;
+        }
+        return -1;
+    }
+
+    public static int swTable(int x) {
+        switch (x) {
+            case 1:
+                return 10;
+            case 2:
+                return 20;
+            case 3:
+                return 30;
+            default:
+                return -1;
+        }
+    }
+
+    public static int swLookup(int x) {
+        switch (x) {
+            case 100:
+                return 1;
+            case 10000:
+                return 2;
+            default:
+                return -1;
+        }
+    }
+
+    public static int multiArr() {
+        int[][] m = new int[2][3];
+        m[1][2] = 7;
+        return m[1][2];
+    }
+
+    public static int syncThrow(int x) {
+        Object o = new Object();
+        try {
+            synchronized (o) {
+                if (x == 0) {
+                    throw new IllegalArgumentException();
+                }
+                return x;
+            }
+        } catch (IllegalArgumentException e) {
+            return -7;
+        }
+    }
 }

@@ -20,9 +20,11 @@
  
 package org.jnode.vm.x86.compiler.l2;
 
+import java.util.ArrayList;
 import java.util.Collection;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 import org.jnode.assembler.Label;
 import org.jnode.assembler.NativeStream;
 import org.jnode.assembler.ObjectResolver;
@@ -43,10 +45,25 @@ import org.jnode.vm.compiler.ir.IRControlFlowGraph;
 import org.jnode.vm.compiler.ir.IRGenerator;
 import org.jnode.vm.compiler.ir.LinearScanAllocator;
 import org.jnode.vm.compiler.ir.LiveRange;
+import org.jnode.vm.compiler.ir.MethodArgument;
 import org.jnode.vm.compiler.ir.StackLocation;
 import org.jnode.vm.compiler.ir.Variable;
+import org.jnode.vm.compiler.ir.quad.ArrayAssignQuad;
+import org.jnode.vm.compiler.ir.quad.ArrayStoreQuad;
 import org.jnode.vm.compiler.ir.quad.AssignQuad;
+import org.jnode.vm.compiler.ir.quad.BinaryOperation;
+import org.jnode.vm.compiler.ir.quad.BinaryQuad;
+import org.jnode.vm.compiler.ir.quad.CallAssignQuad;
+import org.jnode.vm.compiler.ir.quad.CallQuad;
+import org.jnode.vm.compiler.ir.quad.JsrQuad;
+import org.jnode.vm.compiler.ir.quad.MonitorenterQuad;
+import org.jnode.vm.compiler.ir.quad.MonitorexitQuad;
+import org.jnode.vm.compiler.ir.quad.NewAssignQuad;
+import org.jnode.vm.compiler.ir.quad.NewMultiArrayAssignQuad;
+import org.jnode.vm.compiler.ir.quad.NewObjectArrayAssignQuad;
+import org.jnode.vm.compiler.ir.quad.NewPrimitiveArrayAssignQuad;
 import org.jnode.vm.compiler.ir.quad.Quad;
+import org.jnode.vm.compiler.ir.quad.ThrowQuad;
 import org.jnode.vm.compiler.ir.quad.VariableRefAssignQuad;
 import org.jnode.vm.facade.TypeSizeInfo;
 import org.jnode.vm.scheduler.VmProcessor;
@@ -119,8 +136,8 @@ public class X86Level2Compiler extends AbstractX86Compiler {
         return liveRanges;
     }
 
-    public static LinearScanAllocator allocate(LiveRange[] liveRanges) {
-        LinearScanAllocator lsa = new LinearScanAllocator(liveRanges);
+    public static LinearScanAllocator allocate(LiveRange[] liveRanges, Set<LiveRange> forcedSpills) {
+        LinearScanAllocator lsa = new LinearScanAllocator(liveRanges, forcedSpills);
         lsa.allocate();
         return lsa;
     }
@@ -332,7 +349,92 @@ public class X86Level2Compiler extends AbstractX86Compiler {
     public static LinearScanAllocator allocateRanges(IRControlFlowGraph cfg) {
         List liveVariables = cfg.computeLiveVariables();
         LiveRange[] liveRanges = getLiveRanges(liveVariables);
-        return allocate(liveRanges);
+        return allocate(liveRanges, forcedSpills(cfg, liveRanges));
+    }
+
+    /**
+     * 107: values held in caller-saved registers (EBX/ESI; ECX is saved
+     * around calls by the emitters but spilling it too is harmless) do not
+     * survive calls -- nothing preserves them, saveRegisters is a no-op in
+     * every x86 stack frame -- and nothing survives the native unwinder.
+     * Returns the ranges that must take stack homes: any range with a
+     * call-like quad at an address the range is live at (arguments
+     * consumed BY the call are read before the clobber and stay put), plus
+     * any range whose last use is inside a handler block. Requires dense
+     * post-fixup addresses.
+     *
+     * @param cfg fixed-up graph
+     * @param liveRanges ranges over the same graph
+     * @return identity set over {@code liveRanges} instances
+     */
+    public static Set<LiveRange> forcedSpills(IRControlFlowGraph cfg, LiveRange[] liveRanges) {
+        final HashSet<Integer> callAddrs = new HashSet<Integer>();
+        final ArrayList<int[]> handlerRanges = new ArrayList<int[]>();
+        for (Object b0 : (Iterable<?>) cfg) {
+            final IRBasicBlock b = (IRBasicBlock) b0;
+            if (b.isStartOfExceptionHandler()) {
+                handlerRanges.add(new int[]{b.getStartPC(), b.getEndPC()});
+            }
+            for (Object q0 : (List<?>) b.getQuads()) {
+                final Quad q = (Quad) q0;
+                if (isCallLike(q)) {
+                    callAddrs.add(Integer.valueOf(q.getAddress()));
+                }
+            }
+        }
+        final HashSet<LiveRange> forced = new HashSet<LiveRange>();
+        for (int i = 0; i < liveRanges.length; i++) {
+            final LiveRange lr = liveRanges[i];
+            if (lr.getVariable() instanceof MethodArgument) {
+                continue;
+            }
+            // NB: assignAddress is the POST-def address (def quad + 1), so
+            // a call at exactly `def` runs after the value is homed and can
+            // clobber it: the low side is inclusive. The high side stays
+            // strict (a use AT the call is consumed before the clobber).
+            final int def = lr.getAssignAddress();
+            final int last = lr.getLastUseAddress();
+            for (Integer c : callAddrs) {
+                final int call = c.intValue();
+                if (def <= call && call < last) {
+                    forced.add(lr);
+                    break;
+                }
+            }
+            if (!forced.contains(lr)) {
+                for (int[] h : handlerRanges) {
+                    if (h[0] <= last && last < h[1]) {
+                        forced.add(lr);
+                        break;
+                    }
+                }
+            }
+        }
+        return forced;
+    }
+
+    /**
+     * 107: quads whose emission contains (or may contain, on a slow path) a
+     * call instruction. Array accesses throw via a runtime call on the
+     * failure path; long div/rem call the runtime; unwinding preserves
+     * nothing, hence ThrowQuad.
+     */
+    static boolean isCallLike(Quad q) {
+        if (q instanceof CallQuad || q instanceof CallAssignQuad
+            || q instanceof MonitorenterQuad || q instanceof MonitorexitQuad
+            || q instanceof JsrQuad || q instanceof ThrowQuad
+            || q instanceof NewAssignQuad || q instanceof NewObjectArrayAssignQuad
+            || q instanceof NewPrimitiveArrayAssignQuad || q instanceof NewMultiArrayAssignQuad
+            || q instanceof ArrayAssignQuad || q instanceof ArrayStoreQuad) {
+            return true;
+        }
+        if (q instanceof BinaryQuad) {
+            final BinaryOperation op = ((BinaryQuad) q).getOperation();
+            if (op == BinaryOperation.LDIV || op == BinaryOperation.LREM) {
+                return true;
+            }
+        }
+        return false;
     }
 
     public static void initMethodArguments(VmMethod method, X86StackFrame stackFrame, TypeSizeInfo typeSizeInfo,
