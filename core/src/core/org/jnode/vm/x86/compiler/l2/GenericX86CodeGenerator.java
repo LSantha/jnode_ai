@@ -44,6 +44,10 @@ import org.jnode.vm.classmgr.VmConstFieldRef;
 import org.jnode.vm.classmgr.VmConstMethodRef;
 import org.jnode.vm.classmgr.VmField;
 import org.jnode.vm.classmgr.VmInstanceField;
+import org.jnode.vm.classmgr.ObjectFlags;
+import org.jnode.vm.classmgr.ObjectLayout;
+import org.jnode.vm.classmgr.TIBLayout;
+import org.jnode.vm.classmgr.VmArray;
 import org.jnode.vm.classmgr.VmIsolatedStaticsEntry;
 import org.jnode.vm.classmgr.VmInstanceMethod;
 import org.jnode.vm.classmgr.VmMethod;
@@ -69,10 +73,12 @@ import org.jnode.vm.compiler.ir.Variable;
 import org.jnode.vm.compiler.ir.quad.ArrayAssignQuad;
 import org.jnode.vm.compiler.ir.quad.ArrayLengthAssignQuad;
 import org.jnode.vm.compiler.ir.quad.ArrayStoreQuad;
+import org.jnode.vm.compiler.ir.quad.AtomicStoreQuad;
 import org.jnode.vm.compiler.ir.quad.BinaryOperation;
 import org.jnode.vm.compiler.ir.quad.BinaryQuad;
 import org.jnode.vm.compiler.ir.quad.BranchCondition;
 import org.jnode.vm.compiler.ir.quad.CheckcastQuad;
+import org.jnode.vm.compiler.ir.quad.CmpAssignQuad;
 import org.jnode.vm.compiler.ir.quad.ConditionalBranchQuad;
 import org.jnode.vm.compiler.ir.quad.ConstantClassAssignQuad;
 import org.jnode.vm.compiler.ir.quad.ConstantRefAssignQuad;
@@ -82,6 +88,9 @@ import org.jnode.vm.compiler.ir.quad.InterfaceCallAssignQuad;
 import org.jnode.vm.compiler.ir.quad.InterfaceCallQuad;
 import org.jnode.vm.compiler.ir.quad.JsrQuad;
 import org.jnode.vm.compiler.ir.quad.LookupswitchQuad;
+import org.jnode.vm.compiler.ir.quad.MagicOpAssignQuad;
+import org.jnode.vm.compiler.ir.quad.MemLoadAssignQuad;
+import org.jnode.vm.compiler.ir.quad.MemStoreQuad;
 import org.jnode.vm.compiler.ir.quad.MonitorenterQuad;
 import org.jnode.vm.compiler.ir.quad.MonitorexitQuad;
 import org.jnode.vm.compiler.ir.quad.NewAssignQuad;
@@ -4453,6 +4462,441 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
         }
     }
 
+    /**
+     * Value-producing comparison (M1 comparisons): {@code lhs = (op1 cond
+     * op2) ? 1 : 0}. SR1 (EAX, never allocated -- see X86RegisterPool) is
+     * scratch; MOV preserves flags so the cmp->setcc chain is intact, and
+     * the lhs is written only after the flags are consumed (alias-safe).
+     */
+    public void generateCodeFor(CmpAssignQuad<T> quad) {
+        checkLabel(quad.getAddress());
+        // op1 -> SR1.
+        Operand<T> op1 = quad.getOperand1();
+        if (op1.getAddressingMode() == CONSTANT) {
+            if (!(op1 instanceof IntConstant)) {
+                throw new IllegalArgumentException("Non-int cmp operand: " + op1);
+            }
+            os.writeMOV_Const((GPR) SR1, ((IntConstant<T>) op1).getValue());
+        } else if (op1.getAddressingMode() == REGISTER) {
+            T r1 = ((RegisterLocation<T>) ((Variable<T>) op1).getLocation()).getRegister();
+            os.writeMOV(X86Constants.BITS32, (GPR) SR1, (GPR) r1);
+        } else if (op1.getAddressingMode() == STACK) {
+            int d1 = ((StackLocation<T>) ((Variable<T>) op1).getLocation()).getDisplacement();
+            os.writeMOV(X86Constants.BITS32, (GPR) SR1, X86Register.EBP, d1);
+        } else {
+            throw new IllegalArgumentException("Bad cmp op1: " + op1);
+        }
+        // cmp SR1, op2.
+        Operand<T> op2 = quad.getOperand2();
+        if (op2.getAddressingMode() == CONSTANT) {
+            if (!(op2 instanceof IntConstant)) {
+                throw new IllegalArgumentException("Non-int cmp operand: " + op2);
+            }
+            os.writeCMP_Const((GPR) SR1, ((IntConstant<T>) op2).getValue());
+        } else if (op2.getAddressingMode() == REGISTER) {
+            T r2 = ((RegisterLocation<T>) ((Variable<T>) op2).getLocation()).getRegister();
+            os.writeCMP((GPR) SR1, (GPR) r2);
+        } else if (op2.getAddressingMode() == STACK) {
+            int d2 = ((StackLocation<T>) ((Variable<T>) op2).getLocation()).getDisplacement();
+            os.writeCMP((GPR) SR1, X86Register.EBP, d2);
+        } else {
+            throw new IllegalArgumentException("Bad cmp op2: " + op2);
+        }
+        // SR1 = condition ? 1 : 0 (MOV keeps flags; SETCC masks JCC codes).
+        os.writeMOV_Const((GPR) SR1, 0);
+        os.writeSETCC((GPR) SR1, cmpConditionToCC(quad.getCondition()));
+        // lhs = SR1.
+        Variable<T> lhs = quad.getLHS();
+        if (lhs.getAddressingMode() == REGISTER) {
+            T lr = ((RegisterLocation<T>) lhs.getLocation()).getRegister();
+            os.writeMOV(X86Constants.BITS32, (GPR) lr, (GPR) SR1);
+        } else if (lhs.getAddressingMode() == STACK) {
+            int ld = ((StackLocation<T>) lhs.getLocation()).getDisplacement();
+            os.writeMOV(X86Constants.BITS32, X86Register.EBP, ld, (GPR) SR1);
+        } else {
+            throw new IllegalArgumentException("Bad cmp lhs: " + lhs);
+        }
+    }
+
+    /**
+     * BranchCondition to SETCC code. Mirrors L1b's methodToCC quirk exactly:
+     * plain LT/LE/GT/GE are UNSIGNED, S-prefixed are signed
+     * (BaseX86MagicHelper.methodToCC).
+     */
+    private int cmpConditionToCC(BranchCondition condition) {
+        switch (condition) {
+            case IF_ICMPEQ:
+            case IF_ACMPEQ:
+                return X86Constants.JE;
+            case IF_ICMPNE:
+            case IF_ACMPNE:
+                return X86Constants.JNE;
+            case IF_ICMPLT:
+                return X86Constants.JL;
+            case IF_ICMPLE:
+                return X86Constants.JLE;
+            case IF_ICMPGT:
+                return X86Constants.JG;
+            case IF_ICMPGE:
+                return X86Constants.JGE;
+            case IF_ICMPULT:
+                return X86Constants.JB;
+            case IF_ICMPULE:
+                return X86Constants.JBE;
+            case IF_ICMPUGT:
+                return X86Constants.JA;
+            case IF_ICMPUGE:
+                return X86Constants.JAE;
+            default:
+                throw new IllegalArgumentException("Unknown cmp condition " + condition);
+        }
+    }
+
+    /**
+     * Raw-memory load (M2): effaddr (EAX) then one width-specific move.
+     * EAX/EDX are unpooled scratch (see X86RegisterPool); the lhs is
+     * written only after the address is consumed (alias-safe).
+     */
+    public void generateCodeFor(MemLoadAssignQuad<T> quad) {
+        checkLabel(quad.getAddress());
+        loadEffectiveAddress((GPR) SR1, quad.getAddr(), quad.getOfs());
+        final int kind = quad.getKind();
+        Variable<T> lhs = quad.getLHS();
+        final GPR dst;
+        final boolean dstIsScratch;
+        if (lhs.getAddressingMode() == REGISTER) {
+            dst = (GPR) ((RegisterLocation<T>) lhs.getLocation()).getRegister();
+            dstIsScratch = false;
+        } else if (lhs.getAddressingMode() == STACK) {
+            dst = (GPR) SR1;
+            dstIsScratch = true;
+        } else {
+            throw new IllegalArgumentException("Bad memload lhs: " + lhs);
+        }
+        if (kind == Operand.BYTE) {
+            os.writeMOVSX(dst, X86Register.EAX, 0, BYTESIZE);
+        } else if (kind == Operand.SHORT) {
+            os.writeMOVSX(dst, X86Register.EAX, 0, WORDSIZE);
+        } else if (kind == Operand.CHAR) {
+            os.writeMOVZX(dst, X86Register.EAX, 0, WORDSIZE);
+        } else if (kind == Operand.LONG || kind == Operand.DOUBLE) {
+            if (!dstIsScratch) {
+                throw new IllegalArgumentException("Wide memload to register");
+            }
+            if (lhs.getAddressingMode() != STACK) {
+                throw new IllegalArgumentException("Bad wide memload lhs: " + lhs);
+            }
+            int disp = ((StackLocation<T>) lhs.getLocation()).getDisplacement();
+            int lo = disp - stackFrame.getHelper().SLOTSIZE;
+            // ANCHOR-L2-082 high-base: low half at disp-4, high at disp.
+            os.writeMOV(X86Constants.BITS32, X86Register.EDX, X86Register.EAX, 0);
+            os.writeMOV(X86Constants.BITS32, X86Register.EBP, lo, X86Register.EDX);
+            os.writeMOV(X86Constants.BITS32, X86Register.EDX, X86Register.EAX, 4);
+            os.writeMOV(X86Constants.BITS32, X86Register.EBP, disp, X86Register.EDX);
+            return;
+        } else {
+            // INT/FLOAT/REFERENCE: one word, raw bits.
+            os.writeMOV(X86Constants.BITS32, dst, X86Register.EAX, 0);
+        }
+        if (dstIsScratch) {
+            int disp = ((StackLocation<T>) lhs.getLocation()).getDisplacement();
+            os.writeMOV(X86Constants.BITS32, X86Register.EBP, disp, dst);
+        }
+    }
+
+    /**
+     * Raw-memory store (M2): effaddr (EAX), value (EDX), one width store.
+     */
+    public void generateCodeFor(MemStoreQuad<T> quad) {
+        checkLabel(quad.getAddress());
+        loadEffectiveAddress((GPR) SR1, quad.getAddr(), quad.getOfs());
+        final int kind = quad.getKind();
+        Operand<T> value = quad.getValue();
+        if (kind == Operand.LONG || kind == Operand.DOUBLE) {
+            if (value.getAddressingMode() == CONSTANT) {
+                long v;
+                if (value instanceof LongConstant) {
+                    v = ((LongConstant<T>) value).getValue();
+                } else if (value instanceof DoubleConstant) {
+                    v = Double.doubleToRawLongBits(((DoubleConstant<T>) value).getValue());
+                } else {
+                    throw new IllegalArgumentException("Bad wide memstore const: " + value);
+                }
+                os.writeMOV_Const(X86Constants.BITS32, X86Register.EAX, 0,
+                    (int) (v & 0xFFFFFFFFL));
+                os.writeMOV_Const(X86Constants.BITS32, X86Register.EAX, 4,
+                    (int) ((v >>> 32) & 0xFFFFFFFFL));
+                return;
+            }
+            if (value.getAddressingMode() != STACK) {
+                throw new IllegalArgumentException("Wide memstore value from register");
+            }
+            int vdisp = ((StackLocation<T>) ((Variable<T>) value).getLocation()).getDisplacement();
+            int vlo = vdisp - stackFrame.getHelper().SLOTSIZE;
+            os.writeMOV(X86Constants.BITS32, X86Register.EDX, X86Register.EBP, vlo);
+            os.writeMOV(X86Constants.BITS32, X86Register.EAX, 0, X86Register.EDX);
+            os.writeMOV(X86Constants.BITS32, X86Register.EDX, X86Register.EBP, vdisp);
+            os.writeMOV(X86Constants.BITS32, X86Register.EAX, 4, X86Register.EDX);
+            return;
+        }
+        moveWordToReg(X86Register.EDX, value);
+        if (kind == Operand.BYTE) {
+            // EDX is low-byte-capable (cf. ANCHOR-L2-084).
+            os.writeMOV(X86Constants.BITS8, X86Register.EAX, 0, X86Register.EDX);
+        } else if (kind == Operand.SHORT || kind == Operand.CHAR) {
+            os.writeMOV(X86Constants.BITS16, X86Register.EAX, 0, X86Register.EDX);
+        } else {
+            // INT/FLOAT/REFERENCE: one word, raw bits.
+            os.writeMOV(X86Constants.BITS32, X86Register.EAX, 0, X86Register.EDX);
+        }
+    }
+
+    /**
+     * Effective address to a scratch register: mov addr, then fold the
+     * offset (LEA for register offsets, ADD for immediates; L1b LEA parity).
+     * The offset temp is always EDX, so callers must not hold anything live
+     * in EDX across this call.
+     */
+    private void loadEffectiveAddress(GPR dst, Operand<T> addr, Operand<T> ofs) {
+        moveWordToReg(dst, addr);
+        if (ofs == null) {
+            return;
+        }
+        if (ofs.getAddressingMode() == REGISTER) {
+            GPR or_ = (GPR) ((RegisterLocation<T>) ((Variable<T>) ofs).getLocation()).getRegister();
+            os.writeLEA(dst, dst, or_, 1, 0);
+        } else if (ofs.getAddressingMode() == STACK) {
+            int d = ((StackLocation<T>) ((Variable<T>) ofs).getLocation()).getDisplacement();
+            if (dst == X86Register.EDX) {
+                throw new IllegalArgumentException("Offset temp collides with dst");
+            }
+            os.writeMOV(X86Constants.BITS32, X86Register.EDX, X86Register.EBP, d);
+            os.writeLEA(dst, dst, X86Register.EDX, 1, 0);
+        } else if (ofs.getAddressingMode() == CONSTANT) {
+            if (!(ofs instanceof IntConstant)) {
+                throw new IllegalArgumentException("Non-int mem offset: " + ofs);
+            }
+            os.writeADD(dst, ((IntConstant<T>) ofs).getValue());
+        } else {
+            throw new IllegalArgumentException("Bad mem offset: " + ofs);
+        }
+    }
+
+    /**
+     * Multi-step VmMagic facades (M3): one scratch sequence per kind
+     * (EAX/EDX, both unpooled). Field/table offsets come from the live
+     * EntryPoints (same source L1b uses); slot arithmetic is CODE32.
+     */
+    public void generateCodeFor(MagicOpAssignQuad<T> quad) {
+        checkLabel(quad.getAddress());
+        final int kind = quad.getKind();
+        final Operand<T>[] refs = quad.getReferencedOps();
+        Variable<T> lhs = quad.getLHS();
+        switch (kind) {
+            case MagicOpAssignQuad.FRAME_EBP: {
+                os.writeMOV(X86Constants.BITS32, (GPR) SR1, X86Register.EBP);
+                storeRegToLhs((GPR) SR1, lhs);
+                break;
+            }
+            case MagicOpAssignQuad.SEG_PROCESSOR: {
+                int off = stackFrame.getEntryPoints().getVmProcessorMeField().getOffset();
+                os.writePrefix(X86Constants.FS_PREFIX);
+                os.writeMOV((GPR) SR1, off);
+                storeRegToLhs((GPR) SR1, lhs);
+                break;
+            }
+            case MagicOpAssignQuad.SEG_SHARED_STATICS:
+            case MagicOpAssignQuad.SEG_ISOLATED_STATICS: {
+                final boolean shared = (kind == MagicOpAssignQuad.SEG_SHARED_STATICS);
+                int tableOff = shared
+                    ? stackFrame.getEntryPoints().getVmProcessorSharedStaticsTable().getOffset()
+                    : stackFrame.getEntryPoints().getVmProcessorIsolatedStaticsTable().getOffset();
+                os.writePrefix(X86Constants.FS_PREFIX);
+                os.writeMOV((GPR) SR1, tableOff);
+                Operand<T> idx = refs[0];
+                final int dataOff = VmArray.DATA_OFFSET * 4;
+                if (idx.getAddressingMode() == CONSTANT) {
+                    if (!(idx instanceof IntConstant)) {
+                        throw new IllegalArgumentException("Non-int statics index: " + idx);
+                    }
+                    os.writeADD((GPR) SR1,
+                        ((IntConstant<T>) idx).getValue() * 4 + dataOff);
+                } else {
+                    moveWordToReg(X86Register.EDX, idx);
+                    os.writeLEA((GPR) SR1, (GPR) SR1, X86Register.EDX, 4, dataOff);
+                }
+                storeRegToLhs((GPR) SR1, lhs);
+                break;
+            }
+            case MagicOpAssignQuad.OBJ_TYPE: {
+                moveWordToReg((GPR) SR1, refs[0]);
+                os.writeMOV(X86Constants.BITS32, (GPR) SR1, (GPR) SR1,
+                    ObjectLayout.TIB_SLOT * 4);
+                os.writeMOV(X86Constants.BITS32, X86Register.EDX, (GPR) SR1,
+                    (TIBLayout.VMTYPE_INDEX + VmArray.DATA_OFFSET) * 4);
+                storeRegToLhs(X86Register.EDX, lhs);
+                break;
+            }
+            case MagicOpAssignQuad.OBJ_COLOR:
+            case MagicOpAssignQuad.OBJ_FINALIZED: {
+                final int mask = (kind == MagicOpAssignQuad.OBJ_COLOR)
+                    ? ObjectFlags.GC_COLOUR_MASK : ObjectFlags.STATUS_FINALIZED;
+                moveWordToReg((GPR) SR1, refs[0]);
+                os.writeMOV(X86Constants.BITS32, X86Register.EDX, (GPR) SR1,
+                    ObjectLayout.FLAGS_SLOT * 4);
+                os.writeAND(X86Register.EDX, mask);
+                storeRegToLhs(X86Register.EDX, lhs);
+                break;
+            }
+            case MagicOpAssignQuad.TIMESTAMP: {
+                if (lhs.getAddressingMode() != STACK) {
+                    throw new IllegalArgumentException("Timestamp to register");
+                }
+                int disp = ((StackLocation<T>) lhs.getLocation()).getDisplacement();
+                int lo = disp - stackFrame.getHelper().SLOTSIZE;
+                os.writeRDTSC();
+                os.writeMOV(X86Constants.BITS32, X86Register.EBP, lo, X86Register.EAX);
+                os.writeMOV(X86Constants.BITS32, X86Register.EBP, disp, X86Register.EDX);
+                break;
+            }
+            case MagicOpAssignQuad.TO_LONG: {
+                // Zero-extend one word to a wide home (L1b TOLONG parity:
+                // low = word, high = 0).
+                if (lhs.getAddressingMode() != STACK) {
+                    throw new IllegalArgumentException("Wide toLong to register");
+                }
+                int disp = ((StackLocation<T>) lhs.getLocation()).getDisplacement();
+                int lo = disp - stackFrame.getHelper().SLOTSIZE;
+                moveWordToReg((GPR) SR1, refs[0]);
+                os.writeMOV(X86Constants.BITS32, X86Register.EBP, lo, (GPR) SR1);
+                os.writeMOV_Const(X86Register.EDX, 0);
+                os.writeMOV(X86Constants.BITS32, X86Register.EBP, disp, X86Register.EDX);
+                break;
+            }
+            case MagicOpAssignQuad.FROM_LONG: {
+                // Truncate a wide home to its low half (L1b FROMLONG parity).
+                Operand<T> src = refs[0];
+                if (src.getAddressingMode() != STACK) {
+                    throw new IllegalArgumentException("fromLong of register long");
+                }
+                int d = ((StackLocation<T>) ((Variable<T>) src).getLocation()).getDisplacement();
+                os.writeMOV(X86Constants.BITS32, (GPR) SR1, X86Register.EBP,
+                    d - stackFrame.getHelper().SLOTSIZE);
+                storeRegToLhs((GPR) SR1, lhs);
+                break;
+            }
+            case MagicOpAssignQuad.CAS: {
+                // attempt(old, new[, ofs]): LOCK CMPXCHG. The new value is
+                // staged through the stack (push/pop) so aliasing between
+                // old/new/addr homes cannot corrupt the sequence; ECX is
+                // pooled so it is push/pop-protected like array stores.
+                Operand<T> addr;
+                Operand<T> ofs;
+                Operand<T> oldW;
+                Operand<T> newW;
+                if (refs.length == 3) {
+                    addr = refs[0];
+                    ofs = null;
+                    oldW = refs[1];
+                    newW = refs[2];
+                } else if (refs.length == 4) {
+                    addr = refs[0];
+                    oldW = refs[1];
+                    newW = refs[2];
+                    ofs = refs[3];
+                } else {
+                    throw new IllegalArgumentException("Bad CAS arity " + refs.length);
+                }
+                os.writePUSH(X86Register.ECX);
+                pushWord(newW);
+                moveWordToReg(X86Register.EAX, oldW);
+                loadEffectiveAddress(X86Register.EDX, addr, ofs);
+                os.writePOP(X86Register.ECX);
+                os.writeCMPXCHG_EAX(X86Register.EDX, 0, X86Register.ECX, true);
+                os.writeMOV_Const(X86Register.EDX, 0);
+                os.writeSETCC(X86Register.EDX, X86Constants.JZ);
+                storeRegToLhs(X86Register.EDX, lhs);
+                os.writePOP(X86Register.ECX);
+                break;
+            }
+            default:
+                throw new IllegalArgumentException("Unknown magic op " + kind);
+        }
+    }
+
+    /**
+     * Locked read-modify-write (M4 atomics): LOCK op [effaddr] = value.
+     */
+    public void generateCodeFor(AtomicStoreQuad<T> quad) {
+        checkLabel(quad.getAddress());
+        loadEffectiveAddress(X86Register.EDX, quad.getAddr(), null);
+        Operand<T> value = quad.getValue();
+        os.writePUSH(X86Register.ECX);
+        moveWordToReg(X86Register.ECX, value);
+        os.writePrefix(X86Constants.LOCK_PREFIX);
+        os.writeArithOp(quad.getOperation(), X86Register.EDX, 0, X86Register.ECX);
+        os.writePOP(X86Register.ECX);
+    }
+
+    /**
+     * Push one word (register/stack/int-constant) on the machine stack.
+     */
+    private void pushWord(Operand<T> src) {
+        if (src.getAddressingMode() == REGISTER) {
+            GPR r = (GPR) ((RegisterLocation<T>) ((Variable<T>) src).getLocation()).getRegister();
+            os.writePUSH(r);
+        } else if (src.getAddressingMode() == STACK) {
+            int d = ((StackLocation<T>) ((Variable<T>) src).getLocation()).getDisplacement();
+            os.writePUSH(X86Register.EBP, d);
+        } else if (src.getAddressingMode() == CONSTANT) {
+            if (!(src instanceof IntConstant)) {
+                throw new IllegalArgumentException("Non-int push operand: " + src);
+            }
+            os.writePUSH(((IntConstant<T>) src).getValue());
+        } else {
+            throw new IllegalArgumentException("Bad push operand: " + src);
+        }
+    }
+
+    /**
+     * Store a scratch register to an assign home (register or stack).
+     */
+    private void storeRegToLhs(GPR src, Variable<T> lhs) {
+        if (lhs.getAddressingMode() == REGISTER) {
+            GPR lr = (GPR) ((RegisterLocation<T>) lhs.getLocation()).getRegister();
+            if (lr != src) {
+                os.writeMOV(X86Constants.BITS32, lr, src);
+            }
+        } else if (lhs.getAddressingMode() == STACK) {
+            int d = ((StackLocation<T>) lhs.getLocation()).getDisplacement();
+            os.writeMOV(X86Constants.BITS32, X86Register.EBP, d, src);
+        } else {
+            throw new IllegalArgumentException("Bad magicop lhs: " + lhs);
+        }
+    }
+
+    /**
+     * One word (register/stack/int-constant) to a register.
+     */
+    private void moveWordToReg(GPR dst, Operand<T> src) {
+        if (src.getAddressingMode() == REGISTER) {
+            GPR r = (GPR) ((RegisterLocation<T>) ((Variable<T>) src).getLocation()).getRegister();
+            if (r != dst) {
+                os.writeMOV(X86Constants.BITS32, dst, r);
+            }
+        } else if (src.getAddressingMode() == STACK) {
+            int d = ((StackLocation<T>) ((Variable<T>) src).getLocation()).getDisplacement();
+            os.writeMOV(X86Constants.BITS32, dst, X86Register.EBP, d);
+        } else if (src.getAddressingMode() == CONSTANT) {
+            if (!(src instanceof IntConstant)) {
+                throw new IllegalArgumentException("Non-int mem operand: " + src);
+            }
+            os.writeMOV_Const(dst, ((IntConstant<T>) src).getValue());
+        } else {
+            throw new IllegalArgumentException("Bad mem operand: " + src);
+        }
+    }
+
     public void endMethod() {
         stackFrame.emitTrailer(typeSizeInfo, currentMethod.getBytecode().getNoLocals());
     }
@@ -6733,11 +7177,11 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
         methodRef.resolve(currentMethod.getDeclaringClass().getLoader());
         try {
             final VmMethod sm = methodRef.getResolvedVmMethod();
-            if (sm.getDeclaringClass().isMagicType()) {
-                // ANCHOR-L2-076 (CG-4e): L2 has no magic emitter (CG-5 port);
-                // fail loud, never silently skip the call (stack imbalance).
-                throw new IllegalArgumentException("L2 magic not implemented: " + methodRef.getName());
-            }
+            // M0: no magic check on invokespecial. L1a+L1b compile
+            // invokespecial (always <init>/private, incl. magic constructors
+            // like Word(long)) through the ordinary path -- verified against
+            // both backends 2026-09-12. ANCHOR-L2-076 still guards
+            // virtual/static/interface dispatch on magic types.
 
             //dropParameters(sm, true);
             // Preserve ECX below the arguments (frame-shift reason).
@@ -6764,10 +7208,7 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
         methodRef.resolve(currentMethod.getDeclaringClass().getLoader());
         try {
             final VmMethod sm = methodRef.getResolvedVmMethod();
-            if (sm.getDeclaringClass().isMagicType()) {
-                // ANCHOR-L2-076 (CG-4e): fail loud, never silently skip.
-                throw new IllegalArgumentException("L2 magic not implemented: " + methodRef.getName());
-            }
+            // M0: no magic check on invokespecial (L1a+L1b parity, see above).
 
             //dropParameters(sm, true);
             // Preserve ECX below the arguments (frame-shift reason).

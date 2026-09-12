@@ -319,6 +319,9 @@ public class X86Level2Compiler extends AbstractX86Compiler {
      * keeps them, and anything stranded is collected.
      */
     public static void constructAndOptimize(IRControlFlowGraph cfg) {
+        // M1: lower magic calls to plain quads BEFORE SSA, so versioning
+        // and all downstream passes see ordinary moves/constants.
+        MagicHelper.lowerMagicCalls(cfg);
         cfg.constructSSA();
         optimizeOnce(cfg);
     }

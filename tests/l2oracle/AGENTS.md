@@ -129,6 +129,25 @@ bash compare.sh <host-out> /tmp/out-l2.txt
 One shell command per `$JAC` call (no chains around silent-long steps);
 `--write` needs the parent dir to exist.
 
+## QEMU loop (when VBox is down)
+
+Same guest flow over QEMU (repo skill `.opencode/skills/jnode-interact`;
+VBox pipe and mux stay out of it — stop the mux first):
+
+```bash
+bash .opencode/skills/jnode-interact/scripts/start_qemu.sh simple all/build/cdroms/jnode-x86-lite.iso 1
+# wait for "Serial console available" in /tmp/qemu_serial.log, then:
+ln -sf /tmp/jnode.serial2 /tmp/jnode_com2
+JAC=.opencode/skills/jnode-interact/scripts/jnode_agent_cmd.py
+python3 $JAC "javac -d /jnode/tmp/ox /devices/sg0/ox/Probes.java /devices/sg0/ox/OracleDriver.java"
+python3 $JAC "java OracleDriver out-l2.txt"   # separate calls; TCG is slow
+python3 $JAC "cat out-l2.txt" > /tmp/out-l2.txt
+```
+
+One command per call (legacy one-shot agent, no batching, no `--write`
+of big files); TCG needs generous timeouts. Identify QEMU by PID before
+killing (shared host); never `pkill -f` with a self-matching pattern.
+
 ## Driver modes
 
 `java OracleDriver <out> [mode]`:
@@ -142,6 +161,8 @@ One shell command per `$JAC` call (no chains around silent-long steps);
 
 ## Reading the scoreboard
 
+- `mkdir -p /tmp/oracle` FIRST — `compare.sh` writes temp files there;
+without it the CR-strip fails silently and diffs vanish (false PASS).
 - `force|N` first line, N > 0 on JNode = forcing worked (count includes one extra slot; `-1` host, `-2` forcing threw).
 - Known pre-existing divergences (NOT L2 bugs): int `MIN/-1` → `EX` (x86 `#DE` mapped by the runtime) and `parseDouble` 1-ULP (library).
 - Everything else in the L2 diff is an L2 bug; file it with method + inputs + expected vs actual bits.

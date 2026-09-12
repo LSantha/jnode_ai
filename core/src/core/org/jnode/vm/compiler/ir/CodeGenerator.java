@@ -23,10 +23,12 @@ package org.jnode.vm.compiler.ir;
 import org.jnode.vm.compiler.ir.quad.ArrayAssignQuad;
 import org.jnode.vm.compiler.ir.quad.ArrayLengthAssignQuad;
 import org.jnode.vm.compiler.ir.quad.ArrayStoreQuad;
+import org.jnode.vm.compiler.ir.quad.AtomicStoreQuad;
 import org.jnode.vm.compiler.ir.quad.BinaryOperation;
 import org.jnode.vm.compiler.ir.quad.BinaryQuad;
 import org.jnode.vm.compiler.ir.quad.BranchCondition;
 import org.jnode.vm.compiler.ir.quad.CheckcastQuad;
+import org.jnode.vm.compiler.ir.quad.CmpAssignQuad;
 import org.jnode.vm.compiler.ir.quad.ConditionalBranchQuad;
 import org.jnode.vm.compiler.ir.quad.ConstantClassAssignQuad;
 import org.jnode.vm.compiler.ir.quad.ConstantRefAssignQuad;
@@ -36,6 +38,9 @@ import org.jnode.vm.compiler.ir.quad.InterfaceCallAssignQuad;
 import org.jnode.vm.compiler.ir.quad.InterfaceCallQuad;
 import org.jnode.vm.compiler.ir.quad.JsrQuad;
 import org.jnode.vm.compiler.ir.quad.LookupswitchQuad;
+import org.jnode.vm.compiler.ir.quad.MagicOpAssignQuad;
+import org.jnode.vm.compiler.ir.quad.MemLoadAssignQuad;
+import org.jnode.vm.compiler.ir.quad.MemStoreQuad;
 import org.jnode.vm.compiler.ir.quad.MonitorenterQuad;
 import org.jnode.vm.compiler.ir.quad.MonitorexitQuad;
 import org.jnode.vm.compiler.ir.quad.NewAssignQuad;
@@ -120,6 +125,41 @@ public abstract class CodeGenerator<T> {
      * @param quad
      */
     public abstract void generateCodeFor(VariableRefAssignQuad<T> quad);
+
+    /**
+     * Value-producing integer comparison (CmpAssignQuad).
+     *
+     * @param quad
+     */
+    public abstract void generateCodeFor(CmpAssignQuad<T> quad);
+
+    /**
+     * Raw-memory load (MemLoadAssignQuad).
+     *
+     * @param quad
+     */
+    public abstract void generateCodeFor(MemLoadAssignQuad<T> quad);
+
+    /**
+     * Raw-memory store (MemStoreQuad).
+     *
+     * @param quad
+     */
+    public abstract void generateCodeFor(MemStoreQuad<T> quad);
+
+    /**
+     * Multi-step VmMagic facade (MagicOpAssignQuad).
+     *
+     * @param quad
+     */
+    public abstract void generateCodeFor(MagicOpAssignQuad<T> quad);
+
+    /**
+     * Locked read-modify-write (AtomicStoreQuad).
+     *
+     * @param quad
+     */
+    public abstract void generateCodeFor(AtomicStoreQuad<T> quad);
 
     /**
      * @param quad
