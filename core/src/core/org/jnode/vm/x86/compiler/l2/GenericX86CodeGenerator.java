@@ -4776,6 +4776,13 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
             case MagicOpAssignQuad.FROM_LONG: {
                 // Truncate a wide home to its low half (L1b FROMLONG parity).
                 Operand<T> src = refs[0];
+                if (src instanceof LongConstant) {
+                    // Constant long (VmX86Architecture64#getEnd/#getStart
+                    // AVAILABLE_END/START): fold to the low half immediate.
+                    os.writeMOV_Const((GPR) SR1, (int) ((LongConstant<T>) src).getValue());
+                    storeRegToLhs((GPR) SR1, lhs);
+                    break;
+                }
                 if (src.getAddressingMode() != STACK) {
                     throw new IllegalArgumentException("fromLong of register long");
                 }
