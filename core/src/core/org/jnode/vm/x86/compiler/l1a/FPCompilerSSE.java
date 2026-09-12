@@ -100,6 +100,8 @@ final class FPCompilerSSE extends FPCompiler {
             final double fpv1 = getFPValue(v1);
             final double fpv2 = getFPValue(v2);
             vstack.push(createConst(ifac, type, fpv1 + fpv2));
+            v1.release(ec);
+            v2.release(ec);
         } else {
             if (prepareForOperation(v1, v2, commutative)) {
                 // Swap
