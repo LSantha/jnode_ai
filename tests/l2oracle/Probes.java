@@ -23,6 +23,10 @@
  * catching is not tested. All methods are stateless statics; forcing
  * compiles the whole class.
  */
+import org.vmmagic.unboxed.Address;
+import org.vmmagic.unboxed.Offset;
+import org.vmmagic.unboxed.Word;
+
 public class Probes {
 
     public static int add_iii(int a, int b) {
@@ -331,5 +335,124 @@ public class Probes {
         } catch (IllegalArgumentException e) {
             return -7;
         }
+    }
+
+    // Magic-call section (M0-M4): Word/Address ops, primitives in/out only,
+    // magic objects stay inside (driver decodes int/long only). Unsigned
+    // (zero-extended) unless s-prefixed (sign-extended). NOTE host/guest-lib
+    // divergences that are NOT L2 bugs: signExtend->toLong (host
+    // sign-extends the long field, guest zero-extends the word),
+    // zeroExtend->rsha (host long>> vs guest word SAR), and Word.LT/LE
+    // (UNSIGNED by design: name-resolves to mcode LT -> JB; the host body
+    // is signed) are deliberately absent or rerouted; rsha uses
+    // signExtend, toLong uses zeroExtend, signed compare goes through
+    // Offset.sLT/sLE.
+    public static int wadd_iii(int a, int b) {
+        return Word.fromIntZeroExtend(a).add(Word.fromIntZeroExtend(b)).toInt();
+    }
+
+    public static int wsub_iii(int a, int b) {
+        return Word.fromIntZeroExtend(a).sub(Word.fromIntZeroExtend(b)).toInt();
+    }
+
+    public static int wand_iii(int a, int b) {
+        return Word.fromIntZeroExtend(a).and(Word.fromIntZeroExtend(b)).toInt();
+    }
+
+    public static int wor_iii(int a, int b) {
+        return Word.fromIntZeroExtend(a).or(Word.fromIntZeroExtend(b)).toInt();
+    }
+
+    public static int wxor_iii(int a, int b) {
+        return Word.fromIntZeroExtend(a).xor(Word.fromIntZeroExtend(b)).toInt();
+    }
+
+    public static int wnot_ii(int a) {
+        return Word.fromIntZeroExtend(a).not().toInt();
+    }
+
+    public static int wlsh_iii(int a, int b) {
+        return Word.fromIntZeroExtend(a).lsh(b).toInt();
+    }
+
+    public static int wrshl_iii(int a, int b) {
+        return Word.fromIntZeroExtend(a).rshl(b).toInt();
+    }
+
+    public static int wrsha_iii(int a, int b) {
+        return Word.fromIntSignExtend(a).rsha(b).toInt();
+    }
+
+    public static int wsign_iii(int a, int b) {
+        return Word.fromIntSignExtend(a).add(Word.fromIntSignExtend(b)).toInt();
+    }
+
+    public static int wlt_iii(int a, int b) {
+        return Word.fromIntZeroExtend(a).LT(Word.fromIntZeroExtend(b)) ? 1 : 0;
+    }
+
+    public static int wle_iii(int a, int b) {
+        return Word.fromIntZeroExtend(a).LE(Word.fromIntZeroExtend(b)) ? 1 : 0;
+    }
+
+    public static int wgt_iii(int a, int b) {
+        return Word.fromIntZeroExtend(a).GT(Word.fromIntZeroExtend(b)) ? 1 : 0;
+    }
+
+    public static int wge_iii(int a, int b) {
+        return Word.fromIntZeroExtend(a).GE(Word.fromIntZeroExtend(b)) ? 1 : 0;
+    }
+
+    public static int weq_iii(int a, int b) {
+        return Word.fromIntZeroExtend(a).EQ(Word.fromIntZeroExtend(b)) ? 1 : 0;
+    }
+
+    public static int wne_iii(int a, int b) {
+        return Word.fromIntZeroExtend(a).NE(Word.fromIntZeroExtend(b)) ? 1 : 0;
+    }
+
+    public static int wslt_iii(int a, int b) {
+        // Signed path goes through Offset.sLT: Word.LT is UNSIGNED by
+        // design (resolves to mcode LT -> JB), so a signed Word probe can
+        // never agree host-vs-guest. toOffset is TOOFFSET (M1 moves).
+        return Word.fromIntSignExtend(a).toOffset().sLT(
+            Word.fromIntSignExtend(b).toOffset()) ? 1 : 0;
+    }
+
+    public static int wsle_iii(int a, int b) {
+        return Word.fromIntSignExtend(a).toOffset().sLE(
+            Word.fromIntSignExtend(b).toOffset()) ? 1 : 0;
+    }
+
+    public static int wzero_ii(int a) {
+        return Word.zero().add(Word.fromIntZeroExtend(a)).toInt();
+    }
+
+    public static int wone_ii(int a) {
+        return Word.one().add(Word.fromIntZeroExtend(a)).toInt();
+    }
+
+    public static int wmax_ii(int a) {
+        return Word.max().add(Word.fromIntZeroExtend(a)).toInt();
+    }
+
+    public static int wiszero_ii(int a) {
+        return Word.fromIntZeroExtend(a).isZero() ? 1 : 0;
+    }
+
+    public static int wismax_ii(int a) {
+        return Word.fromIntSignExtend(a).isMax() ? 1 : 0;
+    }
+
+    public static long wtol_j(int a) {
+        return Word.fromIntZeroExtend(a).toLong();
+    }
+
+    public static int altoi_ji(long a) {
+        return Address.fromLong(a).toInt();
+    }
+
+    public static int aadd_iii(int a, int b) {
+        return Address.fromIntZeroExtend(a).add(Word.fromIntZeroExtend(b)).toInt();
     }
 }

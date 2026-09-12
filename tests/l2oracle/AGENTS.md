@@ -147,6 +147,43 @@ python3 $JAC "cat out-l2.txt" > /tmp/out-l2.txt
 One command per call (legacy one-shot agent, no batching, no `--write`
 of big files); TCG needs generous timeouts. Identify QEMU by PID before
 killing (shared host); never `pkill -f` with a self-matching pattern.
+`pgrep -f "<pattern>"` self-matches too (the pattern string sits in your
+own `bash -c` line) — append `.*JNode`, pipe through `grep -v pgrep`,
+or match `mk-ox-iso\.sh` with the escaped dot. A "STILL-ALIVE" after a
+successful kill is almost always your own command line.
+
+## Magic probes (host support set + semantic rules)
+
+`Probes.java` magic section calls `org.vmmagic.unboxed.{Word,Address,Offset}`
+(real bodies, host-executable). Host `javac` needs them plus two empty
+stubs (`org.jnode.vm.VmAddress`, `org.jnode.vm.classmgr.VmType` — opaque
+signature types in `Address.java`):
+
+```bash
+HJ=/home/levente/ext/prg/java/bin/javac; HR=/home/levente/ext/prg/java/bin/java
+mkdir -p /tmp/mghost/src/org/jnode/vm/classmgr /tmp/mghost/classes
+printf 'package org.jnode.vm;\npublic class VmAddress {\n}\n' > /tmp/mghost/src/org/jnode/vm/VmAddress.java
+printf 'package org.jnode.vm.classmgr;\npublic class VmType {\n}\n' > /tmp/mghost/src/org/jnode/vm/classmgr/VmType.java
+$HJ -d /tmp/mghost/classes -sourcepath core/src/vmmagic:core/src/classlib:/tmp/mghost/src \
+  /tmp/mghost/src/org/jnode/vm/VmAddress.java /tmp/mghost/src/org/jnode/vm/classmgr/VmType.java \
+  core/src/vmmagic/org/vmmagic/unboxed/{Word,Address,Offset,Extent,UnboxedObject,ObjectReference}.java \
+  core/src/classlib/org/jnode/annotation/{KernelSpace,Uninterruptible}.java \
+  core/src/vmmagic/org/vmmagic/pragma/Uninterruptible.java
+$HJ -cp /tmp/mghost/classes -d /tmp/l2oracle-ref /tmp/l2oracle-ref/Probes.java /tmp/l2oracle-ref/OracleDriver.java
+$HR -cp /tmp/mghost/classes:/tmp/l2oracle-ref OracleDriver /tmp/l2oracle-ref/out-host.txt noforce
+```
+
+Host/guest-lib divergences that are NOT L2 bugs (never probe these):
+- `signExtend->toLong` (host sign-extends the `long v` field, guest
+  zero-extends the word) — toLong probes use zeroExtend only.
+- `zeroExtend->rsha` (host `long>>` vs guest word SAR) — rsha probes
+  use signExtend only.
+- `Word.LT/LE/GT/GE` are UNSIGNED by design (name-resolves to mcode
+  `LT->JB`; the host body is signed). Signed compare goes through
+  `Offset.sLT/sLE` (mcode `SLT->JL`); the S-variants are reachable only
+  via methods literally named `sLT/sLE/sGT/sGE`.
+Status 2026-09-12: 56 magic rows green under L1 AND L2 (force|72), modulo
+the 4 pre-existing divergences.
 
 ## Driver modes
 
