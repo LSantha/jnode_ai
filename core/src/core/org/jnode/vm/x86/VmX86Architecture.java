@@ -163,6 +163,11 @@ public abstract class VmX86Architecture extends BaseVmArchitecture {
                 this.compilers[1] = new X86Level1BCompiler();
             } else if ("L1A".equalsIgnoreCase(compiler)) {
                 this.compilers[1] = new X86Level1ACompiler();
+            } else if ("L2".equalsIgnoreCase(compiler)) {
+                // Experimental L2 boot: high-opt AOT classes and opt-1
+                // runtime compiles go through L2 (32-bit only; the
+                // image build selects this via -Djnode.compiler=L2).
+                this.compilers[1] = new X86Level2Compiler();
             } else {
                 BootLogInstance.get().warn("JNode native compiler '" + compiler + "' is unknown.");
             }

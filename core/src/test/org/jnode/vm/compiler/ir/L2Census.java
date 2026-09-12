@@ -74,6 +74,9 @@ public class L2Census {
         urls.add(new File(root + "/core/build/classes").toURL());
         urls.add(new File(root + "/distr/build/classes").toURL());
         urls.add(new File(classDir).toURL());
+        for (int i = 2; i < args.length; i++) {
+            urls.add(new File(args[i]).toURL());
+        }
         File localClasslib = new File(root + "/local/classlib");
         if (localClasslib.isDirectory()) {
             urls.add(localClasslib.toURL());
