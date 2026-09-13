@@ -138,6 +138,11 @@ public abstract class Variable<T> extends Operand<T> implements Cloneable {
     }
 
     public Operand<T> simplify() {
+        // ANCHOR-L2-113: uses in unreachable code can point at a variable
+        // whose definition was never renamed/recorded; keep the use as-is.
+        if (assignQuad == null) {
+            return this;
+        }
         Operand<T> op = assignQuad.propagate(this);
         return op;
     }

@@ -104,7 +104,7 @@ public class VariableRefAssignQuad<T> extends AssignQuad<T> {
     public void doPass2() {
         // This operation will almost always become dead code, but I wanted to play it
         // safe and compute liveness assuming it might survive.
-        if (!(refs[0] instanceof ExceptionArgument))
+        if (refs[0] != null && !(refs[0] instanceof ExceptionArgument))
             refs[0] = refs[0].simplify();
     }
 

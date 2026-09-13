@@ -157,7 +157,7 @@ public class IRControlFlowGraph<T> implements Iterable<IRBasicBlock<T>> {
 
         for (Map.Entry<Variable, Integer> u : varUses.entrySet()) {
             Variable var = u.getKey();
-            if (u.getValue() == 1 && !(var instanceof MethodArgument) && !var.getAssignQuad().isDeadCode()) {
+            if (u.getValue() == 1 && !(var instanceof MethodArgument) && var.getAssignQuad() != null && !var.getAssignQuad().isDeadCode()) {
                 for (IRBasicBlock<T> b : this) {
                     for (Quad<T> q : b.getQuads()) {
                         if (!q.isDeadCode()) {

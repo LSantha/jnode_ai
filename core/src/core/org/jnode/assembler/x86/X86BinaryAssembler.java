@@ -95,7 +95,15 @@ public class X86BinaryAssembler extends X86Assembler implements X86Operation {
          * @return This Key instance's hashcode.
          */
         public final int hashCode() {
-            return key.hashCode();
+            // ANCHOR-L2-112: identity for non-Labels, matching equals (which
+            // is identity except for Labels). Value-hashing here recursed
+            // forever once a registered object (transitively) contained its
+            // own Key (StackOverflowError in emitObjects via HashSet.contains
+            // during the first L2 boot image); identity hash never recurses.
+            if (key instanceof Label) {
+                return key.hashCode();
+            }
+            return System.identityHashCode(key);
         }
 
     }
