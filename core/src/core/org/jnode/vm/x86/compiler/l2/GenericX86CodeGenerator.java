@@ -5481,7 +5481,7 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
             }
         } else if (lhs.getAddressingMode() == STACK) {
             int disp = ((StackLocation) lhs.getLocation()).getDisplacement();
-            os.writeMOV(X86Constants.BITS32, GPR.ESP, disp, GPR.EAX);
+            os.writeMOV(X86Constants.BITS32, X86Register.EBP, disp, GPR.EAX);
         }
     }
 
@@ -5572,7 +5572,7 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
             }
         } else if (lhs.getAddressingMode() == STACK) {
             int disp = ((StackLocation) lhs.getLocation()).getDisplacement();
-            os.writeMOV(X86Constants.BITS32, GPR.ESP, disp, GPR.EAX);
+            os.writeMOV(X86Constants.BITS32, X86Register.EBP, disp, GPR.EAX);
         }
     }
 
@@ -5657,7 +5657,7 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
                 }
             } else if (lhs.getAddressingMode() == STACK) {
                 int disp = ((StackLocation) lhs.getLocation()).getDisplacement();
-                os.writeMOV(X86Constants.BITS32, GPR.ESP, disp, GPR.EAX);
+                os.writeMOV(X86Constants.BITS32, X86Register.EBP, disp, GPR.EAX);
             }
         }
     }
@@ -5697,7 +5697,7 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
             }
         } else if (lhs.getAddressingMode() == STACK) {
             int disp = ((StackLocation) lhs.getLocation()).getDisplacement();
-            os.writeMOV(X86Constants.BITS32, GPR.ESP, disp, GPR.EAX);
+            os.writeMOV(X86Constants.BITS32, X86Register.EBP, disp, GPR.EAX);
         }
     }
 
