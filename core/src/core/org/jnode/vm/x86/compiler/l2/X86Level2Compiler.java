@@ -239,12 +239,17 @@ public class X86Level2Compiler extends AbstractX86Compiler {
 
                 initMethodArguments(method, stackFrame, typeSizeInfo, irg);
 
+                // ANCHOR-L2-119: create the codegen BEFORE optimize, not
+                // after. Phi doPass2 queries CodeGenerator.getInstance()
+                // (BinaryQuad liveness 3-addr check); the old order relied
+                // on the previous method's leftover instance, which the
+                // ANCHOR-L2-118 finally now clears. Same order as L2Dump.
+                X86CodeGenerator x86cg = new X86CodeGenerator(method, (X86Assembler) os, bytecode.getLength(),
+                    typeSizeInfo, stackFrame);
                 constructAndOptimize(cfg);
                 optimizeOnce(cfg);
                 deSSAAndFixup(cfg);
 
-                X86CodeGenerator x86cg = new X86CodeGenerator(method, (X86Assembler) os, bytecode.getLength(),
-                    typeSizeInfo, stackFrame);
                 LinearScanAllocator lsa = allocateRanges(cfg);
                 generateCode(x86cg, cfg, irg, lsa);
 
