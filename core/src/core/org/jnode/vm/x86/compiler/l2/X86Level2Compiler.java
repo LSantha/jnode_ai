@@ -256,6 +256,14 @@ public class X86Level2Compiler extends AbstractX86Compiler {
         } catch (Error x) {
             System.err.println("ERROR in compilation of " + method.getFullName());
             throw x;
+        } finally {
+            // ANCHOR-L2-118: drop the global codegen pin. Its ctor publishes
+            // it statically for phi/live-range queries during this compile,
+            // but it roots spilledVariables and the assemblers; leaving it
+            // set drags the last method's whole IR graph plus the native
+            // streams into the boot image via static copying (locked-list
+            // crashes and hashCode cycles in emitObjects).
+            CodeGenerator.setCodeGenerator(null);
         }
 
         return cm;
