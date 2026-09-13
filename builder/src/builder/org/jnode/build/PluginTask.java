@@ -26,6 +26,7 @@ import java.util.HashMap;
 import java.util.LinkedList;
 import java.util.Map;
 import java.util.concurrent.ArrayBlockingQueue;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -94,7 +95,11 @@ public class PluginTask extends AbstractPluginTask {
             }
         };
 
-        final Map<String, File> descriptors = new HashMap<String, File>();
+        // ANCHOR-L2-111: workers share this map (put from the pool);
+        // a plain HashMap corrupts on concurrent put+resize and spins
+        // forever in transfer (hung assemble-plugins). The check-then-put
+        // below is also racy, so publish with putIfAbsent atomically.
+        final ConcurrentHashMap<String, File> descriptors = new ConcurrentHashMap<String, File>();
         for (FileSet fs : descriptorSets) {
             final DirectoryScanner ds = fs.getDirectoryScanner(getProject());
             final String[] files = ds.getIncludedFiles();
@@ -137,11 +142,14 @@ public class PluginTask extends AbstractPluginTask {
         final PluginDescriptor descr = readDescriptor(descriptor);
 
         final String fullId = descr.getId() + "_" + descr.getVersion();
-        if (descriptors.containsKey(fullId)) {
-            File otherDesc = descriptors.get(fullId);
-            throw new BuildException("Same id(" + fullId + ") for 2 plugins: " + otherDesc + ", " + descriptor);
+        // ANCHOR-L2-111: atomic check-then-put; workers share this map.
+        synchronized (descriptors) {
+            final File otherDesc = descriptors.get(fullId);
+            if (otherDesc != null) {
+                throw new BuildException("Same id(" + fullId + ") for 2 plugins: " + otherDesc + ", " + descriptor);
+            }
+            descriptors.put(fullId, descriptor);
         }
-        descriptors.put(fullId, descriptor);
 
         File destFile = new File(todir, fullId + ".jar");
 

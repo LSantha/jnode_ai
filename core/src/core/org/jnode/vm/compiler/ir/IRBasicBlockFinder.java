@@ -43,6 +43,16 @@ public class IRBasicBlockFinder<T> extends BytecodeVisitorSupport implements Com
 
     private final ArrayList<IRBasicBlock<T>> blocks = new ArrayList<IRBasicBlock<T>>();
     private final List<int[]> branchTargets = new ArrayList<int[]>();
+    /**
+     * jsr sites as {jsrAddr, subTarget, resumeAddr} (ANCHOR-L2-079). The
+     * resume is the instruction following the jsr, captured in
+     * startInstruction; -1 if the jsr is last (degenerate). Drives ret
+     * successor wiring below and the IRGenerator resume depths.
+     */
+    private final List<int[]> jsrSites = new ArrayList<int[]>();
+    private final List<Integer> retAddrs = new ArrayList<Integer>();
+    private int pendingJsrAddr = -1;
+    private int pendingJsrTarget = -1;
     private VmByteCode byteCode;
     private static final byte CONDITIONAL_BRANCH = 1;
     private static final byte UNCONDITIONAL_BRANCH = 2;
@@ -101,16 +111,53 @@ public class IRBasicBlockFinder<T> extends BytecodeVisitorSupport implements Com
             }
             pred.addSuccessor(succ);
         }
+        // ANCHOR-L2-079: ret blocks flow to every recorded resume block. The
+        // dispatch is dynamic (address value), so over-approximate: dead arms
+        // never execute, and deconstructed moves land in dead blocks only.
+        // A jsr with no fallthrough (last instruction) records no resume.
+        if (pendingJsrAddr >= 0) {
+            jsrSites.add(new int[]{pendingJsrAddr, pendingJsrTarget, -1});
+            pendingJsrAddr = -1;
+        }
+        for (Integer retAddr : retAddrs) {
+            IRBasicBlock<T> pred = findBB(list, retAddr.intValue());
+            if (pred == null) {
+                throw new AssertionError("unable to find BB!");
+            }
+            for (int[] site : jsrSites) {
+                if (site[2] >= 0) {
+                    IRBasicBlock<T> succ = findBB(list, site[2]);
+                    if (succ == null) {
+                        throw new AssertionError("unable to find BB!");
+                    }
+                    pred.addSuccessor(succ);
+                }
+            }
+        }
         if (bbIndex != list.length) {
             throw new AssertionError("bbIndex != list.length");
         }
 
+        // ANCHOR-L2-110: exception edges from every block covered by the
+        // try range to the handler. The old code edged only the try entry's
+        // predecessors (empty when the try starts at method entry, and wrong
+        // in general: the handler catches throws from INSIDE the range).
+        // Without the in-range edge the handler block is unreachable in the
+        // CFG: postorder misses it and everything below it, the dominator
+        // fixpoint roots the region at start, no phis are placed at its
+        // merges, and renameVariables nulls uses whose only def lives in
+        // the handler (SecurityManager#classLoaderDepth NPE in doPass2).
+        // Conservative: an exception may transfer from any covered block.
         for (int i = 0; i < byteCode.getNoExceptionHandlers(); i++) {
             VmInterpretedExceptionHandler eh = byteCode.getExceptionHandler(i);
             IRBasicBlock<T> handlerBB = findBB(list, eh.getHandlerPC());
-            IRBasicBlock<T> tryBB = findBB(list, eh.getStartPC());
-            for (IRBasicBlock bb : tryBB.getPredecessors()) {
-                bb.addSuccessor(handlerBB);
+            if (handlerBB == null) {
+                continue;
+            }
+            for (IRBasicBlock<T> bb : list) {
+                if (bb.getStartPC() < eh.getEndPC() && bb.getEndPC() > eh.getStartPC()) {
+                    bb.addSuccessor(handlerBB);
+                }
             }
         }
 
@@ -214,9 +261,12 @@ public class IRBasicBlockFinder<T> extends BytecodeVisitorSupport implements Com
     }
 
     public void visit_jsr(int address) {
-        // TODO Not sure about this, the next block I believe it NOT a
-        // direct successor. This will have to be tested.
-        //addBranch(address);
+        // ANCHOR-L2-079: edge to the subroutine only (UNCONDITIONAL, so the
+        // resume block is NOT a successor: resume inherits the subroutine
+        // exit state via ret edges, not the jsr block). Resume captured below.
+        addBranch(address, UNCONDITIONAL_BRANCH);
+        pendingJsrAddr = getInstructionAddress();
+        pendingJsrTarget = address;
     }
 
     public void visit_tableswitch(int defValue, int lowValue, int highValue, int[] addresses) {
@@ -272,6 +322,8 @@ public class IRBasicBlockFinder<T> extends BytecodeVisitorSupport implements Com
     public void visit_ret(int index) {
         // Not sure about this either, this needs testing
         endBB(UNCONDITIONAL_BRANCH);
+        // ANCHOR-L2-079: record for ret->resume wiring in createBasicBlocks.
+        retAddrs.add(getInstructionAddress());
     }
 
     public void visit_return() {
@@ -324,10 +376,23 @@ public class IRBasicBlockFinder<T> extends BytecodeVisitorSupport implements Com
     public void startInstruction(int address) {
         super.startInstruction(address);
         opcodeFlags[address] |= BytecodeFlags.F_START_OF_INSTRUCTION;
+        if (pendingJsrAddr >= 0) {
+            // The instruction after a jsr is its resume block (ANCHOR-L2-079).
+            jsrSites.add(new int[]{pendingJsrAddr, pendingJsrTarget, address});
+            pendingJsrAddr = -1;
+        }
         if (nextIsStartOfBB || isStartOfBB(address)) {
             this.currentBlock = startBB(address);
             nextIsStartOfBB = false;
         }
+    }
+
+    /**
+     * @return the recorded jsr sites as {jsrAddr, subTarget, resumeAddr}
+     * (resumeAddr -1 if the jsr has no fallthrough).
+     */
+    public List<int[]> getJsrSites() {
+        return jsrSites;
     }
 
     private final boolean isStartOfBB(int address) {

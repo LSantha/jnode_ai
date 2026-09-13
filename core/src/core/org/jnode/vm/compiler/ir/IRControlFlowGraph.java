@@ -24,6 +24,7 @@ import java.util.Collection;
 import java.util.Collections;
 import java.util.Comparator;
 import java.util.HashMap;
+import java.util.IdentityHashMap;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
@@ -33,6 +34,7 @@ import org.jnode.vm.classmgr.VmByteCode;
 import org.jnode.vm.classmgr.VmInterpretedExceptionHandler;
 import org.jnode.vm.compiler.ir.quad.AssignQuad;
 import org.jnode.vm.compiler.ir.quad.CallAssignQuad;
+import org.jnode.vm.compiler.ir.quad.JsrQuad;
 import org.jnode.vm.compiler.ir.quad.NewAssignQuad;
 import org.jnode.vm.compiler.ir.quad.NewMultiArrayAssignQuad;
 import org.jnode.vm.compiler.ir.quad.NewObjectArrayAssignQuad;
@@ -53,6 +55,16 @@ public class IRControlFlowGraph<T> implements Iterable<IRBasicBlock<T>> {
     private final IRBasicBlock<T>[] bblocks;
     private List<IRBasicBlock<T>> postOrderList;
     private IRBasicBlock<T> startBlock;
+    private final IRBasicBlockFinder<T> finder;
+    /**
+     * Pre-fixup bytecode address per quad (104: exception tables). The
+     * backend's table boundaries are bytecode PCs but emission runs on
+     * dense post-fixup addresses; this snapshot maps each quad back to
+     * the bytecode address it was created for. Identity-keyed: quads are
+     * never cloned between fixup and emission. Null until
+     * {@code fixupAddresses} runs.
+     */
+    private Map<Quad<T>, Integer> bcQuadAddresses;
 
     /**
      * Create a new instance
@@ -64,8 +76,17 @@ public class IRControlFlowGraph<T> implements Iterable<IRBasicBlock<T>> {
         final IRBasicBlockFinder<T> bbf = new IRBasicBlockFinder<T>();
         BytecodeParser.parse(bytecode, bbf);
         this.bblocks = bbf.createBasicBlocks();
+        this.finder = bbf;
         startBlock = bblocks[0];
         computeDominance(bytecode);
+    }
+
+    /**
+     * @return the jsr sites recorded by the finder as {jsrAddr, subTarget,
+     * resumeAddr}, for subroutine dataflow (ANCHOR-L2-079).
+     */
+    public List<int[]> getJsrSites() {
+        return finder.getJsrSites();
     }
 
     //todo use set
@@ -103,8 +124,11 @@ public class IRControlFlowGraph<T> implements Iterable<IRBasicBlock<T>> {
                     dq instanceof NewAssignQuad ||
                     dq instanceof NewObjectArrayAssignQuad ||
                     dq instanceof NewPrimitiveArrayAssignQuad ||
-                    dq instanceof NewMultiArrayAssignQuad) {
+                    dq instanceof NewMultiArrayAssignQuad ||
+                    dq instanceof JsrQuad) {
                     //todo optimize it, could be transformed to CallQuad
+                    // (JsrQuad: control effects -- entering the subroutine.
+                    // ANCHOR-L2-079.)
                     continue;
                 }
 
@@ -133,7 +157,7 @@ public class IRControlFlowGraph<T> implements Iterable<IRBasicBlock<T>> {
 
         for (Map.Entry<Variable, Integer> u : varUses.entrySet()) {
             Variable var = u.getKey();
-            if (u.getValue() == 1 && !(var instanceof MethodArgument) && !var.getAssignQuad().isDeadCode()) {
+            if (u.getValue() == 1 && !(var instanceof MethodArgument) && var.getAssignQuad() != null && !var.getAssignQuad().isDeadCode()) {
                 for (IRBasicBlock<T> b : this) {
                     for (Quad<T> q : b.getQuads()) {
                         if (!q.isDeadCode()) {
@@ -290,6 +314,15 @@ public class IRControlFlowGraph<T> implements Iterable<IRBasicBlock<T>> {
             }
 
         }
+        // ANCHOR-L2-102: unreachable blocks (no predecessors, e.g. padding
+        // after ireturn) skip the fixpoint above and keep a null idom, which
+        // NPEs block-offset queries during parse. Root them at start: their
+        // quads (if any) never execute, and DCE collects their defs.
+        for (IRBasicBlock<T> b : bblocks) {
+            if (b != startBlock && b.getIDominator() == null) {
+                b.setIDominator(startBlock);
+            }
+        }
     }
 
     /**
@@ -334,7 +367,10 @@ public class IRControlFlowGraph<T> implements Iterable<IRBasicBlock<T>> {
             List<IRBasicBlock<T>> predList = b.getPredecessors();
             if (predList.size() >= 2) {
                 for (IRBasicBlock<T> runner : predList) {
-                    while (runner != b.getIDominator()) {
+                    // ANCHOR-L2-096: null-safe walk. Blocks with no idom yet
+                    // (unreachable/handler entries) used to NPE climbing past
+                    // the root; stopping at null only affects those cases.
+                    while (runner != null && runner != b.getIDominator()) {
                         runner.addDominanceFrontier(b);
                         runner = runner.getIDominator();
                     }
@@ -344,14 +380,21 @@ public class IRControlFlowGraph<T> implements Iterable<IRBasicBlock<T>> {
     }
 
     /**
-     *
+     * Rebuild the dominated-blocks tree from the final idom fixpoint.
+     * Must not rely on edges accumulated by {@code setIDominator} during
+     * {@code doComputeDominance}: idoms change between iterations and every
+     * former parent keeps a stale child edge (entries are only added, never
+     * removed). Stale edges make {@code renameVariables} visit blocks twice,
+     * appending duplicate phi sources (ANCHOR-L2-004).
      */
     private void computeDominatedBlocks() {
-        for (IRBasicBlock<T> b : postOrderList) {
+        for (IRBasicBlock<T> b : bblocks) {
+            b.clearDominatedBlocks();
+        }
+        for (IRBasicBlock<T> b : bblocks) {
             IRBasicBlock<T> idom = b.getIDominator();
-            if (idom != null) {
+            if (idom != null && idom != b) {
                 idom.addDominatedBlock(b);
-                idom = idom.getIDominator();
             }
         }
     }
@@ -373,6 +416,49 @@ public class IRControlFlowGraph<T> implements Iterable<IRBasicBlock<T>> {
         }
         placePhiFunctions();
         renameVariables(startBlock);
+        typePhiResults();
+    }
+
+    /**
+     * Give every phi result the type of its sources. Without this a merge of
+     * wide values keeps a narrow/unknown type and the allocator hands it a
+     * register the emitters reject (oracle: LAND with a long in ESI).
+     * Sources agree by verifier construction; on conflict prefer wide
+     * (spilling a narrow is safe, registering a wide is fatal).
+     */
+    private void typePhiResults() {
+        for (IRBasicBlock<T> b : bblocks) {
+            for (Quad<T> q : b.getQuads()) {
+                if (!(q instanceof PhiAssignQuad) || q.isDeadCode()) {
+                    continue;
+                }
+                PhiAssignQuad<T> paq = (PhiAssignQuad<T>) q;
+                Variable<T> lhs = paq.getLHS();
+                int type = lhs.getType();
+                if (type == Operand.LONG || type == Operand.DOUBLE) {
+                    continue;
+                }
+                java.util.List<Operand<T>> sources = paq.getPhiOperand().getSources();
+                int found = Operand.UNKNOWN;
+                for (int i = 0; i < sources.size(); i++) {
+                    Operand<T> s = sources.get(i);
+                    if (!(s instanceof Variable)) {
+                        continue;
+                    }
+                    int st = ((Variable<T>) s).getType();
+                    if (st == Operand.LONG || st == Operand.DOUBLE) {
+                        found = st;
+                        break;
+                    }
+                    if (found == Operand.UNKNOWN && st != Operand.UNKNOWN) {
+                        found = st;
+                    }
+                }
+                if (found != Operand.UNKNOWN) {
+                    lhs.setType(found);
+                }
+            }
+        }
     }
 
     /**
@@ -408,6 +494,42 @@ public class IRControlFlowGraph<T> implements Iterable<IRBasicBlock<T>> {
             }
         }
 
+        deconstructPhiList(phiQuads);
+    }
+
+    public void deconstrucSSA(Collection<Variable<T>> liveVariables) {
+        final List<PhiAssignQuad<T>> phiQuads = new BootableArrayList<PhiAssignQuad<T>>();
+        for (IRBasicBlock<T> b : bblocks) {
+            for (Quad<T> q : b.getQuads()) {
+                if (q instanceof PhiAssignQuad) {
+                    PhiAssignQuad<T> q1 = (PhiAssignQuad<T>) q;
+                    if (liveVariables.contains(q1.getLHS())) {
+                        phiQuads.add(q1);
+                    } else {
+                        q1.setDeadCode(true);
+                    }
+                }
+//                else {
+//                    break;
+//                }
+            }
+        }
+        deconstructPhiList(phiQuads);
+    }
+
+    /**
+     * Shared phi-destruction: sort deepest-join first, then expand each phi
+     * into predecessor copies. Used by both {@code deconstrucSSA} overloads
+     * (OPT-03/ANCHOR-L2-022).
+     * <p/>
+     * The order is load-bearing for phi-of-phi chains (loop headers): an
+     * outer phi whose source is another phi's result must observe the already
+     * destructed move ({@code lhs.assignQuad}), otherwise the copy lands in
+     * the phi's own block and reads a version that does not dominate the join.
+     * The {@code MethodArgument} guard covers passthrough sources
+     * (e.g. {@code c ? a0 : 1}), whose assignQuad is null.
+     */
+    private void deconstructPhiList(List<PhiAssignQuad<T>> phiQuads) {
         Collections.sort(phiQuads, new Comparator<PhiAssignQuad<T>>() {
             @Override
             public int compare(PhiAssignQuad<T> o1, PhiAssignQuad<T> o2) {
@@ -445,50 +567,13 @@ public class IRControlFlowGraph<T> implements Iterable<IRBasicBlock<T>> {
         }
     }
 
-    public void deconstrucSSA(Collection<Variable<T>> liveVariables) {
-        final List<PhiAssignQuad<T>> phiQuads = new BootableArrayList<PhiAssignQuad<T>>();
-        for (IRBasicBlock<T> b : bblocks) {
-            for (Quad<T> q : b.getQuads()) {
-                if (q instanceof PhiAssignQuad) {
-                    PhiAssignQuad<T> q1 = (PhiAssignQuad<T>) q;
-                    if (liveVariables.contains(q1.getLHS())) {
-                        phiQuads.add(q1);
-                    } else {
-                        q1.setDeadCode(true);
-                    }
-                }
-//                else {
-//                    break;
-//                }
-            }
-        }
-        for (PhiAssignQuad<T> paq : phiQuads) {
-            Variable<T> lhs = paq.getLHS();
-            IRBasicBlock<T> firstBlock = null;
-            VariableRefAssignQuad<T> firstPhiMove = null;
-            for (Operand<T> o : paq.getPhiOperand().getSources()) {
-                Variable<T> rhs = (Variable<T>) o;
-                IRBasicBlock<T> ab = rhs.getAssignQuad().getBasicBlock();
-                VariableRefAssignQuad<T> phiMove;
-                phiMove = new VariableRefAssignQuad<T>(0, ab, lhs, rhs);
-                ab.add(phiMove);
-//                fixupAddresses();  //todo possible optimisation to remove assignment chains
-                phiMove.doPass2();
-                if (firstBlock == null || ab.getStartPC() < firstBlock.getStartPC()) {
-                    firstBlock = ab;
-                    firstPhiMove = phiMove;
-                }
-            }
-            lhs.setAssignQuad(firstPhiMove);
-            paq.setDeadCode(true);
-        }
-    }
-
     public void fixupAddresses() {
         int address = 0;
+        bcQuadAddresses = new IdentityHashMap<Quad<T>, Integer>();
         for (IRBasicBlock<T> b : bblocks) {
             b.setStartPC(address);
             for (Quad<T> q : b.getQuads()) {
+                bcQuadAddresses.put(q, Integer.valueOf(q.getAddress()));
                 q.setAddress(address);
                 if (!q.isDeadCode()) {
                     address += 1;
@@ -496,6 +581,14 @@ public class IRControlFlowGraph<T> implements Iterable<IRBasicBlock<T>> {
             }
             b.setEndPC(address);
         }
+    }
+
+    /**
+     * @return pre-fixup bytecode address per quad (104), or null if
+     * {@code fixupAddresses} has not run
+     */
+    public Map<Quad<T>, Integer> getBcQuadAddresses() {
+        return bcQuadAddresses;
     }
 
     private void placePhiFunctions() {
@@ -546,6 +639,13 @@ public class IRControlFlowGraph<T> implements Iterable<IRBasicBlock<T>> {
                     if (st != null) {
                         Variable[] vars = block.getVariables();
                         Variable<T> peek = st.peek();
+                        // ANCHOR-L2-110: an empty stack means no reaching def
+                        // on this path (dead/unreachable use). Storing the
+                        // null would poison the quad and NPE a later doPass2;
+                        // leave the pre-SSA variable instead.
+                        if (peek == null) {
+                            continue;
+                        }
                         vars[((Variable) refs[i]).getIndex()] = peek;
                         refs[i] = peek;
                     }

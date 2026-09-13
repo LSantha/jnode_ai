@@ -95,7 +95,15 @@ public class X86BinaryAssembler extends X86Assembler implements X86Operation {
          * @return This Key instance's hashcode.
          */
         public final int hashCode() {
-            return key.hashCode();
+            // ANCHOR-L2-112: identity for non-Labels, matching equals (which
+            // is identity except for Labels). Value-hashing here recursed
+            // forever once a registered object (transitively) contained its
+            // own Key (StackOverflowError in emitObjects via HashSet.contains
+            // during the first L2 boot image); identity hash never recurses.
+            if (key instanceof Label) {
+                return key.hashCode();
+            }
+            return System.identityHashCode(key);
         }
 
     }
@@ -3686,7 +3694,8 @@ public class X86BinaryAssembler extends X86Assembler implements X86Operation {
 
     public void writeMOVSX(GPR dstReg, GPR srcReg, int srcDisp, int srcSize) {
         if (srcSize == X86Constants.BITS8) {
-            testSuitableForBits8(dstReg);
+            // 106: any r32 dst is encodable with a mem source (the 8-bit
+            // suitability constraint applies to register sources only).
             write2bOpcodeModRM(0x0F, 0xBE, dstReg.getSize(), srcReg, srcDisp,
                 dstReg.getNr());
         } else if (srcSize == X86Constants.BITS16) {
@@ -3744,7 +3753,7 @@ public class X86BinaryAssembler extends X86Assembler implements X86Operation {
 
     public void writeMOVZX(GPR dstReg, GPR srcReg, int srcDisp, int srcSize) {
         if (srcSize == X86Constants.BITS8) {
-            testSuitableForBits8(dstReg);
+            // 106: see writeMOVSX above.
             write2bOpcodeModRM(0x0F, 0xB6, dstReg.getSize(), srcReg, srcDisp,
                 dstReg.getNr());
         } else if (srcSize == X86Constants.BITS16) {

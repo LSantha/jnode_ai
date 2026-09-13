@@ -44,6 +44,10 @@ public class StackVariable<T> extends Variable<T> {
     }
 
     public Object clone() {
-        return new StackVariable<T>(this);
+        // ANCHOR-L2-052: preserve the location like MethodArgument.clone does
+        // (see LocalVariable.clone).
+        StackVariable<T> clone = new StackVariable<T>(this);
+        clone.setLocation(this.getLocation());
+        return clone;
     }
 }

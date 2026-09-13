@@ -23,10 +23,12 @@ package org.jnode.vm.compiler.ir;
 import org.jnode.vm.compiler.ir.quad.ArrayAssignQuad;
 import org.jnode.vm.compiler.ir.quad.ArrayLengthAssignQuad;
 import org.jnode.vm.compiler.ir.quad.ArrayStoreQuad;
+import org.jnode.vm.compiler.ir.quad.AtomicStoreQuad;
 import org.jnode.vm.compiler.ir.quad.BinaryOperation;
 import org.jnode.vm.compiler.ir.quad.BinaryQuad;
 import org.jnode.vm.compiler.ir.quad.BranchCondition;
 import org.jnode.vm.compiler.ir.quad.CheckcastQuad;
+import org.jnode.vm.compiler.ir.quad.CmpAssignQuad;
 import org.jnode.vm.compiler.ir.quad.ConditionalBranchQuad;
 import org.jnode.vm.compiler.ir.quad.ConstantClassAssignQuad;
 import org.jnode.vm.compiler.ir.quad.ConstantRefAssignQuad;
@@ -34,7 +36,11 @@ import org.jnode.vm.compiler.ir.quad.ConstantStringAssignQuad;
 import org.jnode.vm.compiler.ir.quad.InstanceofAssignQuad;
 import org.jnode.vm.compiler.ir.quad.InterfaceCallAssignQuad;
 import org.jnode.vm.compiler.ir.quad.InterfaceCallQuad;
+import org.jnode.vm.compiler.ir.quad.JsrQuad;
 import org.jnode.vm.compiler.ir.quad.LookupswitchQuad;
+import org.jnode.vm.compiler.ir.quad.MagicOpAssignQuad;
+import org.jnode.vm.compiler.ir.quad.MemLoadAssignQuad;
+import org.jnode.vm.compiler.ir.quad.MemStoreQuad;
 import org.jnode.vm.compiler.ir.quad.MonitorenterQuad;
 import org.jnode.vm.compiler.ir.quad.MonitorexitQuad;
 import org.jnode.vm.compiler.ir.quad.NewAssignQuad;
@@ -43,6 +49,7 @@ import org.jnode.vm.compiler.ir.quad.NewObjectArrayAssignQuad;
 import org.jnode.vm.compiler.ir.quad.NewPrimitiveArrayAssignQuad;
 import org.jnode.vm.compiler.ir.quad.RefAssignQuad;
 import org.jnode.vm.compiler.ir.quad.RefStoreQuad;
+import org.jnode.vm.compiler.ir.quad.RetQuad;
 import org.jnode.vm.compiler.ir.quad.SpecialCallAssignQuad;
 import org.jnode.vm.compiler.ir.quad.SpecialCallQuad;
 import org.jnode.vm.compiler.ir.quad.StaticCallAssignQuad;
@@ -120,6 +127,41 @@ public abstract class CodeGenerator<T> {
     public abstract void generateCodeFor(VariableRefAssignQuad<T> quad);
 
     /**
+     * Value-producing integer comparison (CmpAssignQuad).
+     *
+     * @param quad
+     */
+    public abstract void generateCodeFor(CmpAssignQuad<T> quad);
+
+    /**
+     * Raw-memory load (MemLoadAssignQuad).
+     *
+     * @param quad
+     */
+    public abstract void generateCodeFor(MemLoadAssignQuad<T> quad);
+
+    /**
+     * Raw-memory store (MemStoreQuad).
+     *
+     * @param quad
+     */
+    public abstract void generateCodeFor(MemStoreQuad<T> quad);
+
+    /**
+     * Multi-step VmMagic facade (MagicOpAssignQuad).
+     *
+     * @param quad
+     */
+    public abstract void generateCodeFor(MagicOpAssignQuad<T> quad);
+
+    /**
+     * Locked read-modify-write (AtomicStoreQuad).
+     *
+     * @param quad
+     */
+    public abstract void generateCodeFor(AtomicStoreQuad<T> quad);
+
+    /**
      * @param quad
      */
     public abstract void generateCodeFor(VarReturnQuad<T> quad);
@@ -128,6 +170,32 @@ public abstract class CodeGenerator<T> {
      * @param quad
      */
     public abstract void generateCodeFor(VoidReturnQuad<T> quad);
+
+    /**
+     * Emit a {@code jsr} subroutine call: materialize the pushed return
+     * address (CALL/POP/store) and jump to the subroutine (ANCHOR-L2-079).
+     *
+     * @param quad the jsr quad
+     */
+    public abstract void generateCodeFor(JsrQuad<T> quad);
+
+    /**
+     * Emit a {@code ret} subroutine return: indirect jump through the
+     * address held in a local (ANCHOR-L2-079).
+     *
+     * @param quad the ret quad
+     */
+    public abstract void generateCodeFor(RetQuad<T> quad);
+
+    /**
+     * Emit an FP compare quad (FCMPG/FCMPL/DCMPG/DCMPL) producing -1/0/1.
+     * Routed here from {@code BinaryQuad.generateCode} because compare quads
+     * need the whole quad (both operands plus address), unlike the
+     * mode-split arithmetic paths (ANCHOR-L2-050).
+     *
+     * @param quad the compare quad
+     */
+    public abstract void generateCompareOP(BinaryQuad<T> quad);
 
     /**
      * @param quad

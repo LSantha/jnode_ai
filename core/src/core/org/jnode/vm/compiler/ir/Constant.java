@@ -312,7 +312,8 @@ public abstract class Constant<T> extends Operand<T> {
     public Constant<T> fRem(Constant<T> c2) {
         float f1 = ((FloatConstant<T>) this).getValue();
         float f2 = ((FloatConstant<T>) c2).getValue();
-        return new FloatConstant<T>(f1 / f2);
+        // ANCHOR-L2-006: remainder per JLS 15.17.3 (was f1 / f2).
+        return new FloatConstant<T>(f1 % f2);
     }
 
     public Constant<T> dAdd(Constant<T> c2) {
