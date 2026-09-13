@@ -332,6 +332,10 @@ final class ItemFactory {
         return getOrCreateCount == releaseCount;
     }
 
+    int getImbalance() {
+        return getOrCreateCount - releaseCount;
+    }
+
     void balance() {
         getOrCreateCount = releaseCount = 0;
     }

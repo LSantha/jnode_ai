@@ -674,7 +674,8 @@ final class X86BytecodeVisitor extends InlineBytecodeVisitor {
         if (ItemFactory.CHECK_BALANCED_ITEM_FACTORY) {
             if (!ifac.isBalanced()) {
                 BootLogInstance.get().warn(
-                    "Unbalanced item handling in " + currentMethod.getFullName());
+                    "Unbalanced item handling in " + currentMethod.getFullName() +
+                        " (leaked " + ifac.getImbalance() + " item(s))");
                 ifac.balance();
             }
         }
@@ -2636,6 +2637,7 @@ final class X86BytecodeVisitor extends InlineBytecodeVisitor {
         val.loadIf(eContext, ~Item.Kind.CONSTANT);
         if (val.isConstant()) {
             vstack.push(ifac.createIConst(eContext, -val.getValue()));
+            val.release(eContext);
         } else {
             os.writeNEG(val.getRegister());
             vstack.push(val);
@@ -3019,6 +3021,7 @@ final class X86BytecodeVisitor extends InlineBytecodeVisitor {
         final LongItem v = vstack.popLong();
         if (v.isConstant()) {
             vstack.push(ifac.createIConst(eContext, (int) v.getValue()));
+            v.release(eContext);
         } else {
             final X86RegisterPool pool = eContext.getGPRPool();
             final IntItem result;
@@ -3351,6 +3354,7 @@ final class X86BytecodeVisitor extends InlineBytecodeVisitor {
 
         if (v.isConstant()) {
             vstack.push(ifac.createLConst(eContext, -v.getValue()));
+            v.release(eContext);
         } else {
             // Load val
             v.load(eContext);
