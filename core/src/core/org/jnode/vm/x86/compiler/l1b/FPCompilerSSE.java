@@ -99,7 +99,25 @@ final class FPCompilerSSE extends FPCompiler {
         if (v1.isConstant() && v2.isConstant()) {
             final double fpv1 = getFPValue(v1);
             final double fpv2 = getFPValue(v2);
-            vstack.push(createConst(ifac, type, fpv1 + fpv2));
+            final double result;
+            switch (operation) {
+                case X86Operation.SSE_SUB:
+                    result = fpv1 - fpv2;
+                    break;
+                case X86Operation.SSE_MUL:
+                    result = fpv1 * fpv2;
+                    break;
+                case X86Operation.SSE_DIV:
+                    result = fpv1 / fpv2;
+                    break;
+                case X86Operation.SSE_ADD:
+                default:
+                    result = fpv1 + fpv2;
+                    break;
+            }
+            vstack.push(createConst(ifac, type, result));
+            v1.release(ec);
+            v2.release(ec);
         } else {
             if (prepareForOperation(v1, v2, commutative)) {
                 // Swap
