@@ -138,13 +138,17 @@ public class PluginTask extends AbstractPluginTask {
      * @param descriptor  the plugin descriptor XML
      * @throws BuildException on failure
      */
-    public void buildPlugin(ConcurrentHashMap<String, File> descriptors, File descriptor) throws BuildException {
+    public void buildPlugin(Map<String, File> descriptors, File descriptor) throws BuildException {
         final PluginDescriptor descr = readDescriptor(descriptor);
 
         final String fullId = descr.getId() + "_" + descr.getVersion();
-        final File otherDesc = descriptors.putIfAbsent(fullId, descriptor);
-        if (otherDesc != null) {
-            throw new BuildException("Same id(" + fullId + ") for 2 plugins: " + otherDesc + ", " + descriptor);
+        // ANCHOR-L2-111: atomic check-then-put; workers share this map.
+        synchronized (descriptors) {
+            final File otherDesc = descriptors.get(fullId);
+            if (otherDesc != null) {
+                throw new BuildException("Same id(" + fullId + ") for 2 plugins: " + otherDesc + ", " + descriptor);
+            }
+            descriptors.put(fullId, descriptor);
         }
 
         File destFile = new File(todir, fullId + ".jar");
