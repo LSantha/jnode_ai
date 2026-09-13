@@ -5471,6 +5471,19 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
         os.writePOP(X86Register.ECX);
     }
 
+    /**
+     * Bit pattern of a constant array-store value. The 4-byte store cube is
+     * type-agnostic machine-wise, but FLOAT stores carry a
+     * {@link FloatConstant}, not an {@link IntConstant}
+     * (Arrays#sort([FII)V CCE here). A float store is a raw 32-bit move.
+     */
+    private static int arrayStoreConstBits(Operand rhs) {
+        if (rhs instanceof FloatConstant) {
+            return Float.floatToRawIntBits(((FloatConstant) rhs).getValue());
+        }
+        return ((IntConstant) rhs).getValue();
+    }
+
     @Override
     public void generateCodeFor(ArrayStoreQuad quad) {
         checkLabel(quad.getAddress());
@@ -5521,7 +5534,7 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
             if (ind.getAddressingMode() == CONSTANT) {
                 final int offset = ((IntConstant) ind).getValue() * scale;
                 if (rhs.getAddressingMode() == CONSTANT) {
-                    os.writeMOV_Const(BITS32, dstReg, offset + arrayDataOffset, ((IntConstant) rhs).getValue());
+                    os.writeMOV_Const(BITS32, dstReg, offset + arrayDataOffset, arrayStoreConstBits(rhs));
                 } else if (rhs.getAddressingMode() == REGISTER) {
                     os.writeMOV(BITS32, dstReg, offset + arrayDataOffset,
                         (GPR) ((RegisterLocation) ((Variable) rhs).getLocation()).getRegister());
@@ -5535,7 +5548,7 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
             } else if (ind.getAddressingMode() == REGISTER) {
                 GPR idxReg = (GPR) ((RegisterLocation) ((Variable) ind).getLocation()).getRegister();
                 if (rhs.getAddressingMode() == CONSTANT) {
-                    os.writeMOV_Const(BITS32, dstReg, idxReg, scale, arrayDataOffset, ((IntConstant) rhs).getValue());
+                    os.writeMOV_Const(BITS32, dstReg, idxReg, scale, arrayDataOffset, arrayStoreConstBits(rhs));
                 } else if (rhs.getAddressingMode() == REGISTER) {
                     os.writeMOV(BITS32, dstReg, idxReg, scale, arrayDataOffset,
                         (GPR) ((RegisterLocation) ((Variable) rhs).getLocation()).getRegister());
@@ -5550,7 +5563,7 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
                 os.writeMOV(X86Constants.BITS32, SR1, X86Register.EBP,
                     ((StackLocation) ((Variable) ind).getLocation()).getDisplacement());
                 if (rhs.getAddressingMode() == CONSTANT) {
-                    os.writeMOV_Const(BITS32, dstReg, SR1, scale, arrayDataOffset, ((IntConstant) rhs).getValue());
+                    os.writeMOV_Const(BITS32, dstReg, SR1, scale, arrayDataOffset, arrayStoreConstBits(rhs));
                 } else if (rhs.getAddressingMode() == REGISTER) {
                     os.writeMOV(BITS32, dstReg, SR1, scale, arrayDataOffset,
                         (GPR) ((RegisterLocation) ((Variable) rhs).getLocation()).getRegister());
@@ -5572,7 +5585,7 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
             if (ind.getAddressingMode() == CONSTANT) {
                 final int offset = ((IntConstant) ind).getValue() * scale;
                 if (rhs.getAddressingMode() == CONSTANT) {
-                    os.writeMOV_Const(BITS32, SR1, offset + arrayDataOffset, ((IntConstant) rhs).getValue());
+                    os.writeMOV_Const(BITS32, SR1, offset + arrayDataOffset, arrayStoreConstBits(rhs));
                 } else if (rhs.getAddressingMode() == REGISTER) {
                     os.writeMOV(BITS32, SR1, offset + arrayDataOffset,
                         (GPR) ((RegisterLocation) ((Variable) rhs).getLocation()).getRegister());
@@ -5589,7 +5602,7 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
             } else if (ind.getAddressingMode() == REGISTER) {
                 GPR idxReg = (GPR) ((RegisterLocation) ((Variable) ind).getLocation()).getRegister();
                 if (rhs.getAddressingMode() == CONSTANT) {
-                    os.writeMOV_Const(BITS32, SR1, idxReg, scale, arrayDataOffset, ((IntConstant) rhs).getValue());
+                    os.writeMOV_Const(BITS32, SR1, idxReg, scale, arrayDataOffset, arrayStoreConstBits(rhs));
                 } else if (rhs.getAddressingMode() == REGISTER) {
                     os.writeMOV(BITS32, SR1, idxReg, scale, arrayDataOffset,
                         (GPR) ((RegisterLocation) ((Variable) rhs).getLocation()).getRegister());
@@ -5609,7 +5622,7 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
                 os.writeMOV(BITS32, sr2, X86Register.EBP,
                     ((StackLocation) ((Variable) ind).getLocation()).getDisplacement());
                 if (rhs.getAddressingMode() == CONSTANT) {
-                    os.writeMOV_Const(BITS32, SR1, sr2, scale, arrayDataOffset, ((IntConstant) rhs).getValue());
+                    os.writeMOV_Const(BITS32, SR1, sr2, scale, arrayDataOffset, arrayStoreConstBits(rhs));
                 } else if (rhs.getAddressingMode() == REGISTER) {
                     os.writeMOV(BITS32, SR1, sr2, scale, arrayDataOffset,
                         (GPR) ((RegisterLocation) ((Variable) rhs).getLocation()).getRegister());
