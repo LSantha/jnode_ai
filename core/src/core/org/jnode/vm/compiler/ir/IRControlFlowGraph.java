@@ -639,6 +639,13 @@ public class IRControlFlowGraph<T> implements Iterable<IRBasicBlock<T>> {
                     if (st != null) {
                         Variable[] vars = block.getVariables();
                         Variable<T> peek = st.peek();
+                        // ANCHOR-L2-110: an empty stack means no reaching def
+                        // on this path (dead/unreachable use). Storing the
+                        // null would poison the quad and NPE a later doPass2;
+                        // leave the pre-SSA variable instead.
+                        if (peek == null) {
+                            continue;
+                        }
                         vars[((Variable) refs[i]).getIndex()] = peek;
                         refs[i] = peek;
                     }

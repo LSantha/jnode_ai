@@ -138,12 +138,26 @@ public class IRBasicBlockFinder<T> extends BytecodeVisitorSupport implements Com
             throw new AssertionError("bbIndex != list.length");
         }
 
+        // ANCHOR-L2-110: exception edges from every block covered by the
+        // try range to the handler. The old code edged only the try entry's
+        // predecessors (empty when the try starts at method entry, and wrong
+        // in general: the handler catches throws from INSIDE the range).
+        // Without the in-range edge the handler block is unreachable in the
+        // CFG: postorder misses it and everything below it, the dominator
+        // fixpoint roots the region at start, no phis are placed at its
+        // merges, and renameVariables nulls uses whose only def lives in
+        // the handler (SecurityManager#classLoaderDepth NPE in doPass2).
+        // Conservative: an exception may transfer from any covered block.
         for (int i = 0; i < byteCode.getNoExceptionHandlers(); i++) {
             VmInterpretedExceptionHandler eh = byteCode.getExceptionHandler(i);
             IRBasicBlock<T> handlerBB = findBB(list, eh.getHandlerPC());
-            IRBasicBlock<T> tryBB = findBB(list, eh.getStartPC());
-            for (IRBasicBlock bb : tryBB.getPredecessors()) {
-                bb.addSuccessor(handlerBB);
+            if (handlerBB == null) {
+                continue;
+            }
+            for (IRBasicBlock<T> bb : list) {
+                if (bb.getStartPC() < eh.getEndPC() && bb.getEndPC() > eh.getStartPC()) {
+                    bb.addSuccessor(handlerBB);
+                }
             }
         }
 
