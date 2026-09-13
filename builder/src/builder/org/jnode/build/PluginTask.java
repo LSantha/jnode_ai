@@ -22,6 +22,7 @@ package org.jnode.build;
 
 import java.io.File;
 import java.io.IOException;
+import java.util.HashMap;
 import java.util.LinkedList;
 import java.util.Map;
 import java.util.concurrent.ArrayBlockingQueue;
@@ -98,7 +99,7 @@ public class PluginTask extends AbstractPluginTask {
         // a plain HashMap corrupts on concurrent put+resize and spins
         // forever in transfer (hung assemble-plugins). The check-then-put
         // below is also racy, so publish with putIfAbsent atomically.
-        final Map<String, File> descriptors = new ConcurrentHashMap<String, File>();
+        final ConcurrentHashMap<String, File> descriptors = new ConcurrentHashMap<String, File>();
         for (FileSet fs : descriptorSets) {
             final DirectoryScanner ds = fs.getDirectoryScanner(getProject());
             final String[] files = ds.getIncludedFiles();
@@ -137,7 +138,7 @@ public class PluginTask extends AbstractPluginTask {
      * @param descriptor  the plugin descriptor XML
      * @throws BuildException on failure
      */
-    public void buildPlugin(Map<String, File> descriptors, File descriptor) throws BuildException {
+    public void buildPlugin(ConcurrentHashMap<String, File> descriptors, File descriptor) throws BuildException {
         final PluginDescriptor descr = readDescriptor(descriptor);
 
         final String fullId = descr.getId() + "_" + descr.getVersion();
