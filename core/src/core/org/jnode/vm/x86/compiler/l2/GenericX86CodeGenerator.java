@@ -4822,8 +4822,13 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
                 os.writeCMPXCHG_EAX(X86Register.EDX, 0, X86Register.ECX, true);
                 os.writeMOV_Const(X86Register.EDX, 0);
                 os.writeSETCC(X86Register.EDX, X86Constants.JZ);
-                storeRegToLhs(X86Register.EDX, lhs);
+                // ANCHOR-L2-116: restore ECX BEFORE publishing the result:
+                // the result home may itself be ECX (monitorExit's attempt
+                // landed there) and the restore would clobber it, making a
+                // successful CAS report failure (boot hung in monitorExit's
+                // "Lock not owned by us" on the second loop pass).
                 os.writePOP(X86Register.ECX);
+                storeRegToLhs(X86Register.EDX, lhs);
                 break;
             }
             default:
