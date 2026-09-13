@@ -76,6 +76,11 @@ public class SerialConsolePlugin extends Plugin {
             CommandShell commandShell = new CommandShell(console);
             commandShell.configureShell();
             commandShell.setProperty("jnode.prompt", "\n[JNODE_AGENT_READY]\n");
+            // Verbose errors on the agent console: stack traces and command
+            // diagnostics print to this shell's err (the serial line) instead
+            // of living only in the global log / focused text console, so a
+            // remote agent sees what went wrong without VGA access.
+            commandShell.setProperty("jnode.debug", "true");
             consoleThread = new Thread(commandShell, "serial-console");
             consoleThread.setDaemon(true);
             consoleThread.start();

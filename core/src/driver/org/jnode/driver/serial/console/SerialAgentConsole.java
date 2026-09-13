@@ -145,7 +145,24 @@ public class SerialAgentConsole extends AbstractConsole implements TextConsole {
 
     @Override public void focusGained(org.jnode.system.event.FocusEvent event) {}
     @Override public void focusLost(org.jnode.system.event.FocusEvent event) {}
-    @Override public void keyPressed(KeyboardEvent event) {}
-    @Override public void keyReleased(KeyboardEvent event) {}
+
+    /**
+     * Enqueue key events for asynchronous dispatch, bypassing the focus
+     * check. Agent consoles are never "focused", but listeners such as the
+     * shell's AsyncCommandInvoker (Ctrl-C / Ctrl-Z job control) must still
+     * receive events synthesized from control characters. Asynchronous
+     * dispatch keeps the serial input pump from ever blocking on listeners
+     * (e.g. a listener writing to a stalled UART).
+     */
+    @Override
+    public void keyPressed(KeyboardEvent event) {
+        enqueueKeyboardEvent(event);
+    }
+
+    @Override
+    public void keyReleased(KeyboardEvent event) {
+        enqueueKeyboardEvent(event);
+    }
+
     @Override public void pointerStateChanged(PointerEvent event) {}
 }

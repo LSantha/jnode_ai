@@ -173,7 +173,7 @@ public abstract class AsyncCommandInvoker implements SimpleCommandInvoker,
         // for input.  If we figure out how to prevent this, then ^Z could mean
         // "background, losing control of keyboard input".
         if (blockingThread != null && blockingThread.isAlive()) {
-            System.err.println("ctrl-z: Returning focus to console. ("
+            reportJobControl("ctrl-z: Returning focus to console. ("
                     + cmdName + " is still running)");
             unblock();
         }
@@ -182,7 +182,7 @@ public abstract class AsyncCommandInvoker implements SimpleCommandInvoker,
     private void doCtrlC() {
         if (threadProcess != null && threadProcess.isAlive()
                 && blockingThread != null && blockingThread.isAlive()) {
-            System.err.println("ctrl-c: Returning focus to console. ("
+            reportJobControl("ctrl-c: Returning focus to console. ("
                     + cmdName + " has been killed)");
             unblock();
 
@@ -192,6 +192,28 @@ public abstract class AsyncCommandInvoker implements SimpleCommandInvoker,
                     return null;
                 }
             });
+        }
+    }
+
+    /**
+     * Report a job-control action both globally (existing behavior: VGA / log)
+     * and on the invoking shell's own console, so serial agents see it too.
+     * Failures here must never propagate: this runs on the console's event
+     * thread and must not prevent the unblock/stop that follows.
+     */
+    private void reportJobControl(String msg) {
+        System.err.println(msg);
+        try {
+            if (shell != null && shell.getConsole() != null) {
+                java.io.Writer w = shell.getConsole().getErr();
+                if (w != null) {
+                    w.write(msg + '\n');
+                    w.flush();
+                }
+            }
+        } catch (Throwable t) {
+            // Ignore: port access from an event thread may lack I/O
+            // privilege; the message already went to the global stderr.
         }
     }
 
