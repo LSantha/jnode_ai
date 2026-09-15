@@ -1713,7 +1713,7 @@ public class XMLElement
             this.parseFromReader(new StringReader(string),
                                  /*startingLineNr*/ 1);
         } catch (IOException e) {
-            // Java exception handling suxx
+            throw new AssertionError("StringReader should not throw IOException", e);
         }
     }
 
@@ -1821,7 +1821,7 @@ public class XMLElement
         try {
             this.parseFromReader(new StringReader(string), startingLineNr);
         } catch (IOException e) {
-            // Java exception handling suxx
+            throw new AssertionError("StringReader should not throw IOException", e);
         }
     }
 
@@ -2301,6 +2301,7 @@ public class XMLElement
                 case '\t':
                 case '\n':
                     result.append(ch);
+                    break;
                 case '\r':
                     break;
                 default:
