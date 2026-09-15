@@ -26,6 +26,7 @@ import java.util.Comparator;
 import java.util.HashMap;
 import java.util.IdentityHashMap;
 import java.util.Iterator;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import org.jnode.util.ObjectArrayIterator;
@@ -537,6 +538,19 @@ public class IRControlFlowGraph<T> implements Iterable<IRBasicBlock<T>> {
      * the phi's own block and reads a version that does not dominate the join.
      * The {@code MethodArgument} guard covers passthrough sources
      * (e.g. {@code c ? a0 : 1}), whose assignQuad is null.
+     * <p/>
+     * ANCHOR-L2-124: edge-based placement. The copy for a source must execute
+     * on the edge that carries the value, i.e. at the end of a predecessor of
+     * the join. The old code used the source version's def block, which is
+     * wrong for loop-carried values: the def lives in the loop header, so the
+     * copy landed in the header and executed unconditionally every iteration,
+     * clobbering the body-computed value before the back-edge carry could read
+     * it (guest: VmDefaultHeap.alloc looped forever, objectPtr never visibly
+     * updated). Sources defined in a predecessor keep the old placement; the
+     * rest are routed to a predecessor reachable from the def without passing
+     * through the join (outside-loop values to entry edges, loop-carried
+     * values to back edges). Ambiguous copies are flushed before primaries so
+     * a same-block primary (the true edge value) wins.
      */
     private void deconstructPhiList(List<PhiAssignQuad<T>> phiQuads) {
         Collections.sort(phiQuads, new Comparator<PhiAssignQuad<T>>() {
@@ -550,30 +564,328 @@ public class IRControlFlowGraph<T> implements Iterable<IRBasicBlock<T>> {
             }
         });
         for (PhiAssignQuad<T> paq : phiQuads) {
-            Variable<T> lhs = paq.getLHS();
-            IRBasicBlock<T> firstBlock = null;
-            AssignQuad<T> firstPhiMove = null;
-            for (Operand<T> o : paq.getPhiOperand().getSources()) {
-                Variable<T> rhs = (Variable<T>) o;
+            deconstructOnePhi(paq);
+        }
+    }
+
+    /**
+     * One phi source for {@code deconstructOnePhi}: resolved rhs version plus
+     * its def block (startBlock for passthrough MethodArguments).
+     */
+    private static final class PhiSource<T> {
+        final Variable<T> rhs;
+        final IRBasicBlock<T> defBlock;
+        PhiSource(Variable<T> rhs, IRBasicBlock<T> defBlock) {
+            this.rhs = rhs;
+            this.defBlock = defBlock;
+        }
+    }
+
+    /**
+     * Dominance via the idominator chain (valid: no pass adds/removes blocks
+     * between dominator computation and deSSA). A def in a dominating block
+     * is live at the dominated block's end (single static assignment), so a
+     * phi copy for it may go on any edge out of dominated predecessors.
+     * This complements successor reachability, which misses edges whose
+     * successor record went stale during optimization.
+     */
+    private boolean blockDominates(IRBasicBlock<T> a, IRBasicBlock<T> b) {
+        if (a == null || b == null) {
+            return false;
+        }
+        IRBasicBlock<T> cur = b;
+        while (cur != null) {
+            if (cur == a) {
+                return true;
+            }
+            cur = cur.getIDominator();
+        }
+        return false;
+    }
+
+    /**
+     * Reachability over successor edges, optionally refusing to pass through
+     * one block. Used to route phi copies onto the edge that carries them.
+     */
+    private boolean blockReaches(IRBasicBlock<T> from, IRBasicBlock<T> to,
+                                 IRBasicBlock<T> avoid) {        if (from == null || to == null) {
+            return false;
+        }
+        if (from == to) {
+            return true;
+        }
+        java.util.ArrayList<IRBasicBlock<T>> stack =
+            new java.util.ArrayList<IRBasicBlock<T>>();
+        java.util.HashSet<IRBasicBlock<T>> seen =
+            new java.util.HashSet<IRBasicBlock<T>>();
+        stack.add(from);
+        seen.add(from);
+        while (!stack.isEmpty()) {
+            IRBasicBlock<T> b = stack.remove(stack.size() - 1);
+            List<IRBasicBlock<T>> succs = b.getSuccessors();
+            if (succs == null) {
+                continue;
+            }
+            for (IRBasicBlock<T> s : succs) {
+                if (s == null || s == avoid || !seen.add(s)) {
+                    continue;
+                }
+                if (s == to) {
+                    return true;
+                }
+                stack.add(s);
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Expand one phi into predecessor copies with edge-based placement
+     * (ANCHOR-L2-124, see {@code deconstructPhiList}).
+     */
+    private void deconstructOnePhi(PhiAssignQuad<T> paq) {
+        Variable<T> lhs = paq.getLHS();
+        final IRBasicBlock<T> join = paq.getBasicBlock();
+        final List<IRBasicBlock<T>> preds = join.getPredecessors();
+        // Per-block buckets; ambiguous copies flush before primaries so a
+        // same-block primary (the true edge value) wins over a stray copy.
+        final Map<IRBasicBlock<T>, List<AssignQuad<T>>> ambBucket =
+            new HashMap<IRBasicBlock<T>, List<AssignQuad<T>>>();
+        final Map<IRBasicBlock<T>, List<AssignQuad<T>>> priBucket =
+            new HashMap<IRBasicBlock<T>, List<AssignQuad<T>>>();
+        final java.util.HashSet<IRBasicBlock<T>> claimed =
+            new java.util.HashSet<IRBasicBlock<T>>();
+        IRBasicBlock<T> firstBlock = null;
+        AssignQuad<T> firstPhiMove = null;
+
+        // Resolve sources, then place in two passes: primaries claim their
+        // predecessor first, ambiguous sources route among the leftovers.
+        // Single-pass claiming lets an early ambiguous source steal a
+        // predecessor that a later primary owns (guest: allocObject entry
+        // copy landed on the allocHeap edge, heap.alloc on null).
+        List<PhiSource<T>> primaries = new ArrayList<PhiSource<T>>();
+        List<PhiSource<T>> ambiguous = new ArrayList<PhiSource<T>>();
+        for (Operand<T> o : paq.getPhiOperand().getSources()) {
+            Variable<T> rhs = (Variable<T>) o;
+            AssignQuad<T> assignQuad = rhs.getAssignQuad();
+            IRBasicBlock<T> defBlock;
+            if (assignQuad == null && rhs instanceof MethodArgument) {
+                defBlock = startBlock;
+            } else if (assignQuad == null) {
+                continue;
+            } else {
+                defBlock = assignQuad.getBasicBlock();
+            }
+            if (defBlock != null && preds.contains(defBlock)
+                && !claimed.contains(defBlock)) {
+                primaries.add(new PhiSource<T>(rhs, defBlock));
+                claimed.add(defBlock);
+            } else {
+                ambiguous.add(new PhiSource<T>(rhs, defBlock));
+            }
+        }
+        for (PhiSource<T> s : primaries) {
+            AssignQuad<T> phiMove;
+            phiMove = new VariableRefAssignQuad<T>(0, s.defBlock, lhs, s.rhs);
+            phiMove.doPass2();
+            List<AssignQuad<T>> list = priBucket.get(s.defBlock);
+            if (list == null) {
+                list = new ArrayList<AssignQuad<T>>();
+                priBucket.put(s.defBlock, list);
+            }
+            list.add(phiMove);
+            if (firstBlock == null
+                || s.defBlock.getStartPC() < firstBlock.getStartPC()) {
+                firstBlock = s.defBlock;
+                firstPhiMove = phiMove;
+            }
+        }
+        // Constraint rounds: an ambiguous source with exactly one usable
+        // edge takes it (claiming it); repeat until fixpoint. This resolves
+        // swaps deterministically however the sources interleave (guest:
+        // allocObject entry copy and allocHeap copy swapped edges under
+        // first-come claiming, heap.alloc on null). Leftovers take their
+        // first usable edge, else the def block (old behavior).
+        List<PhiSource<T>> pending = ambiguous;
+        while (!pending.isEmpty()) {
+            List<PhiSource<T>> next = new ArrayList<PhiSource<T>>();
+            boolean progress = false;
+            for (PhiSource<T> s : pending) {
+                List<IRBasicBlock<T>> cands =
+                    routeCandidates(join, preds, claimed, s.defBlock);
+                if (cands.size() == 1) {
+                    IRBasicBlock<T> ab = cands.get(0);
+                    AssignQuad<T> phiMove;
+                    phiMove = new VariableRefAssignQuad<T>(0, ab, lhs, s.rhs);
+                    phiMove.doPass2();
+                    List<AssignQuad<T>> list = ambBucket.get(ab);
+                    if (list == null) {
+                        list = new ArrayList<AssignQuad<T>>();
+                        ambBucket.put(ab, list);
+                    }
+                    list.add(phiMove);
+                    claimed.add(ab);
+                    progress = true;
+                    if (firstBlock == null
+                        || ab.getStartPC() < firstBlock.getStartPC()) {
+                        firstBlock = ab;
+                        firstPhiMove = phiMove;
+                    }
+                } else {
+                    next.add(s);
+                }
+            }
+            if (!progress) {
+                for (PhiSource<T> s : next) {
+                    List<IRBasicBlock<T>> cands =
+                        routeCandidates(join, preds, claimed, s.defBlock);
+                    IRBasicBlock<T> ab = cands.isEmpty() ? s.defBlock : cands.get(0);
+                    if (ab == null) {
+                        continue;
+                    }
+                    AssignQuad<T> phiMove;
+                    phiMove = new VariableRefAssignQuad<T>(0, ab, lhs, s.rhs);
+                    phiMove.doPass2();
+                    List<AssignQuad<T>> list = ambBucket.get(ab);
+                    if (list == null) {
+                        list = new ArrayList<AssignQuad<T>>();
+                        ambBucket.put(ab, list);
+                    }
+                    list.add(phiMove);
+                    claimed.add(ab);
+                    if (firstBlock == null
+                        || ab.getStartPC() < firstBlock.getStartPC()) {
+                        firstBlock = ab;
+                        firstPhiMove = phiMove;
+                    }
+                }
+                break;
+            }
+            pending = next;
+        }
+        // Floor: a live phi must leave at least one copy (old behavior put it
+        // in the def block). Without this a later assignQuad user could NPE.
+        if (firstPhiMove == null) {
+            List<Operand<T>> sources = paq.getPhiOperand().getSources();
+            if (!sources.isEmpty()) {
+                Variable<T> rhs = (Variable<T>) sources.get(0);
                 AssignQuad<T> assignQuad = rhs.getAssignQuad();
                 IRBasicBlock<T> ab;
                 if (assignQuad == null && rhs instanceof MethodArgument) {
                     ab = startBlock;
+                } else if (assignQuad == null) {
+                    paq.setDeadCode(true);
+                    return;
                 } else {
                     ab = assignQuad.getBasicBlock();
                 }
-                AssignQuad<T> phiMove;
-                phiMove = new VariableRefAssignQuad<T>(0, ab, lhs, rhs);
-                phiMove.doPass2();
-                ab.add(phiMove);
-                if (firstBlock == null || ab.getStartPC() < firstBlock.getStartPC()) {
-                    firstBlock = ab;
-                    firstPhiMove = phiMove;
+                firstPhiMove = new VariableRefAssignQuad<T>(0, ab, lhs, rhs);
+                firstPhiMove.doPass2();
+                List<AssignQuad<T>> list = priBucket.get(ab);
+                if (list == null) {
+                    list = new ArrayList<AssignQuad<T>>();
+                    priBucket.put(ab, list);
+                }
+                list.add(firstPhiMove);
+                firstBlock = ab;
+            }
+        }
+        // Flush: ambiguous copies first, then primaries (source order kept
+        // within each group by construction above). Identical (lhs,rhs)
+        // copies in one block collapse to the first: same edge, same value,
+        // pure bloat from duplicate visit records.
+        java.util.HashSet<IRBasicBlock<T>> blocks =
+            new java.util.HashSet<IRBasicBlock<T>>();
+        blocks.addAll(ambBucket.keySet());
+        blocks.addAll(priBucket.keySet());
+        for (IRBasicBlock<T> b : blocks) {
+            java.util.HashMap<Variable<T>, java.util.HashSet<Variable<T>>> seen =
+                new java.util.HashMap<Variable<T>, java.util.HashSet<Variable<T>>>();
+            List<AssignQuad<T>> amb = ambBucket.get(b);
+            if (amb != null) {
+                for (AssignQuad<T> q : amb) {
+                    if (noteCopy(seen, q)) {
+                        b.add(q);
+                    } else {
+                        q.setDeadCode(true);
+                    }
                 }
             }
-            lhs.setAssignQuad(firstPhiMove);
-            paq.setDeadCode(true);
+            List<AssignQuad<T>> pri = priBucket.get(b);
+            if (pri != null) {
+                for (AssignQuad<T> q : pri) {
+                    if (noteCopy(seen, q)) {
+                        b.add(q);
+                    } else {
+                        q.setDeadCode(true);
+                    }
+                }
+            }
         }
+        if (firstPhiMove != null) {
+            lhs.setAssignQuad(firstPhiMove);
+        }
+        paq.setDeadCode(true);
+    }
+
+    /**
+     * Record a (lhs,rhs) copy for flush dedup. Returns false for an exact
+     * repeat in the same block (caller marks it dead).
+     */
+    private boolean noteCopy(
+        java.util.HashMap<Variable<T>, java.util.HashSet<Variable<T>>> seen,
+        AssignQuad<T> q) {
+        Variable<T> lhs = q.getLHS();
+        Operand<T>[] refs = q.getReferencedOps();
+        Variable<T> rhs = (refs != null && refs.length > 0 && refs[0] instanceof Variable)
+            ? (Variable<T>) refs[0] : null;
+        java.util.HashSet<Variable<T>> set = seen.get(lhs);
+        if (set == null) {
+            set = new java.util.HashSet<Variable<T>>();
+            seen.put(lhs, set);
+        }
+        if (rhs != null && !set.add(rhs)) {
+            return false;
+        }
+        return true;
+    }
+
+    /**
+     * Usable edges for an ambiguous phi source (def block is not a free
+     * predecessor of the join), in predecessor order: unclaimed predecessors
+     * the def dominates or reaches without passing through the join, with
+     * outside-loop values restricted to entry edges and loop-carried values
+     * to back edges (see {@code deconstructPhiList}).
+     */
+    private List<IRBasicBlock<T>> routeCandidates(IRBasicBlock<T> join,
+                                                  List<IRBasicBlock<T>> preds,
+                                                  java.util.HashSet<IRBasicBlock<T>> claimed,
+                                                  IRBasicBlock<T> defBlock) {
+        List<IRBasicBlock<T>> out = new ArrayList<IRBasicBlock<T>>();
+        if (preds == null || preds.isEmpty()) {
+            return out;
+        }
+        final boolean inLoop;
+        if (defBlock == null || defBlock == join) {
+            inLoop = true;
+        } else {
+            inLoop = blockReaches(defBlock, join, null)
+                && blockReaches(join, defBlock, null);
+        }
+        // Internal preds are reachable back from the join (back edges);
+        // the rest are entry edges.
+        for (IRBasicBlock<T> p : preds) {
+            if (p == null || p == join || claimed.contains(p)) {
+                continue;
+            }
+            final boolean internal = blockReaches(join, p, null);
+            if (inLoop == internal
+                && (defBlock == null || blockDominates(defBlock, p)
+                    || blockReaches(defBlock, p, join))) {
+                out.add(p);
+            }
+        }
+        return out;
     }
 
     public void fixupAddresses() {
