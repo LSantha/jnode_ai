@@ -271,7 +271,15 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
         // args, aliasing temps over live arg slots) and advance 2 for wide
         // values (one index per variable shared 4 bytes between co-live
         // double temps; oracle: addCC garbage). Narrow temps are unaffected.
-        int slot = currentMethod.getArgSlotCount();
+        // ANCHOR-L2-121: base above ALL JVM slots (getNoLocals), not just the
+        // args. Basing at argSlotCount aliased spill homes over live JVM
+        // locals -- and with no JVM locals at all the homes landed below EBP
+        // in the unreserved outgoing-args area, so every call's pushes
+        // clobbered live spills (guest: NPEs in StringBuilder.append chains,
+        // Math.min wrong values, substring -8; MauveBug.line spill [ebp-4]
+        // destroyed by the very next push ecx). The frame reserves the extra
+        // homes in endMethod.
+        int slot = currentMethod.getBytecode().getNoLocals();
         for (int i = 0; i < n; i += 1) {
             Variable<X86Register> var = (Variable<X86Register>) spilledVariables[i];
             StackLocation loc = (StackLocation) var.getLocation();
@@ -4910,7 +4918,21 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
     }
 
     public void endMethod() {
-        stackFrame.emitTrailer(typeSizeInfo, currentMethod.getBytecode().getNoLocals());
+        // ANCHOR-L2-121: reserve frame space for spill homes. Spill slots
+        // live above all JVM slots (see setSpilledVariables); the prolog
+        // must push enough zeros to cover them or the homes land in the
+        // unreserved outgoing-args area. JVM local/arg mapping is untouched
+        // (indices below getNoLocals map exactly as before); the footer
+        // still returns argSlotCount slots; handler clearing just covers
+        // more zeros.
+        int maxLocals = currentMethod.getBytecode().getNoLocals();
+        if (spilledVariables != null) {
+            for (int i = 0; i < spilledVariables.length; i += 1) {
+                int type = ((Variable) spilledVariables[i]).getType();
+                maxLocals += (type == Operand.LONG || type == Operand.DOUBLE) ? 2 : 1;
+            }
+        }
+        stackFrame.emitTrailer(typeSizeInfo, maxLocals);
     }
 
     public synchronized void startMethod(VmMethod method) {
@@ -5170,7 +5192,11 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
             os.writeFSTP64(X86Register.EBP, resd - stackFrame.getHelper().SLOTSIZE);
         } else {
             // BYTE (signed), CHAR (unsigned), SHORT (signed) -> int result.
-            os.writeLEA(X86Register.EDX, X86Register.EAX, X86Register.ECX, 1, arrayDataOffset);
+            // ANCHOR-L2-122: CHAR/SHORT elements are 2 bytes: scale the index
+            // by 2 (scale 1 scrambled every char[]/short[] access; guest:
+            // String.compareTo 7 wrong values from a garbled char[] source).
+            final int narrowScale = (elemType == Operand.BYTE) ? 1 : 2;
+            os.writeLEA(X86Register.EDX, X86Register.EAX, X86Register.ECX, narrowScale, arrayDataOffset);
             final boolean signed = (elemType != Operand.CHAR);
             final int size = (elemType == Operand.BYTE) ? BYTESIZE : WORDSIZE;
             if (lhs.getAddressingMode() == REGISTER) {
@@ -5440,7 +5466,9 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
             }
         } else {
             // BYTE/CHAR/SHORT stores narrow the int value to 1/2 bytes.
-            os.writeLEA(X86Register.EDX, X86Register.EAX, X86Register.ECX, 1, arrayDataOffset);
+            // ANCHOR-L2-122: CHAR/SHORT scale is 2 (see load side above).
+            os.writeLEA(X86Register.EDX, X86Register.EAX, X86Register.ECX,
+                (elemType == Operand.BYTE) ? 1 : 2, arrayDataOffset);
             final int size = (elemType == Operand.BYTE) ? BYTESIZE : WORDSIZE;
             if (rhs.getAddressingMode() == REGISTER) {
                 GPR valr = (GPR) ((RegisterLocation) ((Variable) rhs).getLocation()).getRegister();
