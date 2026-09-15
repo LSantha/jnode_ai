@@ -1,0 +1,22 @@
+# Mauve differential subset v1 (compiler-relevant, no GUI/net/fs).
+# One testlet class per line. L1A-guest baseline vs L2-forced guest.
+gnu.testlet.java.lang.Integer.parseInt
+gnu.testlet.java.lang.Integer.decode
+gnu.testlet.java.lang.Integer.compareTo
+gnu.testlet.java.lang.Long.LongTest
+gnu.testlet.java.lang.Double.parseDouble
+gnu.testlet.java.lang.Float.toHexString
+gnu.testlet.java.lang.String.compareTo
+gnu.testlet.java.lang.String.substring
+gnu.testlet.java.lang.String.split
+gnu.testlet.java.lang.String.indexOf
+gnu.testlet.java.lang.StringBuffer.StringBufferTest
+gnu.testlet.java.lang.Math.min
+gnu.testlet.java.lang.Character.digit
+gnu.testlet.java.lang.Boolean.BooleanTest
+gnu.testlet.java.math.BigInteger.add
+gnu.testlet.java.math.BigDecimal.construct
+gnu.testlet.java.util.ArrayList.AcuniaArrayListTest
+gnu.testlet.java.util.HashMap.AcuniaHashMapTest
+gnu.testlet.java.util.Random.basic
+gnu.testlet.java.text.DecimalFormat.format
