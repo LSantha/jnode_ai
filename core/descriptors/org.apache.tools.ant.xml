@@ -34,6 +34,9 @@
   </requires>
         
   <runtime>
+    <library name="jnode-cli.jar">
+      <export name="org.apache.tools.ant.taskdefs.ExecuteJava"/>
+    </library>
     <library name="ant.jar">
       <export name="*"/>
       <export name="org.apache.tools.ant.filters.*"/>
@@ -49,6 +52,7 @@
       <exclude name="org.apache.tools.tar.*" />
       <exclude name="org.apache.tools.zip.*" />
       <exclude name="org.apache.tools.bzip2.*" />
+      <exclude name="org.apache.tools.ant.taskdefs.ExecuteJava"/>
     </library>
   </runtime>  
   
