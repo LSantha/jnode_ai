@@ -486,8 +486,17 @@ public class IRControlFlowGraph<T> implements Iterable<IRBasicBlock<T>> {
         final List<PhiAssignQuad<T>> phiQuads = new BootableArrayList<PhiAssignQuad<T>>();
         for (IRBasicBlock<T> b : bblocks) {
             for (Quad<T> q : b.getQuads()) {
-                if (q instanceof PhiAssignQuad && !q.isDeadCode()) {
-                    phiQuads.add((PhiAssignQuad<T>) q);
+                if (q instanceof PhiAssignQuad) {
+                    // ANCHOR-L2-123: skip pruned phis, do NOT break. Dead
+                    // phis stay linked in the block (only skipped at print/
+                    // codegen), so a pruned phi ahead of a live one used to
+                    // end the scan and the live phi never got predecessor
+                    // moves (guest: dumpMultibootMMap loop read never-written
+                    // [ebp-0x2c], null-read at 0x4217B4). Non-phi still ends
+                    // the leading-phi run.
+                    if (!q.isDeadCode()) {
+                        phiQuads.add((PhiAssignQuad<T>) q);
+                    }
                 } else {
                     break;
                 }
