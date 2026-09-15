@@ -2108,7 +2108,7 @@ public abstract class X86Assembler extends NativeStream implements BootImageNati
      * Create a push reg32
      *
      * @param srcReg
-     * @return The ofset of the start of the instruction.
+     * @return The offset of the start of the instruction.
      */
     public abstract int writePUSH(GPR srcReg);
 
@@ -2116,7 +2116,7 @@ public abstract class X86Assembler extends NativeStream implements BootImageNati
      * Create a push sreg
      *
      * @param srcReg
-     * @return The ofset of the start of the instruction.
+     * @return The offset of the start of the instruction.
      */
     public abstract int writePUSH(SR srcReg);
 
@@ -2127,7 +2127,7 @@ public abstract class X86Assembler extends NativeStream implements BootImageNati
      * @param srcIndexReg
      * @param srcScale
      * @param srcDisp
-     * @return The ofset of the start of the instruction.
+     * @return The offset of the start of the instruction.
      */
     public abstract int writePUSH(GPR srcBaseReg, GPR srcIndexReg,
                                   int srcScale, int srcDisp);
@@ -2137,7 +2137,7 @@ public abstract class X86Assembler extends NativeStream implements BootImageNati
      *
      * @param srcReg
      * @param srcDisp
-     * @return The ofset of the start of the instruction.
+     * @return The offset of the start of the instruction.
      */
     public abstract int writePUSH(GPR srcReg, int srcDisp);
 
@@ -2146,7 +2146,7 @@ public abstract class X86Assembler extends NativeStream implements BootImageNati
      *
      * @param sr
      * @param srcDisp
-     * @return The ofset of the start of the instruction.
+     * @return The offset of the start of the instruction.
      */
     public abstract int writePUSH(SR sr, int srcDisp);
 
@@ -2155,7 +2155,7 @@ public abstract class X86Assembler extends NativeStream implements BootImageNati
      * Create a push dword <imm32>
      *
      * @param imm32
-     * @return The ofset of the start of the instruction.
+     * @return The offset of the start of the instruction.
      */
     public abstract int writePUSH(int imm32);
 
