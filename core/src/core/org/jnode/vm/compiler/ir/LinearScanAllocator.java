@@ -25,6 +25,7 @@ import java.util.Arrays;
 import java.util.Collections;
 import java.util.Comparator;
 import java.util.List;
+import java.util.Set;
 
 import org.jnode.vm.objects.BootableArrayList;
 
@@ -38,9 +39,21 @@ public class LinearScanAllocator<T> {
     private EndPointComparator<T> endPointComparator;
     private List<Variable<T>> spilledVariableList;
     private Variable<T>[] spilledVariables;
+    /**
+     * Ranges that must take stack homes even under zero pressure (107:
+     * values in caller-saved regs do not survive calls; nothing is
+     * preserved across the native unwinder). Identity-compared; the
+     * instances must be the same ones passed in {@code liveRanges}.
+     */
+    private final Set<LiveRange<T>> forcedSpills;
 
     public LinearScanAllocator(LiveRange<T>[] liveRanges) {
+        this(liveRanges, Collections.<LiveRange<T>>emptySet());
+    }
+
+    public LinearScanAllocator(LiveRange<T>[] liveRanges, Set<LiveRange<T>> forcedSpills) {
         this.liveRanges = liveRanges;
+        this.forcedSpills = forcedSpills;
         final CodeGenerator<T> cg = CodeGenerator.getInstance();
         this.registerPool = cg.getRegisterPool();
         this.active = new BootableArrayList<LiveRange<T>>();
@@ -58,6 +71,15 @@ public class LinearScanAllocator<T> {
             if (!(var instanceof MethodArgument)) {
                 // don't allocate method arguments to registers
                 expireOldRange(lr);
+                if (forcedSpills.contains(lr)) {
+                    // 107: live across a call or into a handler: callers
+                    // preserve nothing (saveRegisters is a no-op everywhere)
+                    // and neither does the native unwinder. Bypass the swap
+                    // below -- it could hand this range a register.
+                    lr.setLocation(new StackLocation<T>());
+                    this.spilledVariableList.add(var);
+                    continue;
+                }
                 T reg = registerPool.request(var.getType());
                 if (reg == null) {
                     spillRange(lr);
@@ -86,7 +108,12 @@ public class LinearScanAllocator<T> {
      */
     private void expireOldRange(LiveRange<T> lr) {
         for (LiveRange<T> l : new ArrayList<LiveRange>(active)) {
-            if (l.getLastUseAddress() >= lr.getAssignAddress()) {
+            // 108: a quad reads its operands and writes its result in one
+            // emission, so a ref used at N and a result assigned at N+1
+            // (post-def convention) are simultaneously live: keep refs one
+            // address longer, or the result reuses a home that is read
+            // after it is destroyed (instanceof zeroed its own object).
+            if (l.getLastUseAddress() + 1 >= lr.getAssignAddress()) {
                 return;
             }
             active.remove(l);
@@ -99,8 +126,13 @@ public class LinearScanAllocator<T> {
      * @param lr
      */
     private void spillRange(LiveRange<T> lr) {
+        // ANCHOR-L2-089: LONG, DOUBLE and FLOAT spill directly (wide values
+        // need spill homes; floats only implement stack shapes since the
+        // x87 backend needs memory operands -- letting them steal a register
+        // in the swap below reintroduces GPR floats the emitters reject).
         if (active.isEmpty() || lr.getVariable().getType() == Operand.LONG ||
-            lr.getVariable().getType() == Operand.DOUBLE) {
+            lr.getVariable().getType() == Operand.DOUBLE ||
+            lr.getVariable().getType() == Operand.FLOAT) {
             lr.setLocation(new StackLocation<T>());
             this.spilledVariableList.add(lr.getVariable());
             return;

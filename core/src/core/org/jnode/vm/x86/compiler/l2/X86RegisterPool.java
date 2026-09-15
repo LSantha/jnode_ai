@@ -48,9 +48,15 @@ public class X86RegisterPool extends RegisterPool<X86Register> {
         if (type == Operand.LONG) {
             return null;
         }
-        if (/* type == Operand.FLOAT || */type == Operand.DOUBLE) {
+        if (type == Operand.DOUBLE) {
             // throw new IllegalArgumentException("floats and double not yet
             // supported");
+            return null;
+        }
+        // ANCHOR-L2-060 (CG-3): floats spill too. The float backend only
+        // implements stack shapes (x87 needs memory operands); handing a
+        // float to a GPR made emission depend on allocation luck.
+        if (type == Operand.FLOAT) {
             return null;
         }
         int size = registers.size();

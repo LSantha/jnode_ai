@@ -356,6 +356,23 @@ public final class VmSystemClassLoader extends VmAbstractClassLoader {
                 classInfos.remove(ci.getName());
                 addFailedClassName(name);
                 throw new ClassNotFoundException(name, ex);
+            } catch (RuntimeException ex) {
+                // ANCHOR-L2-120: any other failure during define must also
+                // release the ClassInfo. Otherwise the incomplete ClassInfo
+                // stays in the map forever and every later loadClass(name)
+                // parks in ClassInfo.getVmClass() wait() forever (single
+                // thread: self-deadlock; multi thread: hung waiters).
+                ci.setLoadError(ex.toString());
+                classInfos.remove(ci.getName());
+                addFailedClassName(name);
+                throw ex;
+            } catch (Error ex) {
+                // Same as above (e.g. ClassFormatError for a native method
+                // without replacement when natives are rejected).
+                ci.setLoadError(ex.toString());
+                classInfos.remove(ci.getName());
+                addFailedClassName(name);
+                throw ex;
             }
             if (resolve) {
                 ci.getVmClass().link();
