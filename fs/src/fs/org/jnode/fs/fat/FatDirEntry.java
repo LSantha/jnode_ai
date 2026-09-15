@@ -21,6 +21,7 @@
 package org.jnode.fs.fat;
 
 import java.io.IOException;
+import java.nio.ByteBuffer;
 import java.util.Date;
 import org.jnode.fs.FSAccessRights;
 import org.jnode.fs.FSDirectory;
@@ -30,7 +31,6 @@ import org.jnode.fs.FSEntryLastAccessed;
 import org.jnode.fs.FSFile;
 import org.jnode.fs.spi.UnixFSAccessRights;
 import org.jnode.fs.util.DosUtils;
-import org.jnode.util.LittleEndian;
 import org.jnode.util.NumberUtils;
 
 /**
@@ -108,15 +108,14 @@ public class FatDirEntry extends FatBasicDirEntry implements FSEntry, FSEntryCre
      */
     private final FSAccessRights rights;
 
-    public static FatBasicDirEntry fatDirEntryFactory(AbstractDirectory dir, byte[] src, int offset) {
-        int flags = LittleEndian.getUInt8(src, offset + 0x0b);
+    public static FatBasicDirEntry fatDirEntryFactory(AbstractDirectory dir, ByteBuffer src, int offset) {
+        int flags = src.get(offset + 0x0b) & 0xFF;
         boolean r = (flags & F_READONLY) != 0;
         boolean h = (flags & F_HIDDEN) != 0;
         boolean s = (flags & F_SYSTEM) != 0;
         boolean v = (flags & F_LABEL) != 0;
 
         if (r && h && s && v) {
-            // this is a LFN entry, don't need to parse it!
             return new FatLfnDirEntry(dir, src, offset);
         }
         FatDirEntry entry = new FatDirEntry(dir, src, offset);
@@ -159,40 +158,40 @@ public class FatDirEntry extends FatBasicDirEntry implements FSEntry, FSEntryCre
      * @param src
      * @param offset
      */
-    public FatDirEntry(AbstractDirectory dir, byte[] src, int offset) {
+    public FatDirEntry(AbstractDirectory dir, ByteBuffer src, int offset) {
         super(dir, src, offset);
 
         this.parent = dir;
         id = Integer.toString(offset / FatConstants.DIR_ENTRY_SIZE);
-        unused = (src[offset] == 0);
-        deleted = (LittleEndian.getUInt8(src, offset) == 0xe5);
+        unused = (src.get(offset) == 0);
+        deleted = ((src.get(offset) & 0xFF) == 0xe5);
 
         char[] nameArr = new char[8];
         for (int i = 0; i < nameArr.length; i++) {
-            nameArr[i] = (char) LittleEndian.getUInt8(src, offset + i);
+            nameArr[i] = (char) (src.get(offset + i) & 0xFF);
         }
-        if (LittleEndian.getUInt8(src, offset) == 0x05) {
+        if ((src.get(offset) & 0xFF) == 0x05) {
             nameArr[0] = (char) 0xe5;
         }
         setName(new String(nameArr).trim());
 
         char[] extArr = new char[3];
         for (int i = 0; i < extArr.length; i++) {
-            extArr[i] = (char) LittleEndian.getUInt8(src, offset + 0x08 + i);
+            extArr[i] = (char) (src.get(offset + 0x08 + i) & 0xFF);
         }
         setExt(new String(extArr).trim());
 
-        this.flags = LittleEndian.getUInt8(src, offset + 0x0b);
+        this.flags = src.get(offset + 0x0b) & 0xFF;
         this.created =
-            DosUtils.decodeDateTime(LittleEndian.getUInt16(src, offset + 0x10),
-                LittleEndian.getUInt16(src, offset + 0x0e));
+            DosUtils.decodeDateTime(src.getShort(offset + 0x10) & 0xFFFF,
+                src.getShort(offset + 0x0e) & 0xFFFF);
         this.lastModified =
-            DosUtils.decodeDateTime(LittleEndian.getUInt16(src, offset + 0x18),
-                LittleEndian.getUInt16(src, offset + 0x16));
+            DosUtils.decodeDateTime(src.getShort(offset + 0x18) & 0xFFFF,
+                src.getShort(offset + 0x16) & 0xFFFF);
         this.lastAccessed =
-            DosUtils.decodeDateTime(LittleEndian.getUInt16(src, offset + 0x12), 0); // time not stored
-        this.startCluster = LittleEndian.getUInt16(src, offset + 0x1a);
-        this.length = LittleEndian.getUInt32(src, offset + 0x1c);
+            DosUtils.decodeDateTime(src.getShort(offset + 0x12) & 0xFFFF, 0);
+        this.startCluster = src.getShort(offset + 0x1a) & 0xFFFF;
+        this.length = src.getInt(offset + 0x1c) & 0xFFFFFFFFL;
         this._dirty = false;
         this.rights = new UnixFSAccessRights(getFileSystem());
     }
@@ -474,17 +473,16 @@ public class FatDirEntry extends FatBasicDirEntry implements FSEntry, FSEntryCre
     }
 
     /**
-     * Write my contents to the given byte-array
+     * Write my contents to the given buffer
      *
      * @param dest
      * @param offset
      */
-    public void write(byte[] dest, int offset) {
-        // System.out.println("FatDir entry write at" + offset);
+    public void write(ByteBuffer dest, int offset) {
         if (unused) {
-            dest[offset] = 0;
+            dest.put(offset, (byte) 0);
         } else if (deleted) {
-            dest[offset] = (byte) 0xe5;
+            dest.put(offset, (byte) 0xe5);
         }
 
         for (int i = 0; i < 8; i++) {
@@ -497,7 +495,7 @@ public class FatDirEntry extends FatBasicDirEntry implements FSEntry, FSEntryCre
             } else {
                 ch = ' ';
             }
-            dest[offset + i] = (byte) ch;
+            dest.put(offset + i, (byte) ch);
         }
 
         for (int i = 0; i < 3; i++) {
@@ -507,17 +505,17 @@ public class FatDirEntry extends FatBasicDirEntry implements FSEntry, FSEntryCre
             } else {
                 ch = ' ';
             }
-            dest[offset + 0x08 + i] = (byte) ch;
+            dest.put(offset + 0x08 + i, (byte) ch);
         }
 
-        LittleEndian.setInt8(dest, offset + 0x0b, flags);
-        LittleEndian.setInt16(dest, offset + 0x0e, DosUtils.encodeTime(created));
-        LittleEndian.setInt16(dest, offset + 0x10, DosUtils.encodeDate(created));
-        LittleEndian.setInt16(dest, offset + 0x12, DosUtils.encodeDate(lastAccessed));
-        LittleEndian.setInt16(dest, offset + 0x16, DosUtils.encodeTime(lastModified));
-        LittleEndian.setInt16(dest, offset + 0x18, DosUtils.encodeDate(lastModified));
-        LittleEndian.setInt16(dest, offset + 0x1a, startCluster);
-        LittleEndian.setInt32(dest, offset + 0x1c, (int) length);
+        dest.put(offset + 0x0b, (byte) flags);
+        dest.putShort(offset + 0x0e, (short) DosUtils.encodeTime(created));
+        dest.putShort(offset + 0x10, (short) DosUtils.encodeDate(created));
+        dest.putShort(offset + 0x12, (short) DosUtils.encodeDate(lastAccessed));
+        dest.putShort(offset + 0x16, (short) DosUtils.encodeTime(lastModified));
+        dest.putShort(offset + 0x18, (short) DosUtils.encodeDate(lastModified));
+        dest.putShort(offset + 0x1a, (short) startCluster);
+        dest.putInt(offset + 0x1c, (int) length);
         this._dirty = false;
     }
 
