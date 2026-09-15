@@ -65,6 +65,9 @@ grant {
 
 	// Log4j specific standard properties
 	permission java.util.PropertyPermission "log4j.defaultInitOverride", "read";	
+
+	// Allow reflection access for test harnesses and command invokers
+	permission java.lang.reflect.ReflectPermission "suppressAccessChecks";
 	
 };
 
