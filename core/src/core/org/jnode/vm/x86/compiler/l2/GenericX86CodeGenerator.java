@@ -430,7 +430,7 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
             case F2I:
                 os.writePUSH((GPR) rhsReg);
                 os.writeFLD32(X86Register.ESP, 0);
-                os.writeFISTP32(X86Register.ESP, 0);
+                org.jnode.vm.x86.compiler.X86CompilerHelper.emitF2I(os, X86Register.ESP, 0);
                 os.writePOP((GPR) lhsReg);
                 break;
 
@@ -509,7 +509,7 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
             case F2I:
                 os.writePUSH(X86Register.EBP, rhsDisp);
                 os.writeFLD32(X86Register.ESP, 0);
-                os.writeFISTP32(X86Register.ESP, 0);
+                org.jnode.vm.x86.compiler.X86CompilerHelper.emitF2I(os, X86Register.ESP, 0);
                 os.writePOP((GPR) lhsReg);
                 break;
 
@@ -589,7 +589,7 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
             case F2I:
                 os.writeMOV(X86Constants.BITS32, X86Register.EBP, lhsDisp, (GPR) rhsReg);
                 os.writeFLD32(X86Register.EBP, lhsDisp);
-                os.writeFISTP32(X86Register.EBP, lhsDisp);
+                org.jnode.vm.x86.compiler.X86CompilerHelper.emitF2I(os, X86Register.EBP, lhsDisp);
                 break;
 
             case F2L:
@@ -673,7 +673,7 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
 
             case F2I:
                 os.writeFLD32(X86Register.EBP, rhsDisp);
-                os.writeFISTP32(X86Register.EBP, lhsDisp);
+                org.jnode.vm.x86.compiler.X86CompilerHelper.emitF2I(os, X86Register.EBP, lhsDisp);
                 break;
 
             case F2L:

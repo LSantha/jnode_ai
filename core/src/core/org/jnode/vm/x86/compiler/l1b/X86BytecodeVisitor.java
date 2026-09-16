@@ -488,7 +488,7 @@ final class X86BytecodeVisitor extends InlineBytecodeVisitor implements
             if (jvmType == JvmType.DOUBLE) {
                 os.writeFSTP64(helper.BP, disp);
             } else {
-                os.writeFISTP64(helper.BP, disp);
+                org.jnode.vm.x86.compiler.X86CompilerHelper.emitF2L(os, helper.BP, disp);
             }
             vstack.fpuStack.pop(val);
         } else if (val.isStack()) {
@@ -5416,7 +5416,7 @@ final class X86BytecodeVisitor extends InlineBytecodeVisitor implements
             if (jvmType == JvmType.FLOAT) {
                 os.writeFSTP32(helper.BP, disp);
             } else {
-                os.writeFISTP32(helper.BP, disp);
+                org.jnode.vm.x86.compiler.X86CompilerHelper.emitF2I(os, helper.BP, disp);
             }
             vstack.fpuStack.pop(val);
         } else if (val.isStack()) {
