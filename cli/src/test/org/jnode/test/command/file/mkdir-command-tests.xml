@@ -1,0 +1,34 @@
+<testSet title="mkdir command tests">
+    <plugin id="org.jnode.command.file"/>
+    <plugin id="org.jnode.shell.bjorne" class="org.jnode.test.shell.bjorne.BjornePseudoPlugin"/>
+    <testSpec title="single-create" command="run" runMode="AS_SCRIPT" rc="0">
+        <script>#!bjorne
+                mkdir @TEMP_DIR@/single/a
+        </script>
+        <file name="single/a" directory="true"/>
+    </testSpec>
+    <testSpec title="nested-create-with-parents-short" command="run" runMode="AS_SCRIPT" rc="0">
+        <script>#!bjorne
+                mkdir -p @TEMP_DIR@/parents-short/a/b/c
+        </script>
+        <file name="parents-short/a/b/c" directory="true"/>
+    </testSpec>
+    <testSpec title="nested-create-with-parents-long" command="run" runMode="AS_SCRIPT" rc="0">
+        <script>#!bjorne
+                mkdir --parents @TEMP_DIR@/parents-long/a/b/c
+        </script>
+        <file name="parents-long/a/b/c" directory="true"/>
+    </testSpec>
+    <testSpec title="nested-create-without-parents-fails" command="run" runMode="AS_SCRIPT" rc="1">
+        <script>#!bjorne
+                mkdir @TEMP_DIR@/no-parents/a/b/c
+        </script>
+    </testSpec>
+    <testSpec title="parents-no-error-if-existing" command="run" runMode="AS_SCRIPT" rc="0">
+        <script>#!bjorne
+                mkdir @TEMP_DIR@/existing/a
+                mkdir -p @TEMP_DIR@/existing/a
+        </script>
+        <file name="existing/a" directory="true"/>
+    </testSpec>
+</testSet>

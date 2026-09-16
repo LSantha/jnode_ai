@@ -43,18 +43,22 @@ Two approaches, choose based on need:
 
 The 3rd argument `[entry]` selects a GRUB boot menu entry (0-5). Default is 0.
 
+The table below describes a standard-built cdrom ISO (`all/conf/x86/menu-cdrom.lst`, 6 entries, `timeout 5`). Note: an ISO built with the CI profile (`jnode.properties` pointing `grub.menu.cdrom` at `.github/qemu/menu-cdrom.lst`) contains a single entry with `timeout 0` — entry selection is a no-op there and every boot loads the same initjar. Check your ISO's menu with `strings <iso> | grep -a "title JNode"`. Selection was validated end-to-end (entry 1 of a timeout-5 menu booted the 450K `shell.jgz` while entry 0 loaded the multi-MB default image).
+
 | Entry | GRUB Title | Flags | Serial Log |
 |-------|------------|-------|------------|
 | 0 | JNode (default) | `kdb lkd` | ✅ Boot + Log4j |
 | 1 | JNode (all plugins) | `kdb lkd` | ✅ Boot + Log4j |
 | 2 | JNode (minimal shell) | `kdb lkd` | ✅ Boot + Log4j |
-| 3 | JNode (all plugins, VESA) | `fb kdb lkd` | ✅ Boot + Log4j |
-| 4 | JNode tests (+ tests plugin) | `kdb lkd` | ✅ Boot + Log4j |
+| 3 | JNode (all plugins) (VESA mode) | `fb kdb lkd` | ✅ Boot + Log4j |
+| 4 | JNode tests (all plugins + tests) | `kdb lkd` | ✅ Boot + Log4j |
 | 5 | JNode via dhcp (all plugins) | `kdb lkd` | ✅ Boot + Log4j |
 
 All entries include the `kdb lkd` kernel flags for serial boot logging.
 
-**How it works:** When `entry > 0`, the script adds `-monitor unix:/tmp/qemu_monitor.sock,server,nowait` to QEMU, waits for the monitor socket, then sends `N×DOWN + ENTER` keystrokes via `socat` to select the GRUB entry within the 5-second timeout window.
+**How it works:** When `entry > 0`, the script adds `-monitor unix:/tmp/qemu_monitor.sock,server,nowait` to QEMU, waits for the monitor socket, then sweeps the idempotent sequence `HOME + N×DOWN` via `socat` once per 1.5s (12 iterations, ~18s). `HOME` makes every iteration converge to the same cursor position and any arrow key stops the GRUB countdown, so the timing of the menu render no longer matters — a single delayed burst used to miss the 5-second menu window and always boot entry 0. A final `ENTER` boots the selected entry. Tune with `GRUB_SWEEP=<iterations>` / `GRUB_STEP=<secs>` on very slow hosts; monitor echo noise is discarded.
+
+**Caveats:** Entry selection requires a GRUB menu with `timeout > 0` (the default cdrom ISO has `timeout 5`). CI menu builds with `timeout 0` always boot entry 0 regardless of this parameter. After booting a non-default entry, verify it took effect: `grep "initial jarfile" /tmp/qemu_serial.log` (entry 0 loads `default.jgz`; entry 2 loads the much smaller `shell.jgz`) or compare the `plugin` command output.
 
 **Examples:**
 ```bash
@@ -97,6 +101,8 @@ bash .opencode/skills/jnode-interact/scripts/start_qemu.sh full
 | `-chardev socket,...,logfile=...` | Single chardev does double duty: Unix socket for KDB interaction + file for boot log |
 | `-serial chardev:com1` | Maps UART1 to the chardev instead of a plain file |
 | `rm -f` prior sockets | Chardev socket path must not exist before QEMU starts (unlike `-serial unix:`) |
+
+**Known limitation — KDB pollutes the boot log:** the chardev `logfile=` captures all UART1 traffic in both directions, so KDB command responses are appended to `/tmp/qemu_serial.log` alongside the boot log (e.g. 120 → 219 lines after one `W` dump). Boot-line counting (`wc -l`) is unreliable in full mode; use `grep "Serial console available"` as the readiness check. Separating the logs would require an extra serial backend; documenting the pollution is the chosen tradeoff.
 
 **KDB commands (send to the socket):**
 ```
@@ -174,7 +180,9 @@ sh build.sh cd-x86-lite
 wc -l /tmp/qemu_serial.log
 ```
 
-All GRUB entries now include the `kdb lkd` flags, so a successful boot produces **~190 lines** regardless of entry selection. The log stops growing once boot completes — this is normal, not a freeze.
+All GRUB entries now include the `kdb lkd` flags, so a successful boot produces **~80-120 lines** depending on entry and plugin set (observed: 77-111 simple, 77-120 full; an older revision of this doc said ~190). The log stops growing once boot completes — this is normal, not a freeze.
+
+In full mode, KDB traffic shares the same chardev logfile, so `/tmp/qemu_serial.log` keeps growing after boot (e.g. 120 → 219 lines after a `W` dump) — `wc -l` is unreliable there. `grep "Serial console available"` is the stable readiness check in both modes.
 
 Key markers:
 - `Starting JNode` — Java entry point reached
@@ -244,9 +252,23 @@ python3 .opencode/skills/jnode-interact/scripts/jnode_agent_cmd.py \
 
 1. Connects to the Unix socket (`/tmp/jnode_com2` → `/tmp/jnode.serial2`)
 2. Clears any pending data from the buffer
-3. Sends each command followed by `\r\n`
-4. Streams output as it arrives — prints complete lines immediately
-5. Waits for either the prompt or 10 seconds of silence since last output
+3. Waits for the `[JNODE_AGENT_READY]` prompt (10s per attempt, 3 auto-retries with 2s gaps — transient post-boot latency self-recovers)
+4. Sends each command followed by `\r\n`
+5. Streams output as it arrives — prints complete lines immediately
+6. Waits for either the prompt or 10 seconds of silence since last output
+
+### Persistent console alternative (mux workflow)
+
+For long sessions with many commands, prefer the persistent single-client proxy from the `jnode-serial` skill — it holds ONE connection for the whole session instead of cycling connect/disconnect per call, and has no silence timeout (multi-minute commands just work):
+
+```bash
+S=.opencode/skills/jnode-serial/scripts
+python3 $S/serial_cmd.py "date" "echo hello" "pwd"
+python3 $S/serial_cmd.py --status    # mux pid + link state + command count
+python3 $S/serial_cmd.py --stop      # stop the mux (frees the pipe)
+```
+
+The mux talks to `/tmp/jnode.serial2`, the same socket `start_qemu.sh` creates, so it works with QEMU-started instances as well as VirtualBox ones. (Its self-healing `changeuartmode2` replug path is VirtualBox-specific; on QEMU just restart QEMU if the link drops.) Management details and the `--write` multi-line file helper are documented in the `jnode-serial` skill. The one-shot `jnode_agent_cmd.py` above remains the default for short CI-style runs.
 
 ### Important: Single client only
 
@@ -356,16 +378,19 @@ Wait for the `SerialConsolePlugin` log message:
 ```bash
 grep "Serial console available" /tmp/qemu_serial.log
 ```
-If not found after 70 seconds, the plugin may have failed to start. Check other error messages in the log.
+If not found after 120 seconds, the plugin may have failed to start. Check other error messages in the log. (Full boot takes ~80-90s, so a shorter threshold gives false alarms.)
 
-### Serial log stuck at ~190 lines
-This is normal — the boot log is complete and the system is idle. The log will grow when commands generate Log4j output.
+### Serial log stuck at ~80-120 lines
+This is normal — the boot log is complete and the system is idle. The log will grow when commands generate Log4j output. In full mode the count is unreliable after boot because KDB traffic shares the logfile — use `grep "Serial console available"` instead of `wc -l`.
 
 ### Broken pipe errors
 Only one client can connect to the serial pipe at a time. Make sure no other terminal or script is connected. Kill any existing connections before running the script.
 
 ### Commands return no output
 The shell might not be fully initialized yet. Wait a few more seconds after the socket appears. The `[JNODE_AGENT_READY]` prompt confirms readiness.
+
+### `prompt not seen` on the first call after boot
+Transient console latency — right after boot, and right after heavy KDB `W` dumps, the console trickles bytes and the script may fail once. Retry — it self-recovers. The script already waits 10s per attempt with 3 auto-retries; if it still fails, wait ~10s and run again.
 
 ### KDB socket "Resource temporarily unavailable"
 This means another client is already connected to the KDB socket. The chardev (`server,nowait`) accepts only **one client at a time**. Close the existing connection first. Each KDB command can be a fresh connect-send-disconnect cycle — no persistent reader is needed.

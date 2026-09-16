@@ -17,16 +17,13 @@
  * along with this library; If not, write to the Free Software Foundation, Inc., 
  * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
  */
- 
-package org.jnode.test.shell;
 
-import org.jnode.test.shell.help.DefaultHelpTest;
-import org.junit.runner.RunWith;
-import org.junit.runners.Suite;
+package org.jnode.test.shell.fixture;
 
-@RunWith(Suite.class)
-@Suite.SuiteClasses({CompletionInfoTest.class, PathnamePatternTest.class, CompletionTest.class,
-    DefaultSyntaxCompletionTest.class, DefaultHelpTest.class, ExecuteJavaPackagePrivateTest.class,
-    org.jnode.test.shell.bjorne.AllTests.class, org.jnode.test.shell.syntax.AllTests.class })
-public class AllTests {
+public class PublicMain {
+
+    public static void main(String[] args) {
+        System.setProperty(
+            "org.jnode.test.shell.fixture.PublicMain.ran", "true");
+    }
 }
