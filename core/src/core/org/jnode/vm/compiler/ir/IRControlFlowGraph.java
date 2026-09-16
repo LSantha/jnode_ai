@@ -416,6 +416,9 @@ public class IRControlFlowGraph<T> implements Iterable<IRBasicBlock<T>> {
             }
         }
         placePhiFunctions();
+        // ANCHOR-L2-125: handler-resume merge phis, before the rename so the
+        // resume uses bind to the phi results.
+        placeHandlerPhis();
         renameVariables(startBlock);
         typePhiResults();
     }
@@ -926,9 +929,35 @@ public class IRControlFlowGraph<T> implements Iterable<IRBasicBlock<T>> {
      * @param block
      */
     private void renameVariables(IRBasicBlock<T> block) {
+        // ANCHOR-L2-125: handler-entry local restore. On the exceptional
+        // edge into a handler, JVM locals hold their PRE-try values (the
+        // in-try astore never executed when the throwing call fired), but
+        // the SSA stack here reflects the normal path. Versions defined
+        // inside the try (def block is an exceptional pred of this handler)
+        // would be read after the handler from homes that are never written
+        // on that path (prolog-zeroed -> NULL; guest: b6 = b6.append(...) in
+        // try, always throws, post-catch append read NULL receiver ->
+        // monitorEnter NPE -> unwind monitorExit(null) NPE -> SOE in trace
+        // alloc -> panic). Pop those versions now, insert restore copies
+        // after renaming (insertHandlerCopies), and push them back so the
+        // normal-path renames keep the in-try versions.
+        java.util.ArrayList<Variable<T>> handlerPopped = null;
+        java.util.ArrayList<Variable<T>> handlerPres = null;
+        java.util.ArrayList<Variable<T>> handlerTops = null;
+        if (block.isStartOfExceptionHandler()) {
+            handlerPopped = new java.util.ArrayList<Variable<T>>();
+            handlerPres = new java.util.ArrayList<Variable<T>>();
+            handlerTops = new java.util.ArrayList<Variable<T>>();
+            popHandlerVersions(block, handlerPopped, handlerTops, handlerPres);
+        }
         doRenameVariables(block);
         for (IRBasicBlock<T> b : block.getSuccessors()) {
             rewritePhiParams(b);
+        }
+        if (handlerPopped != null) {
+            for (int k = handlerPopped.size() - 1; k >= 0; k--) {
+                getStack(handlerPopped.get(k)).push(handlerPopped.get(k));
+            }
         }
 
         if (block == startBlock) {
@@ -945,6 +974,126 @@ public class IRControlFlowGraph<T> implements Iterable<IRBasicBlock<T>> {
             }
         }
         popVariables(block);
+    }
+
+    /**
+     * ANCHOR-L2-125: pop the versions whose def block is an exceptional
+     * predecessor of this handler entry (locals only; the defs execute
+     * after the potentially-throwing call, so on the exceptional edge they
+     * are unwritten). Called BEFORE the block's rename so the handler's own
+     * uses see the pre-try versions, and the popped versions are pushed
+     * back by the caller after the rename (the resume phi sources read the
+     * stack before the push-back). The reaching version (stack top per
+     * slot) and the pre-try version (stack top after the pops) are recorded.
+     */
+    private void popHandlerVersions(IRBasicBlock<T> block,
+        java.util.ArrayList<Variable<T>> popped,
+        java.util.ArrayList<Variable<T>> tops,
+        java.util.ArrayList<Variable<T>> pres) {
+        final List<IRBasicBlock<T>> preds = block.getPredecessors();
+        if (preds == null || preds.isEmpty()) {
+            return;
+        }
+        final java.util.HashSet<IRBasicBlock<T>> exPreds =
+            new java.util.HashSet<IRBasicBlock<T>>(preds);
+        final int nLocalSlots = block.getStackOffset();
+        for (int i = 0; i < nLocalSlots; i++) {
+            SSAStack<T> st = renumberArray[i];
+            if (st == null) {
+                continue;
+            }
+            Variable<T> top = null;
+            int cnt = 0;
+            Variable<T> peeked;
+            while ((peeked = st.peek()) != null) {
+                AssignQuad<T> aq = peeked.getAssignQuad();
+                IRBasicBlock<T> defBlock =
+                    (aq != null) ? aq.getBasicBlock() : null;
+                if (defBlock == null || !exPreds.contains(defBlock)) {
+                    break;
+                }
+                if (cnt == 0) {
+                    top = peeked;
+                }
+                popped.add(st.pop());
+                cnt++;
+            }
+            if (cnt > 0) {
+                tops.add(top);
+                pres.add(st.peek());
+            }
+        }
+    }
+
+    /**
+     * ANCHOR-L2-125: place merge phis at the fallthrough successor (resume)
+     * of every handler entry, for local slots defined in the covered blocks.
+     * The dominance frontier misses these merges for single-block tries
+     * (the try block strictly dominates the resume through both the goto and
+     * the handler edge), yet the exceptional edge carries the PRE-try local
+     * values while the normal edge carries the in-try ones, so the resume
+     * reads one unwritten home on one of the paths (guest: b6 = b6.append(...)
+     * in try, always throws, post-catch append read NULL receiver ->
+     * monitorEnter NPE -> unwind monitorExit(null) NPE -> SOE in trace alloc
+     * -> panic). The phi sources are filled by rewritePhiParams during the
+     * rename: the normal edge contributes the in-try version, the handler
+     * edge contributes the pre-try version (popHandlerVersions). Slots that
+     * already have a frontier phi are skipped; slots with no pre-try version
+     * yield a dead phi (rewritePhiParams) and keep the pre-existing behavior.
+     */
+    private void placeHandlerPhis() {
+        for (IRBasicBlock<T> h : bblocks) {
+            if (!h.isStartOfExceptionHandler()) {
+                continue;
+            }
+            List<IRBasicBlock<T>> succs = h.getSuccessors();
+            if (succs == null || succs.size() != 1) {
+                continue;
+            }
+            IRBasicBlock<T> resume = succs.get(0);
+            List<IRBasicBlock<T>> preds = h.getPredecessors();
+            if (preds == null || preds.isEmpty()) {
+                continue;
+            }
+            final int nLocalSlots = h.getStackOffset();
+            for (IRBasicBlock<T> b : preds) {
+                List<Operand> defs = b.getDefList();
+                if (defs == null) {
+                    continue;
+                }
+                for (Operand def : defs) {
+                    if (!(def instanceof Variable)) {
+                        continue;
+                    }
+                    int slot = ((Variable) def).getIndex();
+                    if (slot >= nLocalSlots) {
+                        continue;
+                    }
+                    if (hasPhiFor(resume, slot)) {
+                        continue;
+                    }
+                    resume.add(new PhiAssignQuad<T>(resume, slot));
+                }
+            }
+        }
+    }
+
+    /**
+     * ANCHOR-L2-125: true when a live phi for the given local slot already
+     * exists at the head of the block's quads.
+     */
+    private boolean hasPhiFor(IRBasicBlock<T> block, int slot) {
+        List<Quad<T>> quads = block.getQuads();
+        for (Quad<T> q : quads) {
+            if (!(q instanceof PhiAssignQuad)) {
+                break;
+            }
+            if (!q.isDeadCode() && q.getDefinedOp() != null
+                && ((Variable) q.getDefinedOp()).getIndex() == slot) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /**
