@@ -1086,12 +1086,24 @@ public class X86BinaryAssembler extends X86Assembler implements X86Operation {
      */
     public void writeAND(int operandSize, GPR dstReg, int dstDisp, int imm32) {
         testSize(dstReg, mode.getSize());
-        if (isByte(imm32)) {
-            write1bOpcodeModRM(0x83, operandSize, dstReg, dstDisp, 4);
-            write8(imm32);
-        } else {
-            write1bOpcodeModRM(0x81, operandSize, dstReg, dstDisp, 4);
-            write32(imm32);
+        testOperandSize(operandSize, BITS16 | BITS32);
+        if (operandSize == BITS32) {
+            if (isByte(imm32)) {
+                write1bOpcodeModRM(0x83, operandSize, dstReg, dstDisp, 4);
+                write8(imm32);
+            } else {
+                write1bOpcodeModRM(0x81, operandSize, dstReg, dstDisp, 4);
+                write32(imm32);
+            }
+        } else if (operandSize == BITS16) {
+            write8(OSIZE_PREFIX);
+            if (isByte(imm32)) {
+                write1bOpcodeModRM(0x83, operandSize, dstReg, dstDisp, 4);
+                write8(imm32);
+            } else {
+                write1bOpcodeModRM(0x81, operandSize, dstReg, dstDisp, 4);
+                write16(imm32);
+            }
         }
     }
 
@@ -1124,21 +1136,24 @@ public class X86BinaryAssembler extends X86Assembler implements X86Operation {
      */
     public void writeAND(int operandSize, int dstDisp, int imm32) {
         testOperandSize(operandSize, BITS8 | BITS16 | BITS32);
-        switch (operandSize) {
-            case BITS8:   //todo review
-                write8(0x80);
-                write8(0x25);
-                write32(dstDisp);
-                break;
-            case BITS16:
-                write8(OSIZE_PREFIX);
-                write1bOpcodeModMem(0x81, operandSize, dstDisp, 4);
-                break;
-            case BITS32:
-                write1bOpcodeModMem(0x81, operandSize, dstDisp, 4);
-                break;
+        //TODO review
+        if (operandSize == BITS32) {
+            write8(0x81);
+            write8((4 << 3) | 5);
+            write32(dstDisp);
+            write32(imm32);
+        } else if (operandSize == BITS16) {
+            write8(OSIZE_PREFIX);
+            write8(0x81);
+            write8((4 << 3) | 5);
+            write32(dstDisp);
+            write16(imm32);
+        } else if (operandSize == BITS8) {
+            write8(0x80);
+            write8((4 << 3) | 5);
+            write32(dstDisp);
+            write8(imm32);
         }
-        write8(imm32);
     }
 
     /**

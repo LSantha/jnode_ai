@@ -1167,7 +1167,8 @@ init_fpu:
 	
 	lea esp,[esp-4]
 	fstcw [esp]
-	or word [esp], 0x0C00
+	and word [esp], 0xF2FF
+	or word [esp], 0x0200
 	fldcw [esp]
 	lea esp,[esp+4]
 	mov eax,cr0
