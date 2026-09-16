@@ -11,7 +11,7 @@ if [ "$ENTRY" -lt 0 ] || [ "$ENTRY" -gt 5 ] 2>/dev/null; then
   echo "  0 = JNode (default)      — has kdb+lkd serial logging"
   echo "  1 = JNode (all plugins)"
   echo "  2 = JNode (minimal shell)"
-  echo "  3 = JNode (all plugins, VESA mode)"
+  echo "  3 = JNode (all plugins) (VESA mode)"
   echo "  4 = JNode tests (all plugins + tests)"
   echo "  5 = JNode via dhcp (all plugins)"
   exit 1
@@ -65,25 +65,52 @@ echo "QEMU started (PID: $QEMU_PID)"
 
 # Send keystrokes for non-default GRUB entry
 if [ "$ENTRY" != "0" ]; then
-  # Wait for monitor socket
-  for i in $(seq 1 10); do
-    if [ -S /tmp/qemu_monitor.sock ]; then
-      echo "Monitor socket ready after ${i}s"
-      break
-    fi
-    sleep 1
-  done
-  if [ ! -S /tmp/qemu_monitor.sock ]; then
-    echo "WARNING: Monitor socket not ready, GRUB may have already booted default"
+  # The QEMU monitor socket appears immediately, but SeaBIOS + GRUB stage
+  # load takes several seconds before the menu renders, and the exact delay
+  # varies by host. A single delayed keystroke burst easily misses the
+  # 5-second menu window (symptom: always boots entry 0). So sweep the full
+  # idempotent sequence HOME + N*DOWN once per GRUB_STEP seconds: HOME makes
+  # every iteration converge to the same cursor position, and any arrow key
+  # stops the countdown, so once the menu is up it stays put on entry N.
+  # Only the final ENTER (sent once, after the sweep) boots. Override the
+  # sweep length on very slow hosts with GRUB_SWEEP=<iterations>.
+  # Entry selection requires a GRUB menu with timeout > 0 (the default
+  # cdrom ISO has timeout 5; CI menu builds with timeout 0 always boot
+  # entry 0 regardless of this parameter).
+  GRUB_SWEEP="${GRUB_SWEEP:-12}"
+  GRUB_STEP="${GRUB_STEP:-1.5}"
+  if ! command -v socat >/dev/null 2>&1; then
+    echo "WARNING: socat not found, cannot select GRUB entry #${ENTRY}; will boot default"
   else
-    # Send N×DOWN + ENTER to select entry N
-    KEYS=""
-    for ((e=0; e<ENTRY; e++)); do
-      KEYS+="sendkey down\n"
+    # Wait for monitor socket
+    for i in $(seq 1 10); do
+      if [ -S /tmp/qemu_monitor.sock ]; then
+        echo "Monitor socket ready after ${i}s"
+        break
+      fi
+      sleep 1
     done
-    KEYS+="sendkey ret\n"
-    printf "$KEYS" | socat - UNIX-CONNECT:/tmp/qemu_monitor.sock 2>/dev/null || true
-    echo "Sent ${ENTRY}×DOWN + ENTER to GRUB (entry #${ENTRY})"
+    if [ ! -S /tmp/qemu_monitor.sock ]; then
+      echo "WARNING: Monitor socket not ready, GRUB may have already booted default"
+    else
+      send_entry() {
+        KEYS="sendkey home\n"
+        for ((e=0; e<ENTRY; e++)); do
+          KEYS+="sendkey down\n"
+        done
+        # The human monitor echoes input with terminal control codes;
+        # discard it, only the keystrokes matter.
+        printf "$KEYS" | socat - UNIX-CONNECT:/tmp/qemu_monitor.sock >/dev/null 2>&1 || true
+      }
+      echo "Sweeping GRUB selection (${GRUB_SWEEP}x HOME + ${ENTRY}xDOWN)..."
+      for ((i=1; i<=GRUB_SWEEP; i++)); do
+        send_entry
+        sleep "$GRUB_STEP"
+      done
+      printf "sendkey ret\n" | socat - UNIX-CONNECT:/tmp/qemu_monitor.sock >/dev/null 2>&1 || true
+      echo "Sent ENTER (entry #${ENTRY})"
+      echo "Verify with: grep 'initial jarfile' /tmp/qemu_serial.log"
+    fi
   fi
 fi
 
