@@ -5,10 +5,10 @@ timeout 0
 # ---------------------------
 title JNode tests (all plugins + tests)
 serial --unit=0 --speed=115200 --word=8 --parity=no --stop=1
-kernel /jnode32.gz mp=no kdb lkd cmd=halt
+kernel /jnode32.gz mp=no kdb lkd
 module /tests.jgz
 
 # ---------------------------
 #title JNode (minimal shell)
-#kernel /jnode32.gz mp=no kdb lkd cmd=halt
+#kernel /jnode32.gz mp=no kdb lkd
 #module /shell.jgz
