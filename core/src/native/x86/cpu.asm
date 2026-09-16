@@ -9,10 +9,13 @@
 ; Initialize the FPU
 init_fpu:
 	fninit
-	; Setup rounding mode
+	; Setup x87 for Java strictfp: double precision (PC=10),
+	; round to nearest even (RC=00). fninit gives CW=0x037F
+	; (PC=11 extended, RC=00); clear RC and PC bit 8, keep PC bit 9.
 	lea ASP,[ASP-SLOT_SIZE]
 	fstcw [ASP]
-	or word [ASP], 0x0C00
+	and word [ASP], 0xF2FF
+	or word [ASP], 0x0200
 	fldcw [ASP]
 	lea ASP,[ASP+SLOT_SIZE]
 	mov AAX,cr0

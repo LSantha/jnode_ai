@@ -977,6 +977,9 @@ public class X86CompilerHelper {
      * the 32-bit result is stored at [destReg+destDisp] with NaN -&gt; 0,
      * +Inf/overflow -&gt; MAX_VALUE, -Inf/underflow -&gt; MIN_VALUE.
      * Preserves EAX/RAX and balances ESP/RSP.
+     * The global x87 control word uses round-to-nearest (Java strictfp),
+     * so FISTP is wrapped with a truncate control word which is restored
+     * afterwards.
      *
      * @param os assembler stream
      * @param destReg destination base register
@@ -993,10 +996,16 @@ public class X86CompilerHelper {
         final GPR scratch = X86Register.EAX;
         final GPR scratch64 = X86Register.RAX;
         final int reserve;
+        final int cwSave;
+        final int cwTrunc;
         if (is32) {
-            reserve = 12;
+            reserve = 20;
+            cwSave = 12;
+            cwTrunc = 16;
         } else {
-            reserve = 16;
+            reserve = 24;
+            cwSave = 16;
+            cwTrunc = 20;
         }
         final boolean destIsSP = (destReg.getNr() == 4);
         final GPR destRegAfter;
@@ -1022,7 +1031,16 @@ public class X86CompilerHelper {
         }
         os.writeFSTP64(sp, 0);
         os.writeFLD64(sp, 0);
+        // JLS float->int truncates toward zero, but the global x87
+        // control word uses round-to-nearest: switch to truncate for FISTP.
+        os.writeFSTCW(sp, cwSave);
+        os.writeMOV(BITS32, scratch, sp, cwSave);
+        os.writeOR(scratch, 0x0C00);
+        os.writeMOV(BITS32, sp, cwTrunc, scratch);
+        os.writeFLDCW(sp, cwTrunc);
         os.writeFISTP32(destRegAfter, destDispAfter);
+        // Restore the round-to-nearest control word.
+        os.writeFLDCW(sp, cwSave);
 
         os.writeMOV(BITS32, scratch, destRegAfter, destDispAfter);
         os.writeCMP_Const(scratch, 0x80000000);
@@ -1079,6 +1097,9 @@ public class X86CompilerHelper {
      * the 64-bit result is stored at [destReg+destDisp] with NaN -&gt; 0,
      * +Inf/overflow -&gt; MAX_VALUE, -Inf/underflow -&gt; MIN_VALUE.
      * Preserves EAX/RAX and balances ESP/RSP.
+     * The global x87 control word uses round-to-nearest (Java strictfp),
+     * so FISTP is wrapped with a truncate control word which is restored
+     * afterwards.
      *
      * @param os assembler stream
      * @param destReg destination base register
@@ -1095,10 +1116,16 @@ public class X86CompilerHelper {
         final GPR scratch = X86Register.EAX;
         final GPR scratch64 = X86Register.RAX;
         final int reserve;
+        final int cwSave;
+        final int cwTrunc;
         if (is32) {
-            reserve = 12;
+            reserve = 20;
+            cwSave = 12;
+            cwTrunc = 16;
         } else {
-            reserve = 16;
+            reserve = 24;
+            cwSave = 16;
+            cwTrunc = 20;
         }
         final boolean destIsSP = (destReg.getNr() == 4);
         final GPR destRegAfter;
@@ -1124,7 +1151,16 @@ public class X86CompilerHelper {
         }
         os.writeFSTP64(sp, 0);
         os.writeFLD64(sp, 0);
+        // JLS float->long truncates toward zero, but the global x87
+        // control word uses round-to-nearest: switch to truncate for FISTP.
+        os.writeFSTCW(sp, cwSave);
+        os.writeMOV(BITS32, scratch, sp, cwSave);
+        os.writeOR(scratch, 0x0C00);
+        os.writeMOV(BITS32, sp, cwTrunc, scratch);
+        os.writeFLDCW(sp, cwTrunc);
         os.writeFISTP64(destRegAfter, destDispAfter);
+        // Restore the round-to-nearest control word.
+        os.writeFLDCW(sp, cwSave);
 
         os.writeCMP_Const(BITS32, destRegAfter, destDispAfter, 0);
         os.writeJCC(done, X86Constants.JNE);
