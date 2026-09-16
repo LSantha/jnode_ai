@@ -19,7 +19,11 @@ def connect_serial():
 
 
 PROMPT = b'[JNODE_AGENT_READY]'
-PROMPT_TIMEOUT = 3.0
+# Generous prompt timeout: right after boot or after heavy KDB 'W' dumps the
+# console trickles bytes and a tight timeout raises false 'prompt not seen'
+# errors. The handshake auto-retries a few times before giving up.
+PROMPT_TIMEOUT = 10.0
+PROMPT_RETRIES = 3
 OUTPUT_TIMEOUT = 10.0
 
 
@@ -110,8 +114,18 @@ def main():
 
     try:
         s = connect_serial()
-        if not wait_for_prompt(s, PROMPT_TIMEOUT):
+        for attempt in range(1, PROMPT_RETRIES + 1):
+            if wait_for_prompt(s, PROMPT_TIMEOUT):
+                break
+            if attempt < PROMPT_RETRIES:
+                print(f"Prompt not seen yet, retrying "
+                      f"({attempt}/{PROMPT_RETRIES})...",
+                      file=sys.stderr)
+                time.sleep(2.0)
+        else:
             print("ERROR: JNode shell prompt not seen (is the VM booted?)")
+            print("HINT: right after boot the console can trickle bytes; "
+                  "wait a few seconds and retry - it self-recovers.")
             sys.exit(1)
         for cmd in sys.argv[1:]:
             send_cmd(s, cmd)
