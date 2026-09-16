@@ -100,14 +100,15 @@ final class LongItem extends DoubleWordItem {
     }
 
     /**
-     * Pop the top of the FPU stack into the given memory location.
+     * Pop the top of the FPU stack into the given memory location,
+     * with JLS 5.1.3 handling for NaN, infinity and overflow.
      *
      * @param os
      * @param reg
      * @param disp
      */
     protected void popFromFPU(X86Assembler os, GPR reg, int disp) {
-        os.writeFISTP64(reg, disp);
+        org.jnode.vm.x86.compiler.X86CompilerHelper.emitF2L(os, reg, disp);
     }
 
     /**
