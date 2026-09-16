@@ -85,14 +85,15 @@ final class IntItem extends WordItem implements X86CompilerConstants {
     }
 
     /**
-     * Pop the top of the FPU stack into the given memory location.
+     * Pop the top of the FPU stack into the given memory location,
+     * with JLS 5.1.3 handling for NaN, infinity and overflow.
      *
      * @param os
      * @param reg
      * @param disp
      */
     protected void popFromFPU(X86Assembler os, GPR reg, int disp) {
-        os.writeFISTP32(reg, disp);
+        org.jnode.vm.x86.compiler.X86CompilerHelper.emitF2I(os, reg, disp);
     }
 
     /**

@@ -968,4 +968,216 @@ public class X86CompilerHelper {
             throw new InternalError("Assertion failed: " + msg);
         }
     }
+
+    private static int fpuConvertLabelCounter;
+
+    /**
+     * Emit JLS-correct float/double to int conversion.
+     * On entry ST0 holds the source value. On exit ST0 is popped and
+     * the 32-bit result is stored at [destReg+destDisp] with NaN -&gt; 0,
+     * +Inf/overflow -&gt; MAX_VALUE, -Inf/underflow -&gt; MIN_VALUE.
+     * Preserves EAX/RAX and balances ESP/RSP.
+     *
+     * @param os assembler stream
+     * @param destReg destination base register
+     * @param destDisp destination displacement
+     */
+    public static void emitF2I(X86Assembler os, GPR destReg, int destDisp) {
+        final boolean is32 = os.isCode32();
+        final GPR sp;
+        if (is32) {
+            sp = X86Register.ESP;
+        } else {
+            sp = X86Register.RSP;
+        }
+        final GPR scratch = X86Register.EAX;
+        final GPR scratch64 = X86Register.RAX;
+        final int reserve;
+        if (is32) {
+            reserve = 12;
+        } else {
+            reserve = 16;
+        }
+        final boolean destIsSP = (destReg.getNr() == 4);
+        final GPR destRegAfter;
+        final int destDispAfter;
+        if (destIsSP) {
+            destRegAfter = sp;
+            destDispAfter = destDisp + reserve;
+        } else {
+            destRegAfter = destReg;
+            destDispAfter = destDisp;
+        }
+        final String uid = "f2i_" + (++fpuConvertLabelCounter) + "_";
+        final Label done = new Label(uid + "done");
+        final Label nan = new Label(uid + "nan");
+        final Label inf = new Label(uid + "inf");
+        final Label ovf = new Label(uid + "ovf");
+
+        os.writeLEA(sp, sp, -reserve);
+        if (is32) {
+            os.writeMOV(BITS32, sp, 8, scratch);
+        } else {
+            os.writeMOV(BITS64, sp, 8, scratch64);
+        }
+        os.writeFSTP64(sp, 0);
+        os.writeFLD64(sp, 0);
+        os.writeFISTP32(destRegAfter, destDispAfter);
+
+        os.writeMOV(BITS32, scratch, destRegAfter, destDispAfter);
+        os.writeCMP_Const(scratch, 0x80000000);
+        os.writeJCC(done, X86Constants.JNE);
+
+        os.writeMOV(BITS32, scratch, sp, 4);
+        os.writeAND(scratch, 0x7FF00000);
+        os.writeCMP_Const(scratch, 0x7FF00000);
+        os.writeJCC(ovf, X86Constants.JNE);
+
+        os.writeMOV(BITS32, scratch, sp, 0);
+        os.writeTEST(scratch, scratch);
+        os.writeJCC(nan, X86Constants.JNE);
+
+        os.setObjectRef(inf);
+        os.writeMOV(BITS32, scratch, sp, 4);
+        os.writeAND(scratch, 0x000FFFFF);
+        os.writeTEST(scratch, scratch);
+        os.writeJCC(nan, X86Constants.JNE);
+
+        os.writeMOV(BITS32, scratch, sp, 4);
+        os.writeTEST(scratch, 0x80000000);
+        os.writeJCC(done, X86Constants.JNE);
+
+        os.writeMOV_Const(scratch, 0x7FFFFFFF);
+        os.writeMOV(BITS32, destRegAfter, destDispAfter, scratch);
+        os.writeJMP(done);
+
+        os.setObjectRef(nan);
+        os.writeXOR(scratch, scratch);
+        os.writeMOV(BITS32, destRegAfter, destDispAfter, scratch);
+        os.writeJMP(done);
+
+        os.setObjectRef(ovf);
+        os.writeMOV(BITS32, scratch, sp, 4);
+        os.writeTEST(scratch, 0x80000000);
+        os.writeJCC(done, X86Constants.JNE);
+
+        os.writeMOV_Const(scratch, 0x7FFFFFFF);
+        os.writeMOV(BITS32, destRegAfter, destDispAfter, scratch);
+
+        os.setObjectRef(done);
+        if (is32) {
+            os.writeMOV(BITS32, scratch, sp, 8);
+        } else {
+            os.writeMOV(BITS64, scratch64, sp, 8);
+        }
+        os.writeLEA(sp, sp, reserve);
+    }
+
+    /**
+     * Emit JLS-correct float/double to long conversion.
+     * On entry ST0 holds the source value. On exit ST0 is popped and
+     * the 64-bit result is stored at [destReg+destDisp] with NaN -&gt; 0,
+     * +Inf/overflow -&gt; MAX_VALUE, -Inf/underflow -&gt; MIN_VALUE.
+     * Preserves EAX/RAX and balances ESP/RSP.
+     *
+     * @param os assembler stream
+     * @param destReg destination base register
+     * @param destDisp destination displacement
+     */
+    public static void emitF2L(X86Assembler os, GPR destReg, int destDisp) {
+        final boolean is32 = os.isCode32();
+        final GPR sp;
+        if (is32) {
+            sp = X86Register.ESP;
+        } else {
+            sp = X86Register.RSP;
+        }
+        final GPR scratch = X86Register.EAX;
+        final GPR scratch64 = X86Register.RAX;
+        final int reserve;
+        if (is32) {
+            reserve = 12;
+        } else {
+            reserve = 16;
+        }
+        final boolean destIsSP = (destReg.getNr() == 4);
+        final GPR destRegAfter;
+        final int destDispAfter;
+        if (destIsSP) {
+            destRegAfter = sp;
+            destDispAfter = destDisp + reserve;
+        } else {
+            destRegAfter = destReg;
+            destDispAfter = destDisp;
+        }
+        final String uid = "f2l_" + (++fpuConvertLabelCounter) + "_";
+        final Label done = new Label(uid + "done");
+        final Label nan = new Label(uid + "nan");
+        final Label inf = new Label(uid + "inf");
+        final Label ovf = new Label(uid + "ovf");
+
+        os.writeLEA(sp, sp, -reserve);
+        if (is32) {
+            os.writeMOV(BITS32, sp, 8, scratch);
+        } else {
+            os.writeMOV(BITS64, sp, 8, scratch64);
+        }
+        os.writeFSTP64(sp, 0);
+        os.writeFLD64(sp, 0);
+        os.writeFISTP64(destRegAfter, destDispAfter);
+
+        os.writeCMP_Const(BITS32, destRegAfter, destDispAfter, 0);
+        os.writeJCC(done, X86Constants.JNE);
+        os.writeCMP_Const(BITS32, destRegAfter, destDispAfter + 4, 0x80000000);
+        os.writeJCC(done, X86Constants.JNE);
+
+        os.writeMOV(BITS32, scratch, sp, 4);
+        os.writeAND(scratch, 0x7FF00000);
+        os.writeCMP_Const(scratch, 0x7FF00000);
+        os.writeJCC(ovf, X86Constants.JNE);
+
+        os.writeMOV(BITS32, scratch, sp, 0);
+        os.writeTEST(scratch, scratch);
+        os.writeJCC(nan, X86Constants.JNE);
+
+        os.setObjectRef(inf);
+        os.writeMOV(BITS32, scratch, sp, 4);
+        os.writeAND(scratch, 0x000FFFFF);
+        os.writeTEST(scratch, scratch);
+        os.writeJCC(nan, X86Constants.JNE);
+
+        os.writeMOV(BITS32, scratch, sp, 4);
+        os.writeTEST(scratch, 0x80000000);
+        os.writeJCC(done, X86Constants.JNE);
+
+        os.writeMOV_Const(scratch, 0xFFFFFFFF);
+        os.writeMOV(BITS32, destRegAfter, destDispAfter, scratch);
+        os.writeMOV_Const(scratch, 0x7FFFFFFF);
+        os.writeMOV(BITS32, destRegAfter, destDispAfter + 4, scratch);
+        os.writeJMP(done);
+
+        os.setObjectRef(nan);
+        os.writeXOR(scratch, scratch);
+        os.writeMOV(BITS32, destRegAfter, destDispAfter, scratch);
+        os.writeMOV(BITS32, destRegAfter, destDispAfter + 4, scratch);
+        os.writeJMP(done);
+
+        os.setObjectRef(ovf);
+        os.writeMOV(BITS32, scratch, sp, 4);
+        os.writeTEST(scratch, 0x80000000);
+        os.writeJCC(done, X86Constants.JNE);
+
+        os.writeMOV_Const(scratch, 0xFFFFFFFF);
+        os.writeMOV(BITS32, destRegAfter, destDispAfter, scratch);
+        os.writeMOV_Const(scratch, 0x7FFFFFFF);
+        os.writeMOV(BITS32, destRegAfter, destDispAfter + 4, scratch);
+
+        os.setObjectRef(done);
+        if (is32) {
+            os.writeMOV(BITS32, scratch, sp, 8);
+        } else {
+            os.writeMOV(BITS64, scratch64, sp, 8);
+        }
+        os.writeLEA(sp, sp, reserve);
+    }
 }
