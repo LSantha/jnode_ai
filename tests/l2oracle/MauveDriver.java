@@ -22,9 +22,13 @@ import java.util.ArrayList;
  * pass->fail (or crash) delta is an L2 codegen bug (library failures cancel
  * out since both runs share the image).
  *
- * Usage: java MauveDriver <force|noforce> <list.txt>   (one class per line,
- *   '#' comments and blanks ignored). JNode APIs are reached by reflection
- *   so the same class file runs on the host JDK (always pass noforce there).
+ * Usage: java MauveDriver <force|noforce> <list.txt> [outFile]
+ *   (one class per line, '#' comments and blanks ignored). All framing and
+ *   progress lines are mirrored to stdout even when outFile is given, so a
+ *   host capturing the serial stream always sees START/DONE; the outFile is
+ *   best-effort (lost on kill/poweroff, GH #649). JNode APIs are reached by
+ *   reflection so the same class file runs on the host JDK (always pass
+ *   noforce there).
  */
 public class MauveDriver {
 
@@ -97,6 +101,17 @@ public class MauveDriver {
         } catch (Throwable t) {
             // ignore: already linked, or host JDK
         }
+        // ANCHOR-ORACLE-RESOLVE: the boot image compiles high-opt classes
+        // with resolveCpRefs() applied first (class-init checks + direct
+        // statics), so resolve here too to make the forced codegen
+        // boot-image-identical. Already-resolved classes throw IAE
+        // (Cannot overwrite constant pool) - catch and proceed, the
+        // existing CP is resolved all the same.
+        try {
+            vmType.getMethod("resolveCpRefs").invoke(type);
+        } catch (Throwable t) {
+            // ignore: already resolved, or host JDK
+        }
         Method cr = vmType.getMethod("compileRuntime",
             new Class[]{Integer.TYPE, Boolean.TYPE});
         Object n = cr.invoke(type,
@@ -124,6 +139,19 @@ public class MauveDriver {
         return s.replace('|', '/');
     }
 
+    static void emit(java.io.PrintStream dest, java.io.PrintStream out,
+        String s) {
+        dest.println(s);
+        dest.flush();
+        // Framing/progress always also go to the serial console: if the shell
+        // wedges or the outFile handle is lost, the streamed lines survive on
+        // the host. Summaries are mirrored by their callers for legacy logs.
+        if (dest != out) {
+            out.println(s);
+            out.flush();
+        }
+    }
+
     public static void main(String[] args) throws Exception {
         boolean want = args.length > 0 && args[0].equals("force");
         String outFile = args.length > 2 ? args[2] : null;
@@ -133,8 +161,8 @@ public class MauveDriver {
             file = new java.io.PrintStream(new java.io.FileOutputStream(outFile));
         }
         java.io.PrintStream dest = file == null ? out : file;
-        dest.println("mauve|START");
-        dest.flush();
+        try {
+        emit(dest, out, "mauve|START");
         ArrayList names = new ArrayList();
         BufferedReader br = new BufferedReader(new FileReader(args[1]));
         String line;
@@ -148,32 +176,27 @@ public class MauveDriver {
         br.close();
         for (int i = 0; i < names.size(); i++) {
             String cn = (String) names.get(i);
-            dest.println("mauve|" + cn + "|loading");
-            dest.flush();
+            emit(dest, out, "mauve|" + cn + "|loading");
             Class<?> c;
             try {
                 c = Class.forName(cn);
             } catch (Throwable e) {
-                dest.println("mauve|" + cn + "|loadEX:" + rootCause(e));
-                dest.flush();
+                emit(dest, out, "mauve|" + cn + "|loadEX:" + rootCause(e));
                 continue;
             }
             if (want) {
-                dest.println("mauve|" + cn + "|forcing");
-                dest.flush();
+                emit(dest, out, "mauve|" + cn + "|forcing");
                 try {
                     int n = forceL2(c);
-                    dest.println("mauve|" + cn + "|force=" + n);
+                    emit(dest, out, "mauve|" + cn + "|force=" + n);
                 } catch (Throwable e) {
-                    dest.println("mauve|" + cn + "|forceEX:"
+                    emit(dest, out, "mauve|" + cn + "|forceEX:"
                         + rootCause(e));
-                    dest.flush();
                     continue;
                 }
             }
             Harness h = new Harness(cn);
-            dest.println("mauve|" + cn + "|running");
-            dest.flush();
+            emit(dest, out, "mauve|" + cn + "|running");
             try {
                 Object t = c.newInstance();
                 ((Testlet) t).test(h);
@@ -198,10 +221,21 @@ public class MauveDriver {
             dest.flush();
             out.flush();
         }
-        dest.println("mauve|DONE");
-        dest.flush();
-        if (file != null) {
-            file.close();
+        emit(dest, out, "mauve|DONE");
+        } finally {
+            // Guarantee the outFile is flushed and closed even if a testlet
+            // (or the VM) throws outside the per-testlet handlers. NOTE: this
+            // cannot survive a killed process (Ctrl-C / poweroff) - buffers
+            // are lost and the handle leaks (see GH #649). Prefer capturing
+            // the mirrored stdout on the host for results that must survive.
+            if (file != null) {
+                try {
+                    file.flush();
+                    file.close();
+                } catch (Throwable t) {
+                    // best effort on the way out
+                }
+            }
         }
     }
 }
