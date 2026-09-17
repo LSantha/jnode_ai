@@ -856,9 +856,18 @@ public class IRControlFlowGraph<T> implements Iterable<IRBasicBlock<T>> {
     /**
      * Usable edges for an ambiguous phi source (def block is not a free
      * predecessor of the join), in predecessor order: unclaimed predecessors
-     * the def dominates or reaches without passing through the join, with
-     * outside-loop values restricted to entry edges and loop-carried values
-     * to back edges (see {@code deconstructPhiList}).
+     * the def normally dominates or normally reaches without passing through
+     * the join, with outside-loop values restricted to entry edges and
+     * loop-carried values to back edges (see {@code deconstructPhiList}).
+     *
+     * ANCHOR-L2-127: availability is NORMAL-FLOW only (exceptional edges
+     * ignored). A value defined mid-try is not available on the handler
+     * edge even though the handler is (exceptionally) dominated by and
+     * reachable from the try; counting exceptional edges made in-try
+     * values doubly routable, and leftover order then swapped resume-phi
+     * copies whenever the handler predecessor came first (guest: HashMap
+     * test_keySet resume phi l2_3 got pre-try null on the normal edge and
+     * the in-try keySet on the handler edge -> NPE on s.add).
      */
     private List<IRBasicBlock<T>> routeCandidates(IRBasicBlock<T> join,
                                                   List<IRBasicBlock<T>> preds,
@@ -877,18 +886,185 @@ public class IRControlFlowGraph<T> implements Iterable<IRBasicBlock<T>> {
         }
         // Internal preds are reachable back from the join (back edges);
         // the rest are entry edges.
+        final java.util.HashSet<IRBasicBlock<T>> hflow = handlerFlowSet();
         for (IRBasicBlock<T> p : preds) {
             if (p == null || p == join || claimed.contains(p)) {
                 continue;
             }
             final boolean internal = blockReaches(join, p, null);
-            if (inLoop == internal
-                && (defBlock == null || blockDominates(defBlock, p)
-                    || blockReaches(defBlock, p, join))) {
+            if (inLoop == internal && isUsableEdge(join, p, hflow, defBlock)) {
                 out.add(p);
             }
         }
         return out;
+    }
+
+    /**
+     * ANCHOR-L2-127: single-edge usability for an ambiguous phi source.
+     * A normal-flow predecessor carries the def when the def normally
+     * dominates it or normally reaches it without passing the join. A
+     * handler-flow predecessor (handler entry, or only reachable through
+     * one) carries only try-external defs: on the exceptional edge locals
+     * hold whatever was stored before the throw, which the SSA models as
+     * the pre-try version (see popHandlerVersions); an in-try def is the
+     * normal edge's value and must never route here, however the leftover
+     * order interleaves (guest: HashMap test_keySet resume phi l2_3).
+     */
+    private boolean isUsableEdge(IRBasicBlock<T> join, IRBasicBlock<T> p,
+                                 java.util.HashSet<IRBasicBlock<T>> hflow,
+                                 IRBasicBlock<T> defBlock) {
+        if (defBlock == null) {
+            return true;
+        }
+        if (hflow.contains(p)) {
+            IRBasicBlock<T> h = nearestHandlerDominator(p);
+            if (h == null) {
+                return false;
+            }
+            List<IRBasicBlock<T>> epreds = h.getPredecessors();
+            return epreds == null || !epreds.contains(defBlock);
+        }
+        return blockDominatesNormal(defBlock, p)
+            || blockReachesNormal(defBlock, p, join);
+    }
+
+    /**
+     * ANCHOR-L2-127: blocks whose every normal path comes through a
+     * handler entry (the entries themselves, plus blocks reachable only
+     * via them, e.g. a handler's fallthrough into the resume). Edges into
+     * such blocks are exceptional flow for phi-copy routing.
+     */
+    private java.util.HashSet<IRBasicBlock<T>> handlerFlowSet() {
+        final java.util.HashSet<IRBasicBlock<T>> set =
+            new java.util.HashSet<IRBasicBlock<T>>();
+        for (IRBasicBlock<T> b : bblocks) {
+            if (b.isStartOfExceptionHandler()) {
+                set.add(b);
+            }
+        }
+        boolean changed = true;
+        while (changed) {
+            changed = false;
+            for (IRBasicBlock<T> b : bblocks) {
+                if (set.contains(b)) {
+                    continue;
+                }
+                List<IRBasicBlock<T>> preds = b.getPredecessors();
+                if (preds == null || preds.isEmpty()) {
+                    continue;
+                }
+                boolean all = true;
+                for (IRBasicBlock<T> p : preds) {
+                    if (p == null || !set.contains(p)) {
+                        all = false;
+                        break;
+                    }
+                }
+                if (all) {
+                    set.add(b);
+                    changed = true;
+                }
+            }
+        }
+        return set;
+    }
+
+    /**
+     * ANCHOR-L2-127: nearest handler entry on the full idominator chain
+     * of {@code b} (itself first), or null when normally reachable.
+     */
+    private IRBasicBlock<T> nearestHandlerDominator(IRBasicBlock<T> b) {
+        IRBasicBlock<T> cur = b;
+        while (cur != null) {
+            if (cur.isStartOfExceptionHandler()) {
+                return cur;
+            }
+            cur = cur.getIDominator();
+        }
+        return null;
+    }
+
+    /**
+     * ANCHOR-L2-127: normal-flow domination (exceptional edges ignored).
+     * A handler entry has no normal predecessors, so only it dominates
+     * itself; any other block is normally dominated by {@code a} when
+     * {@code a == b} or every predecessor is. Single-pass DFS with an
+     * in-progress-true guard is exact here: any false instance has a
+     * simple (cycle-free) a-avoiding witness path, which the search
+     * explores completely since only cyclic descents hit the guard.
+     */
+    private boolean blockDominatesNormal(IRBasicBlock<T> a, IRBasicBlock<T> b) {
+        return blockDominatesNormal(a, b,
+            new java.util.HashSet<IRBasicBlock<T>>());
+    }
+
+    private boolean blockDominatesNormal(IRBasicBlock<T> a,
+                                         IRBasicBlock<T> b,
+                                         java.util.HashSet<IRBasicBlock<T>> busy) {
+        if (a == null || b == null) {
+            return false;
+        }
+        if (a == b) {
+            return true;
+        }
+        if (b.isStartOfExceptionHandler()) {
+            return false;
+        }
+        if (!busy.add(b)) {
+            return true;
+        }
+        final List<IRBasicBlock<T>> preds = b.getPredecessors();
+        if (preds == null || preds.isEmpty()) {
+            return false;
+        }
+        for (IRBasicBlock<T> p : preds) {
+            if (!blockDominatesNormal(a, p, busy)) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    /**
+     * ANCHOR-L2-127: normal-flow reachability (never steps into a handler
+     * entry; exceptional dispatch is not a value-carrying edge for phi
+     * copies, which materialize as code in normal blocks). Otherwise a
+     * mirror of {@link #blockReaches}.
+     */
+    private boolean blockReachesNormal(IRBasicBlock<T> from, IRBasicBlock<T> to,
+                                       IRBasicBlock<T> avoid) {
+        if (from == null || to == null) {
+            return false;
+        }
+        if (from == to) {
+            return true;
+        }
+        java.util.ArrayList<IRBasicBlock<T>> stack =
+            new java.util.ArrayList<IRBasicBlock<T>>();
+        java.util.HashSet<IRBasicBlock<T>> seen =
+            new java.util.HashSet<IRBasicBlock<T>>();
+        stack.add(from);
+        seen.add(from);
+        while (!stack.isEmpty()) {
+            IRBasicBlock<T> b = stack.remove(stack.size() - 1);
+            List<IRBasicBlock<T>> succs = b.getSuccessors();
+            if (succs == null) {
+                continue;
+            }
+            for (IRBasicBlock<T> s : succs) {
+                if (s == null || s == avoid || !seen.add(s)) {
+                    continue;
+                }
+                if (s == to) {
+                    return true;
+                }
+                if (s.isStartOfExceptionHandler()) {
+                    continue;
+                }
+                stack.add(s);
+            }
+        }
+        return false;
     }
 
     public void fixupAddresses() {
