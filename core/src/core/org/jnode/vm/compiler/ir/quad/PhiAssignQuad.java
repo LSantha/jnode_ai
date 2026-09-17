@@ -62,8 +62,12 @@ public class PhiAssignQuad<T> extends AssignQuad<T> {
     }
 
     public int getLHSLiveAddress() {
-        // TODO Auto-generated method stub
-        return 0;
+        // ANCHOR-L2-128: was a stub returning 0, which gave every
+        // phi-defined variable a whole-method-prefix live range
+        // (LiveRange clamps first+1 < assign; assign=0 defeats the clamp),
+        // forced dedicated homes and defeated expireOldRange for them.
+        // Match the post-def convention of the other quads.
+        return getAddress() + 1;
     }
 
     public Operand<T>[] getReferencedOps() {

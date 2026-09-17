@@ -193,11 +193,11 @@ public class IRBasicBlockFinder<T> extends BytecodeVisitorSupport implements Com
     }
 
     public void endMethod() {
-        VmByteCode bc = byteCode;
-        // TODO add catch blocks to try successors
-        for (int i = 0; i < bc.getNoExceptionHandlers(); i++) {
-            VmInterpretedExceptionHandler eh = bc.getExceptionHandler(i);
-        }
+        // ANCHOR-L2-128: the old body iterated the exception handlers under
+        // a TODO "add catch blocks to try successors" and did nothing. The
+        // successor wiring lives in createBasicBlocks (ANCHOR-L2-110: every
+        // block covered by a try range gains an edge to its handler), so
+        // this was a leftover dead loop. Removed.
     }
 
     public void visit_ifeq(int address) {

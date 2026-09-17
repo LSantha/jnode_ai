@@ -1095,6 +1095,20 @@ public class IRControlFlowGraph<T> implements Iterable<IRBasicBlock<T>> {
         for (IRBasicBlock<T> b : bblocks) {
             for (Operand<T> def : b.getDefList()) {
                 for (IRBasicBlock<T> dfb : b.getDominanceFrontier()) {
+                    // ANCHOR-L2-128: a handler entry resets its operand
+                    // stack (the VM pushes the thrown object at the first
+                    // stack slot; the handler builds its own stack above).
+                    // No stack slot reaches a handler entry through the
+                    // exceptional edges; a phi there merges pre-try stack
+                    // states and shadows the exception (guest:
+                    // Class.reflect#getCons catch(Throwable) returned the
+                    // merged flag/ctor value instead of the caught
+                    // NoSuchMethodException). Locals still merge (handled
+                    // by the handler-entry restore + resume phis).
+                    if (dfb.isStartOfExceptionHandler()
+                        && ((Variable<T>) def).getIndex() >= dfb.getStackOffset()) {
+                        continue;
+                    }
                     dfb.add(new PhiAssignQuad<T>(dfb, ((Variable<T>) def).getIndex()));
                 }
             }
@@ -1120,11 +1134,26 @@ public class IRControlFlowGraph<T> implements Iterable<IRBasicBlock<T>> {
         java.util.ArrayList<Variable<T>> handlerPopped = null;
         java.util.ArrayList<Variable<T>> handlerPres = null;
         java.util.ArrayList<Variable<T>> handlerTops = null;
+        SSAStack<T> excStack = null;
         if (block.isStartOfExceptionHandler()) {
             handlerPopped = new java.util.ArrayList<Variable<T>>();
             handlerPres = new java.util.ArrayList<Variable<T>>();
             handlerTops = new java.util.ArrayList<Variable<T>>();
             popHandlerVersions(block, handlerPopped, handlerTops, handlerPres);
+            // ANCHOR-L2-128: the exception slot's SSA value at handler entry
+            // is the VM-pushed thrown object, not any pre-try stack state.
+            // Push a fresh ExceptionArgument so the handler's first read
+            // (the astore of the catch variable) binds to the exception, and
+            // pop it after the rename so the normal-path renames keep the
+            // pre-handler stack. (Guest: Class.reflect#getCons
+            // catch(Throwable) returned the phi-merged flag/ctor value
+            // instead of the caught NoSuchMethodException.)
+            final int excSlot = block.getStackOffset();
+            if (excSlot < renumberArray.length && renumberArray[excSlot] != null) {
+                renumberArray[excSlot].push(
+                    new ExceptionArgument(Operand.REFERENCE, excSlot));
+                excStack = renumberArray[excSlot];
+            }
         }
         doRenameVariables(block);
         for (IRBasicBlock<T> b : block.getSuccessors()) {
@@ -1134,6 +1163,9 @@ public class IRControlFlowGraph<T> implements Iterable<IRBasicBlock<T>> {
             for (int k = handlerPopped.size() - 1; k >= 0; k--) {
                 getStack(handlerPopped.get(k)).push(handlerPopped.get(k));
             }
+        }
+        if (excStack != null) {
+            excStack.pop();
         }
 
         if (block == startBlock) {
@@ -1309,19 +1341,14 @@ public class IRControlFlowGraph<T> implements Iterable<IRBasicBlock<T>> {
             }
         }
         if (block.isStartOfExceptionHandler()) {
-            if (block.getQuads().size() > 0) {
-                Quad q = block.getQuads().get(0);
-                Operand[] referencedOps = q.getReferencedOps();
-                for (int i = 0; i < referencedOps.length; i++) {
-                    Operand op = referencedOps[i];
-                    if (op instanceof StackVariable) {
-                        StackVariable sv = (StackVariable) op;
-                        if (sv.getIndex() == block.getStackOffset()) {
-                            referencedOps[i] = new ExceptionArgument(Operand.REFERENCE, block.getStackOffset());
-                        }
-                    }
-                }
-            }
+            // ANCHOR-L2-128: the exception slot binds to the fresh
+            // ExceptionArgument pushed by renameVariables before this
+            // rename (the VM pushes the thrown object at the first stack
+            // slot at handler dispatch). No per-quad patch is needed: the
+            // SSA stack peek resolves handler reads of that slot to the
+            // exception, and the exception-slot phi is not placed anymore
+            // (placePhiFunctions). Phis keep their per-edge sources; the
+            // ExceptionArgument is only valid at handler entry.
         }
     }
 

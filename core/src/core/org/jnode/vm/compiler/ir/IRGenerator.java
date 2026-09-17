@@ -233,9 +233,9 @@ public class IRGenerator<T> extends BytecodeVisitor {
                 stackOffset = nLocals;
                 currentBlock.setStackOffset(stackOffset);
                 currentBlock.setVariables(variables.clone());
-//                    currentBlock.getVariables()[stackOffset] = new ExceptionArgument(Operand.REFERENCE, stackOffset);
+                currentBlock.getVariables()[stackOffset] =
+                    new ExceptionArgument(Operand.REFERENCE, stackOffset);
                 stackOffset++;
-                // TODO need to set variables also...
             } else {
 //                return;
 //            }
