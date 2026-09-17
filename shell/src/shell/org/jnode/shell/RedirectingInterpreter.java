@@ -75,6 +75,12 @@ public class RedirectingInterpreter extends DefaultInterpreter implements
         if (sequence.isEmpty()) {
             return 0; // empty command line.
         }
+        if (sequence.size() == 1) {
+            // Preserve the historical single-pipeline contract: ShellException
+            // failures propagate to the caller.  Only multi-pipeline sequences
+            // convert failures to rc == 1 for '&&' / '||' / ';' semantics.
+            return runSequence(shell, sequence.get(0).pipeline);
+        }
         int rc = 0;
         for (int i = 0; i < sequence.size(); i++) {
             SequenceDescriptor seq = sequence.get(i);

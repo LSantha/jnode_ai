@@ -175,4 +175,149 @@ public class DefaultTokenizerTest {
                 t.last().tokenType);
         Assert.assertEquals(false, t.hasNext());
     }
+
+    @Test
+    public void testTokenizerSequenceOperators() throws ShellException {
+        SymbolSource<CommandLine.Token> t =
+                new MyDefaultInterpreter().makeTokenizer("a&&b");
+        Assert.assertEquals("a", t.next().text);
+        Assert.assertEquals(MyDefaultInterpreter.LITERAL, t.last().tokenType);
+        Assert.assertEquals("&&", t.next().text);
+        Assert.assertEquals(MyDefaultInterpreter.SPECIAL, t.last().tokenType);
+        Assert.assertEquals("b", t.next().text);
+        Assert.assertEquals(false, t.hasNext());
+
+        t = new MyDefaultInterpreter().makeTokenizer("a || b");
+        Assert.assertEquals("a", t.next().text);
+        Assert.assertEquals("||", t.next().text);
+        Assert.assertEquals(MyDefaultInterpreter.SPECIAL, t.last().tokenType);
+        Assert.assertEquals("b", t.next().text);
+        Assert.assertEquals(false, t.hasNext());
+
+        t = new MyDefaultInterpreter().makeTokenizer("a;b");
+        Assert.assertEquals("a", t.next().text);
+        Assert.assertEquals(";", t.next().text);
+        Assert.assertEquals(MyDefaultInterpreter.SPECIAL, t.last().tokenType);
+        Assert.assertEquals("b", t.next().text);
+        Assert.assertEquals(false, t.hasNext());
+    }
+
+    @Test
+    public void testTokenizerOrWithoutRedirectsFlag() throws ShellException {
+        // '||' is an operator even when REDIRECTS_FLAG is not set.
+        SymbolSource<CommandLine.Token> t =
+                new MyDefaultInterpreter().makeTokenizer("a||b", 0);
+        Assert.assertEquals("a", t.next().text);
+        Assert.assertEquals("||", t.next().text);
+        Assert.assertEquals(MyDefaultInterpreter.SPECIAL, t.last().tokenType);
+        Assert.assertEquals("b", t.next().text);
+        Assert.assertEquals(false, t.hasNext());
+    }
+
+    @Test
+    public void testTokenizerSinglePipeWithoutFlagIsLiteral() throws ShellException {
+        // A single '|' is literal without REDIRECTS_FLAG ...
+        SymbolSource<CommandLine.Token> t =
+                new MyDefaultInterpreter().makeTokenizer("a|b", 0);
+        Assert.assertEquals(true, t.hasNext());
+        Assert.assertEquals("a|b", t.next().text);
+        Assert.assertEquals(MyDefaultInterpreter.LITERAL, t.last().tokenType);
+        Assert.assertEquals(false, t.hasNext());
+
+        t = new MyDefaultInterpreter().makeTokenizer("a | b", 0);
+        Assert.assertEquals("a", t.next().text);
+        Assert.assertEquals("|", t.next().text);
+        Assert.assertEquals(MyDefaultInterpreter.LITERAL, t.last().tokenType);
+        Assert.assertEquals("b", t.next().text);
+        Assert.assertEquals(false, t.hasNext());
+
+        // ... but special with REDIRECTS_FLAG.
+        t = new MyDefaultInterpreter().makeTokenizer("a | b",
+                MyDefaultInterpreter.REDIRECTS_FLAG);
+        Assert.assertEquals("a", t.next().text);
+        Assert.assertEquals("|", t.next().text);
+        Assert.assertEquals(MyDefaultInterpreter.SPECIAL, t.last().tokenType);
+        Assert.assertEquals("b", t.next().text);
+        Assert.assertEquals(false, t.hasNext());
+    }
+
+    @Test
+    public void testTokenizerQuotedOperators() throws ShellException {
+        SymbolSource<CommandLine.Token> t =
+                new MyDefaultInterpreter().makeTokenizer("'a&&b' \"c||d\" 'e;f'");
+        CommandLine.Token s = t.next();
+        Assert.assertEquals("a&&b", s.text);
+        Assert.assertTrue((s.tokenType & MyDefaultInterpreter.STRING) != 0);
+        s = t.next();
+        Assert.assertEquals("c||d", s.text);
+        Assert.assertTrue((s.tokenType & MyDefaultInterpreter.STRING) != 0);
+        s = t.next();
+        Assert.assertEquals("e;f", s.text);
+        Assert.assertTrue((s.tokenType & MyDefaultInterpreter.STRING) != 0);
+        Assert.assertEquals(false, t.hasNext());
+    }
+
+    @Test
+    public void testTokenizerEscapedOperators() throws ShellException {
+        SymbolSource<CommandLine.Token> t =
+                new MyDefaultInterpreter().makeTokenizer("a\\&\\&b");
+        Assert.assertEquals("a&&b", t.next().text);
+        Assert.assertEquals(MyDefaultInterpreter.LITERAL, t.last().tokenType);
+        Assert.assertEquals(false, t.hasNext());
+
+        t = new MyDefaultInterpreter().makeTokenizer("a\\|\\|b");
+        Assert.assertEquals("a||b", t.next().text);
+        Assert.assertEquals(MyDefaultInterpreter.LITERAL, t.last().tokenType);
+        Assert.assertEquals(false, t.hasNext());
+
+        t = new MyDefaultInterpreter().makeTokenizer("a\\;b");
+        Assert.assertEquals("a;b", t.next().text);
+        Assert.assertEquals(MyDefaultInterpreter.LITERAL, t.last().tokenType);
+        Assert.assertEquals(false, t.hasNext());
+    }
+
+    @Test
+    public void testTokenizerCommentWithOperators() throws ShellException {
+        SymbolSource<CommandLine.Token> t =
+                new MyDefaultInterpreter().makeTokenizer("a && b # c && d");
+        Assert.assertEquals("a", t.next().text);
+        Assert.assertEquals("&&", t.next().text);
+        Assert.assertEquals(MyDefaultInterpreter.SPECIAL, t.last().tokenType);
+        Assert.assertEquals("b", t.next().text);
+        // A trailing comment is ignored: any remaining token must be empty.
+        while (t.hasNext()) {
+            Assert.assertEquals("", t.next().text);
+        }
+    }
+
+    @Test
+    public void testTokenizerUrlWithAmp() throws ShellException {
+        SymbolSource<CommandLine.Token> t =
+                new MyDefaultInterpreter().makeTokenizer("http://x/?a=1&b=2");
+        Assert.assertEquals("http://x/?a=1&b=2", t.next().text);
+        Assert.assertEquals(MyDefaultInterpreter.LITERAL, t.last().tokenType);
+        Assert.assertEquals(false, t.hasNext());
+    }
+
+    @Test
+    public void testTokenizerStandaloneAmpIsSpecial() throws ShellException {
+        SymbolSource<CommandLine.Token> t =
+                new MyDefaultInterpreter().makeTokenizer("echo a & echo b");
+        Assert.assertEquals("echo", t.next().text);
+        Assert.assertEquals("a", t.next().text);
+        Assert.assertEquals("&", t.next().text);
+        Assert.assertEquals(MyDefaultInterpreter.SPECIAL, t.last().tokenType);
+        Assert.assertEquals("echo", t.next().text);
+        Assert.assertEquals("b", t.next().text);
+        Assert.assertEquals(false, t.hasNext());
+
+        t = new MyDefaultInterpreter().makeTokenizer("a &&& b");
+        Assert.assertEquals("a", t.next().text);
+        Assert.assertEquals("&&", t.next().text);
+        Assert.assertEquals(MyDefaultInterpreter.SPECIAL, t.last().tokenType);
+        Assert.assertEquals("&", t.next().text);
+        Assert.assertEquals(MyDefaultInterpreter.SPECIAL, t.last().tokenType);
+        Assert.assertEquals("b", t.next().text);
+        Assert.assertEquals(false, t.hasNext());
+    }
 }

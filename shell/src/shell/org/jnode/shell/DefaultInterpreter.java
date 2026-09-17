@@ -145,7 +145,29 @@ public class DefaultInterpreter implements CommandInterpreter {
     
     @Override
     public Completable parsePartial(CommandShell shell, String line) throws ShellException {
-        CommandLine res = doParseCommandLine(line);
+        Tokenizer tokenizer = new Tokenizer(line);
+        List<SequenceEntry> sequence = parseSequence(tokenizer, true);
+        if (sequence.isEmpty()) {
+            return new CommandLine("", null);
+        }
+        // A trailing '&&' / '||' / ';' means the next command is empty:
+        // complete in an empty context, mirroring RedirectingInterpreter's
+        // trailingSequenceOp handling.  (Help still uses the last command
+        // via doParseCommandLine.)
+        tokenizer.seek(0);
+        CommandLine.Token last = null;
+        while (tokenizer.hasNext()) {
+            CommandLine.Token t = tokenizer.next();
+            // Skip the empty token that a trailing '#...' comment produces.
+            if (t.text.length() > 0) {
+                last = t;
+            }
+        }
+        if (last != null && last.tokenType == SPECIAL &&
+                (AND_IF.equals(last.text) || OR_IF.equals(last.text) || SEMI.equals(last.text))) {
+            return new CommandLine("", null);
+        }
+        CommandLine res = sequence.get(sequence.size() - 1).commandLine;
         return res == null ? new CommandLine("", null) : res;
     }
     
@@ -175,6 +197,14 @@ public class DefaultInterpreter implements CommandInterpreter {
         List<SequenceEntry> sequence = parseSequence(tokenizer, false);
         if (sequence.isEmpty()) {
             return 0;
+        }
+        if (sequence.size() == 1) {
+            // Preserve the historical single-command contract: per-command
+            // ShellException failures propagate to the caller (e.g. unknown
+            // command, TimeCommand, script-abort and test-harness exception
+            // expectations).  Only multi-command sequences convert failures
+            // to rc == 1 for '&&' / '||' / ';' semantics.
+            return shell.invoke(sequence.get(0).commandLine, null, null);
         }
         int rc = 0;
         for (int i = 0; i < sequence.size(); i++) {
@@ -340,15 +370,12 @@ public class DefaultInterpreter implements CommandInterpreter {
                     break;
                 case AMP_CHAR:
                 case SEMI_CHAR:
-                    // '&' and ';' can introduce operators ('&&', ';'), so always escape them.
-                    sb.append(ESCAPE_CHAR).append(ch);
-                    break;
                 case PIPE_CHAR:
-                    if (escapeRedirects) {
-                        sb.append(ESCAPE_CHAR).append(PIPE_CHAR); 
-                    } else {
-                        sb.append(PIPE_CHAR);
-                    }
+                    // '&', ';' and '|' can introduce operators ('&&', '||', ';'),
+                    // so always escape them.  (A single '|' is literal in this
+                    // interpreter, but escaping it is harmless and keeps an
+                    // escaped '||' from re-parsing as an operator.)
+                    sb.append(ESCAPE_CHAR).append(ch);
                     break;
                 case SEND_OUTPUT_TO_CHAR:
                     if (escapeRedirects) {
@@ -610,9 +637,9 @@ public class DefaultInterpreter implements CommandInterpreter {
                                 token.append(currentChar);
                             } else if (pos < s.length() && s.charAt(pos) == AMP_CHAR) {
                                 // '&&' is always an operator.  A single '&' is kept
-                                // as a literal character for backward compatibility
-                                // (e.g. URLs containing '&'); background execution
-                                // with '&' is not supported.
+                                // as a literal character when embedded in a word for
+                                // backward compatibility (e.g. URLs containing '&');
+                                // background execution with '&' is not supported.
                                 finished = true;
                                 if (token.length() == 0) {
                                     token.append(currentChar);
@@ -621,6 +648,14 @@ public class DefaultInterpreter implements CommandInterpreter {
                                 } else {
                                     pos--; // the operator terminates the literal.
                                 }
+                            } else if (token.length() == 0) {
+                                // A standalone '&' (not part of '&&' and not embedded
+                                // in a word) is emitted as SPECIAL so the parser can
+                                // diagnose it as unsupported.  Embedded '&' (e.g. in
+                                // URLs) and escaped / quoted '&' stay literal.
+                                finished = true;
+                                token.append(currentChar);
+                                type = SPECIAL;
                             } else {
                                 token.append(currentChar);
                             }
