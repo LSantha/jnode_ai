@@ -406,13 +406,20 @@ public class X86Level2Compiler extends AbstractX86Compiler {
             }
             // NB: assignAddress is the POST-def address (def quad + 1), so
             // a call at exactly `def` runs after the value is homed and can
-            // clobber it: the low side is inclusive. The high side stays
-            // strict (a use AT the call is consumed before the clobber).
+            // clobber it: the low side is inclusive. The high side is
+            // inclusive as well: a use AT the call is consumed before the
+            // clobber for a single execution, but a call inside a loop
+            // executes once per iteration and a loop-carried operand (e.g.
+            // the receiver of the same synchronized get(i) call) must
+            // survive it -- callees preserve nothing (saveRegisters is a
+            // no-op everywhere), so the register would hold garbage from
+            // the second iteration on (guest: AcuniaBitSetTest.test_clone
+            // NPE: b.clone() result homed in EBX, clobbered by BitSet.get).
             final int def = lr.getAssignAddress();
             final int last = lr.getLastUseAddress();
             for (Integer c : callAddrs) {
                 final int call = c.intValue();
-                if (def <= call && call < last) {
+                if (def <= call && call <= last) {
                     forced.add(lr);
                     break;
                 }
