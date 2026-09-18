@@ -1323,23 +1323,38 @@ public class IRControlFlowGraph<T> implements Iterable<IRBasicBlock<T>> {
      */
     private void doRenameVariables(IRBasicBlock<T> block) {
         for (Quad<T> q : block.getQuads()) {
-            Operand<T>[] refs = q.getReferencedOps();
-            if (refs != null) {
-                int n = refs.length;
-                for (int i = 0; i < n; i += 1) {
-                    SSAStack<T> st = getStack(refs[i]);
-                    if (st != null) {
-                        Variable[] vars = block.getVariables();
-                        Variable<T> peek = st.peek();
-                        // ANCHOR-L2-110: an empty stack means no reaching def
-                        // on this path (dead/unreachable use). Storing the
-                        // null would poison the quad and NPE a later doPass2;
-                        // leave the pre-SSA variable instead.
-                        if (peek == null) {
-                            continue;
+            // ANCHOR-L2-130: phi sources are FINAL SSA versions (appended by
+            // rewritePhiParams per predecessor as each predecessor finishes
+            // renaming). Re-applying the stack-top rewrite to them would
+            // corrupt SSA (both sources of a diamond's phi would become the
+            // pre-diamond version). Skip phis in the refs loop below
+            // explicitly; their LHS rename (the AssignQuad branch) still
+            // runs. Historically this only worked because
+            // PhiAssignQuad.getReferencedOps() returns a fresh toArray copy
+            // (the refs[i] = peek write landed in the throwaway array) - a
+            // serendipity, not an invariant. All phi sources share the phi's
+            // slot (rewritePhiParams reads the phi LHS's stack), so the
+            // skipped vars[] write was always immediately overwritten by the
+            // phi's own LHS rename; skipping it is a no-op.
+            if (!(q instanceof PhiAssignQuad)) {
+                Operand<T>[] refs = q.getReferencedOps();
+                if (refs != null) {
+                    int n = refs.length;
+                    for (int i = 0; i < n; i += 1) {
+                        SSAStack<T> st = getStack(refs[i]);
+                        if (st != null) {
+                            Variable[] vars = block.getVariables();
+                            Variable<T> peek = st.peek();
+                            // ANCHOR-L2-110: an empty stack means no reaching def
+                            // on this path (dead/unreachable use). Storing the
+                            // null would poison the quad and NPE a later doPass2;
+                            // leave the pre-SSA variable instead.
+                            if (peek == null) {
+                                continue;
+                            }
+                            vars[((Variable) refs[i]).getIndex()] = peek;
+                            refs[i] = peek;
                         }
-                        vars[((Variable) refs[i]).getIndex()] = peek;
-                        refs[i] = peek;
                     }
                 }
             }

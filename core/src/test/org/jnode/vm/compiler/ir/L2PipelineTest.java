@@ -484,6 +484,62 @@ public class L2PipelineTest {
     }
 
     /**
+     * SSAVerifier (review work order step 5): run the pre-deSSA invariants
+     * (live phi arity == pred count; every use's def dominates the use) over
+     * a broad host corpus, then the post-deSSA invariants (no live phi;
+     * every read written on every path) after deSSA+fixup. The jsr probe is
+     * verified pre-deSSA only: the ret to all-resumes over-approximation
+     * makes post-deSSA path analysis ambiguous there (documented carve-out).
+     */
+    @Test
+    public void testSSAVerifierCorpus() throws Exception {
+        String[] methods = {"add", "appel", "terniary22", "terniary1",
+            "discriminant", "simpleWhile", "const1", "switchDense",
+            "tryCatch", "twoCatches", "syncThrow", "arrayCatch", "syncBlock",
+            "syncMethod", "concat", "hello", "callVirt", "ldiv",
+            "dupArrAssign", "dupArrUse", "instOf"};
+        for (int i = 0; i < methods.length; i++) {
+            VmMethod m = findMethod(methods[i]);
+            IRControlFlowGraph cfg = runToPostDce(m);
+            String v = SSAVerifier.verifyPreDessA(cfg);
+            if (v != null) {
+                fail("SSA violation (pre-deSSA) in " + methods[i] + ": " + v);
+            }
+            cfg.deconstrucSSA();
+            cfg.removeDefUseChains();
+            cfg.fixupAddresses();
+            v = SSAVerifier.verifyPostDessA(cfg);
+            if (v != null) {
+                fail("SSA violation (post-deSSA) in " + methods[i] + ": " + v);
+            }
+        }
+        // jsr probe: pre-deSSA only (ret/resume over-approximation).
+        java.io.File dir = java.io.File.createTempFile("jsrverif", "");
+        dir.delete();
+        dir.mkdirs();
+        java.io.FileOutputStream fos = new java.io.FileOutputStream(
+            new java.io.File(dir, "JsrProbe.class"));
+        fos.write(JsrProbeBuilder.build());
+        fos.close();
+        VmSystemClassLoader child = new VmSystemClassLoader(
+            classlibUrls(dir), loader.getArchitecture());
+        VmType type = child.loadClass("JsrProbe", true);
+        VmMethod found = null;
+        for (int i = 0; i < type.getNoDeclaredMethods(); i++) {
+            VmMethod m = type.getDeclaredMethod(i);
+            if ("jsrDemo".equals(m.getName())) {
+                found = m;
+            }
+        }
+        assertNotNull("jsrDemo not found", found);
+        IRControlFlowGraph cfg = runToPostDce(found);
+        String v = SSAVerifier.verifyPreDessA(cfg);
+        if (v != null) {
+            fail("SSA violation (pre-deSSA) in jsrDemo: " + v);
+        }
+    }
+
+    /**
      * 107: no register-held value may span a call-like quad (callers
      * preserve nothing: saveRegisters is a no-op in every x86 frame) or
      * end inside a handler block (the native unwinder preserves nothing).

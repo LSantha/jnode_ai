@@ -71,6 +71,14 @@ public class PhiAssignQuad<T> extends AssignQuad<T> {
     }
 
     public Operand<T>[] getReferencedOps() {
+        // ANCHOR-L2-130: this MUST stay a fresh copy (toArray). Callers write
+        // into the returned array (doRenameVariables' refs[i] = stack-top
+        // rewrite; historically the only thing that saved phi sources from
+        // corruption). The rename loop now skips PhiAssignQuad explicitly
+        // (ANCHOR-L2-130 in IRControlFlowGraph.doRenameVariables), so this
+        // copy is belt-and-braces; it is also what read-only consumers
+        // (DCE use counting, L2PipelineTest.hasLiveUse, SSAVerifier)
+        // legitimately read.
         return phi.getSources().toArray(new Operand[phi.getSources().size()]);
     }
 
