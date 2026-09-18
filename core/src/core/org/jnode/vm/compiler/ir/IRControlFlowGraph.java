@@ -656,6 +656,16 @@ public class IRControlFlowGraph<T> implements Iterable<IRBasicBlock<T>> {
     /**
      * Expand one phi into predecessor copies with edge-based placement
      * (ANCHOR-L2-124, see {@code deconstructPhiList}).
+     * <p>
+     * C3 decision (2026-09-18): the L2-124/127 routing machinery is KEPT and
+     * the ANCHOR-L2-131 tags stay as a verification layer (the assertion
+     * loop below). Census data over 11340+ methods: 144 tag-vs-placement
+     * disagreements, all value-equivalent (same-object source rotations and
+     * copy-propagation artifacts) - the machinery is correct for the actual
+     * values. A pure tag-based placement was rejected: it loses the
+     * def-block coalescing (one copy per source instead of per dominating
+     * def) and needs a value-equivalence verifier through post-doPass2
+     * propagated RHS forms.
      */
     private void deconstructOnePhi(PhiAssignQuad<T> paq) {
         Variable<T> lhs = paq.getLHS();
@@ -1148,6 +1158,17 @@ public class IRControlFlowGraph<T> implements Iterable<IRBasicBlock<T>> {
     }
 
     private void placePhiFunctions() {
+        // ANCHOR-L2-133: B (iterated DF+ closure) was TRIED and REVERTED
+        // (2026-09-18): the worklist version exposed a NEW post-deSSA
+        // dangling read in NativeStrictMath#remPiOver2 (a copy reading a
+        // never-defined version; the old placement skipped that source in
+        // deconstructOnePhi because its assignQuad is null and it is not a
+        // MethodArgument). The one-shot pass stays until that interaction
+        // (new phis x DCE counts x the retarget) is understood; the review
+        // assesses the one-shot form as order-dependent but not live - the
+        // historically observed cases are covered by the L2-110/125/127
+        // handler work. The verifier (SSAVerifier) is the gate for any
+        // retry.
         for (IRBasicBlock<T> b : bblocks) {
             for (Operand<T> def : b.getDefList()) {
                 for (IRBasicBlock<T> dfb : b.getDominanceFrontier()) {
