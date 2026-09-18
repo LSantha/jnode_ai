@@ -853,4 +853,30 @@ public class PrimitiveTest {
         }
         return 0;
     }
+
+    static int riskyParse() {
+        return Integer.parseInt("x");
+    }
+
+    /**
+     * ANCHOR-L2-129 corpus: sibling-handler SSA leak probe. The try region
+     * stores r after the throwing call; catch1 defines r; catch2 reads r.
+     * catch2's add must bind the PRE-try version (r = 1, def in the entry
+     * block), never catch1's version. (Runtime note: parseInt throws
+     * NumberFormatException, so catch1 always wins dynamically and the
+     * method returns 10; the bug is latent on the catch2 edge. Assert the
+     * SSA binding, not the value.)
+     */
+    public static int twoCatches() {
+        int r = 1;
+        try {
+            int q = riskyParse();
+            r = 5;
+        } catch (IllegalArgumentException e) {
+            r = 10;
+        } catch (RuntimeException e2) {
+            r = r + 100;
+        }
+        return r;
+    }
 }

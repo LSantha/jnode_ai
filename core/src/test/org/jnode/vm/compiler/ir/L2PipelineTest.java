@@ -421,6 +421,69 @@ public class L2PipelineTest {
     }
 
     /**
+     * ANCHOR-L2-129 (review item 5 / report S5): sibling-handler SSA leak. In twoCatches,
+     * catch2's {@code r + 100} must bind the pre-try version of {@code r}
+     * (defined outside any handler), never catch1's {@code r = 10} version.
+     * The old renameVariables pushed the saved pre-try versions back ON TOP
+     * of the handler's own defs, so popVariables removed the restored
+     * entries and the handler's def versions leaked onto the slot stacks;
+     * a sibling scope renamed later bound the leak and read a
+     * never-written home at runtime. Scoped to this probe shape (nested
+     * handlers, where cross-handler flow is legitimate, are not covered).
+     */
+    @Test
+    public void testSiblingHandlerReadsPreTryVersion() throws Exception {
+        VmMethod m = findMethod("twoCatches");
+        IRControlFlowGraph cfg = runToPostDce(m);
+        List handlerBlocks = new ArrayList();
+        Iterator blocks = cfg.iterator();
+        while (blocks.hasNext()) {
+            IRBasicBlock b = (IRBasicBlock) blocks.next();
+            if (b.isStartOfExceptionHandler()) {
+                handlerBlocks.add(b);
+            }
+        }
+        assertTrue("twoCatches shape changed: expected 2 handlers, got "
+            + handlerBlocks.size(), handlerBlocks.size() >= 2);
+        int lastHandlerQuads = 0;
+        for (int bi = 0; bi < handlerBlocks.size(); bi++) {
+            IRBasicBlock b = (IRBasicBlock) handlerBlocks.get(bi);
+            List quads = b.getQuads();
+            for (int i = 0; i < quads.size(); i++) {
+                Quad q = (Quad) quads.get(i);
+                if (q.isDeadCode()) {
+                    continue;
+                }
+                if (bi == handlerBlocks.size() - 1) {
+                    lastHandlerQuads++;
+                }
+                Operand[] refs = q.getReferencedOps();
+                if (refs == null) {
+                    continue;
+                }
+                for (int j = 0; j < refs.length; j++) {
+                    if (!(refs[j] instanceof Variable)) {
+                        continue;
+                    }
+                    Variable v = (Variable) refs[j];
+                    AssignQuad def = v.getAssignQuad();
+                    IRBasicBlock defBlock =
+                        (def == null) ? null : def.getBasicBlock();
+                    assertFalse("sibling-handler leak: " + q + " in " + b
+                        + " reads " + v + " defined in handler " + defBlock,
+                        defBlock != null && defBlock != b
+                            && defBlock.isStartOfExceptionHandler());
+                }
+            }
+        }
+        // The last handler reads r (pre-try) + 100: with the fix the read
+        // binds a constant and constant-folds, so no IADD survives -- do not
+        // assert one. Only assert the handler body is still live (the shape
+        // did not collapse to nothing).
+        assertTrue("last handler body collapsed", lastHandlerQuads > 0);
+    }
+
+    /**
      * 107: no register-held value may span a call-like quad (callers
      * preserve nothing: saveRegisters is a no-op in every x86 frame) or
      * end inside a handler block (the native unwinder preserves nothing).

@@ -1128,9 +1128,10 @@ public class IRControlFlowGraph<T> implements Iterable<IRBasicBlock<T>> {
         // on that path (prolog-zeroed -> NULL; guest: b6 = b6.append(...) in
         // try, always throws, post-catch append read NULL receiver ->
         // monitorEnter NPE -> unwind monitorExit(null) NPE -> SOE in trace
-        // alloc -> panic). Pop those versions now, insert restore copies
-        // after renaming (insertHandlerCopies), and push them back so the
-        // normal-path renames keep the in-try versions.
+        // alloc -> panic). Pop those versions now; the handler body then
+        // renames against the pre-try tops, and the popped versions are
+        // pushed back AFTER popVariables (ANCHOR-L2-129) so sibling scopes
+        // renamed later see the pre-try values, not the handler's defs.
         java.util.ArrayList<Variable<T>> handlerPopped = null;
         java.util.ArrayList<Variable<T>> handlerPres = null;
         java.util.ArrayList<Variable<T>> handlerTops = null;
@@ -1168,11 +1169,6 @@ public class IRControlFlowGraph<T> implements Iterable<IRBasicBlock<T>> {
         for (IRBasicBlock<T> b : block.getSuccessors()) {
             rewritePhiParams(b);
         }
-        if (handlerPopped != null) {
-            for (int k = handlerPopped.size() - 1; k >= 0; k--) {
-                getStack(handlerPopped.get(k)).push(handlerPopped.get(k));
-            }
-        }
         if (block == startBlock) {
             for (IRBasicBlock b : bblocks) {
                 if (b.getIDominator() == null && b != startBlock) {
@@ -1187,6 +1183,19 @@ public class IRControlFlowGraph<T> implements Iterable<IRBasicBlock<T>> {
             }
         }
         popVariables(block);
+        if (handlerPopped != null) {
+            // ANCHOR-L2-129: restore the saved pre-try versions AFTER the
+            // handler's own defs are popped (was: before the recursion).
+            // The old order pushed the pre-try versions ON TOP of the
+            // handler's defs, so popVariables removed the restored entries
+            // and the handler's def versions leaked onto the slot stacks;
+            // any sibling scope renamed later (second catch block reading
+            // a shared local) bound the leaked version and read a
+            // never-written home at runtime (0/null via prologue zeroing).
+            for (int k = handlerPopped.size() - 1; k >= 0; k--) {
+                getStack(handlerPopped.get(k)).push(handlerPopped.get(k));
+            }
+        }
     }
 
     /**
