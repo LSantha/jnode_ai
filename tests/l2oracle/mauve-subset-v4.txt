@@ -1,0 +1,36 @@
+# v4: static-init interplay + array shapes + reflection/exceptions.
+# Motivated by the L2 boot crash in Integer.stringSize (null static
+# int[] deref): clinit/static-field/array-bounds/exception-table shapes.
+# f1 = static-init interplay (forName/loadClass/getProperty paths);
+# f2 = array shapes (iaload/iastore/newarray bounds-check shapes);
+# f3 = reflection + exceptions (heavy exception tables + IMT dispatch).
+# Chunks f1/f2/f3 sized <=7 for the 240s + heap-discipline rules.
+# Sibling audit (javap -v CONSTANT_Class, 2026-09-18): none of these need
+# same-package siblings beyond $* inners (auto-staged); rf_help-style
+# forName helpers are NOT referenced by this set.
+
+# --- f1: static-init interplay ---
+gnu.testlet.java.lang.ClassLoader.initialize
+gnu.testlet.java.lang.ClassLoader.loadClass
+gnu.testlet.java.lang.ClassLoader.findLoadedClass
+gnu.testlet.java.lang.ClassLoader.Resources
+gnu.testlet.java.lang.System.getProperty
+gnu.testlet.java.lang.Runtime.security
+gnu.testlet.java.lang.Thread.contextClassLoader
+
+# --- f2: array shapes ---
+gnu.testlet.java.util.EnumSet.ComplementOf
+gnu.testlet.java.util.IdentityHashMap.simple
+gnu.testlet.java.util.Vector.copyInto
+gnu.testlet.java.util.Vector.subList
+gnu.testlet.java.util.ArrayList.subList
+gnu.testlet.java.lang.String.getBytes
+gnu.testlet.java.lang.String.getBytes13
+
+# --- f3: reflection + exceptions ---
+gnu.testlet.java.lang.reflect.Method.invoke
+gnu.testlet.java.lang.reflect.Method.equals
+gnu.testlet.java.lang.reflect.Field.access
+gnu.testlet.java.lang.reflect.Constructor.newInstance
+gnu.testlet.java.lang.reflect.InvocationTargetException.Chain
+gnu.testlet.java.lang.ProcessBuilder.simple
