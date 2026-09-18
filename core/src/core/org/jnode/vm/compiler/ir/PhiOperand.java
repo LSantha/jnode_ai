@@ -29,6 +29,13 @@ import org.jnode.vm.objects.BootableArrayList;
  */
 public class PhiOperand<T> extends Operand<T> {
     private final List<Operand<T>> sources;
+    // ANCHOR-L2-131: predecessor tag per source, parallel to sources (null
+    // for the legacy no-tag overload). Filled by rewritePhiParams while
+    // renaming the predecessor, so the tag is free. deSSA uses it to place
+    // the copy on the edge that carries the value instead of re-deriving
+    // the mapping (the L2-124/127 routing heuristic exists solely because
+    // this information used to be thrown away).
+    private final List<IRBasicBlock<T>> sourcePreds;
     private int varIndex;
 
     public PhiOperand() {
@@ -41,10 +48,16 @@ public class PhiOperand<T> extends Operand<T> {
     public PhiOperand(int type) {
         super(type);
         sources = new BootableArrayList<Operand<T>>();
+        sourcePreds = new BootableArrayList<IRBasicBlock<T>>();
     }
 
     public void addSource(Variable<T> source) {
+        addSource(source, null);
+    }
+
+    public void addSource(Variable<T> source, IRBasicBlock<T> pred) {
         sources.add(source);
+        sourcePreds.add(pred);
         int type = getType();
         if (type == UNKNOWN) {
             setType(source.getType());
@@ -55,6 +68,14 @@ public class PhiOperand<T> extends Operand<T> {
 //        else if (type != source.getType()) {
 //            throw new AssertionError("phi operand source types don't match");
 //        }
+    }
+
+    /**
+     * @return the predecessor block the i-th source was filled from
+     *         (null for legacy no-tag sources); parallel to getSources().
+     */
+    public IRBasicBlock<T> getSourcePred(int i) {
+        return sourcePreds.get(i);
     }
 
     public String toString() {

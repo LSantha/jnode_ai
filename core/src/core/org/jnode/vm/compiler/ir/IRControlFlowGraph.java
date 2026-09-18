@@ -1166,9 +1166,12 @@ public class IRControlFlowGraph<T> implements Iterable<IRBasicBlock<T>> {
             }
         }
         doRenameVariables(block);
-        for (IRBasicBlock<T> b : block.getSuccessors()) {
-            rewritePhiParams(b);
-        }
+            for (IRBasicBlock<T> b : block.getSuccessors()) {
+                // ANCHOR-L2-131: pass the predecessor (the block being
+                // renamed) so each source is tagged with the edge it
+                // arrived on; the tag is free here.
+                rewritePhiParams(b, block);
+            }
         if (block == startBlock) {
             for (IRBasicBlock b : bblocks) {
                 if (b.getIDominator() == null && b != startBlock) {
@@ -1382,13 +1385,15 @@ public class IRControlFlowGraph<T> implements Iterable<IRBasicBlock<T>> {
     }
 
     /**
-     * @param block
+     * @param succ the successor whose leading phis are filled
+     * @param pred the predecessor being renamed (tags each source with the
+     *        edge it arrived on, ANCHOR-L2-131)
      */
-    private void rewritePhiParams(IRBasicBlock<T> block) {
-        if (block == null) {
+    private void rewritePhiParams(IRBasicBlock<T> succ, IRBasicBlock<T> pred) {
+        if (succ == null) {
             return;
         }
-        for (Quad<T> q : block.getQuads()) {
+        for (Quad<T> q : succ.getQuads()) {
             if (q instanceof PhiAssignQuad) {
                 PhiAssignQuad<T> aq = (PhiAssignQuad<T>) q;
                 if (!aq.isDeadCode()) {
@@ -1397,7 +1402,7 @@ public class IRControlFlowGraph<T> implements Iterable<IRBasicBlock<T>> {
                     // If there was no incoming branch to this phi, I think it's dead...
                     if (var != null) {
                         PhiOperand<T> phi = aq.getPhiOperand();
-                        phi.addSource(var);
+                        phi.addSource(var, pred);
                     } else {
                         aq.setDeadCode(true);
                     }

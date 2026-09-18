@@ -86,6 +86,32 @@ public final class SSAVerifier {
                         return "phi arity " + nsrc + " != pred count " + npred
                             + " at " + q + " in " + b;
                     }
+                    // (c) edge tags match the predecessor set (ANCHOR-L2-131
+                    // tagging correctness): every live phi source must carry
+                    // a tag, and the tag set must equal the predecessor set.
+                    java.util.Set<IRBasicBlock> tags =
+                        new java.util.HashSet<IRBasicBlock>();
+                    java.util.List<Operand> srcs =
+                        ((PhiAssignQuad) q).getPhiOperand().getSources();
+                    for (int s = 0; s < srcs.size(); s++) {
+                        IRBasicBlock tag =
+                            ((PhiAssignQuad) q).getPhiOperand().getSourcePred(s);
+                        if (tag == null) {
+                            return "untagged phi source " + srcs.get(s)
+                                + " at " + q + " in " + b;
+                        }
+                        if (!tags.add(tag)) {
+                            return "duplicate phi source tag " + tag
+                                + " at " + q + " in " + b;
+                        }
+                    }
+                    List preds = b.getPredecessors();
+                    for (int p = 0; p < preds.size(); p++) {
+                        if (!tags.contains(preds.get(p))) {
+                            return "phi missing tag for predecessor "
+                                + preds.get(p) + " at " + q + " in " + b;
+                        }
+                    }
                 }
             }
         }

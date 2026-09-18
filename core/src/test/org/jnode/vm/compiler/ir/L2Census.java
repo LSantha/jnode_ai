@@ -95,6 +95,7 @@ public class L2Census {
         List<String> otherExamples = new ArrayList<String>();
         List<String> handlerExamples = new ArrayList<String>();
         List<String> magicExamples = new ArrayList<String>();
+        List<String> failed = new ArrayList<String>();
         int done = 0;
         for (String cn : classes) {
             VmType type;
@@ -135,6 +136,7 @@ public class L2Census {
                         handlersH++;
                     }
                 } catch (Throwable t) {
+                    failed.add(full);
                     String msg = String.valueOf(t.getMessage());
                     String low = msg.toLowerCase();
                     if (low.indexOf("magic") >= 0) {
@@ -160,6 +162,10 @@ public class L2Census {
         out.println("classes=" + classes.size());
         out.println("OK=" + ok + " SKIP=" + skip + " MAGIC=" + magic
             + " HANDLERS=" + handlersH + " FAIL_64=" + fail64);
+        out.println("--- FAILED (" + failed.size() + ") ---");
+        for (String s : failed) {
+            out.println(s);
+        }
         out.println("--- OTHER (" + other.size() + " distinct) ---");
         for (Map.Entry<String, Integer> e : other.entrySet()) {
             out.println("[" + e.getValue() + "x] " + e.getKey());
