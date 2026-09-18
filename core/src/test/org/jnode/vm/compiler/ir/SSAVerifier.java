@@ -86,6 +86,22 @@ public final class SSAVerifier {
                         return "phi arity " + nsrc + " != pred count " + npred
                             + " at " + q + " in " + b;
                     }
+                    // (d) phi sources share the phi's slot (rewritePhiParams
+                    // reads the phi LHS's stack): a cross-slot source means a
+                    // value from another slot merged into this phi.
+                    int phiSlot = ((Variable) q.getDefinedOp()).getIndex();
+                    java.util.List<Operand> srcsAll =
+                        ((PhiAssignQuad) q).getPhiOperand().getSources();
+                    for (int s = 0; s < srcsAll.size(); s++) {
+                        Operand so = srcsAll.get(s);
+                        if (so instanceof Variable
+                            && ((Variable) so).getIndex() != phiSlot) {
+                            return "cross-slot phi source " + so
+                                + " (slot " + ((Variable) so).getIndex()
+                                + ") in phi for slot " + phiSlot
+                                + " at " + q + " in " + b;
+                        }
+                    }
                     // (c) edge tags match the predecessor set (ANCHOR-L2-131
                     // tagging correctness): every live phi source must carry
                     // a tag, and the tag set must equal the predecessor set.
@@ -212,8 +228,27 @@ public final class SSAVerifier {
                         continue; // return address: over-approximated resumes
                     }
                     if (!writtenOnEveryPath(cfg, b, q.getAddress(), v)) {
-                        return "read of " + v + " at " + q + " in " + b
-                            + " is not written on every path";
+                        StringBuffer sb = new StringBuffer("read of " + v
+                            + " at " + q + " in " + b
+                            + " is not written on every path; defs:");
+                        Iterator db2 = cfg.iterator();
+                        while (db2.hasNext()) {
+                            IRBasicBlock dbb = (IRBasicBlock) db2.next();
+                            List qs = dbb.getQuads();
+                            for (int k = 0; k < qs.size(); k++) {
+                                Quad dq = (Quad) qs.get(k);
+                                if (!dq.isDeadCode()
+                                    && dq instanceof AssignQuad
+                                    && v.equals(((AssignQuad) dq).getLHS())) {
+                                    sb.append(" [").append(dq)
+                                        .append(" in ").append(dbb)
+                                        .append(" @").append(dq.getAddress())
+                                        .append(']');
+                                }
+                            }
+                        }
+                        sb.append(" (use @").append(q.getAddress()).append(')');
+                        return sb.toString();
                     }
                 }
             }
@@ -226,8 +261,13 @@ public final class SSAVerifier {
      * useAddr in useBlock. Defs are collected per use (equals matching, no
      * identity assumptions); a def in a block that dominates the use block
      * covers every path by dominance; a def in the use block before the use
-     * covers it by in-block order; otherwise a backwards walk must cross a
-     * def-containing block on every path.
+     * covers it by in-block order; otherwise a forward "uncovered" fixpoint
+     * decides: a block is uncovered when it holds no def of v and some
+     * predecessor is uncovered (or it has no predecessors - the entry).
+     * The use is violated iff some predecessor of the use block is
+     * uncovered. NOTE: no-pred unreachable roots (ANCHOR-L2-102 dead code)
+     * are treated as uncovered; javac emits no dead code, so this is inert
+     * for the corpus.
      */
     private static boolean writtenOnEveryPath(IRControlFlowGraph cfg,
         IRBasicBlock useBlock, int useAddr, Variable v) {
@@ -260,24 +300,48 @@ public final class SSAVerifier {
                 return true;
             }
         }
-        // Backwards walk over predecessors.
-        HashSet<IRBasicBlock> seen = new HashSet<IRBasicBlock>();
-        ArrayList<IRBasicBlock> stack = new ArrayList<IRBasicBlock>();
-        stack.addAll(useBlock.getPredecessors());
-        while (!stack.isEmpty()) {
-            IRBasicBlock x = stack.remove(stack.size() - 1);
-            if (x == null || !seen.add(x)) {
-                continue;
-            }
-            if (defBlocks.contains(x)) {
-                return true;
-            }
-            List preds = x.getPredecessors();
-            if (preds != null) {
-                stack.addAll(preds);
+        // Forward uncovered fixpoint: uncovered(X) = no def of v in X and
+        // (no predecessors or some predecessor uncovered). All quads of a
+        // basic block execute on any pass, so a def anywhere in the block
+        // covers every path through it.
+        HashSet<IRBasicBlock> uncovered = new HashSet<IRBasicBlock>();
+        boolean changed = true;
+        while (changed) {
+            changed = false;
+            blocks = cfg.iterator();
+            while (blocks.hasNext()) {
+                IRBasicBlock x = (IRBasicBlock) blocks.next();
+                if (uncovered.contains(x) || defBlocks.contains(x)) {
+                    continue;
+                }
+                List preds = x.getPredecessors();
+                boolean unc;
+                if (preds == null || preds.isEmpty()) {
+                    unc = true;
+                } else {
+                    unc = false;
+                    for (int p = 0; p < preds.size(); p++) {
+                        if (uncovered.contains(preds.get(p))) {
+                            unc = true;
+                            break;
+                        }
+                    }
+                }
+                if (unc) {
+                    uncovered.add(x);
+                    changed = true;
+                }
             }
         }
-        return false;
+        List preds = useBlock.getPredecessors();
+        if (preds != null) {
+            for (int p = 0; p < preds.size(); p++) {
+                if (uncovered.contains(preds.get(p))) {
+                    return false;
+                }
+            }
+        }
+        return true;
     }
 
     /**

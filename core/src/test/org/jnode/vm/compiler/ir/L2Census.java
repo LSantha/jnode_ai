@@ -182,6 +182,10 @@ public class L2Census {
         for (String s : handlerExamples) {
             out.println(s);
         }
+        // ANCHOR-L2-131 C2 assertion layer: tag-vs-placement disagreements
+        // over every method compiled above (log-only layer in deconstructOnePhi).
+        out.println("SSATAG disagreements=" + IRControlFlowGraph.tagDisagreements
+            + " handlerEntryPhis=" + IRControlFlowGraph.tagHandlerEntryPhis);
         out.flush();
         if (out != null && args.length > 1) {
             out.close();

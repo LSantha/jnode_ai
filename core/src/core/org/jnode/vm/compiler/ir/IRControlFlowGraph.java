@@ -51,6 +51,13 @@ import org.jnode.vm.objects.BootableArrayList;
 //TODO simpify to use existing CFG from l1
 
 public class IRControlFlowGraph<T> implements Iterable<IRBasicBlock<T>> {
+    // ANCHOR-L2-131 (C2 assertion layer): tag-vs-placement disagreement
+    // counts over all compiles in this JVM. Log-only: the first 20
+    // disagreements print to stderr, all of them are counted. Read from
+    // tests/census to decide whether the L2-124/127 routing heuristic can
+    // be replaced by the tags (C3).
+    public static int tagDisagreements = 0;
+    public static int tagHandlerEntryPhis = 0;
 
     private SSAStack<T>[] renumberArray;
     private final IRBasicBlock<T>[] bblocks;
@@ -573,14 +580,18 @@ public class IRControlFlowGraph<T> implements Iterable<IRBasicBlock<T>> {
 
     /**
      * One phi source for {@code deconstructOnePhi}: resolved rhs version plus
-     * its def block (startBlock for passthrough MethodArguments).
+     * its def block (startBlock for passthrough MethodArguments). tag is the
+     * predecessor the source arrived from (ANCHOR-L2-131, null = legacy
+     * no-tag source).
      */
     private static final class PhiSource<T> {
         final Variable<T> rhs;
         final IRBasicBlock<T> defBlock;
-        PhiSource(Variable<T> rhs, IRBasicBlock<T> defBlock) {
+        final IRBasicBlock<T> tag;
+        PhiSource(Variable<T> rhs, IRBasicBlock<T> defBlock, IRBasicBlock<T> tag) {
             this.rhs = rhs;
             this.defBlock = defBlock;
+            this.tag = tag;
         }
     }
 
@@ -668,7 +679,11 @@ public class IRControlFlowGraph<T> implements Iterable<IRBasicBlock<T>> {
         // copy landed on the allocHeap edge, heap.alloc on null).
         List<PhiSource<T>> primaries = new ArrayList<PhiSource<T>>();
         List<PhiSource<T>> ambiguous = new ArrayList<PhiSource<T>>();
-        for (Operand<T> o : paq.getPhiOperand().getSources()) {
+        final java.util.List<Operand<T>> phiSources =
+            paq.getPhiOperand().getSources();
+        for (int si = 0; si < phiSources.size(); si++) {
+            Operand<T> o = phiSources.get(si);
+            final IRBasicBlock<T> tag = paq.getPhiOperand().getSourcePred(si);
             Variable<T> rhs = (Variable<T>) o;
             AssignQuad<T> assignQuad = rhs.getAssignQuad();
             IRBasicBlock<T> defBlock;
@@ -681,12 +696,16 @@ public class IRControlFlowGraph<T> implements Iterable<IRBasicBlock<T>> {
             }
             if (defBlock != null && preds.contains(defBlock)
                 && !claimed.contains(defBlock)) {
-                primaries.add(new PhiSource<T>(rhs, defBlock));
+                primaries.add(new PhiSource<T>(rhs, defBlock, tag));
                 claimed.add(defBlock);
             } else {
-                ambiguous.add(new PhiSource<T>(rhs, defBlock));
+                ambiguous.add(new PhiSource<T>(rhs, defBlock, tag));
             }
         }
+        // ANCHOR-L2-131: where each source's copy lands, for the C2
+        // assertion layer below.
+        final java.util.IdentityHashMap<PhiSource<T>, IRBasicBlock<T>> placed =
+            new java.util.IdentityHashMap<PhiSource<T>, IRBasicBlock<T>>();
         for (PhiSource<T> s : primaries) {
             AssignQuad<T> phiMove;
             phiMove = new VariableRefAssignQuad<T>(0, s.defBlock, lhs, s.rhs);
@@ -697,6 +716,7 @@ public class IRControlFlowGraph<T> implements Iterable<IRBasicBlock<T>> {
                 priBucket.put(s.defBlock, list);
             }
             list.add(phiMove);
+            placed.put(s, s.defBlock);
             if (firstBlock == null
                 || s.defBlock.getStartPC() < firstBlock.getStartPC()) {
                 firstBlock = s.defBlock;
@@ -727,6 +747,7 @@ public class IRControlFlowGraph<T> implements Iterable<IRBasicBlock<T>> {
                         ambBucket.put(ab, list);
                     }
                     list.add(phiMove);
+                    placed.put(s, ab);
                     claimed.add(ab);
                     progress = true;
                     if (firstBlock == null
@@ -755,6 +776,7 @@ public class IRControlFlowGraph<T> implements Iterable<IRBasicBlock<T>> {
                         ambBucket.put(ab, list);
                     }
                     list.add(phiMove);
+                    placed.put(s, ab);
                     claimed.add(ab);
                     if (firstBlock == null
                         || ab.getStartPC() < firstBlock.getStartPC()) {
@@ -791,6 +813,40 @@ public class IRControlFlowGraph<T> implements Iterable<IRBasicBlock<T>> {
                 }
                 list.add(firstPhiMove);
                 firstBlock = ab;
+                placed.put(new PhiSource<T>(rhs, ab, null), ab);
+            }
+        }
+        // ANCHOR-L2-131 (C2 assertion layer, log-only): a copy for a tagged
+        // source is sound iff it is on the tagged edge (X == T) or in a
+        // block that (a) dominates the tag (executes before the tag's edge
+        // on every path to it) and (b) is dominated by the source's def
+        // (the copied value is defined before the copy runs). Anything else
+        // is the routing heuristic guessing - the test_keySet swap class.
+        // The placement above is UNCHANGED until tag routing is proven; this
+        // only counts/logs, so census and guest behavior are untouched.
+        for (java.util.Map.Entry<PhiSource<T>, IRBasicBlock<T>> e
+            : placed.entrySet()) {
+            final IRBasicBlock<T> tag = e.getKey().tag;
+            if (tag == null) {
+                continue;
+            }
+            if (join.isStartOfExceptionHandler()) {
+                // Handler-entry joins: copies on tagged normal edges do not
+                // execute on the exceptional dispatch; the L2-127/125
+                // machinery and the documented S6.4 approximation own this
+                // semantics. Counted for visibility, not flagged.
+                tagHandlerEntryPhis++;
+                continue;
+            }
+            final IRBasicBlock<T> x = e.getValue();
+            if (x != tag && !(blockDominates(x, tag)
+                && blockDominates(e.getKey().defBlock, x))) {
+                tagDisagreements++;
+                if (tagDisagreements <= 20) {
+                    System.err.println("[ssatag] DISAGREE phi for " + lhs
+                        + ": copy in " + x + " but source arrived from "
+                        + tag + " (def in " + e.getKey().defBlock + ")");
+                }
             }
         }
         // Flush: ambiguous copies first, then primaries (source order kept
