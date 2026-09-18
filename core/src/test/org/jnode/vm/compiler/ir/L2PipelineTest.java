@@ -537,6 +537,36 @@ public class L2PipelineTest {
         if (v != null) {
             fail("SSA violation (pre-deSSA) in jsrDemo: " + v);
         }
+        // ANCHOR-L2-132 regression guard: NativeStrictMath#remPiOver2 (a real
+        // guest method, OpenJDK classlib) had a post-deSSA dcmpl reading a
+        // variable with NO defining quad - deSSA's phiMove.doPass2 killed the
+        // constant's def while this use still referenced it. The kill is gone
+        // (ConstantRefAssignQuad.propagate no longer marks the def dead); the
+        // post-deSSA must-check must stay clean here.
+        VmSystemClassLoader openjdkLoader = new VmSystemClassLoader(
+            classlibUrls(new java.io.File("core/build/classes")),
+            loader.getArchitecture());
+        VmType strictType = openjdkLoader.loadClass("java.lang.NativeStrictMath", true);
+        VmMethod remPi = null;
+        for (int i = 0; i < strictType.getNoDeclaredMethods(); i++) {
+            VmMethod m = strictType.getDeclaredMethod(i);
+            if ("remPiOver2".equals(m.getName())) {
+                remPi = m;
+            }
+        }
+        assertNotNull("remPiOver2 not found", remPi);
+        IRControlFlowGraph cfg2 = runToPostDce(remPi);
+        v = SSAVerifier.verifyPreDessA(cfg2);
+        if (v != null) {
+            fail("SSA violation (pre-deSSA) in remPiOver2: " + v);
+        }
+        cfg2.deconstrucSSA();
+        cfg2.removeDefUseChains();
+        cfg2.fixupAddresses();
+        v = SSAVerifier.verifyPostDessA(cfg2);
+        if (v != null) {
+            fail("SSA violation (post-deSSA) in remPiOver2: " + v);
+        }
     }
 
     /**

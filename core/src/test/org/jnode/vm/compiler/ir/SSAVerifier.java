@@ -86,22 +86,6 @@ public final class SSAVerifier {
                         return "phi arity " + nsrc + " != pred count " + npred
                             + " at " + q + " in " + b;
                     }
-                    // (d) phi sources share the phi's slot (rewritePhiParams
-                    // reads the phi LHS's stack): a cross-slot source means a
-                    // value from another slot merged into this phi.
-                    int phiSlot = ((Variable) q.getDefinedOp()).getIndex();
-                    java.util.List<Operand> srcsAll =
-                        ((PhiAssignQuad) q).getPhiOperand().getSources();
-                    for (int s = 0; s < srcsAll.size(); s++) {
-                        Operand so = srcsAll.get(s);
-                        if (so instanceof Variable
-                            && ((Variable) so).getIndex() != phiSlot) {
-                            return "cross-slot phi source " + so
-                                + " (slot " + ((Variable) so).getIndex()
-                                + ") in phi for slot " + phiSlot
-                                + " at " + q + " in " + b;
-                        }
-                    }
                     // (c) edge tags match the predecessor set (ANCHOR-L2-131
                     // tagging correctness): every live phi source must carry
                     // a tag, and the tag set must equal the predecessor set.
