@@ -1134,7 +1134,6 @@ public class IRControlFlowGraph<T> implements Iterable<IRBasicBlock<T>> {
         java.util.ArrayList<Variable<T>> handlerPopped = null;
         java.util.ArrayList<Variable<T>> handlerPres = null;
         java.util.ArrayList<Variable<T>> handlerTops = null;
-        SSAStack<T> excStack = null;
         if (block.isStartOfExceptionHandler()) {
             handlerPopped = new java.util.ArrayList<Variable<T>>();
             handlerPres = new java.util.ArrayList<Variable<T>>();
@@ -1150,9 +1149,19 @@ public class IRControlFlowGraph<T> implements Iterable<IRBasicBlock<T>> {
             // instead of the caught NoSuchMethodException.)
             final int excSlot = block.getStackOffset();
             if (excSlot < renumberArray.length && renumberArray[excSlot] != null) {
+                // Push ONCE and never pop: the exception behaves like the
+                // method arguments (version at the bottom of the slot's SSA
+                // stack, invisible once real versions stack above). A
+                // balanced pop is WRONG here: the handler's own pushes
+                // (made during doRenameVariables, e.g. the
+                // new java.io.IOException in ProcessBuilder#start) sit on
+                // top, and they MUST stay - they are the SSA state flowing
+                // into the handler-dominated continuation blocks (the
+                // athrow there reads the freshly built object, not the
+                // exception; popVariables' strict per-def balance would
+                // also underflow).
                 renumberArray[excSlot].push(
                     new ExceptionArgument(Operand.REFERENCE, excSlot));
-                excStack = renumberArray[excSlot];
             }
         }
         doRenameVariables(block);
@@ -1164,10 +1173,6 @@ public class IRControlFlowGraph<T> implements Iterable<IRBasicBlock<T>> {
                 getStack(handlerPopped.get(k)).push(handlerPopped.get(k));
             }
         }
-        if (excStack != null) {
-            excStack.pop();
-        }
-
         if (block == startBlock) {
             for (IRBasicBlock b : bblocks) {
                 if (b.getIDominator() == null && b != startBlock) {
