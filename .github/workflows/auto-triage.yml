@@ -1,0 +1,111 @@
+name: Auto Triage
+
+on:
+  issues:
+    types: [opened]
+  issue_comment:
+    types: [created]
+
+# One runner per issue; bursts of comments queue instead of racing.
+concurrency:
+  group: auto-triage-${{ github.event.issue.number }}
+  cancel-in-progress: false
+
+jobs:
+  triage:
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+    steps:
+      - name: Auto post /oc triage when due
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GH_PAT || secrets.GITHUB_TOKEN }}
+          script: |
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+
+            function isBotUser(user) {
+              if (!user) return false;
+              return ((user.type || '').toLowerCase() === 'bot' ||
+                (user.login || '').includes('[bot]'));
+            }
+
+            async function getIssue(number) {
+              const { data } = await github.rest.issues.get({ owner, repo, issue_number: number });
+              return data;
+            }
+
+            function labelNames(issue) {
+              return (issue.labels || []).map(l => (typeof l === 'string') ? l : l.name);
+            }
+
+            async function alreadyTriaged(number) {
+              const comments = await github.paginate(github.rest.issues.listComments, {
+                owner, repo, issue_number: number, per_page: 100,
+              });
+              let triageCount = 0;
+              let hasOcTriage = false;
+              for (const c of comments) {
+                const b = c.body || '';
+                if (/## .*Triage/i.test(b)) triageCount++;
+                if(/(^|\s)\/oc triage(\s|$)/.test(b)) hasOcTriage = true;
+              }
+              return { triageCount, hasOcTriage };
+            }
+
+            async function postTriage(number, message) {
+              core.info('Auto-triage: posting /oc triage on #' + number);
+              await github.rest.issues.createComment({ owner, repo, issue_number: number, body: message });
+            }
+
+            const NEW_ISSUE_MSG = '/oc triage\n\nAuto-triage of new issue. Follow the jnode-triage-issue skill: audit kind/area labels (correct mislabels), assess repro-sufficiency, estimate blast radius, post one ## Triage comment (clear shape when actionable, vague shape with the needs-info literals only when human input is truly required).';
+            const RE_TRIAGE_MSG = '/oc triage\n\nRe-triage: reporter replied since the vague triage. Per jnode-triage-issue sections 0 and 8: read the FULL comment thread including the latest reply, re-judge sufficiency, post one updated ## Triage comment (clear shape clears needs-info, vague shape keeps it).';
+
+            if (context.eventName === 'issues') {
+              const issue = context.payload.issue;
+              if (!issue) return;
+              const number = issue.number;
+              if (issue.pull_request) { core.info('Issues event on a PR, skipping.'); return; }
+              if (isBotUser(issue.user)) { core.info('Issue #' + number + ' opened by bot, skipping.'); return; }
+
+              const full = await getIssue(number);
+              const labels = labelNames(full);
+              if (labels.includes('no-auto')) { core.info('#' + number + ' has no-auto, skipping.'); return; }
+              if (labels.includes('kind/orchestrator')) { core.info('#' + number + ' is an orchestrator master, skipping.'); return; }
+              if (/<!-- ORCHESTRATOR_STATE:/.test(full.body || '')) { core.info('#' + number + ' holds orchestrator state, skipping.'); return; }
+
+              const { triageCount, hasOcTriage } = await alreadyTriaged(number);
+              if (triageCount > 0 || hasOcTriage) { core.info('#' + number + ' already triaged, skipping.'); return; }
+
+              await postTriage(number, NEW_ISSUE_MSG);
+              return;
+            }
+
+            if (context.eventName === 'issue_comment') {
+              const issue = context.payload.issue;
+              const comment = context.payload.comment || {};
+              if (!issue) return;
+              const number = issue.number;
+              if (issue.pull_request) return;
+              if (isBotUser(comment.user)) { core.info('Bot comment on #' + number + ', skipping.'); return; }
+              const body = comment.body || '';
+              if (/^\s*\/(oc|run|orchestrate)(\s|$)/.test(body)) { core.info('Slash-command comment, routed elsewhere.'); return; }
+
+              const full = await getIssue(number);
+              const labels = labelNames(full);
+              if (labels.includes('no-auto')) return;
+              if (labels.includes('kind/orchestrator')) return;
+              if (/<!-- ORCHESTRATOR_STATE:/.test(full.body || '')) return;
+              if (labels.includes('agent/in-progress')) { core.info('#' + number + ' has agent/in-progress, skipping.'); return; }
+              if (!labels.includes('agent/needs-info')) return;
+
+              const { triageCount } = await alreadyTriaged(number);
+              if (triageCount === 0) return;
+              if (triageCount >= 3) { core.info('#' + number + ' reached 3 triage passes, leaving for human.'); return; }
+
+              await postTriage(number, RE_TRIAGE_MSG);
+              return;
+            }
+
+            core.info('Unhandled event ' + context.eventName);

@@ -101,4 +101,58 @@ test('opencode-post-step.js test suite', async (t) => {
     await runPostStep({ github, context, core });
     assert.ok(calls.removeLabel.includes('agent/in-progress'));
   });
+
+  await t.test('Vague triage with reporter literal applies agent/needs-info', async () => {
+    const { core, github, context, calls, setComments } = createMocks();
+    process.env.PREV_CONCLUSION = 'success';
+    setComments([{ body: '## Triage\n\n- [ ] **Repro:** needs more info from reporter\n- [ ] **Suggested next:** needs-info' }]);
+
+    await runPostStep({ github, context, core });
+    assert.ok(calls.addLabels.includes('agent/needs-info'));
+  });
+
+  await t.test('Vague triage with needs-the-following applies agent/needs-info', async () => {
+    const { core, github, context, calls, setComments } = createMocks();
+    process.env.PREV_CONCLUSION = 'success';
+    setComments([{ body: '## Triage\n\nNeeds the following before work can start:\n1. QEMU cmd?' }]);
+
+    await runPostStep({ github, context, core });
+    assert.ok(calls.addLabels.includes('agent/needs-info'));
+  });
+
+  await t.test('Clear triage applies no agent label', async () => {
+    const { core, github, context, calls, setIssueData, setComments } = createMocks();
+    process.env.PREV_CONCLUSION = 'success';
+    setIssueData({ labels: ['kind/bug', 'area/fs'], state: 'open' });
+    setComments([{ body: '## Triage\n\n- [x] **Repro:** 1. boot 2. mkdir\n- [x] **Suggested next:** fix' }]);
+
+    await runPostStep({ github, context, core });
+    assert.strictEqual(calls.addLabels.length, 0, 'Clear triage must not add any agent label');
+  });
+
+  await t.test('Clear re-triage removes stale agent/needs-info', async () => {
+    const { core, github, context, calls, setIssueData, setComments } = createMocks();
+    process.env.PREV_CONCLUSION = 'success';
+    setIssueData({ labels: ['kind/bug', 'agent/needs-info'], state: 'open' });
+    setComments([
+      { body: '## Triage\n\n- [ ] **Repro:** needs more info from reporter' },
+      { body: 'reporter reply with serial log' },
+      { body: '## Triage\n\n- [x] **Repro:** 1. boot 2. mkdir\n- [x] **Suggested next:** fix' }
+    ]);
+
+    await runPostStep({ github, context, core });
+    assert.ok(calls.removeLabel.includes('agent/needs-info'));
+    assert.strictEqual(calls.addLabels.length, 0, 'Clear re-triage must not add any agent label');
+  });
+
+  await t.test('Vague triage overrides existing agent/done', async () => {
+    const { core, github, context, calls, setIssueData, setComments } = createMocks();
+    process.env.PREV_CONCLUSION = 'success';
+    setIssueData({ labels: ['agent/done'], state: 'open' });
+    setComments([{ body: '## Triage\n\n- [ ] **Repro:** needs more info from reporter' }]);
+
+    await runPostStep({ github, context, core });
+    assert.ok(calls.addLabels.includes('agent/needs-info'));
+    assert.ok(calls.removeLabel.includes('agent/done'));
+  });
 });

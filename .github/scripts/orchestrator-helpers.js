@@ -88,6 +88,85 @@ module.exports = function createHelpers({ github, context, core }) {
     return true;
   }
 
+  /** Kinds that may auto-merge without an explicit 'auto-merge' label. */
+  var SAFE_AUTO_MERGE_KINDS = ["kind/chore", "kind/wiki", "kind/test"];
+
+  /** Label-only check: explicit 'auto-merge' or implicit safe kind. No API beyond label reads. */
+  async function isAutoMergeEligible(issueNumber, prNumber) {
+    var issue = await github.rest.issues.get({
+      owner, repo, issue_number: issueNumber
+    });
+    var labels = extractLabels(issue.data);
+    if (labels.includes("auto-merge")) return true;
+    var implicit = SAFE_AUTO_MERGE_KINDS.some(function (k) { return labels.includes(k); });
+    if (!implicit) return false;
+
+    if (prNumber) {
+      try {
+        var pr = await github.rest.issues.get({
+          owner, repo, issue_number: prNumber
+        });
+        if (extractLabels(pr.data).includes("auto-merge")) return true;
+      } catch (_) {}
+    }
+    return implicit;
+  }
+
+  /** Forbidden diff paths: ASM, build config, plugin lists. Mirrors the resolver skill self-check. */
+  var FORBIDDEN_DIFF_RE = /(^|\/)(core\/src\/native\/x86\/|jnode\.properties$|all\/build\.xml$|all\/conf\/)/;
+
+  /** True when the PR diff is small and touches no forbidden path. */
+  async function isDiffSafe(prNumber) {
+    var files;
+    try {
+      files = await github.rest.pulls.listFiles({
+        owner, repo, pull_number: prNumber, per_page: 100
+      });
+    } catch (e) {
+      core.warning("isDiffSafe: listFiles failed for PR #" + prNumber + ": " + e.message);
+      return false;
+    }
+    var list = files.data || [];
+    if (list.length === 0 || list.length >= 100) return false;
+    if (list.length > 5) return false;
+    var additions = 0;
+    for (var i = 0; i < list.length; i++) {
+      additions += list[i].additions || 0;
+      if (FORBIDDEN_DIFF_RE.test(list[i].filename || "")) return false;
+    }
+    return additions <= 100;
+  }
+
+  /** True when CI check runs on the PR head SHA show success and no failure. */
+  async function isCIGreen(prNumber) {
+    var pr;
+    try {
+      pr = await github.rest.pulls.get({ owner, repo, pull_number: prNumber });
+    } catch (e) {
+      core.warning("isCIGreen: pulls.get failed for PR #" + prNumber + ": " + e.message);
+      return false;
+    }
+    var sha = pr.data && pr.data.head && pr.data.head.sha;
+    if (!sha) return false;
+    var runs;
+    try {
+      var res = await github.rest.checks.listForRef({ owner, repo, ref: sha, per_page: 100 });
+      runs = (res.data && res.data.check_runs) || [];
+    } catch (e) {
+      core.warning("isCIGreen: listForRef failed for " + sha + ": " + e.message);
+      return false;
+    }
+    var BAD = ["failure", "cancelled", "timed_out", "action_required"];
+    var ok = 0;
+    for (var i = 0; i < runs.length; i++) {
+      var r = runs[i];
+      if (r.status !== "completed") continue;
+      if (BAD.indexOf(r.conclusion) >= 0) return false;
+      if (r.conclusion === "success") ok++;
+    }
+    return ok > 0;
+  }
+
   /** Return true if the user object represents a bot. */
   function isBotUser(user) {
     return !!user && ((user.type || "").toLowerCase() === "bot" ||
@@ -113,6 +192,18 @@ module.exports = function createHelpers({ github, context, core }) {
     }
   }
 
+  /** List open PR numbers whose head SHA matches (for CI-completion wakeups). */
+  async function findPRsForSHA(sha) {
+    var pulls = await github.rest.pulls.list({
+      owner, repo, state: "open", per_page: 100
+    });
+    var out = [];
+    for (var i = 0; i < pulls.data.length; i++) {
+      var pr = pulls.data[i];
+      if (pr.head && pr.head.sha === sha) out.push(pr.number);
+    }
+    return out;
+  }
   /** Extract labels from an issue response as an array of strings. */
   function extractLabels(issueData) {
     return (issueData.labels || []).map(function (l) {
@@ -138,9 +229,14 @@ module.exports = function createHelpers({ github, context, core }) {
     getReviewPrompt: getReviewPrompt,
     getAgentReviewVerdict: getAgentReviewVerdict,
     needsHumanReview: needsHumanReview,
+    isAutoMergeEligible: isAutoMergeEligible,
+    isDiffSafe: isDiffSafe,
+    isCIGreen: isCIGreen,
+    SAFE_AUTO_MERGE_KINDS: SAFE_AUTO_MERGE_KINDS,
     isBotUser: isBotUser,
     mergePR: mergePR,
     extractLabels: extractLabels,
+    findPRsForSHA: findPRsForSHA,
     COMPLETION_LABELS: COMPLETION_LABELS,
     SHORT_CIRCUIT_LABELS: SHORT_CIRCUIT_LABELS
   };

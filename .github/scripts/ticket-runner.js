@@ -108,10 +108,20 @@ module.exports = async ({ github, context, core }) => {
   const owner = context.repo.owner;
   const repo  = context.repo.repo;
 
+  // Auto-start policy (shared by issues:labeled and workflow_run paths).
+  const ACTIONABLE_KINDS = ["kind/bug", "kind/feature", "kind/chore", "kind/wiki", "kind/test"];
+  const AUTO_BLOCKING_LABELS = ["agent/done", "agent/investigated", "agent/skip", "agent/blocked",
+    "agent/needs-info", "agent/duplicate", "agent/failed", "agent/in-progress"];
+  const VAGUE_RE = /needs more info from reporter|needs the following|suggested next:\s*needs-info/i;
+  const TRIAGE_RE = /## .*Triage/i;
+  const REFUSAL_RE = /refusal|out of scope/i;
+
   // ---- Determine issue number depending on event type ----
 
   if (context.eventName === "issue_comment") {
     await handleIssueComment();
+  } else if (context.eventName === "issues") {
+    await handleIssuesLabeled();
   } else if (context.eventName === "workflow_run") {
     await handleWorkflowRun();
   } else if (context.eventName === "pull_request_review") {
@@ -253,9 +263,184 @@ module.exports = async ({ github, context, core }) => {
     return { managed: false };
   }
 
+  // ---- Auto-start (no manual /run needed) ----
+  // Triage-first ordering: triage owns kind/area labels, auto-run only
+  // proceeds once a CLEAR ## Triage comment exists. All auto paths share
+  // these guards; manual /run is unaffected.
+
+  // Shared guards for every auto-start path. Returns { ok, reason?, labels? }.
+  async function autoStartGuards(issueNumber) {
+    var d;
+    try {
+      var res = await github.rest.issues.get({ owner, repo, issue_number: issueNumber });
+      d = res.data;
+    } catch (err) {
+      return { ok: false, reason: "fetch failed: " + err.message };
+    }
+    if (d.pull_request) return { ok: false, reason: "is a PR" };
+    var labels = h.extractLabels(d);
+    if (labels.includes("no-auto")) return { ok: false, reason: "no-auto" };
+    if (labels.includes("kind/orchestrator")) return { ok: false, reason: "orchestrator master" };
+    if (ORCHESTRATOR_STATE_RE.test(d.body || "")) return { ok: false, reason: "holds orchestrator state" };
+    if (parseState(d.body)) return { ok: false, reason: "already has runner state" };
+    for (var i = 0; i < AUTO_BLOCKING_LABELS.length; i++) {
+      if (labels.includes(AUTO_BLOCKING_LABELS[i])) return { ok: false, reason: "has " + AUTO_BLOCKING_LABELS[i] };
+    }
+    if (!ACTIONABLE_KINDS.some(function (k) { return labels.includes(k); })) {
+      return { ok: false, reason: "no actionable kind" };
+    }
+    var orch = await checkOrchestratorManaged(issueNumber, d.body || "");
+    if (orch.managed) return { ok: false, reason: "orchestrator-managed" };
+    return { ok: true, labels: labels };
+  }
+
+  // Latest ## Triage clarity: present = triaged at least once,
+  // clear = latest triage has no vague literals and is not a refusal.
+  async function triageStatus(issueNumber) {
+    var res = await github.rest.issues.listComments({ owner, repo, issue_number: issueNumber, per_page: 100 });
+    var list = (res && res.data) ? res.data : res;
+    var count = 0;
+    var clear = false;
+    for (var i = 0; i < list.length; i++) {
+      var b = (list[i] && list[i].body) || "";
+      if (TRIAGE_RE.test(b)) {
+        count++;
+        clear = !VAGUE_RE.test(b) && !REFUSAL_RE.test(b);
+      }
+    }
+    return { present: count > 0, clear: clear, count: count };
+  }
+
+  // Create fresh runner state and trigger DEV. Caller ran autoStartGuards first.
+  async function autoInitRun(issueNumber, reason) {
+    var res = await github.rest.issues.get({ owner, repo, issue_number: issueNumber });
+    var body = (res.data && res.data.body) || "";
+    if (parseState(body)) {
+      core.info("Ticket runner: auto-start skipped for #" + issueNumber + ", state appeared meanwhile.");
+      return false;
+    }
+    var st = initState(3);
+    st.history.push({ event: "auto_start", reason: reason, timestamp: new Date().toISOString() });
+    var newBody = replaceOrAppendStatus(body, st, issueNumber);
+    await github.rest.issues.update({ owner, repo, issue_number: issueNumber, body: newBody });
+    await h.triggerTask(issueNumber);
+    core.info("Ticket runner: auto-started DEV for #" + issueNumber + " (" + reason + ").");
+    return true;
+  }
+
+  async function handleIssuesLabeled() {
+    var label = ((context.payload && context.payload.label) || {}).name || "";
+    if (ACTIONABLE_KINDS.indexOf(label) < 0) return;
+    var issue = context.payload.issue;
+    if (!issue) return;
+    var issueNumber = issue.number;
+
+    var g = await autoStartGuards(issueNumber);
+    if (!g.ok) {
+      core.info("Ticket runner: auto-run skipped for #" + issueNumber + ": " + g.reason + ".");
+      return;
+    }
+    var t = await triageStatus(issueNumber);
+    if (!t.present) {
+      core.info("Ticket runner: #" + issueNumber + " labeled " + label + " but untriaged; requesting triage first.");
+      await h.triggerTask(issueNumber, "/oc triage\n\nAuto-requested: actionable kind label applied before any triage. Follow jnode-triage-issue.");
+      return;
+    }
+    if (!t.clear || t.count > 3) {
+      core.info("Ticket runner: #" + issueNumber + " triage not clear yet, waiting for re-triage.");
+      return;
+    }
+    await autoInitRun(issueNumber, "kind label " + label + " + clear triage");
+  }
+
+  async function maybeAutoStartAfterTriage(issueNumber) {
+    var g = await autoStartGuards(issueNumber);
+    if (!g.ok) {
+      core.info("Ticket runner: no state for #" + issueNumber + ", auto-start skipped: " + g.reason + ".");
+      return false;
+    }
+    var t = await triageStatus(issueNumber);
+    if (!t.present || !t.clear || t.count > 3) {
+      core.info("Ticket runner: no state for #" + issueNumber + ", waiting for clear triage.");
+      return false;
+    }
+    await autoInitRun(issueNumber, "triage-clear after opencode run");
+    return true;
+  }
+
+  // Hidden marker so CI-failure comments post exactly once per SHA.
+  function ciHealMarker(sha) {
+    return "<!-- CI-HEAL:" + sha + " -->";
+  }
+
+  // Post /oc fix for a CI failure unless already posted (marker), the PR is
+  // busy (agent/in-progress), or automation is opted out (no-auto).
+  async function postCiFixOnce(prNumber, sha, runUrl) {
+    var d = (await github.rest.issues.get({ owner, repo, issue_number: prNumber })).data;
+    var labels = h.extractLabels(d);
+    if (labels.includes("no-auto") || labels.includes("agent/in-progress")) {
+      core.info("Ticket runner: CI-heal skipped for PR #" + prNumber + " (opt-out or busy).");
+      return false;
+    }
+    var marker = ciHealMarker(sha);
+    var comments = await github.rest.issues.listComments({ owner, repo, issue_number: prNumber, per_page: 100 });
+    var list = (comments && comments.data) ? comments.data : comments;
+    for (var i = 0; i < list.length; i++) {
+      if (((list[i] && list[i].body) || "").indexOf(marker) >= 0) {
+        core.info("Ticket runner: CI-heal already posted for PR #" + prNumber + " @ " + sha + ".");
+        return false;
+      }
+    }
+    await h.triggerTask(prNumber, "/oc fix CI failed for " + sha + ": " + runUrl + "\n" + marker +
+      "\n\nRead the failing check output, fix the code on this branch, and push. Do not open a new PR.");
+    return true;
+  }
+
+  // Java CI completions: green re-runs review for deferred merges,
+  // red posts one /oc fix per SHA on active PRs.
+  async function handleJavaCICompletion() {
+    var run = context.payload.workflow_run;
+    var conclusion = run.conclusion;
+    if (conclusion === "skipped") return;
+    var sha = run.head_sha || "";
+    var runUrl = "https://github.com/" + owner + "/" + repo + "/actions/runs/" + run.id;
+    core.info("Ticket runner: Java CI " + conclusion + " for " + sha);
+
+    var prs;
+    try {
+      prs = await h.findPRsForSHA(sha);
+    } catch (err) {
+      core.warning("Ticket runner: findPRsForSHA failed: " + err.message);
+      return;
+    }
+    for (var i = 0; i < prs.length; i++) {
+      var prNumber = prs[i];
+      var found = await findIssueByPR(prNumber);
+      if (!found) continue;
+      var st = found.state;
+      if (!st || st.phase === "DONE" || st.phase === "FAILED") continue;
+      if (conclusion === "success") {
+        if (st.phase !== "REVIEW") continue;
+        st.history.push({ event: "ci_green_rereview", timestamp: new Date().toISOString() });
+        await updateIssueState(found.issueNumber, st);
+        await h.triggerTask(prNumber, h.getReviewPrompt());
+        core.info("Ticket runner: CI green, re-reviewing PR #" + prNumber + " for #" + found.issueNumber);
+      } else {
+        if (st.phase !== "REVIEW" && st.phase !== "FEEDBACK") continue;
+        await postCiFixOnce(prNumber, sha.slice(0, 7), runUrl);
+      }
+    }
+  }
+
   async function handleWorkflowRun() {
     var conclusion = context.payload.workflow_run.conclusion;
     if (conclusion === "skipped") return;
+
+    var wfName = context.payload.workflow_run.name || "opencode";
+    if (wfName === "Java CI") {
+      await handleJavaCICompletion();
+      return;
+    }
 
     var runTitle = context.payload.workflow_run.display_title ||
                    (context.payload.workflow_run.head_commit && context.payload.workflow_run.head_commit.message) || "";
@@ -289,7 +474,7 @@ module.exports = async ({ github, context, core }) => {
     }
 
     if (!state) {
-      core.info("No TICKET_RUNNER_STATE for #" + runIssueNumber + ". Skipping.");
+      await maybeAutoStartAfterTriage(runIssueNumber);
       return;
     }
 
@@ -467,8 +652,8 @@ module.exports = async ({ github, context, core }) => {
 
     var verdict = await h.getAgentReviewVerdict(state.pr);
     if (verdict === "approve") {
-      var needsHuman = await h.needsHumanReview(issueNumber, state.pr);
-      if (needsHuman) {
+      var eligible = await h.isAutoMergeEligible(issueNumber, state.pr);
+      if (!eligible) {
         state.phase = "HUMAN_REVIEW";
         state.retries = 0;
         state.history.push({ event: "review_approved", next: "HUMAN_REVIEW", timestamp: new Date().toISOString() });
@@ -478,7 +663,7 @@ module.exports = async ({ github, context, core }) => {
           body: "Agent review passed. Awaiting human approval via native GitHub PR Review UI."
         });
         core.info("Ticket runner: #" + issueNumber + " -> HUMAN_REVIEW");
-      } else {
+      } else if (await h.isDiffSafe(state.pr) && await h.isCIGreen(state.pr)) {
         state.phase = "MERGE";
         state.history.push({ event: "review_approved", next: "MERGE", timestamp: new Date().toISOString() });
         try {
@@ -494,9 +679,17 @@ module.exports = async ({ github, context, core }) => {
           await updateIssueState(issueNumber, state);
           await github.rest.issues.createComment({
             owner, repo, issue_number: state.pr,
-            body: "⚠️ Ticket runner: failed to auto-merge PR #" + state.pr + ": " + err.message
+            body: "\u26a0\ufe0f Ticket runner: failed to auto-merge PR #" + state.pr + ": " + err.message
           });
         }
+      } else {
+        state.history.push({ event: "merge_deferred", timestamp: new Date().toISOString() });
+        await updateIssueState(issueNumber, state);
+        await github.rest.issues.createComment({
+          owner, repo, issue_number: state.pr,
+          body: "Agent review passed but auto-merge deferred (diff not safe or CI not green). Will retry when CI completes."
+        });
+        core.info("Ticket runner: #" + issueNumber + " merge deferred, staying in REVIEW");
       }
     } else if (verdict === "request-changes") {
       state.turn += 1;

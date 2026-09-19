@@ -30,7 +30,16 @@ function isRefusalComment(body) {
 
 function isNeedsInfoComment(body) {
   if (!body) return false;
-  return /needs more info|## 🤖 Triage|needs the following/i.test(body);
+  return /needs more info from reporter|needs the following|suggested next:\s*needs-info/i.test(body);
+}
+
+function isTriageComment(body) {
+  if (!body) return false;
+  return /## .*Triage/i.test(body);
+}
+
+function isTriageClearComment(body) {
+  return isTriageComment(body) && !isNeedsInfoComment(body) && !isRefusalComment(body);
 }
 
 function isInvestigationReport(body) {
@@ -39,7 +48,7 @@ function isInvestigationReport(body) {
 }
 
 function isAgentHeading(body) {
-  return body && (isRefusalComment(body) || isNeedsInfoComment(body) || isInvestigationReport(body));
+  return body && (isRefusalComment(body) || isNeedsInfoComment(body) || isInvestigationReport(body) || isTriageComment(body));
 }
 
 function findLatestAgentComment(comments) {
@@ -64,6 +73,9 @@ function decideAgentLabel({ existing, conclusion, latestComment, labels, isPR })
   }
   if (isInvestigationReport(latestComment)) {
     return { label: 'agent/investigated', reason: 'investigation report heading detected (verb-override)' };
+  }
+  if (isTriageClearComment(latestComment)) {
+    return { label: null, clearNeedsInfo: true, reason: 'clear triage, no blocking label' };
   }
   if (existing && existing !== 'agent/failed') {
     return { label: existing, reason: 'existing agent/* label respected' };
@@ -127,24 +139,39 @@ module.exports = async ({ github, context, core }) => {
   });
   core.info('Decision: ' + decision.label + ' (' + decision.reason + ')');
 
-  if (existingAgent && existingAgent !== decision.label) {
-    try {
-      await github.rest.issues.removeLabel({
-        owner, repo, issue_number: number, name: existingAgent,
-      });
-      core.info('Removed old label: ' + existingAgent);
-    } catch (err) {
-      core.warning('Failed to remove old label: ' + err.message);
+  if (decision.label === null) {
+    if (decision.clearNeedsInfo && labels.includes('agent/needs-info')) {
+      try {
+        await github.rest.issues.removeLabel({
+          owner, repo, issue_number: number, name: 'agent/needs-info',
+        });
+        core.info('Cleared stale agent/needs-info after clear triage');
+      } catch (err) {
+        core.warning('Failed to clear needs-info: ' + err.message);
+      }
+    } else {
+      core.info('Clear triage, no label change');
     }
-  }
+  } else {
+    if (existingAgent && existingAgent !== decision.label) {
+      try {
+        await github.rest.issues.removeLabel({
+          owner, repo, issue_number: number, name: existingAgent,
+        });
+        core.info('Removed old label: ' + existingAgent);
+      } catch (err) {
+        core.warning('Failed to remove old label: ' + err.message);
+      }
+    }
 
-  try {
-    await github.rest.issues.addLabels({
-      owner, repo, issue_number: number, labels: [decision.label],
-    });
-    core.info('Applied ' + decision.label);
-  } catch (err) {
-    core.warning('Failed to apply label: ' + err.message);
+    try {
+      await github.rest.issues.addLabels({
+        owner, repo, issue_number: number, labels: [decision.label],
+      });
+      core.info('Applied ' + decision.label);
+    } catch (err) {
+      core.warning('Failed to apply label: ' + err.message);
+    }
   }
 
   try {

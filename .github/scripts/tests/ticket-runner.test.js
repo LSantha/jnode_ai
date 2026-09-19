@@ -21,6 +21,9 @@ function createMocks(eventName, {
   issueLabels = [{ name: "kind/bug" }],
   runDisplayTitle = "Issue #42 - Fix bug",
   runConclusion = "success",
+  runName = "opencode",
+  runHeadSha = "abc123",
+  labelName = "kind/bug",
   prNumber = 99,
   prBody = "Closes #42",
   prLabels = [],
@@ -46,9 +49,12 @@ function createMocks(eventName, {
 
   let currentPRBody = prBody;
   let currentPRLabels = [...prLabels];
-  let currentPRHead = { ref: "opencode/issue42-fix" };
+  let currentPRHead = { ref: "opencode/issue42-fix", sha: "abc123" };
 
   let commentsOnPR = [];
+  let commentsOnIssue = [];
+  let prFiles = [{ filename: "fs/src/fs/org/jnode/fs/jfat/FatChain.java", additions: 10 }];
+  let checkRuns = [{ name: "test", status: "completed", conclusion: "success" }];
   let masterIssues = [...orchestratorMasters];
 
   const core = {
@@ -104,7 +110,7 @@ function createMocks(eventName, {
           if (issue_number === prNumber) {
             return { data: commentsOnPR };
           }
-          return { data: [] };
+          return { data: commentsOnIssue };
         },
         addLabels: async ({ issue_number, labels }) => {
           calls.addLabels.push({ issue_number, labels });
@@ -152,6 +158,14 @@ function createMocks(eventName, {
         },
         merge: async ({ pull_number }) => {
           calls.mergePR.push(pull_number);
+        },
+        listFiles: async () => {
+          return { data: prFiles };
+        }
+      },
+      checks: {
+        listForRef: async () => {
+          return { data: { check_runs: checkRuns } };
         }
       },
       git: {
@@ -181,8 +195,19 @@ function createMocks(eventName, {
     context.payload = {
       workflow_run: {
         id: 1001,
+        name: runName,
+        head_sha: runHeadSha,
         display_title: runDisplayTitle,
         conclusion: runConclusion
+      }
+    };
+  } else if (eventName === "issues") {
+    context.payload = {
+      issue: {
+        number: issueNumber
+      },
+      label: {
+        name: labelName
       }
     };
   } else if (eventName === "pull_request_review") {
@@ -208,6 +233,9 @@ function createMocks(eventName, {
     setIssueBody: (b) => { currentIssueBody = b; },
     setIssueLabels: (l) => { currentIssueLabels = l; },
     setCommentsOnPR: (c) => { commentsOnPR = c; },
+    setIssueComments: (c) => { commentsOnIssue = c; },
+    setPRFiles: (f) => { prFiles = f; },
+    setCheckRuns: (r) => { checkRuns = r; },
     getIssueBody: () => currentIssueBody
   };
 }
@@ -325,6 +353,66 @@ test("orchestrator-helpers utilities", async (t) => {
     assert.strictEqual(h.isBotUser({ login: "user1", type: "User" }), false);
     assert.strictEqual(h.isBotUser({ login: "app[bot]", type: "Bot" }), true);
     assert.strictEqual(h.isBotUser({ login: "opencode-agent[bot]" }), true);
+  });
+});
+
+test("merge safety gate helpers", async (t) => {
+  function makeHelpers({ issueLabels = [], prLabels = [], files = [], runs = [], sha = "abc", prs = [] } = {}) {
+    const gh = {
+      rest: {
+        issues: {
+          get: async ({ issue_number }) => ({
+            data: { labels: issue_number === 99 ? prLabels : issueLabels }
+          }),
+          listComments: async () => ({ data: [] })
+        },
+      pulls: {
+        get: async () => ({ data: { head: { sha } } }),
+        list: async () => ({ data: prs }),
+        listFiles: async () => ({ data: files })
+      },
+        checks: {
+          listForRef: async () => ({ data: { check_runs: runs } })
+        }
+      }
+    };
+    return createHelpers({ github: gh, context: { repo: { owner: "t", repo: "t" } }, core: { info: () => {}, warning: () => {} } });
+  }
+  const ok = [{ name: "build", status: "completed", conclusion: "success" }];
+
+  await t.test("isAutoMergeEligible: explicit, implicit, negative", async () => {
+    assert.strictEqual(await makeHelpers({ issueLabels: [{ name: "kind/bug" }, { name: "auto-merge" }] }).isAutoMergeEligible(42, 99), true);
+    assert.strictEqual(await makeHelpers({ issueLabels: [{ name: "kind/chore" }] }).isAutoMergeEligible(42, 99), true);
+    assert.strictEqual(await makeHelpers({ issueLabels: [{ name: "kind/test" }] }).isAutoMergeEligible(42, 99), true);
+    assert.strictEqual(await makeHelpers({ issueLabels: [{ name: "kind/bug" }] }).isAutoMergeEligible(42, 99), false);
+  });
+
+  await t.test("isDiffSafe: small ok, big/asm/config rejected", async () => {
+    const hSmall = makeHelpers({ files: [{ filename: "fs/a.java", additions: 10 }] });
+    assert.strictEqual(await hSmall.isDiffSafe(99), true);
+    const hBig = makeHelpers({ files: [{ filename: "fs/a.java", additions: 101 }] });
+    assert.strictEqual(await hBig.isDiffSafe(99), false);
+    const hMany = makeHelpers({ files: [1, 2, 3, 4, 5, 6].map(i => ({ filename: "f" + i + ".java", additions: 1 })) });
+    assert.strictEqual(await hMany.isDiffSafe(99), false);
+    const hAsm = makeHelpers({ files: [{ filename: "core/src/native/x86/kernel.asm", additions: 1 }] });
+    assert.strictEqual(await hAsm.isDiffSafe(99), false);
+    const hCfg = makeHelpers({ files: [{ filename: "jnode.properties", additions: 1 }] });
+    assert.strictEqual(await hCfg.isDiffSafe(99), false);
+    const hEmpty = makeHelpers({ files: [] });
+    assert.strictEqual(await hEmpty.isDiffSafe(99), false);
+  });
+
+  await t.test("isCIGreen: success, failure, none", async () => {
+    assert.strictEqual(await makeHelpers({ runs: ok }).isCIGreen(99), true);
+    assert.strictEqual(await makeHelpers({ runs: ok.concat([{ name: "boot", status: "completed", conclusion: "failure" }]) }).isCIGreen(99), false);
+    assert.strictEqual(await makeHelpers({ runs: [] }).isCIGreen(99), false);
+    assert.strictEqual(await makeHelpers({ runs: [{ name: "build", status: "in_progress", conclusion: null }] }).isCIGreen(99), false);
+  });
+
+  await t.test("findPRsForSHA matches head SHA", async () => {
+    const h = makeHelpers({ prs: [{ number: 7, head: { sha: "abc" } }, { number: 8, head: { sha: "zzz" } }] });
+    assert.deepStrictEqual(await h.findPRsForSHA("abc"), [7]);
+    assert.deepStrictEqual(await h.findPRsForSHA("none"), []);
   });
 });
 
@@ -772,5 +860,227 @@ test("ticket-runner.js event handling suite", async (t) => {
     const state = _parseState(mocks.getIssueBody());
     assert.strictEqual(state.phase, "HUMAN_REVIEW");
     assert.strictEqual(mocks.calls.mergePR.length, 0);
+  });
+
+  await t.test("issues:labeled actionable kind + clear triage auto-starts DEV", async () => {
+    const mocks = createMocks("issues", {
+      issueBody: "Bug description",
+      issueLabels: [{ name: "kind/bug" }, { name: "area/fs" }]
+    });
+    mocks.setIssueComments([
+      { body: "## Triage\n\n- [x] **Repro:** 1. boot 2. mkdir\n- [x] **Suggested next:** fix" }
+    ]);
+    await runTicketRunner(mocks);
+
+    const state = _parseState(mocks.getIssueBody());
+    assert.strictEqual(state.phase, "DEV");
+    assert.strictEqual(mocks.calls.createComment.length, 1);
+    assert.ok(mocks.calls.createComment[0].body.includes("/oc Please proceed"));
+  });
+
+  await t.test("issues:labeled without triage requests triage first", async () => {
+    const mocks = createMocks("issues", {
+      issueBody: "Bug description",
+      issueLabels: [{ name: "kind/bug" }]
+    });
+    await runTicketRunner(mocks);
+
+    assert.strictEqual(_parseState(mocks.getIssueBody()), null);
+    assert.strictEqual(mocks.calls.createComment.length, 1);
+    assert.ok(mocks.calls.createComment[0].body.includes("/oc triage"));
+  });
+
+  await t.test("issues:labeled skips vague triage waiter", async () => {
+    const mocks = createMocks("issues", {
+      issueBody: "Bug description",
+      issueLabels: [{ name: "kind/bug" }, { name: "agent/needs-info" }]
+    });
+    mocks.setIssueComments([
+      { body: "## Triage\n\n- [ ] **Repro:** needs more info from reporter" }
+    ]);
+    await runTicketRunner(mocks);
+
+    assert.strictEqual(_parseState(mocks.getIssueBody()), null);
+    assert.strictEqual(mocks.calls.createComment.length, 0);
+  });
+
+  await t.test("issues:labeled ignores non-actionable kind", async () => {
+    const mocks = createMocks("issues", { labelName: "kind/question" });
+    await runTicketRunner(mocks);
+
+    assert.strictEqual(mocks.calls.updateIssue.length, 0);
+    assert.strictEqual(mocks.calls.createComment.length, 0);
+  });
+
+  await t.test("workflow_run with no state + clear triage auto-starts DEV", async () => {
+    const mocks = createMocks("workflow_run", {
+      issueBody: "Bug description",
+      issueLabels: [{ name: "kind/bug" }]
+    });
+    mocks.setIssueComments([
+      { body: "## Triage\n\n- [x] **Repro:** 1. boot\n- [x] **Suggested next:** fix" }
+    ]);
+    await runTicketRunner(mocks);
+
+    const state = _parseState(mocks.getIssueBody());
+    assert.strictEqual(state.phase, "DEV");
+    assert.ok(mocks.calls.createComment.some(c => c.body.includes("/oc Please proceed")));
+  });
+
+  await t.test("workflow_run with no state and no triage waits", async () => {
+    const mocks = createMocks("workflow_run", {
+      issueBody: "Bug description",
+      issueLabels: [{ name: "kind/bug" }]
+    });
+    await runTicketRunner(mocks);
+
+    assert.strictEqual(_parseState(mocks.getIssueBody()), null);
+  });
+
+  await t.test("REVIEW approve + auto-merge defers when CI red", async () => {
+    const initialBody = _replaceOrAppendStatus("Task", {
+      phase: "REVIEW",
+      pr: 99,
+      turn: 0,
+      max_turns: 3,
+      retries: 0,
+      started: new Date().toISOString(),
+      history: []
+    }, 42);
+
+    const mocks = createMocks("workflow_run", {
+      issueBody: initialBody,
+      runDisplayTitle: "Issue #99 - PR",
+      issueLabels: [{ name: "kind/bug" }, { name: "auto-merge" }]
+    });
+    mocks.setCommentsOnPR([{ body: "Verdict: approve" }]);
+    mocks.setCheckRuns([{ name: "test", status: "completed", conclusion: "failure" }]);
+
+    await runTicketRunner(mocks);
+
+    const state = _parseState(mocks.getIssueBody());
+    assert.strictEqual(state.phase, "REVIEW");
+    assert.strictEqual(mocks.calls.mergePR.length, 0);
+    assert.ok(mocks.calls.createComment.some(c => c.body.includes("deferred")));
+  });
+
+  await t.test("REVIEW approve + implicit safe kind merges when green", async () => {
+    const initialBody = _replaceOrAppendStatus("Task", {
+      phase: "REVIEW",
+      pr: 99,
+      turn: 0,
+      max_turns: 3,
+      retries: 0,
+      started: new Date().toISOString(),
+      history: []
+    }, 42);
+
+    const mocks = createMocks("workflow_run", {
+      issueBody: initialBody,
+      runDisplayTitle: "Issue #99 - PR",
+      issueLabels: [{ name: "kind/chore" }]
+    });
+    mocks.setCommentsOnPR([{ body: "Verdict: approve" }]);
+
+    await runTicketRunner(mocks);
+
+    const state = _parseState(mocks.getIssueBody());
+    assert.strictEqual(state.phase, "DONE");
+    assert.deepStrictEqual(mocks.calls.mergePR, [99]);
+  });
+
+  await t.test("REVIEW approve defers when diff touches ASM", async () => {
+    const initialBody = _replaceOrAppendStatus("Task", {
+      phase: "REVIEW",
+      pr: 99,
+      turn: 0,
+      max_turns: 3,
+      retries: 0,
+      started: new Date().toISOString(),
+      history: []
+    }, 42);
+
+    const mocks = createMocks("workflow_run", {
+      issueBody: initialBody,
+      runDisplayTitle: "Issue #99 - PR",
+      issueLabels: [{ name: "kind/bug" }, { name: "auto-merge" }]
+    });
+    mocks.setCommentsOnPR([{ body: "Verdict: approve" }]);
+    mocks.setPRFiles([{ filename: "core/src/native/x86/kernel.asm", additions: 2 }]);
+
+    await runTicketRunner(mocks);
+
+    const state = _parseState(mocks.getIssueBody());
+    assert.strictEqual(state.phase, "REVIEW");
+    assert.strictEqual(mocks.calls.mergePR.length, 0);
+  });
+
+  await t.test("Java CI success re-reviews deferred REVIEW", async () => {
+    const initialBody = _replaceOrAppendStatus("Task", {
+      phase: "REVIEW",
+      pr: 99,
+      turn: 0,
+      max_turns: 3,
+      retries: 0,
+      started: new Date().toISOString(),
+      history: [{ event: "merge_deferred" }]
+    }, 42);
+
+    const mocks = createMocks("workflow_run", {
+      issueBody: initialBody,
+      runName: "Java CI",
+      runConclusion: "success",
+      issueLabels: [{ name: "kind/bug" }, { name: "auto-merge" }]
+    });
+    await runTicketRunner(mocks);
+
+    assert.ok(mocks.calls.createComment.some(c => c.issue_number === 99 && c.body.includes("/oc review")));
+  });
+
+  await t.test("Java CI failure posts one /oc fix per SHA", async () => {
+    const initialBody = _replaceOrAppendStatus("Task", {
+      phase: "REVIEW",
+      pr: 99,
+      turn: 0,
+      max_turns: 3,
+      retries: 0,
+      started: new Date().toISOString(),
+      history: []
+    }, 42);
+
+    const mocks = createMocks("workflow_run", {
+      issueBody: initialBody,
+      runName: "Java CI",
+      runConclusion: "failure",
+      issueLabels: [{ name: "kind/bug" }]
+    });
+    await runTicketRunner(mocks);
+    await runTicketRunner(mocks);
+
+    const fixes = mocks.calls.createComment.filter(c => c.issue_number === 99 && c.body.includes("/oc fix CI failed"));
+    assert.strictEqual(fixes.length, 1, "marker dedupes the second identical run");
+    assert.ok(fixes[0].body.includes("CI-HEAL:abc123"));
+  });
+
+  await t.test("Java CI success ignores FEEDBACK phase", async () => {
+    const initialBody = _replaceOrAppendStatus("Task", {
+      phase: "FEEDBACK",
+      pr: 99,
+      turn: 1,
+      max_turns: 3,
+      retries: 0,
+      started: new Date().toISOString(),
+      history: []
+    }, 42);
+
+    const mocks = createMocks("workflow_run", {
+      issueBody: initialBody,
+      runName: "Java CI",
+      runConclusion: "success",
+      issueLabels: [{ name: "kind/bug" }]
+    });
+    await runTicketRunner(mocks);
+
+    assert.strictEqual(mocks.calls.createComment.length, 0);
   });
 });

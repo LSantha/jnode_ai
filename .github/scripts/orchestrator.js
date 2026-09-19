@@ -2,7 +2,7 @@ module.exports = async ({ github, context, core }) => {
   const createHelpers = require('./orchestrator-helpers.js');
   const h = createHelpers({ github, context, core });
   const { triggerTask, findPRForIssue, getReviewPrompt, getAgentReviewVerdict,
-          needsHumanReview, isBotUser, mergePR, COMPLETION_LABELS, SHORT_CIRCUIT_LABELS } = h;
+          isBotUser, mergePR, COMPLETION_LABELS, SHORT_CIRCUIT_LABELS } = h;
 
   // --- Multi-Step Orchestrator Helpers (orchestrator-specific, not shared) ---
   function isMultiStepTask(task) {
@@ -147,6 +147,49 @@ module.exports = async ({ github, context, core }) => {
     } catch (err) {
       core.warning(`Failed to close master issue #${issueNumber}: ${err.message}`);
     }
+  }
+
+  // Java CI completions for the active PR: green re-runs review for deferred
+  // merges, red posts one /oc fix per SHA. Returns true when it posted.
+  async function handleJavaCICompletion(state) {
+    const run = context.payload.workflow_run;
+    if (!run || run.conclusion === 'skipped') return false;
+    if (!isMultiStepTask(state.current_task) || !state.current_task.pr) return false;
+    const task = state.current_task;
+    const sha = run.head_sha || '';
+    let prs = [];
+    try {
+      prs = await h.findPRsForSHA(sha);
+    } catch (err) {
+      core.warning("Java CI handler: findPRsForSHA failed: " + err.message);
+      return false;
+    }
+    if (prs.indexOf(task.pr) < 0) return false;
+
+    const prData = await github.rest.issues.get({
+      owner: context.repo.owner, repo: context.repo.repo, issue_number: task.pr
+    });
+    const prLabels = h.extractLabels(prData.data);
+    if (prLabels.includes('no-auto') || prLabels.includes('agent/in-progress')) return false;
+
+    const runUrl = `https://github.com/${context.repo.owner}/${context.repo.repo}/actions/runs/${run.id}`;
+    if (run.conclusion === 'success') {
+      if (task.phase !== 'REVIEW') return false;
+      state.history.push({ event: 'ci_green_rereview', task: task.issue, timestamp: new Date().toISOString() });
+      await triggerTask(task.pr, getReviewPrompt());
+      return true;
+    }
+    if (task.phase !== 'REVIEW' && task.phase !== 'FEEDBACK') return false;
+    const marker = `<!-- CI-HEAL:${sha.slice(0, 7)} -->`;
+    const comments = await github.rest.issues.listComments({
+      owner: context.repo.owner, repo: context.repo.repo, issue_number: task.pr, per_page: 100
+    });
+    const list = (comments && comments.data) ? comments.data : comments;
+    for (const c of list) {
+      if (((c && c.body) || '').indexOf(marker) >= 0) return false;
+    }
+    await triggerTask(task.pr, `/oc fix CI failed for ${sha.slice(0, 7)}: ${runUrl}\n${marker}\n\nRead the failing check output, fix the code on this branch, and push. Do not open a new PR.`);
+    return true;
   }
 
   // 1. Find the Master Orchestrator Issue
@@ -351,6 +394,15 @@ module.exports = async ({ github, context, core }) => {
 
     } else if (context.eventName === 'workflow_run') {
       core.info("Workflow run completion trigger detected.");
+
+      const wfName = (context.payload.workflow_run && context.payload.workflow_run.name) || 'opencode';
+      if (wfName === 'Java CI') {
+        const changed = await handleJavaCICompletion(state);
+        if (changed) {
+          await updateMasterIssue(masterIssueNumber, state);
+        }
+        return;
+      }
       
       if (!state.current_task) {
         core.info("No active task in progress. Skipping.");
@@ -447,19 +499,25 @@ module.exports = async ({ github, context, core }) => {
               } else {
                 const verdict = await getAgentReviewVerdict(task.pr);
                 if (verdict === 'approve') {
-                  const needsHuman = await needsHumanReview(task.issue, task.pr);
-                  if (needsHuman) {
+                  const eligible = await h.isAutoMergeEligible(task.issue, task.pr);
+                  if (!eligible) {
                     task.phase = 'HUMAN_REVIEW';
                     task.retries = 0;
                     await github.rest.issues.createComment({
                       owner: context.repo.owner, repo: context.repo.repo, issue_number: task.pr,
                       body: "Agent review passed. Awaiting human approval via native GitHub PR Review UI."
                     });
-                  } else {
+                  } else if (await h.isDiffSafe(task.pr) && await h.isCIGreen(task.pr)) {
                     task.phase = 'MERGE';
                     await mergePR(task.pr);
                     state.completed.push(task.issue);
                     isDone = true;
+                  } else {
+                    task.retries = 0;
+                    await github.rest.issues.createComment({
+                      owner: context.repo.owner, repo: context.repo.repo, issue_number: task.pr,
+                      body: "Agent review passed but auto-merge deferred (diff not safe or CI not green). Will retry when CI completes."
+                    });
                   }
                 } else if (verdict === 'request-changes') {
                   task.turn += 1;

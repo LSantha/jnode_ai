@@ -187,3 +187,48 @@ jobs:
         name: jnode_boot_log_64bit
         path: /tmp/com1_64.txt
       if: always()
+
+  heal:
+    needs: [build, test, boot32, boot64]
+    if: failure() && github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+      pull-requests: write
+    steps:
+      - name: Post /oc fix on CI failure
+        uses: actions/github-script@v7
+        env:
+          NEEDS_JSON: ${{ toJSON(needs) }}
+        with:
+          github-token: ${{ secrets.GH_PAT || secrets.GITHUB_TOKEN }}
+          script: |
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+            const prNumber = context.payload.pull_request.number;
+            const sha = context.payload.pull_request.head.sha.slice(0, 7);
+            const marker = `<!-- CI-HEAL:${sha} -->`;
+            const runUrl = `https://github.com/${owner}/${repo}/actions/runs/${context.runId}`;
+
+            const { data: pr } = await github.rest.issues.get({ owner, repo, issue_number: prNumber });
+            const labels = (pr.labels || []).map(l => (typeof l === 'string') ? l : l.name);
+            if (labels.includes('no-auto') || labels.includes('agent/in-progress')) {
+              core.info(`CI-heal skipped for PR #${prNumber} (opt-out or busy).`);
+              return;
+            }
+            const comments = await github.paginate(github.rest.issues.listComments, {
+              owner, repo, issue_number: prNumber, per_page: 100,
+            });
+            if (comments.some(c => (c.body || '').includes(marker))) {
+              core.info(`CI-heal already posted for PR #${prNumber} @ ${sha}.`);
+              return;
+            }
+            const needed = JSON.parse(process.env.NEEDS_JSON || '{}');
+            const failed = Object.entries(needed)
+              .filter(([, j]) => j && j.result === 'failure')
+              .map(([n]) => n)
+              .join(', ');
+            await github.rest.issues.createComment({
+              owner, repo, issue_number: prNumber,
+              body: `/oc fix CI failed for ${sha} (jobs: ${failed || 'unknown'}): ${runUrl}\n${marker}\n\nRead the failing check output, fix the code on this branch, and push. Do not open a new PR.`
+            });

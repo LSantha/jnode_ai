@@ -240,6 +240,8 @@ Do **not** open a PR. The workflow post-step will detect the `## 🤖 Investigat
 
 ### 5.4 `triage` comment
 
+> Superseded by the `jnode-triage-issue` skill. On `/oc triage`, load that skill and follow it (area routing, kind decision, repro-sufficiency, blast radius, label audit, clear-vs-vague comment contract). The template below is a stale summary kept for shape reference only.
+
 ```markdown
 ## 🤖 Triage
 

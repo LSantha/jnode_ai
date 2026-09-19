@@ -7,8 +7,10 @@ concurrency:
 on:
   issue_comment:
     types: [created]
+  issues:
+    types: [labeled]
   workflow_run:
-    workflows: ["opencode"]
+    workflows: ["opencode", "Java CI"]
     types: [completed]
   pull_request_review:
     types: [submitted]
@@ -17,6 +19,7 @@ jobs:
   run-ticket:
     if: |
       (github.event_name == 'issue_comment' && (github.event.comment.body == '/run' || startsWith(github.event.comment.body, '/run ') || startsWith(github.event.comment.body, '/run\n') || startsWith(github.event.comment.body, '/run\r'))) ||
+      (github.event_name == 'issues' && startsWith(github.event.label.name, 'kind/')) ||
       (github.event_name == 'workflow_run') ||
       (github.event_name == 'pull_request_review')
     runs-on: ubuntu-latest
