@@ -50,6 +50,15 @@ import org.vmmagic.unboxed.Address;
 public abstract class NativeCodeCompiler extends VmSystemObject {
 
     /**
+     * ANCHOR-L2-129: boot-image crash attribution aid. When this system
+     * property is set (host build JVM), compileBootstrap logs one
+     * [methodmap] line per compiled method with its final boot-image
+     * address, giving a complete EIP->method map for KDB crash logs.
+     */
+    public static final boolean DUMP_METHOD_MAP =
+        Boolean.getBoolean("jnode.dump.methodmap");
+
+    /**
      * Compile the given method during bootstrapping
      *
      * @param method
@@ -78,6 +87,12 @@ public abstract class NativeCodeCompiler extends VmSystemObject {
         int end = os.getLength();
 
         final VmAddress nativeCode = (VmAddress) cm.getCodeStart().getObject();
+        if (DUMP_METHOD_MAP) {
+            System.out.println("[methodmap] "
+                + method.getDeclaringClass().getName() + '.'
+                + method.getName() + " @" + nativeCode
+                + " stream=0x" + Integer.toHexString(end));
+        }
         final VmCompiledExceptionHandler[] eTable;
         final VmAddress defExHandler;
         final VmByteCode bc;

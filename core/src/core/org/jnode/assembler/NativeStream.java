@@ -286,7 +286,14 @@ public abstract class NativeStream {
         public abstract void addUnresolvedLink(int offset, int patchSize);
 
         public String toString() {
-            return object.toString();
+            // ANCHOR-L2-114: identity form. object.toString() recursed
+            // forever (OOM) once the emitted graph contained a structure
+            // reaching back to its own ref (first L2 boot image); the
+            // result is only used in diagnostics. Cross-checked with
+            // L2-MuseSpark-1.3-eval, same fix.
+            return "ObjectRef@" + Integer.toHexString(System.identityHashCode(this))
+                + "[object=" + object.getClass().getName() + "@"
+                + Integer.toHexString(System.identityHashCode(object)) + "]";
         }
     }
 }
