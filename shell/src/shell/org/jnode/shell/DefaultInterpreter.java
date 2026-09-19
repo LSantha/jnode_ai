@@ -30,6 +30,7 @@ import java.text.DateFormat;
 import java.util.ArrayList;
 import java.util.Date;
 import java.util.LinkedList;
+import java.util.List;
 import java.util.NoSuchElementException;
 
 import org.apache.log4j.Logger;
@@ -77,7 +78,15 @@ public class DefaultInterpreter implements CommandInterpreter {
     public static final char SEND_OUTPUT_TO_CHAR = '>';
     public static final char GET_INPUT_FROM_CHAR = '<';
     public static final char PIPE_CHAR = '|';
+    public static final char AMP_CHAR = '&';
+    public static final char SEMI_CHAR = ';';
     public static final char COMMENT_CHAR = '#';
+
+    // Recognized multi-character / sequencing operators
+    public static final String AND_IF = "&&";
+    public static final String OR_IF = "||";
+    public static final String SEMI = ";";
+    public static final String AMP = "&";
 
     // Recognized '\' escapes
     private static final char ESCAPE_B = '\b';
@@ -136,13 +145,38 @@ public class DefaultInterpreter implements CommandInterpreter {
     
     @Override
     public Completable parsePartial(CommandShell shell, String line) throws ShellException {
-        CommandLine res = doParseCommandLine(line);
+        Tokenizer tokenizer = new Tokenizer(line);
+        List<SequenceEntry> sequence = parseSequence(tokenizer, true);
+        if (sequence.isEmpty()) {
+            return new CommandLine("", null);
+        }
+        // A trailing '&&' / '||' / ';' means the next command is empty:
+        // complete in an empty context, mirroring RedirectingInterpreter's
+        // trailingSequenceOp handling.  (Help still uses the last command
+        // via doParseCommandLine.)
+        tokenizer.seek(0);
+        CommandLine.Token last = null;
+        while (tokenizer.hasNext()) {
+            CommandLine.Token t = tokenizer.next();
+            // Skip the empty token that a trailing '#...' comment produces.
+            if (t.text.length() > 0) {
+                last = t;
+            }
+        }
+        if (last != null && last.tokenType == SPECIAL &&
+                (AND_IF.equals(last.text) || OR_IF.equals(last.text) || SEMI.equals(last.text))) {
+            return new CommandLine("", null);
+        }
+        CommandLine res = sequence.get(sequence.size() - 1).commandLine;
         return res == null ? new CommandLine("", null) : res;
     }
     
     @Override
     public boolean help(CommandShell shell, String line, PrintWriter pw) throws ShellException {
         CommandLine cmd = doParseCommandLine(line);
+        if (cmd == null) {
+            return false;
+        }
         CommandInfo cmdInfo = cmd.getCommandInfo(shell);
         if (cmdInfo != null) {
             try {
@@ -159,29 +193,141 @@ public class DefaultInterpreter implements CommandInterpreter {
     
     protected int interpret(CommandShell shell, String line) 
         throws ShellException {
-        CommandLine cmd = doParseCommandLine(line);
-        if (cmd == null) {
+        Tokenizer tokenizer = new Tokenizer(line);
+        List<SequenceEntry> sequence = parseSequence(tokenizer, false);
+        if (sequence.isEmpty()) {
             return 0;
         }
-        return shell.invoke(cmd, null, null);
+        if (sequence.size() == 1) {
+            // Preserve the historical single-command contract: per-command
+            // ShellException failures propagate to the caller (e.g. unknown
+            // command, TimeCommand, script-abort and test-harness exception
+            // expectations).  Only multi-command sequences convert failures
+            // to rc == 1 for '&&' / '||' / ';' semantics.
+            return shell.invoke(sequence.get(0).commandLine, null, null);
+        }
+        int rc = 0;
+        for (int i = 0; i < sequence.size(); i++) {
+            SequenceEntry entry = sequence.get(i);
+            if (i > 0) {
+                String op = entry.operatorBefore;
+                if (AND_IF.equals(op) && rc != 0) {
+                    continue;
+                } else if (OR_IF.equals(op) && rc == 0) {
+                    continue;
+                }
+                // ';' always executes
+            }
+            try {
+                rc = shell.invoke(entry.commandLine, null, null);
+            } catch (ShellControlException ex) {
+                throw ex;
+            } catch (ShellException ex) {
+                // A per-command failure (e.g. unknown command) should not abort
+                // the whole sequence; record it as a failure return code.
+                shell.diagnose(ex, null);
+                rc = 1;
+            }
+        }
+        return rc;
     }
 
     private CommandLine doParseCommandLine(String line) throws ShellException {
         Tokenizer tokenizer = new Tokenizer(line);
-        if (!tokenizer.hasNext()) {
+        List<SequenceEntry> sequence = parseSequence(tokenizer, true);
+        if (sequence.isEmpty()) {
             return null;
         }
-        CommandLine.Token commandToken = tokenizer.next();
-        LinkedList<CommandLine.Token> tokenList =
-                new LinkedList<CommandLine.Token>();
+        return sequence.get(sequence.size() - 1).commandLine;
+    }
+
+    /**
+     * Split the token stream into a sequence of commands separated by
+     * '&&', '||' and ';' operators, with POSIX shell compatible semantics:
+     * '&&' executes the next command only if the previous return code is zero,
+     * '||' executes the next command only if the previous return code is non-zero,
+     * and ';' always executes the next command.  Operators are left-associative.
+     *
+     * @param tokenizer the token source
+     * @param completing if {@code true}, a trailing operator is not an error;
+     *        the incomplete trailing sequence entry is simply omitted.
+     * @return the parsed command sequence (possibly empty)
+     * @throws ShellException on syntax errors
+     */
+    protected List<SequenceEntry> parseSequence(Tokenizer tokenizer, boolean completing)
+        throws ShellException {
+        List<SequenceEntry> res = new ArrayList<SequenceEntry>();
+        List<CommandLine.Token> tokenList = new LinkedList<CommandLine.Token>();
+        CommandLine.Token commandToken = null;
+        String pendingOp = null;
+        boolean expectCommand = true;
         while (tokenizer.hasNext()) {
-            tokenList.add(tokenizer.next());
+            CommandLine.Token token = tokenizer.next();
+            if (token.tokenType == SPECIAL) {
+                if (AND_IF.equals(token.text) || OR_IF.equals(token.text) || SEMI.equals(token.text)) {
+                    if (expectCommand) {
+                        if (!completing) {
+                            throw new ShellSyntaxException("Misplaced '" + token.text +
+                                    "': expected a command name");
+                        } else {
+                            // When completing, ignore a misplaced operator.
+                            continue;
+                        }
+                    }
+                    CommandLine.Token[] argTokens =
+                            tokenList.toArray(new CommandLine.Token[tokenList.size()]);
+                    res.add(new SequenceEntry(
+                            new CommandLine(commandToken, argTokens, null), pendingOp));
+                    tokenList.clear();
+                    commandToken = null;
+                    pendingOp = token.text;
+                    expectCommand = true;
+                    if (!tokenizer.hasNext()) {
+                        if (!completing) {
+                            throw new ShellSyntaxException("no command after '" + token.text + "'");
+                        }
+                        // When completing, a trailing operator just means the
+                        // next command is empty; omit it and stop.
+                        break;
+                    }
+                    continue;
+                } else if (AMP.equals(token.text)) {
+                    throw new ShellSyntaxException(
+                            "unsupported '&': use '&&' for conditional execution");
+                } else {
+                    throw new ShellSyntaxException("unrecognized symbol: '" + token.text + "'");
+                }
+            } else {
+                if (expectCommand) {
+                    commandToken = token;
+                    expectCommand = false;
+                } else {
+                    tokenList.add(token);
+                }
+            }
         }
-        CommandLine.Token[] argTokens =
-                tokenList.toArray(new CommandLine.Token[tokenList.size()]);
-        CommandLine res = new CommandLine(commandToken, argTokens, null);
-        res.setArgumentAnticipated(tokenizer.whitespaceAfterLast());
+        if (!expectCommand) {
+            CommandLine.Token[] argTokens =
+                    tokenList.toArray(new CommandLine.Token[tokenList.size()]);
+            CommandLine cmdLine = new CommandLine(commandToken, argTokens, null);
+            cmdLine.setArgumentAnticipated(tokenizer.whitespaceAfterLast());
+            res.add(new SequenceEntry(cmdLine, pendingOp));
+        }
         return res;
+    }
+
+    /**
+     * A single command in a '&&' / '||' / ';' sequence, together with the
+     * operator that precedes it ({@code null} for the first command).
+     */
+    protected static class SequenceEntry {
+        public final CommandLine commandLine;
+        public final String operatorBefore;
+
+        public SequenceEntry(CommandLine commandLine, String operatorBefore) {
+            this.commandLine = commandLine;
+            this.operatorBefore = operatorBefore;
+        }
     }
 
     @Override
@@ -222,12 +368,14 @@ public class DefaultInterpreter implements CommandInterpreter {
                 case SPACE_CHAR:
                     sb.append(ESCAPE_CHAR).append(SPACE_CHAR); 
                     break;
+                case AMP_CHAR:
+                case SEMI_CHAR:
                 case PIPE_CHAR:
-                    if (escapeRedirects) {
-                        sb.append(ESCAPE_CHAR).append(PIPE_CHAR); 
-                    } else {
-                        sb.append(PIPE_CHAR);
-                    }
+                    // '&', ';' and '|' can introduce operators ('&&', '||', ';'),
+                    // so always escape them.  (A single '|' is literal in this
+                    // interpreter, but escaping it is harmless and keeps an
+                    // escaped '||' from re-parsing as an operator.)
+                    sb.append(ESCAPE_CHAR).append(ch);
                     break;
                 case SEND_OUTPUT_TO_CHAR:
                     if (escapeRedirects) {
@@ -444,9 +592,76 @@ public class DefaultInterpreter implements CommandInterpreter {
                             break;
                         case GET_INPUT_FROM_CHAR:
                         case SEND_OUTPUT_TO_CHAR:
-                        case PIPE_CHAR:
                             if (inFullEscape || inQuote ||
                                     (flags & REDIRECTS_FLAG) == 0) {
+                                token.append(currentChar);
+                            } else {
+                                finished = true;
+                                if (token.length() == 0) {
+                                    token.append(currentChar);
+                                    type = SPECIAL;
+                                } else {
+                                    pos--; // the special character terminates the
+                                    // literal.
+                                }
+                            }
+                            break;
+                        case PIPE_CHAR:
+                            if (inFullEscape || inQuote) {
+                                token.append(currentChar);
+                            } else if (pos < s.length() && s.charAt(pos) == PIPE_CHAR) {
+                                // '||' is always an operator, even without REDIRECTS_FLAG
+                                finished = true;
+                                if (token.length() == 0) {
+                                    token.append(currentChar);
+                                    token.append(s.charAt(pos++));
+                                    type = SPECIAL;
+                                } else {
+                                    pos--; // the operator terminates the literal.
+                                }
+                            } else if ((flags & REDIRECTS_FLAG) == 0) {
+                                token.append(currentChar);
+                            } else {
+                                finished = true;
+                                if (token.length() == 0) {
+                                    token.append(currentChar);
+                                    type = SPECIAL;
+                                } else {
+                                    pos--; // the special character terminates the
+                                    // literal.
+                                }
+                            }
+                            break;
+                        case AMP_CHAR:
+                            if (inFullEscape || inQuote) {
+                                token.append(currentChar);
+                            } else if (pos < s.length() && s.charAt(pos) == AMP_CHAR) {
+                                // '&&' is always an operator.  A single '&' is kept
+                                // as a literal character when embedded in a word for
+                                // backward compatibility (e.g. URLs containing '&');
+                                // background execution with '&' is not supported.
+                                finished = true;
+                                if (token.length() == 0) {
+                                    token.append(currentChar);
+                                    token.append(s.charAt(pos++));
+                                    type = SPECIAL;
+                                } else {
+                                    pos--; // the operator terminates the literal.
+                                }
+                            } else if (token.length() == 0) {
+                                // A standalone '&' (not part of '&&' and not embedded
+                                // in a word) is emitted as SPECIAL so the parser can
+                                // diagnose it as unsupported.  Embedded '&' (e.g. in
+                                // URLs) and escaped / quoted '&' stay literal.
+                                finished = true;
+                                token.append(currentChar);
+                                type = SPECIAL;
+                            } else {
+                                token.append(currentChar);
+                            }
+                            break;
+                        case SEMI_CHAR:
+                            if (inFullEscape || inQuote) {
                                 token.append(currentChar);
                             } else {
                                 finished = true;

@@ -70,11 +70,49 @@ public class RedirectingInterpreter extends DefaultInterpreter implements
     @Override
     protected int interpret(CommandShell shell, String line) throws ShellException {
         Tokenizer tokenizer = new Tokenizer(line, REDIRECTS_FLAG);
-        List<CommandDescriptor> commands = new LinkedList<CommandDescriptor>();
-        parse(tokenizer, commands, false);
+        List<SequenceDescriptor> sequence = new LinkedList<SequenceDescriptor>();
+        parse(tokenizer, sequence, false);
+        if (sequence.isEmpty()) {
+            return 0; // empty command line.
+        }
+        if (sequence.size() == 1) {
+            // Preserve the historical single-pipeline contract: ShellException
+            // failures propagate to the caller.  Only multi-pipeline sequences
+            // convert failures to rc == 1 for '&&' / '||' / ';' semantics.
+            return runSequence(shell, sequence.get(0).pipeline);
+        }
+        int rc = 0;
+        for (int i = 0; i < sequence.size(); i++) {
+            SequenceDescriptor seq = sequence.get(i);
+            if (i > 0) {
+                String op = seq.operatorBefore;
+                if (AND_IF.equals(op) && rc != 0) {
+                    continue;
+                } else if (OR_IF.equals(op) && rc == 0) {
+                    continue;
+                }
+                // ';' always executes
+            }
+            try {
+                rc = runSequence(shell, seq.pipeline);
+            } catch (ShellControlException ex) {
+                throw ex;
+            } catch (ShellException ex) {
+                // A per-pipeline failure (e.g. unknown command, bad redirection)
+                // should not abort the whole '&&' / '||' / ';' sequence; record it
+                // as a failure return code so that conditional execution works.
+                shell.diagnose(ex, null);
+                rc = 1;
+            }
+        }
+        return rc;
+    }
+
+    private int runSequence(CommandShell shell, List<CommandDescriptor> commands)
+        throws ShellException {
         int len = commands.size();
         if (len == 0) {
-            return 0; // empty command line.
+            return 0;
         } else if (len == 1) {
             return runCommand(shell, commands.get(0));
         } else {
@@ -86,21 +124,20 @@ public class RedirectingInterpreter extends DefaultInterpreter implements
     public Completable parsePartial(CommandShell shell, String line)
         throws ShellException {
         Tokenizer tokenizer = new Tokenizer(line, REDIRECTS_FLAG);
-        List<CommandDescriptor> commands = new LinkedList<CommandDescriptor>();
-        return parse(tokenizer, commands, true);
+        List<SequenceDescriptor> sequence = new LinkedList<SequenceDescriptor>();
+        return parse(tokenizer, sequence, true);
     }
     
     @Override
     public boolean help(CommandShell shell, String line, PrintWriter pw) throws ShellException {
         Tokenizer tokenizer = new Tokenizer(line, REDIRECTS_FLAG);
-        List<CommandDescriptor> commands = new LinkedList<CommandDescriptor>();
-        parse(tokenizer, commands, true);
-        int len = commands.size();
-        if (len == 0) {
+        List<SequenceDescriptor> sequence = new LinkedList<SequenceDescriptor>();
+        parse(tokenizer, sequence, true);
+        CommandLine cmd = getLastCommand(sequence);
+        if (cmd == null) {
             return false;
         }
-        // We'll show the help for the last command in the pipeline.
-        CommandLine cmd = commands.get(len - 1).commandLine;
+        // We'll show the help for the last command in the last pipeline.
         CommandInfo cmdInfo = cmd.getCommandInfo(shell);
         if (cmdInfo != null) {
             try {
@@ -115,6 +152,16 @@ public class RedirectingInterpreter extends DefaultInterpreter implements
         return false;
     }
 
+    private CommandLine getLastCommand(List<SequenceDescriptor> sequence) {
+        for (int i = sequence.size() - 1; i >= 0; i--) {
+            List<CommandDescriptor> pipeline = sequence.get(i).pipeline;
+            if (!pipeline.isEmpty()) {
+                return pipeline.get(pipeline.size() - 1).commandLine;
+            }
+        }
+        return null;
+    }
+
     @Override
     public String escapeWord(String word) {
         return escapeWord(word, true);
@@ -126,20 +173,31 @@ public class RedirectingInterpreter extends DefaultInterpreter implements
      * according to the parser's syntactic context.  (Normally the Completable is a 
      * CommandLine, but if we at / expecting a redirection filename, it will be a
      * Completer for the filename.)
+     * <p>
+     * The input is parsed as a sequence of pipelines separated by '&&', '||' and
+     * ';' operators with POSIX shell compatible semantics.  Each pipeline is a
+     * sequence of commands separated by '|' with optional '&lt;' / '&gt;'
+     * redirections on each command.
      * 
      * @param tokenizer the source of shell input tokens
-     * @param commands a list for accumulating the parsed commands / redirections
+     * @param sequence a list for accumulating the parsed pipelines and their
+     *        preceding '&&' / '||' / ';' operators
      * @param completing if <code>true</code> we are completing.
      * @return a Completer or <code>null</code>
      * @throws ShellSyntaxException
      */
-    private Completable parse(Tokenizer tokenizer, 
-            List<CommandDescriptor> commands, boolean completing)
+    private Completable parse(Tokenizer tokenizer,
+            List<SequenceDescriptor> sequence, boolean completing)
         throws ShellSyntaxException {
         boolean wspAfter = tokenizer.whitespaceAfterLast();
-        boolean pipeTo = false;
+        List<CommandDescriptor> currentPipeline = new ArrayList<CommandDescriptor>();
+        String pendingOp = null;
+        boolean trailingPipe = false;
+        boolean trailingSequenceOp = false;
         List<CommandLine.Token> args = new ArrayList<CommandLine.Token>();
         while (tokenizer.hasNext()) {
+            trailingPipe = false;
+            trailingSequenceOp = false;
             CommandLine.Token commandToken = tokenizer.next();
             if (commandToken.tokenType == SPECIAL) {
                 throw new ShellSyntaxException("Misplaced '" +
@@ -148,7 +206,8 @@ public class RedirectingInterpreter extends DefaultInterpreter implements
             
             CommandLine.Token from = null;
             CommandLine.Token to = null;
-            pipeTo = false;
+            boolean pipeTo = false;
+            String pipelineTerminator = null;
             args.clear();
             while (tokenizer.hasNext()) {
                 CommandLine.Token token = tokenizer.next();
@@ -176,9 +235,16 @@ public class RedirectingInterpreter extends DefaultInterpreter implements
                     } else if (token.text.equals("|")) {
                         pipeTo = true;
                         break;
+                    } else if (AND_IF.equals(token.text) || OR_IF.equals(token.text) ||
+                            SEMI.equals(token.text)) {
+                        pipelineTerminator = token.text;
+                        break;
+                    } else if (AMP.equals(token.text)) {
+                        throw new ShellSyntaxException(
+                                "unsupported '&': use '&&' for conditional execution");
                     } else {
                         throw new ShellSyntaxException(
-                                "unrecognized symbol: '" + token + "'");
+                                "unrecognized symbol: '" + token.text + "'");
                     }
                 } else {
                     args.add(token);
@@ -188,16 +254,44 @@ public class RedirectingInterpreter extends DefaultInterpreter implements
                     args.toArray(new CommandLine.Token[args.size()]);
 
             CommandLine cl = new CommandLine(commandToken, argVec, null);
-            commands.add(new CommandDescriptor(cl, from, to, pipeTo));
+            currentPipeline.add(new CommandDescriptor(cl, from, to, pipeTo));
+            if (pipelineTerminator != null) {
+                sequence.add(new SequenceDescriptor(currentPipeline, pendingOp));
+                pendingOp = pipelineTerminator;
+                currentPipeline = new ArrayList<CommandDescriptor>();
+                if (!tokenizer.hasNext()) {
+                    if (!completing) {
+                        throw new ShellSyntaxException(
+                                "no command after '" + pipelineTerminator + "'");
+                    }
+                    trailingSequenceOp = true;
+                    break;
+                }
+                // else continue with the next pipeline
+            } else if (pipeTo) {
+                if (!tokenizer.hasNext()) {
+                    if (!completing) {
+                        throw new ShellSyntaxException("no command after '|'");
+                    }
+                    trailingPipe = true;
+                    break;
+                }
+                // else continue with the next command in the same pipeline
+            } else {
+                // End of tokens: the current pipeline is complete.
+                if (!tokenizer.hasNext()) {
+                    break;
+                }
+            }
         }
-        if (pipeTo && !completing) {
-            throw new ShellSyntaxException("no command after '|'");
+        if (!currentPipeline.isEmpty()) {
+            sequence.add(new SequenceDescriptor(currentPipeline, pendingOp));
         }
         if (completing) {
-            if (pipeTo || commands.isEmpty()) {
+            if (trailingPipe || trailingSequenceOp || sequence.isEmpty()) {
                 return new CommandLine("", null);
             } else {
-                CommandLine res = commands.get(commands.size() - 1).commandLine;
+                CommandLine res = getLastCommand(sequence);
                 res.setArgumentAnticipated(wspAfter);
                 return res;
             }
@@ -435,6 +529,20 @@ public class RedirectingInterpreter extends DefaultInterpreter implements
             this.fromFileName = fromFileName;
             this.toFileName = toFileName;
             this.pipeTo = pipeTo;
+        }
+    }
+
+    /**
+     * A single pipeline in a '&&' / '||' / ';' sequence, together with the
+     * operator that precedes it ({@code null} for the first pipeline).
+     */
+    private static class SequenceDescriptor {
+        public final List<CommandDescriptor> pipeline;
+        public final String operatorBefore;
+
+        public SequenceDescriptor(List<CommandDescriptor> pipeline, String operatorBefore) {
+            this.pipeline = pipeline;
+            this.operatorBefore = operatorBefore;
         }
     }
 }
