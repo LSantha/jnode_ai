@@ -144,7 +144,12 @@ public class LinearScanAllocator<T> {
             this.spilledVariableList.add(spill.getVariable());
             active.remove(spill);
             active.add(lr);
-            Collections.sort(active);
+            // ANCHOR-L2-134: re-sort by END point. Natural ordering is by
+            // START address, so after a spill decision expireOldRange's
+            // early-exit and the furthest-end victim choice above operated
+            // on the wrong order - registers freed late, suboptimal
+            // victims, more spilling.
+            Collections.sort(active, endPointComparator);
         } else {
             lr.setLocation(new StackLocation<T>());
             this.spilledVariableList.add(lr.getVariable());
