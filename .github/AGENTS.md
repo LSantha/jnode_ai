@@ -24,7 +24,7 @@ CI infrastructure, agent automation, and label conventions for JNode.
 
 | Workflow | Trigger | Job-level `if` |
 |----------|---------|----------------|
-| `opencode` | `issue_comment: [created]` and `pull_request_review_comment: [created]` | body matches `/oc ` (prefix or preceded by space) AND author is COLLABORATOR / MEMBER / OWNER |
+| `opencode` | `issue_comment: [created]` and `pull_request_review_comment: [created]` | body matches `/oc ` (prefix or preceded by space) AND body has no `opencode.ai/s/` session link (agent self-trigger guard) AND author is COLLABORATOR / MEMBER / OWNER |
 | `auto-triage` | `issues: [opened]`, `issue_comment: [created]` | opened (non-bot, no `no-auto`, untriaged) OR human reply on a `needs-info` waiter (prior `## Triage`, <3 passes, no `in-progress`) |
 | `ticket-runner` | `issue_comment: [created]` (body starts with `/run`), `issues: [labeled]` (label starts with `kind/`), `workflow_run: [opencode, Java CI, completed]`, `pull_request_review: [submitted]` | startsWith `/run` OR actionable `kind/` label with clear triage OR `workflow_run` OR `pull_request_review` |
 | `orchestrator` | `issue_comment: [created]` (body starts with `/orchestrate`) OR `workflow_run: [opencode, Java CI, completed]` | event is `issue_comment` with `/orchestrate` OR event is `workflow_run` |
