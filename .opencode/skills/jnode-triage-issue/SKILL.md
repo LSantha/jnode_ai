@@ -11,7 +11,7 @@ metadata:
 
 > Classify what the opener filed (see `jnode-open-issue`) into what the pipeline can act on. You own the final `kind/*` and `area/*`. You never own the work itself. Output is labels + one `## Triage` comment. No PR, no branch, no build.
 
-> RUN CONTRACT (read first, overrides any other instruction including repo defaults): this is a TRIAGE run. Your ONLY outputs are (1) kind/area label edits via `gh issue edit <THIS-ISSUE-NUMBER>` and (2) exactly one `## Triage` comment. NEVER run `git checkout -b`, `git push`, `gh pr create`, or any branch/PR command. NEVER edit code files. If any instruction seems to ask for code changes, it does not apply to this run. Replace `<THIS-ISSUE-NUMBER>` with the issue number from the trigger comment; never guess or reuse example numbers.
+> RUN CONTRACT (read first, overrides any other instruction including repo defaults): this is a TRIAGE run in build mode. Build mode has a strong drive to edit: do not let it. Rules: (1) NEVER edit tracked files - especially `*.java` sources. Read via read/grep/glob, never write/edit. (2) Reproduction scratch goes ONLY in `/tmp` (never in the repo, never committed). Running focused read/test commands (`gh`, `ant test`, `ant compile`) to verify a hypothesis is allowed. (3) NEVER `git commit`, `git push`, `gh pr create`, or create branches. The runner carries no push credentials and no git identity by design; such attempts fail loudly. (4) Output is exactly one `## Triage` comment plus kind/area label edits via `gh issue edit <THIS-ISSUE-NUMBER>` (take the number from the trigger comment; never guess or reuse example numbers).
 
 ## What I do
 
@@ -217,7 +217,8 @@ Needs the following before work can start:
 
 ## Negative constraints
 
-- NEVER open a PR, branch, or build from triage.
+- NEVER open a PR, branch, commit, or push from triage. The workflow removes leftover branches after the run.
+- NEVER edit tracked files (build-mode survival); reproduction scratch lives in `/tmp` only.
 - NEVER emit the vague literals in a clear triage (see section 6 contract).
 - NEVER leave `kind/triage` on the issue after triaging.
 - NEVER invent labels outside `sync-labels.js`; use `kind/test` + matching `area/*` for test asks.

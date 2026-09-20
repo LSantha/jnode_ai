@@ -7,7 +7,7 @@ CI infrastructure, agent automation, and label conventions for JNode.
 | Path | Purpose |
 |------|---------|
 | `workflows/opencode.yml` | Single-issue agent runner (build agent). Triggered by `/oc <verb>` comments except `/oc triage`. |
-| `workflows/triage.yml` | Dedicated triage runner (plan agent, read-only perms). Triggered by `/oc triage` only. No build, no push credentials. |
+| `workflows/triage.yml` | Dedicated triage runner (build agent under survival rules: no tracked-file edits, repro scratch in `/tmp` only, no commit/push/PR). Triggered by `/oc triage` only. JDK present for test reproduction, no ISO build, no push credentials; leftover branches removed post-run. |
 | `workflows/auto-triage.yml` | Auto posts `/oc triage` on `issues: opened` and on human replies while `agent/needs-info` holds (re-triage, max 3 passes). Skips bots, masters, `no-auto`. |
 | `workflows/ticket-runner.yml` | Single-issue multi-turn runner. Triggered by `/run`, by `issues: labeled` (`kind/*`), or by opencode completion. |
 | `workflows/orchestrator.yml` | Multi-task batch runner. Triggered by `/orchestrate` or by opencode completion. |

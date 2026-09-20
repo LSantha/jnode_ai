@@ -36,6 +36,11 @@ jobs:
         run: gh repo clone LSantha/jnode_ai.wiki .wiki
         env:
           GH_TOKEN: ${{ secrets.GH_PAT }}
+      - name: Set up JDK 8
+        uses: actions/setup-java@v4
+        with:
+          java-version: '8'
+          distribution: 'zulu'
       - name: Run opencode triage
         id: run_agent
         uses: anomalyco/opencode/github@latest
@@ -46,7 +51,6 @@ jobs:
         with:
           model: openrouter/cohere/north-mini-code:free
           variant: high
-          agent: plan
           use_github_token: true
 
       - name: Apply agent/* label and close if work-product is the comment
@@ -59,3 +63,9 @@ jobs:
           script: |
             const postStep = require('./.github/scripts/opencode-post-step.js');
             await postStep({ github, context, core });
+
+      - name: Remove agent branches and scratch
+        if: always()
+        run: |
+          git branch --list 'opencode/*' | xargs -r git branch -D
+          rm -rf /tmp/triage-* /tmp/oc-triage-*
