@@ -47,6 +47,8 @@ jobs:
         with:
           java-version: '8'
           distribution: 'zulu'
+      - name: Make checkout read-only
+        run: git ls-files -z | xargs -0 chmod a-w
       - name: Run opencode triage
         id: run_agent
         uses: anomalyco/opencode/github@latest
