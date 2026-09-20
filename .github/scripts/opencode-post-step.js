@@ -42,6 +42,11 @@ function isTriageClearComment(body) {
   return isTriageComment(body) && !isNeedsInfoComment(body) && !isRefusalComment(body);
 }
 
+function isTriggerComment(body) {
+  if (!body) return false;
+  return /(^|\s)\/(oc|run|orchestrate)(\s|$)/.test(body);
+}
+
 function isInvestigationReport(body) {
   if (!body) return false;
   return /## 🤖 Investigation Report/i.test(body);
@@ -54,7 +59,7 @@ function isAgentHeading(body) {
 function findLatestAgentComment(comments) {
   for (let i = comments.length - 1; i >= 0; i--) {
     const c = comments[i];
-    if (c.body && isAgentHeading(c.body)) {
+    if (c.body && !isTriggerComment(c.body) && isAgentHeading(c.body)) {
       return c.body;
     }
   }

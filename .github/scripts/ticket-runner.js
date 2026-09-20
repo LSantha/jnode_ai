@@ -115,6 +115,10 @@ module.exports = async ({ github, context, core }) => {
   const VAGUE_RE = /needs more info from reporter|needs the following|suggested next:\s*needs-info/i;
   const TRIAGE_RE = /## .*Triage/i;
   const REFUSAL_RE = /refusal|out of scope/i;
+  // A comment carrying a slash-command is a TRIGGER, never a REPORT.
+  // Triggers routinely quote report strings (e.g. "## Triage", "Verdict: ..."),
+  // so every report scan must skip them or it matches its own trigger.
+  const TRIGGER_RE = /(^|\s)\/(oc|run|orchestrate)(\s|$)/;
 
   // ---- Determine issue number depending on event type ----
 
@@ -303,6 +307,7 @@ module.exports = async ({ github, context, core }) => {
     var clear = false;
     for (var i = 0; i < list.length; i++) {
       var b = (list[i] && list[i].body) || "";
+      if (TRIGGER_RE.test(b)) continue;
       if (TRIAGE_RE.test(b)) {
         count++;
         clear = !VAGUE_RE.test(b) && !REFUSAL_RE.test(b);
@@ -755,14 +760,15 @@ module.exports = async ({ github, context, core }) => {
     state.retries += 1;
     state.history.push({ event: "retry", retries: state.retries, phase: state.phase, timestamp: new Date().toISOString() });
     if (state.retries >= 3) {
-      core.error("Ticket runner: #" + issueNumber + " phase " + state.phase + " reached max retries. FAILED.");
+      var failedPhase = state.phase;
+      core.error("Ticket runner: #" + issueNumber + " phase " + failedPhase + " reached max retries. FAILED.");
       state.phase = "FAILED";
-      state.history.push({ event: "max_retries", timestamp: new Date().toISOString() });
+      state.history.push({ event: "max_retries", phase: failedPhase, timestamp: new Date().toISOString() });
       await updateIssueState(issueNumber, state);
       await applyLabel(issueNumber, "agent/failed");
       await github.rest.issues.createComment({
         owner, repo, issue_number: issueNumber,
-        body: "❌ Ticket runner: phase " + state.phase + " failed after 3 retries."
+        body: "\u274c Ticket runner: phase " + failedPhase + " failed after 3 retries."
       });
     } else {
       var target = state.pr || issueNumber;

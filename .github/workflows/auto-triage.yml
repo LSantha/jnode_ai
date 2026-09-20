@@ -48,7 +48,8 @@ jobs:
               let hasOcTriage = false;
               for (const c of comments) {
                 const b = c.body || '';
-                if (/## .*Triage/i.test(b)) triageCount++;
+                const isTrigger = /(^|\s)\/(oc|run|orchestrate)(\s|$)/.test(b);
+                if (/## .*Triage/i.test(b) && !isTrigger) triageCount++;
                 if(/(^|\s)\/oc triage(\s|$)/.test(b)) hasOcTriage = true;
               }
               return { triageCount, hasOcTriage };

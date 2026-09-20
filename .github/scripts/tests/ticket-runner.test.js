@@ -414,6 +414,18 @@ test("merge safety gate helpers", async (t) => {
     assert.deepStrictEqual(await h.findPRsForSHA("abc"), [7]);
     assert.deepStrictEqual(await h.findPRsForSHA("none"), []);
   });
+
+  await t.test("getAgentReviewVerdict ignores trigger quoting verdicts", async () => {
+    const gh = {
+      rest: {
+        issues: {
+          listComments: async () => ({ data: [{ body: "/oc review\n\nFinal line must be exactly one of:\nVerdict: approve\nVerdict: request-changes" }] })
+        }
+      }
+    };
+    const h = createHelpers({ github: gh, context: { repo: { owner: "t", repo: "t" } }, core: { info: () => {}, warning: () => {} } });
+    assert.strictEqual(await h.getAgentReviewVerdict(99), null);
+  });
 });
 
 test("ticket-runner.js event handling suite", async (t) => {
@@ -618,6 +630,7 @@ test("ticket-runner.js event handling suite", async (t) => {
     assert.strictEqual(state.phase, "FAILED");
     assert.ok(mocks.calls.addLabels.some(l => l.labels.includes("agent/failed")));
     assert.ok(mocks.calls.createComment.some(c => c.body.includes("failed after 3 retries")));
+    assert.ok(mocks.calls.createComment.some(c => c.body.includes("phase DEV failed")));
   });
 
   await t.test("Short-circuit label completes the ticket", async () => {
@@ -902,6 +915,22 @@ test("ticket-runner.js event handling suite", async (t) => {
 
     assert.strictEqual(_parseState(mocks.getIssueBody()), null);
     assert.strictEqual(mocks.calls.createComment.length, 0);
+  });
+
+  await t.test("issues:labeled ignores trigger quoting triage", async () => {
+    const mocks = createMocks("issues", {
+      issueBody: "Bug description",
+      issueLabels: [{ name: "kind/chore" }]
+    });
+    mocks.setIssueComments([
+      { body: "/oc triage issue #42\n\nTriage run ONLY. Output is exactly one ## Triage comment plus kind/area label edits." }
+    ]);
+    await runTicketRunner(mocks);
+
+    assert.strictEqual(_parseState(mocks.getIssueBody()), null);
+    assert.strictEqual(mocks.calls.createComment.length, 1);
+    assert.ok(mocks.calls.createComment[0].body.includes("/oc triage"));
+    assert.ok(!mocks.calls.createComment[0].body.includes("Please proceed"));
   });
 
   await t.test("issues:labeled ignores non-actionable kind", async () => {

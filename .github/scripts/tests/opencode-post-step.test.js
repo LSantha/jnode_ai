@@ -155,4 +155,15 @@ test('opencode-post-step.js test suite', async (t) => {
     assert.ok(calls.addLabels.includes('agent/needs-info'));
     assert.ok(calls.removeLabel.includes('agent/done'));
   });
+
+  await t.test('Trigger quoting triage is not a report', async () => {
+    const { core, github, context, calls, setIssueData, setComments } = createMocks();
+    process.env.PREV_CONCLUSION = 'success';
+    setIssueData({ labels: [{ name: 'kind/bug' }], state: 'open' });
+    setComments([{ body: '/oc triage issue #42\n\nTriage run ONLY. Output is exactly one ## Triage comment plus kind/area label edits.' }]);
+
+    await runPostStep({ github, context, core });
+    assert.ok(!calls.removeLabel.includes('agent/needs-info'));
+    assert.ok(calls.addLabels.includes('agent/done'), 'trigger-only falls to default, applies no triage logic');
+  });
 });

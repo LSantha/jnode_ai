@@ -57,6 +57,8 @@ module.exports = function createHelpers({ github, context, core }) {
 
     for (var i = comments.data.length - 1; i >= 0; i--) {
       var body = comments.data[i].body || "";
+      // The review prompt itself quotes both verdicts; never read triggers as verdicts.
+      if (/(^|\s)\/(oc|run|orchestrate)(\s|$)/.test(body)) continue;
       if (requestChangesRe.test(body)) return "request-changes";
       if (approveRe.test(body)) return "approve";
     }

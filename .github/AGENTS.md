@@ -167,7 +167,7 @@ State is stored in the issue body as a markdown status block and a hidden JSON c
 ### Key Behaviors
 
 - **Guards**: Refuses `/run` if posted on a PR (direct `/oc` should be used instead), or if the issue is managed by the orchestrator (either the master issue itself or an issue currently queued in an active `IN_PROGRESS` master issue).
-- **Auto-start**: No manual `/run` needed when the issue carries an actionable kind (`bug`, `feature`, `chore`, `wiki`, `test`), a CLEAR `## Triage` comment, no blocking `agent/*`, no `no-auto`, and no runner state yet. Fires on `issues: labeled` and on `workflow_run` triage-clear; labeled-but-untriaged issues get `/oc triage` first instead of a run.
+- **Auto-start**: No manual `/run` needed when the issue carries an actionable kind (`bug`, `feature`, `chore`, `wiki`, `test`), a CLEAR `## Triage` comment, no blocking `agent/*`, no `no-auto`, and no runner state yet. Report scans skip trigger comments (same rule as post-step). Fires on `issues: labeled` and on `workflow_run` triage-clear; labeled-but-untriaged issues get `/oc triage` first instead of a run.
 - **CI wakeups**: On `Java CI` success the runner re-runs `/oc review` for a deferred `REVIEW` PR (green + still-approve leads to merge); on failure it posts one marker-deduped `/oc fix` per SHA on active `REVIEW`/`FEEDBACK` PRs.
 - **Concurrency**: Grouped per issue/PR for comment and PR review triggers (`ticket-runner-<id>`). For `workflow_run` events, GitHub Actions does not expose the target issue in concurrency expressions, so runs are keyed by `workflow_run.id`. Parallel completions touching the same issue are rare and self-heal on the next turn or manual `/run`.
 - **Human Review**: If the issue is not auto-merge eligible (explicit `auto-merge` label or implicit safe `kind/chore,wiki,test`), successful agent review transitions to `HUMAN_REVIEW`. Human approval via the GitHub PR Review UI triggers automatic squash merge and closes the issue. Eligible tasks merge automatically once the safety gate passes (diff safe + CI green); otherwise they wait in `REVIEW` with a defer comment.
@@ -230,7 +230,7 @@ Runs on every opencode.yml run, regardless of success/failure/cancelled.
 
 1. Read the issue's existing `agent/*` label. If it's set and not `agent/failed`, respect it (except clear triage below, which clears stale `needs-info`).
 2. If the run concluded `failure` or `cancelled`, apply `agent/failed`.
-3. Detect the latest agent comment by heading. Priority order:
+3. Detect the latest agent comment by heading, IGNORING any comment that itself carries a slash-command trigger (`/oc`, `/run`, `/orchestrate`) — triggers quote report strings, so they are never reports. Priority order:
    - `Refusal` heading -> `agent/skip`
    - Vague triage text (`needs more info from reporter` / `needs the following` / `Suggested next: needs-info`) -> `agent/needs-info`. A bare `## Triage` heading alone does NOT match.
    - `Investigation Report` heading -> `agent/investigated` (verb-override)
