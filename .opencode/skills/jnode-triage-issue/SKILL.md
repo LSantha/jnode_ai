@@ -109,6 +109,8 @@ Sufficient = pipeline can start DEV/investigation with no human reply. Vague = b
 - question: sufficient iff question + context + what-was-tried present. Else vague.
 - Product-decision blockers (wontfix vs feature scope call, duplicate ambiguity, embargo) always count as vague even if text is complete.
 
+Needs-info means the REPORTER must supply missing INPUTS (repro steps, logs, env, decisions). It never means missing ANSWERS: if the question is clear but you do not know the answer, that is research for the investigation step (or DEV), not a reporter question. Asking the reporter for the answer to their own question is always wrong - route to `investigate` with a clear verdict instead.
+
 ## 4b. Blast radius (method -> system; system health first)
 
 JNode is a full OS: a one-line change in the wrong layer can break boot, all filesystems, or every plugin. Triage estimates impact WITHOUT reading the whole tree (5-10 greps max). Goal: keep each ticket focused; flag oversized work for splitting now or later refinement.
@@ -287,6 +289,7 @@ Skip the addendum only on `kind/orchestrator` masters and PRs.
 - NEVER set `agent/*` except `agent/duplicate`, and then only together with a comment line `Suggested next: duplicate-of-#M` plus link and reason. A bare duplicate label with no explanation is a failed triage.
 - NEVER close the issue yourself; the post-step owns close for `investigate/question`.
 - NEVER exceed ~30 lines in the comment; details go in label reasons + one follow-up only if asked.
+- NEVER post status or progress comments ("Triage completed", "working on it", summaries of your actions). The only comments you ever post are the `## Triage` report (or `## Refusal`), plus replies the pipeline explicitly requires. Silence is a valid state.
 - NEVER leave an L4/L5-spanning ticket without a Split proposal or an explicit boot-proof requirement; keep tickets focused, split big chunks, refine later.
 
 ## Related pages / files
