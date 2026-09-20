@@ -74,13 +74,35 @@ test('opencode-post-step.js test suite', async (t) => {
     assert.ok(calls.addLabels.includes('agent/done'));
   });
 
-  await t.test('Applies agent/investigated and closes if kind/investigate', async () => {
+  await t.test('Investigate kind without report defaults to done and stays open', async () => {
     const { core, github, context, calls, setIssueData } = createMocks();
     process.env.PREV_CONCLUSION = 'success';
     setIssueData({ labels: ['kind/investigate'], state: 'open' });
-    
+
+    await runPostStep({ github, context, core });
+    assert.ok(calls.addLabels.includes('agent/done'));
+    assert.strictEqual(calls.updateIssue.length, 0, 'No report, no close');
+  });
+
+  await t.test('Investigation report closes non-PR issue', async () => {
+    const { core, github, context, calls, setIssueData, setComments } = createMocks();
+    process.env.PREV_CONCLUSION = 'success';
+    setIssueData({ labels: ['kind/investigate'], state: 'open' });
+    setComments([{ body: '## Investigation Report\n\n**Findings:** x' }]);
+
     await runPostStep({ github, context, core });
     assert.ok(calls.addLabels.includes('agent/investigated'));
+    assert.ok(calls.updateIssue.includes('closed'));
+  });
+
+  await t.test('Duplicate signal applies duplicate and closes', async () => {
+    const { core, github, context, calls, setIssueData, setComments } = createMocks();
+    process.env.PREV_CONCLUSION = 'success';
+    setIssueData({ labels: ['kind/bug'], state: 'open' });
+    setComments([{ body: '## Triage\n\n- [ ] **Suggested next:** duplicate-of-#123 (same stack)' }]);
+
+    await runPostStep({ github, context, core });
+    assert.ok(calls.addLabels.includes('agent/duplicate'));
     assert.ok(calls.updateIssue.includes('closed'));
   });
 

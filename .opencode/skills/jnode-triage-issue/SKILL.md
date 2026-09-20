@@ -96,6 +96,8 @@ Label note: `kind/test` exists in `sync-labels.js` for test asks; pair it with t
 
 `kind/investigate` vs `kind/question`: investigate = codebase research with file:line findings; question = usage answer with wiki refs. Both are comment-only (post-step closes on `agent/investigated`).
 
+Investigate/question triage is scoping, not answering - there is no DEV, PR, or review later, so this step is deliberately light: confirm the question is single and clear, refine the investigation domain (scope In/Out with file:line entry points, wiki refs), give guidance for the later investigation step. Do NOT research the answer, do NOT paste evidence beyond 2-3 pointer lines. Sufficiency = one clear question + scoped domain; vague = missing either. Evidence rule: host-system output (this machine's mounts, processes, logs) is never target-system evidence - never paste it as findings.
+
 ## 4. Repro-sufficiency rubric (this decides needs-info)
 
 Sufficient = pipeline can start DEV/investigation with no human reply. Vague = blocked.
@@ -161,7 +163,7 @@ Rules:
 - Opener hints are inputs. Correct a wrong `area/*` (e.g. `area/net` on a FAT bug becomes `area/fs`) and say why: `Area: area/net -> area/fs (trace shows org.jnode.fs.jfat)`.
 - Cap at 2 `area/*`. Primary = fault site, secondary = harness (e.g. `area/fs` + `area/test`).
 - Replace `kind/triage` with resolved kind; never stack `kind/bug` + `kind/feature` (pick one, note alternative in comment).
-- Never touch `agent/*`, `kind/orchestrator`, `orchestrator/locked`. Duplicates: link original in comment; applying `agent/duplicate` directly is allowed (post-step respects existing `agent/*`), but prefer `Suggested next: duplicate-of-#M` and let the workflow close it unless certain.
+- Never touch `agent/*`, `kind/orchestrator`, `orchestrator/locked` - no exceptions. Duplicates are reported with a `Suggested next: duplicate-of-#M` line plus link and reason; the workflow applies `agent/duplicate` and closes. Never close the issue yourself.
 - `no-auto` present: audit labels and comment, but state `Auto-run: skipped (no-auto)`.
 
 ## 6. Comment contract (wording drives labels)

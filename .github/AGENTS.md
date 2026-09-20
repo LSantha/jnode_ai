@@ -236,12 +236,12 @@ Runs on every opencode.yml run, regardless of success/failure/cancelled.
    - Vague triage text (`needs more info from reporter` / `needs the following` / `Suggested next: needs-info`) -> `agent/needs-info`. A bare `## Triage` heading alone does NOT match.
    - `Investigation Report` heading -> `agent/investigated` (verb-override)
    - Clear triage (`## Triage` without vague literals or refusal) -> apply NO label; remove stale `agent/needs-info` if present (re-triage unstick)
-3. Reports above win even on `failure`/`cancelled` runs (a triage run that dies at finalization after posting still delivered); with no recognized report, `failure`/`cancelled` -> `agent/failed`.
+3. Reports above win even on `failure`/`cancelled` runs (a triage run that dies at finalization after posting still delivered); with no recognized report, `failure`/`cancelled` -> `agent/failed`. No heading anywhere -> existing label respected, PR context -> `agent/done`, else default `agent/done`. There is deliberately no kind-based default: `investigated` requires the report heading, `duplicate` requires a `duplicate-of-#N` link.
 4. If no heading and the context is a PR -> `agent/done`.
 5. If no heading and issue is `kind/investigate` or `kind/question` -> `agent/investigated`.
 6. Default -> `agent/done`.
 7. Remove `agent/in-progress`.
-8. If the applied label is `agent/investigated` AND the issue is `kind/investigate` or `kind/question`, close the issue (unless already closed).
+8. Close the issue (unless already closed) when the applied label is `agent/duplicate` (any kind), or `agent/investigated` on `kind/investigate` or `kind/question`.
 
 The post-step is idempotent. A second run with the same inputs makes the same decision.
 

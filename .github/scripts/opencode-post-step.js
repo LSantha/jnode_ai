@@ -19,10 +19,6 @@ function isPRContext(context) {
   return !!(context.payload.issue && context.payload.issue.pull_request);
 }
 
-function isInvestigationKind(labels) {
-  return labels.includes('kind/investigate') || labels.includes('kind/question');
-}
-
 function isRefusalComment(body) {
   if (!body) return false;
   return /refusal|out of scope|## 🤖 Refusal/i.test(body);
@@ -47,9 +43,14 @@ function isTriggerComment(body) {
   return /(^|\s)\/(oc|run|orchestrate)(\s|$)/.test(body);
 }
 
+function isDuplicateSignal(body) {
+  if (!body) return false;
+  return /duplicate-of-#\d+/i.test(body);
+}
+
 function isInvestigationReport(body) {
   if (!body) return false;
-  return /## 🤖 Investigation Report/i.test(body);
+  return /## .*Investigation Report/i.test(body);
 }
 
 function isAgentHeading(body) {
@@ -79,6 +80,9 @@ function decideAgentLabel({ existing, conclusion, latestComment, labels, isPR })
   if (isInvestigationReport(latestComment)) {
     return { label: 'agent/investigated', reason: 'investigation report heading detected (verb-override)' };
   }
+  if (isDuplicateSignal(latestComment)) {
+    return { label: 'agent/duplicate', reason: 'duplicate-of link detected in comment' };
+  }
   if (isTriageClearComment(latestComment)) {
     return { label: null, clearNeedsInfo: true, reason: 'clear triage, no blocking label' };
   }
@@ -91,14 +95,12 @@ function decideAgentLabel({ existing, conclusion, latestComment, labels, isPR })
   if (isPR) {
     return { label: 'agent/done', reason: 'PR context' };
   }
-  if (isInvestigationKind(labels)) {
-    return { label: 'agent/investigated', reason: 'investigation kind, comment absent' };
-  }
   return { label: 'agent/done', reason: 'default for non-investigation kinds' };
 }
 
 function shouldClose({ isPR, latestComment, labels, agentLabel }) {
   if (isPR) return false;
+  if (agentLabel === 'agent/duplicate') return true;
   if (agentLabel !== 'agent/investigated') return false;
   if (isInvestigationReport(latestComment)) {
     return true;
