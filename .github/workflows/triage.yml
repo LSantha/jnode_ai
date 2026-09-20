@@ -77,5 +77,6 @@ jobs:
       - name: Remove agent branches and scratch
         if: always()
         run: |
+          git checkout -q master 2>/dev/null || true
           git branch --list 'opencode/*' | xargs -r git branch -D
           rm -rf /tmp/triage-* /tmp/oc-triage-*
