@@ -48,7 +48,7 @@ jobs:
           java-version: '8'
           distribution: 'zulu'
       - name: Make checkout read-only
-        run: git ls-files -z | xargs -0 chmod a-w
+        run: chmod -R a-w .
       - name: Run opencode triage
         id: run_agent
         uses: anomalyco/opencode/github@latest
@@ -72,8 +72,6 @@ jobs:
             const postStep = require('./.github/scripts/opencode-post-step.js');
             await postStep({ github, context, core });
 
-      - name: Remove agent branches and scratch
+      - name: Remove scratch
         if: always()
-        run: |
-          git branch --list 'opencode/*' | xargs -r git branch -D
-          rm -rf /tmp/triage-* /tmp/oc-triage-*
+        run: rm -rf /tmp/triage-* /tmp/oc-triage-*
