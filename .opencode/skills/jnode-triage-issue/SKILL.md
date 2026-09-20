@@ -23,10 +23,10 @@ metadata:
 4. Decide final `kind/*` (decision tree, see section 3; `kind/triage` is input-only, never output).
 5. Judge repro-sufficiency per kind (see section 4). Sufficient = actionable, vague = human must reply.
 6. Estimate blast radius L0-L5 with side effects and split proposal if oversized (see section 4b). One ticket stays focused; big chunks split now or flagged for later refinement.
-7. Apply label audit (add/remove, see section 5).
-8. Post exactly one `## Triage` comment using the template v2 (see section 6): area, kind, repro, blast radius, expected scope, test path, merge signal, gaps, suggested next, split, labels. The post-step maps comment TEXT to `agent/*`, so wording is a contract, not prose. Then end your session with the same report as your final message: on a clean checkout the runner posts your final message as the issue comment, which is the fallback delivery path.
+7. Apply label audit FIRST via `gh issue edit` (add/remove, see section 5), then verify with `gh issue view` that they stuck. Labels before comment: a dead run with labels applied still classified the issue.
+8. Post exactly one `## Triage` comment using the template v2 (see section 6): area, kind, repro, blast radius, expected scope, test path, merge signal, gaps, suggested next, split, labels. The `Labels applied` line must mirror the verified step-7 result, never aspiration. The post-step maps comment TEXT to `agent/*`, so wording is a contract, not prose. Then end your session with the same report as your final message: on a clean checkout the runner posts your final message as the issue comment, which is the fallback delivery path.
 9. Write the body addendum (see section 7): mirror the verdicts into the issue body between markers so DEV and reviewers inherit them without scrolling comments.
-10. ONLY AFTER steps 8-9 are posted and verified: optional reproduction scratch in `/tmp` (see survival rules above). Never let scratch precede the comment - the run may die at finalization and only what is already posted survives.
+10. Verify (mandatory): re-read labels (`gh issue view`) and body markers; redo any missing piece NOW. Then stop. Optional reproduction scratch in `/tmp` only after verification - the run may die at finalization and only posted work survives.
 
 ## When to use me
 
@@ -166,13 +166,13 @@ Rules:
 
 ## 6. Comment contract (wording drives labels)
 
-Post exactly one comment. Two shapes. The narrowed post-step matches ONLY the vague literals - so a clear triage must NEVER contain the strings `needs more info from reporter`, `needs the following`, or `Suggested next: ... needs-info`. One stray phrase flips the label.
+Post exactly one comment. Two shapes. The narrowed post-step matches ONLY the vague literals - so a clear triage must NEVER contain the strings `needs more info from reporter`, `needs the following`, or `Suggested next: ... needs-info`. One stray phrase flips the label. `Suggested next` uses exactly one of: `fix`, `investigate`, `needs-info`, `duplicate-of-#M`, `wontfix` - never free text.
 
 Field guide:
 
 - **Expected scope** (delimitation of the solution): files, approximate lines, what changes, what must NOT change (no-go zones: ASM, public API, boot path unless required). This bounds DEV.
 - **Test path**: how DEV proves it - host-JVM module (`cd <sub> && ant test`), QEMU boot proof (kernel/VM/driver/FS), or docs-only (no test). Name the exact command.
-- **Merge signal**: the reviewer handoff. `safe` means auto-merge candidate (safe kind such as chore/wiki/test, small expected scope, no boot path, no public API change, test path exists - always with the why). `human-review` means a human must decide (boot-critical, L4+, public API, ambiguous repro, product call - always with the why). The merge policy and human reviewers read this field to pull the human in or let automation through.
+- **Merge signal**: the reviewer handoff. `safe` requires ALL of: kind is chore/wiki/test (or the issue already carries `auto-merge`), small expected scope (rule of thumb: at most ~5 files, ~100 added lines), no boot path, no public API change, and a working test path - always with the why. Everything else (bug, feature, L4+, boot-critical, ambiguous repro, product call) is `human-review` with the why. The merge policy auto-merges only eligible kinds after agent approval plus green CI; humans use this field to decide whether to even let it try.
 - **Gaps**: report-gap signals. Each gap names the missing piece, who provides it, and whether it blocks. Blocking gaps force the vague shape; non-blocking gaps ride along into the body addendum for DEV.
 
 Clear (actionable):
