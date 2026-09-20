@@ -62,6 +62,7 @@ jobs:
           model: openrouter/cohere/north-mini-code:free
           variant: high
           use_github_token: true
+          prompt: "You are triaging JNode GitHub issue #${{ github.event.issue.number }}. Load the jnode-triage-issue skill and execute it end to end: kind/area label audit first, then exactly one issue comment opening with '## Triage' and the completed skill template, then the body addendum. No preamble, no environment commentary, no branches, commits, pushes, or pull requests."
 
       - name: Apply agent/* label and close if work-product is the comment
         if: success() || failure() || cancelled()
