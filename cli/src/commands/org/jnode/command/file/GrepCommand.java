@@ -87,14 +87,14 @@ private static final String help_matcher_fixed = "Patterns are fixed strings, se
                                                  "file from which output would normally be printed. Scanning stops " +
                                                  "after making a single match.";
     private static final String help_max = "Stop reading a file after n matches. If the input is stdin from a " +
-                                          "regular file, and n matching lines are output, grep ensures that the " +
-                                          "standard input is positioned, to just after the last matching line before " +
-                                          "exiting, regardless of trailing context lines. When grep stops after n " +
-                                          "matching lines, it will output trailing context lines. When used with " +
-                                          "--count, count wil never be more than n. When used with --invert, grep " +
-                                          "stops after n non-matching lines.";
-private static final String help_only_matching = "Print only the matched parts of the matching line. with each " +
-                                                      "part on a separate output line.";
+                                           "regular file, and n matching lines are output, grep ensures that the " +
+                                           "standard input is positioned, to just after the last matching line before " +
+                                           "exiting, regardless of trailing context lines. When grep stops after n " +
+                                           "matching lines, it will output trailing context lines. When used with " +
+                                           "--count, count will never be more than n. When used with --invert, grep " +
+                                           "stops after n non-matching lines.";
+    private static final String help_only_matching = "Print only the matched parts of the matching line. with each " +
+                                                 "part on a separate output line.";
     private static final String help_quiet = "Do not write _anything_ to stdout. Exit immediately with zero status if" +
                                             " any match is found, even if an error was detected.";
     private static final String help_suppress = "Suppress error messages about nonexistent or unreadable files.";
@@ -116,18 +116,18 @@ private static final String help_only_matching = "Print only the matched parts o
                                                   "minimum size field width.";
     private static final String help_prefix_null = "Output a zero byte instead of the character that normally " +
                                                    "a file name, which is normally a newline.";
-    private static final String help_context_after = "Print n lines of trailing context lines after matching lines. " +
-                                                     "Places a line containing a group seperator '--' between " +
-                                                     "contiguous groups of matches. With --only-matching this has no " +
-                                                     "effect and a warning is given.";
-    private static final String help_context_before = "Print n lines of leading context lines before matching lines. " +
-                                                      "Places a line containing a group seperator '--' between " +
-                                                      "contiguous groups of matches. With --only-matching this has " +
-                                                      "no effect and a waring is given.";
+ private static final String help_context_after = "Print n lines of trailing context lines after matching lines. " +
+                                                      "Places a line containing a group separator '--' between " +
+                                                      "contiguous groups of matches. With --only-matching this has no " +
+                                                      "effect and a warning is given.";
+ private static final String help_context_before = "Print n lines of leading context lines before matching lines. " +
+                                                       "Places a line containing a group separator '--' between " +
+                                                       "contiguous groups of matches. With --only-matching this has " +
+                                                       "no effect and a warning is given.";
     private static final String help_context_both = "Print n lines of leading and trailing context. Places a line " +
-                                                    "containing a group seperator '--' between contiguous groups of " +
-                                                    "matches. With --only-matching this has no effect and a warning " +
-                                                    "is given.";
+                                                     "containing a group separator '--' between contiguous groups of " +
+                                                     "matches. With --only-matching this has no effect and a warning " +
+                                                     "is given.";
     private static final String help_mode_binary = "If the first few bytes of a file indicate that the file contains " +
                                                    "binary data, assume the file is the specified type. By default " +
                                                    "the type is 'binary' and grep outputs a one line message saying " +
@@ -738,7 +738,7 @@ private static final String help_only_matching = "Print only the matched parts o
     }
     
     /**
-     * Outputs a file name and appends a null byte if PREFIX_NULL is set, otherwise it
+    * Outputs a file name and appends a null byte if PREFIX_NULL is set, otherwise it
      * appends a newline.
      */
     private void printFile(String name) {
