@@ -3,7 +3,7 @@ name: jnode-triage-issue
 description: Triage and classify JNode GitHub issues - audit kind and area labels, assess repro sufficiency, correct mislabels, emit needs-info only when human input is truly required. Use when triaging a new or re-opened JNode issue via /oc triage or auto-triage.
 license: MIT
 metadata:
-  version: 0.1.0
+  version: 0.2.0
   author: opencode
 ---
 
@@ -22,8 +22,9 @@ metadata:
 5. Judge repro-sufficiency per kind (see section 4). Sufficient = actionable, vague = human must reply.
 6. Estimate blast radius L0-L5 with side effects and split proposal if oversized (see section 4b). One ticket stays focused; big chunks split now or flagged for later refinement.
 7. Apply label audit (add/remove, see section 5).
-8. Post exactly one `## Triage` comment using the clear vs vague template (see section 6). The post-step maps comment TEXT to `agent/*`, so wording is a contract, not prose. Then end your session with the same report as your final message: on a clean checkout the runner posts your final message as the issue comment, which is the fallback delivery path.
-9. ONLY AFTER step 8 is posted and verified: optional reproduction scratch in `/tmp` (see survival rules above). Never let scratch precede the comment - the run may die at finalization and only what is already posted survives.
+8. Post exactly one `## Triage` comment using the template v2 (see section 6): area, kind, repro, blast radius, expected scope, test path, merge signal, gaps, suggested next, split, labels. The post-step maps comment TEXT to `agent/*`, so wording is a contract, not prose. Then end your session with the same report as your final message: on a clean checkout the runner posts your final message as the issue comment, which is the fallback delivery path.
+9. Write the body addendum (see section 7): mirror the verdicts into the issue body between markers so DEV and reviewers inherit them without scrolling comments.
+10. ONLY AFTER steps 8-9 are posted and verified: optional reproduction scratch in `/tmp` (see survival rules above). Never let scratch precede the comment - the run may die at finalization and only what is already posted survives.
 
 ## When to use me
 
@@ -36,6 +37,10 @@ Load explicitly:
 ```bash
 skill({ name: "jnode-triage-issue" })
 ```
+
+## Voice (maintainer tone, mandatory)
+
+Write like a JNode maintainer doing intake, not like a visitor describing limits. Findings, verdicts, pointers. Never narrate your own constraints: banned phrases include `not allowed`, `cannot edit`, `read-only`, `as per the triage rules`, `I am unable`, any apology, any explanation of the pipeline or your permissions. The reader wants the classification, not your autobiography. If blocked, state exactly what is missing and who provides it (`@reporter`), then stop.
 
 ## 0. Inputs
 
@@ -161,20 +166,29 @@ Rules:
 
 Post exactly one comment. Two shapes. The narrowed post-step matches ONLY the vague literals - so a clear triage must NEVER contain the strings `needs more info from reporter`, `needs the following`, or `Suggested next: ... needs-info`. One stray phrase flips the label.
 
+Field guide:
+
+- **Expected scope** (delimitation of the solution): files, approximate lines, what changes, what must NOT change (no-go zones: ASM, public API, boot path unless required). This bounds DEV.
+- **Test path**: how DEV proves it - host-JVM module (`cd <sub> && ant test`), QEMU boot proof (kernel/VM/driver/FS), or docs-only (no test). Name the exact command.
+- **Merge signal**: the reviewer handoff. `safe` means auto-merge candidate (safe kind such as chore/wiki/test, small expected scope, no boot path, no public API change, test path exists - always with the why). `human-review` means a human must decide (boot-critical, L4+, public API, ambiguous repro, product call - always with the why). The merge policy and human reviewers read this field to pull the human in or let automation through.
+- **Gaps**: report-gap signals. Each gap names the missing piece, who provides it, and whether it blocks. Blocking gaps force the vague shape; non-blocking gaps ride along into the body addendum for DEV.
+
 Clear (actionable):
 
 ```markdown
 ## Triage
 
 - [x] **Area:** <area/* applied, ex. area/fs (Sub: FAT32 BPB)>
+- [x] **Kind:** <kind/* resolved>
 - [x] **Repro:** <quoted minimal steps or spec pointer>
-- [x] **Severity:** <bug | feature | question | chore | docs>
-- [x] **Blast radius:** <L0-L5 verdict, ex. L2 package (org.jnode.fs.jfat, 3 classes, no plugin export)>
+- [x] **Blast radius:** <L0-L5 verdict (why)>
+- [x] **Expected scope:** <files, ~lines; changes vs no-go zones>
+- [x] **Test path:** <exact verify command or docs-only>
+- [x] **Merge signal:** <safe (why) | human-review (why)>
+- [x] **Gaps:** <none | non-blocking signals for the addendum>
 - [x] **Suggested next:** <fix | investigate>
-- [x] **Split proposal:** <none - focused | 2-4 child scopes, each L0-L2 and testable>
+- [x] **Split proposal:** <none - focused | child scopes>
 - [x] **Labels applied:** <list, incl. removals with reason>
-
-@<reporter> - triaged, ready for pipeline.
 ```
 
 Vague (blocked):
@@ -183,9 +197,13 @@ Vague (blocked):
 ## Triage
 
 - [ ] **Area:** <best guess + uncertainty>
+- [ ] **Kind:** <best guess>
 - [ ] **Repro:** needs more info from reporter
-- [ ] **Severity:** <guess>
-- [ ] **Blast radius:** <best estimate + what is unknown, ex. L2-L4? (callers unclear, need trace)>
+- [ ] **Blast radius:** <best estimate + what is unknown>
+- [ ] **Expected scope:** <tentative, pending answers>
+- [ ] **Test path:** <tentative>
+- [ ] **Merge signal:** human-review (insufficient signal)
+- [ ] **Gaps:** <blocking signals>
 - [ ] **Suggested next:** needs-info
 - [ ] **Split proposal:** <none yet | tentative, pending answers>
 - [ ] **Labels applied:** <list>
@@ -195,13 +213,47 @@ Needs the following before work can start:
 1. <specific Q1>
 2. <specific Q2>
 3. <specific Q3>
-
-@<reporter> - please reply; re-triage on update.
 ```
 
 `Suggested next: duplicate-of-#M` and `wontfix` use the vague shape (blocked) with reason, without the `needs more info` literals unless answers are also needed.
 
-## 7. Needs-info question bank (pick 3-5, be specific)
+## 7. Body addendum (carry verdicts forward)
+
+After the comment is posted, mirror the verdicts into the issue body between markers so DEV and reviewers inherit area, kind, blast radius, expected scope, test path, merge signal, and gaps without scrolling comments. Markers make it idempotent (replace on re-triage, never duplicate). Never touch anything outside the markers.
+
+```html
+<!-- TRIAGE-ADDENDUM-START -->
+## Triage Addendum (auto, <YYYY-MM-DD>)
+
+- **Area / Kind:** <area/* + kind/*>
+- **Blast radius:** <verdict>
+- **Expected scope:** <bounds>
+- **Test path:** <command>
+- **Merge signal:** <safe | human-review (why)>
+- **Gaps:** <none | signals>
+- **Full report:** `## Triage` comment below.
+<!-- TRIAGE-ADDENDUM-END -->
+```
+
+Recipe (verbatim, replace `<OWNER>`, `<REPO>`, `<N>`):
+
+```bash
+gh api repos/<OWNER>/<REPO>/issues/<N> --jq .body > /tmp/triage_body.md
+python3 - <<'EOF'
+import re
+body = open('/tmp/triage_body.md').read()
+block = open('/tmp/triage_addendum.md').read().strip()
+section = "<!-- TRIAGE-ADDENDUM-START -->\n" + block + "\n<!-- TRIAGE-ADDENDUM-END -->"
+pat = re.compile(r'<!-- TRIAGE-ADDENDUM-START -->.*?<!-- TRIAGE-ADDENDUM-END -->', re.S)
+body = pat.sub(section, body) if pat.search(body) else (body.rstrip() + "\n\n" + section + "\n")
+open('/tmp/triage_body.md', 'w').write(body)
+EOF
+gh api repos/<OWNER>/<REPO>/issues/<N> -X PATCH -F body=@/tmp/triage_body.md > /dev/null
+```
+
+Write `/tmp/triage_addendum.md` first (inner markdown without the marker lines). Skip the addendum only on `kind/orchestrator` masters and PRs.
+
+## 8. Needs-info question bank (pick 3-5, be specific)
 
 - Build: exact `sh build.sh <target>` used? commit SHA (`git log -1 --oneline`)?
 - Boot: 32 or 64-bit ISO? full QEMU/VBox command? did boot reach `System has finished`?
@@ -210,7 +262,7 @@ Needs the following before work can start:
 - Area-specific: FS type + BPB/sub-hint? net `-net` flags + interface? shell command spelling? gui driver + mode?
 - Scope decision: fix vs wontfix call needed from maintainer? duplicate confirmation (`#M` same stack)?
 
-## 8. Idempotency
+## 9. Idempotency
 
 - If `## Triage` already in comments and labels already match routing and no new reporter info: post nothing (or a one-line `Triage verified, no change`) and exit.
 - Re-triage fully when: reporter replied after `needs-info`, labels were hand-edited, or invoked with `--fresh`.
@@ -223,7 +275,7 @@ Needs the following before work can start:
 - NEVER emit the vague literals in a clear triage (see section 6 contract).
 - NEVER leave `kind/triage` on the issue after triaging.
 - NEVER invent labels outside `sync-labels.js`; use `kind/test` + matching `area/*` for test asks.
-- NEVER set `agent/*` except optional `agent/duplicate` when certain (with link).
+- NEVER set `agent/*` except `agent/duplicate`, and then only together with a comment line `Suggested next: duplicate-of-#M` plus link and reason. A bare duplicate label with no explanation is a failed triage.
 - NEVER close the issue yourself; the post-step owns close for `investigate/question`.
 - NEVER exceed ~30 lines in the comment; details go in label reasons + one follow-up only if asked.
 - NEVER leave an L4/L5-spanning ticket without a Split proposal or an explicit boot-proof requirement; keep tickets focused, split big chunks, refine later.
