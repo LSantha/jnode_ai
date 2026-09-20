@@ -166,4 +166,36 @@ test('opencode-post-step.js test suite', async (t) => {
     assert.ok(!calls.removeLabel.includes('agent/needs-info'));
     assert.ok(calls.addLabels.includes('agent/done'), 'trigger-only falls to default, applies no triage logic');
   });
+
+  await t.test('Failure with real vague triage still applies needs-info', async () => {
+    const { core, github, context, calls, setIssueData, setComments } = createMocks();
+    process.env.PREV_CONCLUSION = 'failure';
+    setIssueData({ labels: [{ name: 'kind/bug' }], state: 'open' });
+    setComments([{ body: '## Triage\n\n- [ ] **Repro:** needs more info from reporter' }]);
+
+    await runPostStep({ github, context, core });
+    assert.ok(calls.addLabels.includes('agent/needs-info'));
+    assert.ok(!calls.addLabels.includes('agent/failed'));
+  });
+
+  await t.test('Failure with real clear triage clears needs-info', async () => {
+    const { core, github, context, calls, setIssueData, setComments } = createMocks();
+    process.env.PREV_CONCLUSION = 'failure';
+    setIssueData({ labels: [{ name: 'kind/bug' }, { name: 'agent/needs-info' }], state: 'open' });
+    setComments([{ body: '## Triage\n\n- [x] **Repro:** 1. boot\n- [x] **Suggested next:** fix' }]);
+
+    await runPostStep({ github, context, core });
+    assert.ok(calls.removeLabel.includes('agent/needs-info'));
+    assert.ok(!calls.addLabels.includes('agent/failed'));
+  });
+
+  await t.test('Failure with no report still applies agent/failed', async () => {
+    const { core, github, context, calls, setIssueData, setComments } = createMocks();
+    process.env.PREV_CONCLUSION = 'failure';
+    setIssueData({ labels: [{ name: 'kind/bug' }], state: 'open' });
+    setComments([{ body: 'Just a normal comment' }]);
+
+    await runPostStep({ github, context, core });
+    assert.ok(calls.addLabels.includes('agent/failed'));
+  });
 });

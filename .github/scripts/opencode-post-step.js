@@ -67,9 +67,9 @@ function findLatestAgentComment(comments) {
 }
 
 function decideAgentLabel({ existing, conclusion, latestComment, labels, isPR }) {
-  if (conclusion === 'failure' || conclusion === 'cancelled') {
-    return { label: 'agent/failed', reason: 'run concluded: ' + conclusion };
-  }
+  // Structured reports are deliberate work products: honor them even when the
+  // run later died (triage runs often fail at action finalization after the
+  // comment already landed). Failure maps to failed only with no report.
   if (isRefusalComment(latestComment)) {
     return { label: 'agent/skip', reason: 'refusal detected in comment' };
   }
@@ -81,6 +81,9 @@ function decideAgentLabel({ existing, conclusion, latestComment, labels, isPR })
   }
   if (isTriageClearComment(latestComment)) {
     return { label: null, clearNeedsInfo: true, reason: 'clear triage, no blocking label' };
+  }
+  if (conclusion === 'failure' || conclusion === 'cancelled') {
+    return { label: 'agent/failed', reason: 'run concluded: ' + conclusion };
   }
   if (existing && existing !== 'agent/failed') {
     return { label: existing, reason: 'existing agent/* label respected' };

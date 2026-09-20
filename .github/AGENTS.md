@@ -231,12 +231,12 @@ Six of these (`done`, `investigated`, `skip`, `blocked`, `needs-info`, `duplicat
 Runs on every opencode.yml run, regardless of success/failure/cancelled.
 
 1. Read the issue's existing `agent/*` label. If it's set and not `agent/failed`, respect it (except clear triage below, which clears stale `needs-info`).
-2. If the run concluded `failure` or `cancelled`, apply `agent/failed`.
-3. Detect the latest agent comment by heading, IGNORING any comment that itself carries a slash-command trigger (`/oc`, `/run`, `/orchestrate`) — triggers quote report strings, so they are never reports. Priority order:
+2. Detect the latest NON-TRIGGER agent comment by heading (trigger comments carrying `/oc`, `/run`, `/orchestrate` are never reports). Priority order:
    - `Refusal` heading -> `agent/skip`
    - Vague triage text (`needs more info from reporter` / `needs the following` / `Suggested next: needs-info`) -> `agent/needs-info`. A bare `## Triage` heading alone does NOT match.
    - `Investigation Report` heading -> `agent/investigated` (verb-override)
    - Clear triage (`## Triage` without vague literals or refusal) -> apply NO label; remove stale `agent/needs-info` if present (re-triage unstick)
+3. Reports above win even on `failure`/`cancelled` runs (a triage run that dies at finalization after posting still delivered); with no recognized report, `failure`/`cancelled` -> `agent/failed`.
 4. If no heading and the context is a PR -> `agent/done`.
 5. If no heading and issue is `kind/investigate` or `kind/question` -> `agent/investigated`.
 6. Default -> `agent/done`.

@@ -23,6 +23,7 @@ metadata:
 6. Estimate blast radius L0-L5 with side effects and split proposal if oversized (see section 4b). One ticket stays focused; big chunks split now or flagged for later refinement.
 7. Apply label audit (add/remove, see section 5).
 8. Post exactly one `## Triage` comment using the clear vs vague template (see section 6). The post-step maps comment TEXT to `agent/*`, so wording is a contract, not prose.
+9. ONLY AFTER step 8 is posted and verified: optional reproduction scratch in `/tmp` (see survival rules above). Never let scratch precede the comment - the run may die at finalization and only what is already posted survives.
 
 ## When to use me
 
