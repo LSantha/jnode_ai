@@ -59,8 +59,8 @@ jobs:
               await github.rest.issues.createComment({ owner, repo, issue_number: number, body: message });
             }
 
-            const NEW_ISSUE_MSG = '/oc triage\n\nAuto-triage of new issue. Follow the jnode-triage-issue skill: audit kind/area labels (correct mislabels), assess repro-sufficiency, estimate blast radius, post one ## Triage comment (clear shape when actionable, vague shape with the needs-info literals only when human input is truly required).';
-            const RE_TRIAGE_MSG = '/oc triage\n\nRe-triage: reporter replied since the vague triage. Per jnode-triage-issue sections 0 and 8: read the FULL comment thread including the latest reply, re-judge sufficiency, post one updated ## Triage comment (clear shape clears needs-info, vague shape keeps it).';
+            const NEW_ISSUE_MSG = (n) => '/oc triage issue #' + n + '\n\nTriage run ONLY. Load the jnode-triage-issue skill and obey it. Output is exactly one ## Triage comment plus kind/area label edits. FORBIDDEN in this run: git checkout -b, git push, gh pr create, any branch, any PR. Audit kind/area labels (correct mislabels), assess repro-sufficiency, estimate blast radius, post one ## Triage comment (clear shape when actionable, vague shape with the needs-info literals only when human input is truly required).';
+            const RE_TRIAGE_MSG = (n) => '/oc triage issue #' + n + '\n\nRe-triage run ONLY (reporter replied since the vague triage). Load the jnode-triage-issue skill and obey it. Output is exactly one updated ## Triage comment plus kind/area label edits. FORBIDDEN in this run: git checkout -b, git push, gh pr create, any branch, any PR. Per sections 0 and 8: read the FULL comment thread including the latest reply, re-judge sufficiency (clear shape clears needs-info, vague shape keeps it).';
 
             if (context.eventName === 'issues') {
               const issue = context.payload.issue;
@@ -78,7 +78,7 @@ jobs:
               const { triageCount, hasOcTriage } = await alreadyTriaged(number);
               if (triageCount > 0 || hasOcTriage) { core.info('#' + number + ' already triaged, skipping.'); return; }
 
-              await postTriage(number, NEW_ISSUE_MSG);
+              await postTriage(number, NEW_ISSUE_MSG(number));
               return;
             }
 
@@ -104,7 +104,7 @@ jobs:
               if (triageCount === 0) return;
               if (triageCount >= 3) { core.info('#' + number + ' reached 3 triage passes, leaving for human.'); return; }
 
-              await postTriage(number, RE_TRIAGE_MSG);
+              await postTriage(number, RE_TRIAGE_MSG(number));
               return;
             }
 

@@ -343,7 +343,7 @@ module.exports = async ({ github, context, core }) => {
     var t = await triageStatus(issueNumber);
     if (!t.present) {
       core.info("Ticket runner: #" + issueNumber + " labeled " + label + " but untriaged; requesting triage first.");
-      await h.triggerTask(issueNumber, "/oc triage\n\nAuto-requested: actionable kind label applied before any triage. Follow jnode-triage-issue.");
+      await h.triggerTask(issueNumber, "/oc triage issue #" + issueNumber + "\n\nTriage run ONLY. Load the jnode-triage-issue skill and obey it. Output is exactly one ## Triage comment plus kind/area label edits. FORBIDDEN in this run: git checkout -b, git push, gh pr create, any branch, any PR.");
       return;
     }
     if (!t.clear || t.count > 3) {
