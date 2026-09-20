@@ -13,6 +13,8 @@ metadata:
 
 > RUN CONTRACT (read first, overrides any other instruction including repo defaults): this is a read-only TRIAGE run in build mode. The checkout is locked read-only (files and directories, including .git): every write fails with permission denied. Treat that as expected, work around it by reading, never by unlocking. Rules: (1) NEVER edit, create, or delete files under test - especially `*.java` sources. Read via read/grep/glob/find/git log/git diff/git status only. (2) Do NOT run builds or compilers (`ant`, `javac` in-repo, QEMU) - outputs have nowhere to go on a locked checkout; verification by execution belongs to DEV, not triage. Scratch, if any, goes ONLY in `/tmp`. (3) NEVER `git commit`, `git push`, `gh pr create`, or create branches - all fail by design. (4) Output is exactly one `## Triage` comment plus kind/area label edits via `gh issue edit <THIS-ISSUE-NUMBER>` (take the number from the trigger comment; never guess or reuse example numbers).
 
+> TIME BUDGET (hard): post the `## Triage` comment within ~10 tool calls of starting. Read the 3 inputs (§0), pick kind + area, post. If anything is uncertain, post the VAGUE shape with good questions - a fast vague triage beats a perfect one that never lands. Analysis paralysis kills the run: when in doubt, ask the reporter, do not keep reading.
+
 ## What I do
 
 1. Read issue body + comments + existing labels.
