@@ -1,65 +1,42 @@
-name: opencode
-run-name: "Issue #${{ github.event.issue.number }} — ${{ github.event.issue.title }}"
+name: Triage
+run-name: "Triage #${{ github.event.issue.number }} - ${{ github.event.issue.title }}"
 
 on:
   issue_comment:
     types: [created]
-  pull_request_review_comment:
-    types: [created]
+
+# One triage runner per issue; concurrent triggers queue instead of racing.
+concurrency:
+  group: triage-${{ github.event.issue.number }}
+  cancel-in-progress: false
 
 jobs:
-  opencode:
+  triage:
     if: |
-      (contains(github.event.comment.body, ' /oc ') ||
-      startsWith(github.event.comment.body, '/oc ')) &&
-      !(startsWith(github.event.comment.body, '/oc triage') ||
+      (!github.event.issue.pull_request) &&
+      (startsWith(github.event.comment.body, '/oc triage') ||
       contains(github.event.comment.body, ' /oc triage')) &&
       !contains(github.event.comment.body, 'opencode.ai/s/') &&
-      (github.event.comment.author_association == 'COLLABORATOR' || 
-       github.event.comment.author_association == 'MEMBER' || 
+      (github.event.comment.author_association == 'COLLABORATOR' ||
+       github.event.comment.author_association == 'MEMBER' ||
        github.event.comment.author_association == 'OWNER')
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 20
     env:
       # This forces actions to use Node 24 and clears the warning
       FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
     permissions:
-      id-token: write
-      contents: write
-      pull-requests: write
       issues: write
     steps:
       - name: Checkout repository
         uses: actions/checkout@v6
         with:
-          persist-credentials: true
-      - name: Configure git identity
-        run: |
-          git config user.name "opencode-agent"
-          git config user.email "opencode-agent@users.noreply.github.com"
+          persist-credentials: false
       - name: Clone wiki
         run: gh repo clone LSantha/jnode_ai.wiki .wiki
         env:
           GH_TOKEN: ${{ secrets.GH_PAT }}
-      - name: Set up JDK 8
-        uses: actions/setup-java@v4
-        with:
-          java-version: '8'
-          distribution: 'zulu'
-      - name: Install QEMU
-        run: sudo apt-get update -qq && sudo apt-get install -y -qq qemu-system-x86 socat
-      - name: Prepare jnode.properties
-        run: cp .github/qemu/jnode.properties .
-      - name: Cache ISO build
-        id: cache-iso
-        uses: actions/cache@v4
-        with:
-          path: all/build/cdroms/jnode-x86-lite.iso
-          key: jnode-iso-${{ hashFiles('**/*.java', '**/build.xml', 'build.sh') }}
-      - name: Build ISO
-        if: steps.cache-iso.outputs.cache-hit != 'true'
-        run: sh build.sh cd-x86-lite
-      - name: Run opencode
+      - name: Run opencode triage
         id: run_agent
         uses: anomalyco/opencode/github@latest
         env:
@@ -69,6 +46,7 @@ jobs:
         with:
           model: openrouter/cohere/north-mini-code:free
           variant: high
+          agent: plan
           use_github_token: true
 
       - name: Apply agent/* label and close if work-product is the comment

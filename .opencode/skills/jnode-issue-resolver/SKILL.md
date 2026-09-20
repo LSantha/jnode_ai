@@ -1,6 +1,6 @@
 ---
 name: jnode-issue-resolver
-description: General protocol for an OpenCode agent spawned on a JNode GitHub issue or pull request — routes work by /oc verb (fix / investigate / review / wiki / triage) or label, runs the JNode build/test/boot loop, and reports back via PR, inline review, or a single structured comment. Pairs with the orchestrator workflow for high-volume sequential resolution.
+description: General protocol for an OpenCode agent spawned on a JNode GitHub issue or pull request — routes work by /oc verb (fix / investigate / review / wiki) or label, runs the JNode build/test/boot loop, and reports back via PR, inline review, or a single structured comment. Never handles /oc triage (owned by jnode-triage-issue via triage.yml). Pairs with the orchestrator workflow for high-volume sequential resolution.
 license: MIT
 metadata:
   version: 0.1.0
@@ -76,7 +76,6 @@ Plan: <one-line summary of next 3 steps>
 | `code-review` | `/oc review`, or `pull_request_review_comment` with `/oc`, or `pull_request: opened/synced` | inline comments + summary review | no |
 | `investigation` | `/oc investigate` / `/oc explain`, or `kind/investigate` | single structured comment | no |
 | `wiki-doc` | `/oc wiki`, or `kind/wiki` (delegates to `update-wiki`) | wiki spoke + comment with URL | no |
-| `triage` | `/oc triage` | labels + checklist comment | no |
 | `chore` | `/oc chore`, or `kind/chore` (typo sweep, dead-code removal) | branch + PR | yes, on merge |
 | `test` | `/oc test`, or `kind/test` ("add a test for X") | branch + PR with tests | yes, on merge |
 | `feedback` | `/oc fix` on a PR when orchestrator phase is `FEEDBACK` | pushes commits to existing PR branch | no |
@@ -101,7 +100,7 @@ parse(comment.body):
     "investigate" -> investigation
     "explain"     -> investigation
     "wiki"        -> wiki-doc     (load update-wiki)
-    "triage"      -> triage
+    "triage"      -> STOP. Owned by jnode-triage-issue via triage.yml. Do not proceed with this skill.
     "chore"       -> chore
     "test"        -> test
     "Please"      -> bot-of-bots  (matches "/oc Please proceed with this task.")
@@ -240,21 +239,7 @@ Do **not** open a PR. The workflow post-step will detect the `## 🤖 Investigat
 
 ### 5.4 `triage` comment
 
-> Superseded by the `jnode-triage-issue` skill. On `/oc triage`, load that skill and follow it (area routing, kind decision, repro-sufficiency, blast radius, label audit, clear-vs-vague comment contract). The template below is a stale summary kept for shape reference only.
-
-```markdown
-## 🤖 Triage
-
-- [ ] **Area:** <area/* label added>
-- [ ] **Repro:** <quoted minimal steps, or "needs more info from reporter">
-- [ ] **Severity:** <bug | feature | question | chore | docs>
-- [ ] **Suggested next:** <fix | investigate | needs-info | duplicate-of-#M | wontfix>
-- [ ] **Labels applied:** <list>
-
-@<reporter> — please confirm the repro and add any missing logs.
-```
-
-Apply the right `kind/*` and `area/*` labels. If the issue is a duplicate, label `agent/duplicate` and link the original.
+> Not handled by this skill. `/oc triage` is owned by `jnode-triage-issue` running under `triage.yml` (plan agent, issues:write only). If you landed here on a triage verb, stop reading this skill.
 
 ### 5.5 `wiki-doc`
 
