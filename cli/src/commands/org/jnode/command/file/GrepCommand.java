@@ -65,8 +65,8 @@ public class GrepCommand extends AbstractCommand {
     private static final boolean DEBUG = false;
     private static final int BUFFER_SIZE = 8192;
     
-private static final String help_matcher_fixed = "Patterns are fixed strings, separated by new lines. Any of " +
-                                                      "which is to be matched.";
+    private static final String help_matcher_fixed = "Patterns are fixed strings, separated by new lines. Any of " +
+                                                       "which is to be matched.";
     private static final String help_matcher_basic = "Use basic regular expressions (Default).";
     private static final String help_matcher_ext = "Use extended regular expressions.";
     private static final String help_matcher_perl = "Use perl regular expressions.";
@@ -83,9 +83,9 @@ private static final String help_matcher_fixed = "Patterns are fixed strings, se
     private static final String help_file_nomatch = "Suppress normal output, instead printing the name of each input " +
                                                     "file from which no output would normally be printed. Scanning " +
                                                     "stops after making a single match.";
-    private static final String help_file_match = "Suppress normal output, isntead printing the name of each input " +
-                                                 "file from which output would normally be printed. Scanning stops " +
-                                                 "after making a single match.";
+     private static final String help_file_match = "Suppress normal output, instead printing the name of each input " +
+                                                  "file from which output would normally be printed. Scanning stops " +
+                                                  "after a single match.";
     private static final String help_max = "Stop reading a file after n matches. If the input is stdin from a " +
                                           "regular file, and n matching lines are output, grep ensures that the " +
                                           "standard input is positioned, to just after the last matching line before " +
@@ -117,17 +117,16 @@ private static final String help_only_matching = "Print only the matched parts o
     private static final String help_prefix_null = "Output a zero byte instead of the character that normally " +
                                                    "a file name, which is normally a newline.";
     private static final String help_context_after = "Print n lines of trailing context lines after matching lines. " +
-                                                     "Places a line containing a group seperator '--' between " +
-                                                     "contiguous groups of matches. With --only-matching this has no " +
-                                                     "effect and a warning is given.";
+                                                      "Places a line containing a group separator '--' between " +
+                                                      "contiguous groups of matches. With --only-matching this has no " +
+                                                      "effect and a warning is given.";
     private static final String help_context_before = "Print n lines of leading context lines before matching lines. " +
-                                                      "Places a line containing a group seperator '--' between " +
-                                                      "contiguous groups of matches. With --only-matching this has " +
-                                                      "no effect and a waring is given.";
+                                                       "Places a line containing a group separator '--' between " +
+                                                       "contiguous groups of matches. With --only-matching this has " +
+                                                       "no effect and a warning is given.";
     private static final String help_context_both = "Print n lines of leading and trailing context. Places a line " +
-                                                    "containing a group seperator '--' between contiguous groups of " +
-                                                    "matches. With --only-matching this has no effect and a warning " +
-                                                    "is given.";
+                                                     "containing a group separator '--' between contiguous groups of " +
+                                                     "lines of matching and non-matching lines for each file.";
     private static final String help_mode_binary = "If the first few bytes of a file indicate that the file contains " +
                                                    "binary data, assume the file is the specified type. By default " +
                                                    "the type is 'binary' and grep outputs a one line message saying " +
@@ -156,7 +155,7 @@ private static final String help_only_matching = "Print only the matched parts o
     private static final String help_patterns = "Match the given pattern(s) against the input files.";
     private static final String help_pattern_files = "File with patterns to match, one per line.";
     private static final String help_files = "The files to match against. If there are no files, or if any file is " +
-                                             "'-' then match stdandard input.";
+                                              "'-' then match standard input.";
     private static final String err_ex_walker = "Exception while walking.";
     
     private class ContextLineWriter implements Closeable, Flushable {
