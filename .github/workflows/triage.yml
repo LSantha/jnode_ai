@@ -26,6 +26,8 @@ jobs:
       # This forces actions to use Node 24 and clears the warning
       FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
     permissions:
+      contents: read
+      pull-requests: read
       issues: write
     steps:
       - name: Checkout repository
