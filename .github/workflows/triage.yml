@@ -34,6 +34,10 @@ jobs:
         uses: actions/checkout@v6
         with:
           persist-credentials: false
+      - name: Configure git identity
+        run: |
+          git config user.name "opencode-agent"
+          git config user.email "opencode-agent@users.noreply.github.com"
       - name: Clone wiki
         run: gh repo clone LSantha/jnode_ai.wiki .wiki
         env:
