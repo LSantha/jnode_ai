@@ -92,6 +92,9 @@ jobs:
               if (isBotUser(comment.user)) { core.info('Bot comment on #' + number + ', skipping.'); return; }
               const body = comment.body || '';
               if (/^\s*\/(oc|run|orchestrate)(\s|$)/.test(body)) { core.info('Slash-command comment, routed elsewhere.'); return; }
+              // Agent result comments post as the owner via PAT: only the session
+              // link distinguishes them from genuine reporter replies.
+              if (body.includes('opencode.ai/s/')) { core.info('Agent result comment, not a reporter reply.'); return; }
 
               const full = await getIssue(number);
               const labels = labelNames(full);

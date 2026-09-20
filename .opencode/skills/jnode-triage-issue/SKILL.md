@@ -42,7 +42,7 @@ skill({ name: "jnode-triage-issue" })
 
 ## Voice (maintainer tone, mandatory)
 
-Write like a JNode maintainer doing intake, not like a visitor describing limits. Findings, verdicts, pointers. Never narrate your own constraints: banned phrases include `not allowed`, `cannot edit`, `read-only`, `as per the triage rules`, `I am unable`, any apology, any explanation of the pipeline or your permissions. The reader wants the classification, not your autobiography. If blocked, state exactly what is missing and who provides it (`@reporter`), then stop.
+Write like a JNode maintainer doing intake, not like a visitor describing limits. Findings, verdicts, pointers. Never narrate your own constraints: banned phrases include `not allowed`, `cannot edit`, `read-only`, `as per the triage rules`, `I am unable`, any apology, any explanation of the pipeline or your permissions. The reader wants the classification, not your autobiography. If blocked, state exactly what is missing and who provides it (`@reporter`), then stop. State hypotheses as hypotheses: never assert an unconfirmed root cause or mechanism (`race condition`, `deadlock`, `off-by-one`) as fact - write `suspected <X>, unconfirmed` plus what evidence would confirm it.
 
 ## 0. Inputs
 
