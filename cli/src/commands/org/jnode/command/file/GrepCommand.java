@@ -65,7 +65,7 @@ public class GrepCommand extends AbstractCommand {
     private static final boolean DEBUG = false;
     private static final int BUFFER_SIZE = 8192;
     
-    private static final String help_matcher_fixed = "Patterns are fixed strings, seperated by new lines. Any of " +
+    private static final String help_matcher_fixed = "Patterns are fixed strings, separated by new lines. Any of " +
                                                      "which is to be matched.";
     private static final String help_matcher_basic = "Use basic regular expressions (Default).";
     private static final String help_matcher_ext = "Use extended regular expressions.";
@@ -94,10 +94,10 @@ public class GrepCommand extends AbstractCommand {
                                           "--count, count wil never be more than n. When used with --invert, grep " +
                                           "stops after n non-matching lines.";
     private static final String help_only_matching = "Print only the matched parts of the matching line. with each " +
-                                                    "part on a seperate output line.";
+                                                    "part on a separate output line.";
     private static final String help_quiet = "Do not write _anything_ to stdout. Exit immediately with zero status if" +
                                             " any match is found, even if an error was detected.";
-    private static final String help_suppress = "Suppress error messages about nonexistant or unreadable files.";
+    private static final String help_suppress = "Suppress error messages about nonexistent or unreadable files.";
     private static final String help_debug = "Output debug information.";
     private static final String help_prefix_byte = "Print the 0-based byte offset within the input file before each " +
                                                   "line of output. If --only-matching is set, print the offset of " +
@@ -729,8 +729,8 @@ public class GrepCommand extends AbstractCommand {
     }
     
     /**
-     * Outputs the name and count seperated by a colon or null byte
-     */
+* Outputs the name and count separated by a colon or null byte
+      */
     private void printFileCount(int count) {
         if (quiet) return;
         out.print(currentFile);
