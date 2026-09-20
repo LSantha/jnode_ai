@@ -42,7 +42,7 @@ skill({ name: "jnode-triage-issue" })
 
 ## Voice (maintainer tone, mandatory)
 
-Write like a JNode maintainer doing intake, not like a visitor describing limits. Findings, verdicts, pointers. Never narrate your own constraints: banned phrases include `not allowed`, `cannot edit`, `read-only`, `as per the triage rules`, `I am unable`, any apology, any explanation of the pipeline or your permissions. The reader wants the classification, not your autobiography. If blocked, state exactly what is missing and who provides it (`@reporter`), then stop. State hypotheses as hypotheses: never assert an unconfirmed root cause or mechanism (`race condition`, `deadlock`, `off-by-one`) as fact - write `suspected <X>, unconfirmed` plus what evidence would confirm it.
+Write like a JNode maintainer doing intake, not like a visitor describing limits. Findings, verdicts, pointers. Never narrate your own constraints: banned phrases include `not allowed`, `cannot edit`, `can't edit`, `read-only`, `as per the triage rules`, `during triage mode`, `I am unable`, any apology, any explanation of the pipeline or your permissions. Never OPEN a comment with constraint narration - the first line states the verdict (area, kind, actionable or blocked). The reader wants the classification, not your autobiography. If blocked, state exactly what is missing and who provides it (`@reporter`), then stop. State hypotheses as hypotheses: never assert an unconfirmed root cause or mechanism (`race condition`, `deadlock`, `off-by-one`) as fact - write `suspected <X>, unconfirmed` plus what evidence would confirm it.
 
 ## 0. Inputs
 
@@ -237,23 +237,27 @@ After the comment is posted, mirror the verdicts into the issue body between mar
 <!-- TRIAGE-ADDENDUM-END -->
 ```
 
-Recipe (verbatim, replace `<OWNER>`, `<REPO>`, `<N>`):
+Recipe: single step, no intermediate files. `ADDENDUM` holds the inner markdown (no marker lines). `GH_TOKEN` is already in the runner environment. Replace `<OWNER>`, `<REPO>`, `<N>`:
 
 ```bash
-gh api repos/<OWNER>/<REPO>/issues/<N> --jq .body > /tmp/triage_body.md
-python3 - <<'EOF'
-import re
-body = open('/tmp/triage_body.md').read()
-block = open('/tmp/triage_addendum.md').read().strip()
-section = "<!-- TRIAGE-ADDENDUM-START -->\n" + block + "\n<!-- TRIAGE-ADDENDUM-END -->"
+ADDENDUM='<paste addendum markdown here>' python3 - <<'EOF'
+import json, os, re, urllib.request
+owner, repo, n = "<OWNER>", "<REPO>", "<N>"
+tok = os.environ["GH_TOKEN"]
+api = f"https://api.github.com/repos/{owner}/{repo}/issues/{n}"
+req = urllib.request.Request(api, headers={"Authorization": f"Bearer {tok}", "Accept": "application/vnd.github+json"})
+body = json.load(urllib.request.urlopen(req))["body"] or ""
+section = "<!-- TRIAGE-ADDENDUM-START -->\n" + os.environ["ADDENDUM"].strip() + "\n<!-- TRIAGE-ADDENDUM-END -->"
 pat = re.compile(r'<!-- TRIAGE-ADDENDUM-START -->.*?<!-- TRIAGE-ADDENDUM-END -->', re.S)
 body = pat.sub(section, body) if pat.search(body) else (body.rstrip() + "\n\n" + section + "\n")
-open('/tmp/triage_body.md', 'w').write(body)
+data = json.dumps({"body": body}).encode()
+req = urllib.request.Request(api, data=data, method="PATCH", headers={"Authorization": f"Bearer {tok}", "Accept": "application/vnd.github+json", "Content-Type": "application/json"})
+urllib.request.urlopen(req).read()
+print("addendum written")
 EOF
-gh api repos/<OWNER>/<REPO>/issues/<N> -X PATCH -F body=@/tmp/triage_body.md > /dev/null
 ```
 
-Write `/tmp/triage_addendum.md` first (inner markdown without the marker lines). Skip the addendum only on `kind/orchestrator` masters and PRs.
+Skip the addendum only on `kind/orchestrator` masters and PRs.
 
 ## 8. Needs-info question bank (pick 3-5, be specific)
 
@@ -269,6 +273,7 @@ Write `/tmp/triage_addendum.md` first (inner markdown without the marker lines).
 - If `## Triage` already in comments and labels already match routing and no new reporter info: post nothing (or a one-line `Triage verified, no change`) and exit.
 - Re-triage fully when: reporter replied after `needs-info`, labels were hand-edited, or invoked with `--fresh`.
 - Never emit `## Triage` twice on the same state; update labels instead.
+- Completion runs (labels or addendum missing, verdicts unchanged): fix them silently. NEVER post a second content comment to announce completion work - no plan dumps, no narration. The `## Triage` comment stays single; the addendum and labels carry the rest.
 
 ## Negative constraints
 
