@@ -859,8 +859,25 @@ public class IRControlFlowGraph<T> implements Iterable<IRBasicBlock<T>> {
      */
     private VariableRefAssignQuad<T> newPhiMove(IRBasicBlock<T> block,
         Variable<T> lhs, Variable<T> rhs, AssignQuad<T> originalAssignQuad) {
+        // ANCHOR-L2-137: preserve the phi result's own slot type. Every edge
+        // copy for one phi shares the SAME lhs object, and
+        // VariableRefAssignQuad's constructor re-types the lhs from the rhs
+        // (getLHS().setType(rhs.getType())). So a single source whose type
+        // differs from the result's (guest: NanoTime l6_5 phi, a long whose
+        // sources include an int/REFERENCE version) flipped the shared LONG
+        // lhs to REFERENCE. The register pool only hands out registers to
+        // non-wide types, so the mis-typed long then got a register and the
+        // binary emitter dispatched to MODE_SRS, which has no LSUB case
+        // (only LSHL/LSHR/LUSHR) -> "Unknown operation: LSUB". The design
+        // invariant (ANCHOR-L2-060) is that wide values use stack shapes;
+        // keep the result's type and let the copy's rhs be widened/copied
+        // as a long, exactly as the MODE_SSS long emitters expect.
+        final int resultType = lhs.getType();
         VariableRefAssignQuad<T> move =
             new VariableRefAssignQuad<T>(0, block, lhs, rhs);
+        if (lhs.getType() != resultType) {
+            lhs.setType(resultType);
+        }
         lhs.setAssignQuad(originalAssignQuad);
         return move;
     }
