@@ -508,6 +508,15 @@ public class L2PipelineTest {
             if (v != null) {
                 fail("SSA violation (post-deSSA) in " + methods[i] + ": " + v);
             }
+            // ANCHOR-L2-137: width invariant. The dominance/written-on-path
+            // checks cannot see a copy that truncates a wide value (the L2
+            // backend assumes wide values use stack shapes and that a copy
+            // moves both halves). A mismatched copy silently drops the high
+            // half at codegen and the result is later used as a pointer.
+            v = SSAVerifier.verifyWidths(cfg);
+            if (v != null) {
+                fail("width violation in " + methods[i] + ": " + v);
+            }
         }
         // jsr probe: pre-deSSA only (ret/resume over-approximation).
         java.io.File dir = java.io.File.createTempFile("jsrverif", "");
@@ -606,9 +615,45 @@ public class L2PipelineTest {
         cfg2.removeUnusedVars();
         cfg2.removeDefUseChains();
         cfg2.fixupAddresses();
-        v = SSAVerifier.verifyPostDessA(cfg2);
-        if (v != null) {
-            fail("SSA violation (post-deSSA) in remPiOver2: " + v);
+v = SSAVerifier.verifyPostDessA(cfg2);
+            if (v != null) {
+                fail("SSA violation (post-deSSA) in remPiOver2: " + v);
+            }
+        }
+
+        // ANCHOR-L2-137: sweep the real boot classes the L2 backend compiles
+        // in the ISO. The hand-picked corpus is tiny; the L2 boot crash
+        // (#GP with a wild pointer, a long truncated to one 32-bit word) is a
+        // miscompile of a boot method, not a corpus method. Run the full
+        // verifier (pre/post-deSSA + width) over every method of the classes
+        // that were on the crashing path: MemoryBlockManager (the init that
+        // ran immediately before the panic) and VmSystem (nanoTime, the long
+        // arithmetic that exposed the type-corruption class).
+        String[] bootClasses = {"org.jnode.vm.MemoryBlockManager",
+            "org.jnode.vm.VmSystem"};
+        for (int ci = 0; ci < bootClasses.length; ci++) {
+            VmType t = loader.loadClass(bootClasses[ci], true);
+            int n = t.getNoDeclaredMethods();
+            for (int mi = 0; mi < n; mi++) {
+                VmMethod m = t.getDeclaredMethod(mi);
+                IRControlFlowGraph cfg = runToPostDce(m);
+                String v = SSAVerifier.verifyPreDessA(cfg);
+                if (v != null) {
+                    fail("SSA violation (pre-deSSA) in " + bootClasses[ci] + "#"
+                        + m.getName() + ": " + v);
+                }
+                X86Level2Compiler.deSSAAndFixup(cfg);
+                v = SSAVerifier.verifyPostDessA(cfg);
+                if (v != null) {
+                    fail("SSA violation (post-deSSA) in " + bootClasses[ci] + "#"
+                        + m.getName() + ": " + v);
+                }
+                v = SSAVerifier.verifyWidths(cfg);
+                if (v != null) {
+                    fail("width violation in " + bootClasses[ci] + "#"
+                        + m.getName() + ": " + v);
+                }
+            }
         }
     }
 

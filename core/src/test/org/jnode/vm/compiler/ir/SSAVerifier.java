@@ -331,6 +331,49 @@ public final class SSAVerifier {
     }
 
     /**
+     * Width invariant. A value's type must be preserved by every copy of it:
+     * the L2 backend assumes wide values (LONG/DOUBLE) use stack shapes and
+     * that a copy moves BOTH halves (ANCHOR-L2-082). A copy whose lhs type
+     * differs from its rhs type (guest: NanoTime l6_5, a long whose deSSA
+     * edge copy inherited a REFERENCE-typed lhs) is silently truncated at
+     * codegen: the low half is copied, the high half is garbage, and the
+     * result is later used as a pointer -> #GP with a wild CR2. This is a
+     * SEMANTIC check the dominance/written-on-path invariants cannot express.
+     */
+    public static String verifyWidths(IRControlFlowGraph cfg) {
+        Iterator blocks = cfg.iterator();
+        while (blocks.hasNext()) {
+            IRBasicBlock b = (IRBasicBlock) blocks.next();
+            List quads = b.getQuads();
+            for (int i = 0; i < quads.size(); i++) {
+                Quad q = (Quad) quads.get(i);
+                if (q.isDeadCode() || !(q instanceof AssignQuad)) {
+                    continue;
+                }
+                if (q instanceof PhiAssignQuad) {
+                    continue;
+                }
+                Operand lhs = ((AssignQuad) q).getLHS();
+                Operand[] refs = q.getReferencedOps();
+                if (refs == null || refs.length == 0) {
+                    continue;
+                }
+                Operand rhs = refs[0];
+                if (isWide(lhs.getType()) != isWide(rhs.getType())) {
+                    return "width mismatch at " + q + " in " + b
+                        + ": lhs type " + lhs.getType()
+                        + " vs rhs type " + rhs.getType();
+                }
+            }
+        }
+        return null;
+    }
+
+    private static boolean isWide(int type) {
+        return type == Operand.LONG || type == Operand.DOUBLE;
+    }
+
+    /**
      * Dominance via the idominator chain (a block dominates itself).
      */
     private static boolean dominates(IRBasicBlock a, IRBasicBlock b) {
