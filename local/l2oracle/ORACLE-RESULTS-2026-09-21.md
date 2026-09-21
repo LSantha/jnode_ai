@@ -26,26 +26,50 @@ tests/l2oracle/compare.sh <host-ref> /tmp/out-l2.txt
 | lookupLongTry | 0 | J:2 | J:118200000000 | **L2 bug** |
 | lookupLongTry | 2 | J:8 | J:118200000002 | **L2 bug** |
 
-## Pattern
-Every failing case is a **long return through an exception handler or a
-switch**. The low half is often 0 or wrong; the high half is a stale
-pointer (0x11820000, 0x3c1724a8). lookupLongTry(2): L2 low half = 2 (the
-switch discriminant n) instead of 8 (acc) -- the post-switch/exception phi
-for acc is reading the wrong source.
+## Pattern (narrowed 2026-09-21)
+Every failing case is a LONG return through an exception handler or a
+switch. Low half wrong/zero; high half a stale pointer
+(0x11820000, 0x3c1724a8). lookupLongTry(2) returns low=2 (the switch
+discriminant n) instead of 8 (acc) -- the post-switch/exception phi for
+acc reads the wrong source.
 
 This is the exception-flow / switch phi-copy approximation
 (ANCHOR-L2-136, S6.4): copies on tagged normal edges into handler blocks do
-not execute on the exceptional dispatch, so a long phi that merges a
-switch value and an exception value loses a source. Proven differentially.
+not execute on the exceptional dispatch, so a long phi merging a switch
+value and an exception value loses a source. Proven differentially.
 
-## Green under L2 (subset)
-add_iii, sub_iii, mul_iii, rem_iii, shl_iii, add_jjj, mul_jjj, div_jjj,
-rem_jjj, add_ddd, mul_ddd, id_d, ret15_d, addCC_d, dstoreVar_d, tryCatchDiv,
-tryCatchOob, tryFinally, baIOB, caIOB, saIOB, blnArr, castStr, instStr,
-swTable, swLookup, swBig, multiArr, syncThrow, istoreVar_aiii, dld_d,
-newDlen_d, sumA_aji, virt_base, virt_sub, virt_fin, iface_add, all w*
-word ops, wtol_j, altoi_ji, aadd_iii, loopLongTryFinally, switchLongLoop,
-finallyThrowsLong, loopSwitchLong, sync_add (L1 fallback).
+## Narrowing by shape (2026-09-21)
+Green vs failing shapes isolate the trigger:
+
+| shape | long? | catch? | finally? | switch? | result |
+|-------|-------|--------|----------|---------|--------|
+| switchLongLoop | yes | no | no | table | GREEN |
+| loopLongTryFinally | yes | no | yes | no | GREEN |
+| finallyThrowsLong | yes | no | yes | no | GREEN |
+| loopSwitchLong | yes | no | no | labelled | GREEN |
+| nestedCatchLong | yes | YES | no | no | FAIL |
+| lookupLongTry | yes | YES | no | lookup | FAIL |
+
+=> Trigger is LONG + CATCH handler specifically. finally-only and switch
+do not fail. So the defect is in the catch-handler path (exceptional
+dispatch), not in finally, not in switch, not in plain long arithmetic.
+
+## Host vs guest compile identically
+The host test helper (L2PipelineTest.compileMethod) and production
+doCompile (X86Level2Compiler) share the same pipeline: IRGenerator ->
+constructAndOptimize -> optimizeOnce -> deSSAAndFixup -> allocateRanges
+-> generateCode, all over the same X86CodeGenerator. Host disassembly of
+lookupLongTry shows correct wide moves (STACK/STACK push/pop pairs for the
+synthetic-edge copies, e.g. qb_17: push [ebp-20]; push [ebp-24];
+pop [ebp-48]; pop [ebp-44]). So the compiled bytes match; the corruption
+is at RUNTIME in the guest.
+
+Likely culprit: the catch handler's stack frame. ex_handler does
+`lea esp,[ebp-56]` then `push eax` and jumps into bci_70, where the long
+return value l1_12 lives at [ebp-56]/[ebp-52]. The handler-relative
+addressing of a long that straddles the handler's restored ESP is the
+suspected site (the S6.4 exceptional-dispatch approximation, which does
+not actually execute the tagged normal-edge copies).
 
 ## Files
 - `tests/l2oracle/mauve-L2-forced.txt` — guest L2 output
