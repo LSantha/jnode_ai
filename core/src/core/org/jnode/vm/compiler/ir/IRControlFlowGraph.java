@@ -42,6 +42,7 @@ import org.jnode.vm.compiler.ir.quad.NewMultiArrayAssignQuad;
 import org.jnode.vm.compiler.ir.quad.NewObjectArrayAssignQuad;
 import org.jnode.vm.compiler.ir.quad.NewPrimitiveArrayAssignQuad;
 import org.jnode.vm.compiler.ir.quad.PhiAssignQuad;
+import org.jnode.vm.compiler.ir.quad.UnconditionalBranchQuad;
 import org.jnode.vm.compiler.ir.quad.Quad;
 import org.jnode.vm.compiler.ir.quad.TableswitchQuad;
 import org.jnode.vm.compiler.ir.quad.VariableRefAssignQuad;
@@ -562,6 +563,23 @@ public class IRControlFlowGraph<T> implements Iterable<IRBasicBlock<T>> {
                 join.getPredecessors().add(edge);
                 edge.getPredecessors().add(pred);
                 edge.getSuccessors().add(join);
+
+                // ANCHOR-L2-138: the synthetic block is a single-edge
+                // pass-through; it MUST terminate with an unconditional
+                // branch to its join, or the linear layout falls through to
+                // whatever follows it instead of reaching the merge. The
+                // guest disassembly of lookupLongTry shows exactly this:
+                // the case blocks jump to their synthetic edge blocks, which
+                // then fall through past bci_67 (where l1_12 = l1_7 and
+                // eax/edx are loaded) into the footer, so the normal-path
+                // long return reads uninitialized registers -> low half =
+                // the switch discriminant, high half = a stale pointer.
+                // switchLongLoop (no catch, so no critical edge split) is
+                // unaffected and stays green, which is what isolated it.
+                // (Wired before the quad: BranchQuad's ctor resolves the
+                // target against the block's successors.)
+                edge.add(new UnconditionalBranchQuad<T>(pc, edge,
+                    join.getStartPC()));
 
                 for (int qi = 0; qi < phiQuads.size(); qi++) {
                     PhiAssignQuad<T> phi = phiQuads.get(qi);
