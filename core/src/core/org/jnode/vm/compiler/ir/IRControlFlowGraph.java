@@ -32,19 +32,25 @@ import org.jnode.util.ObjectArrayIterator;
 import org.jnode.vm.bytecode.BytecodeParser;
 import org.jnode.vm.classmgr.VmByteCode;
 import org.jnode.vm.classmgr.VmInterpretedExceptionHandler;
+import org.jnode.vm.compiler.ir.quad.ArrayAssignQuad;
+import org.jnode.vm.compiler.ir.quad.ArrayStoreQuad;
 import org.jnode.vm.compiler.ir.quad.AssignQuad;
 import org.jnode.vm.compiler.ir.quad.BranchQuad;
 import org.jnode.vm.compiler.ir.quad.CallAssignQuad;
+import org.jnode.vm.compiler.ir.quad.CallQuad;
 import org.jnode.vm.compiler.ir.quad.JsrQuad;
 import org.jnode.vm.compiler.ir.quad.LookupswitchQuad;
+import org.jnode.vm.compiler.ir.quad.MonitorenterQuad;
+import org.jnode.vm.compiler.ir.quad.MonitorexitQuad;
 import org.jnode.vm.compiler.ir.quad.NewAssignQuad;
 import org.jnode.vm.compiler.ir.quad.NewMultiArrayAssignQuad;
 import org.jnode.vm.compiler.ir.quad.NewObjectArrayAssignQuad;
 import org.jnode.vm.compiler.ir.quad.NewPrimitiveArrayAssignQuad;
 import org.jnode.vm.compiler.ir.quad.PhiAssignQuad;
-import org.jnode.vm.compiler.ir.quad.UnconditionalBranchQuad;
 import org.jnode.vm.compiler.ir.quad.Quad;
 import org.jnode.vm.compiler.ir.quad.TableswitchQuad;
+import org.jnode.vm.compiler.ir.quad.ThrowQuad;
+import org.jnode.vm.compiler.ir.quad.UnconditionalBranchQuad;
 import org.jnode.vm.compiler.ir.quad.VariableRefAssignQuad;
 import org.jnode.vm.objects.BootableArrayList;
 
@@ -1788,6 +1794,19 @@ public class IRControlFlowGraph<T> implements Iterable<IRBasicBlock<T>> {
                 if (defBlock == null || !exPreds.contains(defBlock)) {
                     break;
                 }
+                // ANCHOR-L2-139: only pop a def that is UNWRITTEN on the
+                // exceptional edge, i.e. a call-like (potentially-throwing)
+                // instruction could have fired before it in the def block.
+                // A def that precedes every call-like quad in its block
+                // always executes (guest: nestedCatchLong(-3) inner try
+                // `acc = acc + n` is a plain add before the throw, so the
+                // inner catch must see -3, not the pre-try 0). The old
+                // implementation popped every def in the block, which
+                // discarded always-executed versions and bound the handler
+                // read to the pre-try value -> 99 instead of 96.
+                if (!isDefUnwrittenOnExceptionalEdge(peeked, defBlock)) {
+                    break;
+                }
                 if (cnt == 0) {
                     top = peeked;
                 }
@@ -1799,6 +1818,47 @@ public class IRControlFlowGraph<T> implements Iterable<IRBasicBlock<T>> {
                 pres.add(st.peek());
             }
         }
+    }
+
+    /**
+     * ANCHOR-L2-139: is {@code var}'s def unwritten on the exceptional edge
+     * out of {@code defBlock}? A def executes iff no exception fired before
+     * it, and an exception can only fire at a call-like (potentially-throwing)
+     * instruction. So the def is unwritten iff some call-like quad at an
+     * address <= the def's address lives in {@code defBlock}. A def that
+     * precedes every call-like quad in its block always executes and must be
+     * kept on the stack for the handler to read.
+     */
+    private boolean isDefUnwrittenOnExceptionalEdge(Variable<T> var,
+                                                     IRBasicBlock<T> defBlock) {
+        AssignQuad<T> aq = var.getAssignQuad();
+        if (aq == null) {
+            return false;
+        }
+        final int defAddr = aq.getAddress();
+        for (Object q0 : defBlock.getQuads()) {
+            Quad<T> q = (Quad<T>) q0;
+            if (q.isDeadCode()) {
+                continue;
+            }
+            if (q.getAddress() > defAddr) {
+                continue;
+            }
+            if (isCallLike(q)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private static boolean isCallLike(Quad q) {
+        return q instanceof CallQuad || q instanceof CallAssignQuad
+            || q instanceof MonitorenterQuad || q instanceof MonitorexitQuad
+            || q instanceof JsrQuad || q instanceof ThrowQuad
+            || q instanceof NewAssignQuad || q instanceof NewObjectArrayAssignQuad
+            || q instanceof NewPrimitiveArrayAssignQuad
+            || q instanceof NewMultiArrayAssignQuad
+            || q instanceof ArrayAssignQuad || q instanceof ArrayStoreQuad;
     }
 
     /**
