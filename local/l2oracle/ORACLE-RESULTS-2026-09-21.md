@@ -91,7 +91,7 @@ Result after fix (force|79): lookupLongTry fully fixed, nestedCatchLong(5)
 fixed, nestedCatchLong(-3) improved from a garbled pointer to off-by-3
 (0x63 vs 0x60). div_iii MIN/-1 remains the known pre-existing #DE mapping.
 
-## Residual (2026-09-21): nestedCatchLong(-3) — nested handler reads pre-try version
+## Residual (2026-09-21): nestedCatchLong(-3) — FIXED by L2-139
 Host 0x60 (96), guest 0x63 (99). 99 = 0 - 1 + 100, i.e. the guest behaves
 as if the inner try's `acc = acc + (long)n` did not take effect before the
 inner catch ran (acc stayed 0, then -1, then +100).
@@ -108,4 +108,15 @@ This is the ANCHOR-L2-129 handler-entry versioning approximation (S6.4),
 now specifically for NESTED handlers: the inner catch's acc phi source on
 the exceptional dispatch is the entry version, not the post-inner-body
 version. Same bug class as the lookupLongTry fall-through, but deeper
-(nested handler scopes), and not yet fixed.
+(nested handler scopes).
+
+### Fix (L2-139): isDefUnwrittenOnExceptionalEdge
+Only pop a def that is UNWRITTEN on the exceptional edge, i.e. a
+call-like (potentially-throwing) instruction could have fired before it in
+the def block. A def that precedes every call-like quad in its block always
+executes and must be kept on the stack for the handler to read.
+
+### FINAL RESULT (force|79): FULLY GREEN
+The only remaining diff is div_iii MIN/-1 -> EX, the known pre-existing
+x86 #DE mapping (documented as NOT an L2 bug). All 79 force-compiled
+methods match the host reference.
