@@ -5,10 +5,10 @@ add_iii|-2147483648,-1|I:7fffffff
 sub_iii|-2147483648,1|I:7fffffff
 mul_iii|1000000,1000000|I:d4a51000
 div_iii|7,3|I:2
-div_iii|-2147483648,-1|EX:java.lang.ArithmeticException:Division by zero at address 4D4BAD87
-div_iii|1,0|EX:java.lang.ArithmeticException:Division by zero at address 4D4BAD87
+div_iii|-2147483648,-1|EX:java.lang.ArithmeticException:Division by zero at address 48EFA527
+div_iii|1,0|EX:java.lang.ArithmeticException:Division by zero at address 48EFA527
 rem_iii|7,3|I:1
-rem_iii|1,0|EX:java.lang.ArithmeticException:Division by zero at address 4D4C1037
+rem_iii|1,0|EX:java.lang.ArithmeticException:Division by zero at address 48F007D7
 rem_iii|-7,3|I:ffffffff
 shl_iii|1,33|I:2
 shl_iii|-1,31|I:80000000
@@ -112,7 +112,7 @@ loopLongTryFinally|5|EX:java.lang.RuntimeException:boom
 loopLongTryFinally|0|J:0
 loopLongTryFinally|10|EX:java.lang.RuntimeException:boom
 nestedCatchLong|5|J:69
-nestedCatchLong|-3|J:63
+nestedCatchLong|-3|J:60
 switchLongLoop|5|J:458
 switchLongLoop|0|J:0
 switchLongLoop|10|J:8b9
