@@ -45,6 +45,11 @@ public class PhiAssignQuad<T> extends AssignQuad<T> {
         phi = new PhiOperand<T>();
     }
 
+    public PhiAssignQuad(int address, IRBasicBlock<T> block, Variable<T> lhs) {
+        super(address, block, lhs);
+        phi = new PhiOperand<T>();
+    }
+
     /**
      * @param dfb
      * @param lhsIndex

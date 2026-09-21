@@ -84,7 +84,9 @@ public final class SSAVerifier {
                         .getSources().size();
                     if (nsrc != npred) {
                         return "phi arity " + nsrc + " != pred count " + npred
-                            + " at " + q + " in " + b;
+                            + " at " + q + " in " + b
+                            + "; preds=" + b.getPredecessors()
+                            + "; sources=" + ((PhiAssignQuad) q).getPhiOperand().getSources();
                     }
                     // (c) edge tags match the predecessor set (ANCHOR-L2-131
                     // tagging correctness): every live phi source must carry

@@ -176,9 +176,7 @@ public class L2PipelineTest {
         // Closure pair mirroring X86Level2Compiler.doCompile (ANCHOR-L2-060).
         cfg.optimize();
         cfg.removeUnusedVars();
-        cfg.deconstrucSSA();
-        cfg.removeDefUseChains();
-        cfg.fixupAddresses();
+        X86Level2Compiler.deSSAAndFixup(cfg);
         X86CodeGenerator x86cg = new X86CodeGenerator(method, os, code.getLength(), typeSizeInfo, stackFrame);
         List liveVariables = cfg.computeLiveVariables();
         LiveRange[] liveRanges = X86Level2Compiler.getLiveRanges(liveVariables);
@@ -505,9 +503,7 @@ public class L2PipelineTest {
             if (v != null) {
                 fail("SSA violation (pre-deSSA) in " + methods[i] + ": " + v);
             }
-            cfg.deconstrucSSA();
-            cfg.removeDefUseChains();
-            cfg.fixupAddresses();
+            X86Level2Compiler.deSSAAndFixup(cfg);
             v = SSAVerifier.verifyPostDessA(cfg);
             if (v != null) {
                 fail("SSA violation (post-deSSA) in " + methods[i] + ": " + v);
@@ -556,11 +552,58 @@ public class L2PipelineTest {
         }
         assertNotNull("remPiOver2 not found", remPi);
         IRControlFlowGraph cfg2 = runToPostDce(remPi);
+        for (Object b0 : cfg2) {
+            IRBasicBlock b = (IRBasicBlock) b0;
+            for (Object q0 : b.getQuads()) {
+                Quad q = (Quad) q0;
+                if (q.isDeadCode()) {
+                    continue;
+                }
+                Operand[] refs = q.getReferencedOps();
+                if (refs == null) {
+                    continue;
+                }
+                for (int ri = 0; ri < refs.length; ri++) {
+                    if ("s28_4".equals(refs[ri].toString())) {
+                        System.out.println("[ssadiag] use " + q + " in " + b + " ref=" + refs[ri]);
+                    }
+                }
+            }
+        }
+        for (Object b0 : cfg2) {
+            IRBasicBlock b = (IRBasicBlock) b0;
+            if (b.getStartPC() == 164) {
+                System.out.println("[ssadiag] remPiOver2 B164 preds=" + b.getPredecessors());
+                for (Object q0 : b.getQuads()) {
+                    Quad q = (Quad) q0;
+                    System.out.println("[ssadiag] " + q + " dead=" + q.isDeadCode());
+                    if (q instanceof PhiAssignQuad) {
+                        PhiOperand phi = ((PhiAssignQuad) q).getPhiOperand();
+                        for (int si = 0; si < phi.getSources().size(); si++) {
+                            System.out.println("[ssadiag]   source " + si + "="
+                                + phi.getSources().get(si) + " pred="
+                                + phi.getSourcePred(si));
+                        }
+                    }
+                }
+                for (int pi = 0; pi < b.getPredecessors().size(); pi++) {
+                    IRBasicBlock p = (IRBasicBlock) b.getPredecessors().get(pi);
+                    System.out.println("[ssadiag] pred " + p + " stackOffset="
+                        + p.getStackOffset() + " handler=" + p.isStartOfExceptionHandler());
+                    for (Object q0 : p.getQuads()) {
+                        Quad q = (Quad) q0;
+                        System.out.println("[ssadiag]   " + q + " dead=" + q.isDeadCode());
+                    }
+                }
+            }
+        }
         v = SSAVerifier.verifyPreDessA(cfg2);
         if (v != null) {
             fail("SSA violation (pre-deSSA) in remPiOver2: " + v);
         }
         cfg2.deconstrucSSA();
+        X86Level2Compiler.removeSelfCopies(cfg2);
+        cfg2.removeUnusedVars();
         cfg2.removeDefUseChains();
         cfg2.fixupAddresses();
         v = SSAVerifier.verifyPostDessA(cfg2);
@@ -731,9 +774,7 @@ public class L2PipelineTest {
         cfg.removeUnusedVars();
         cfg.optimize();
         cfg.removeUnusedVars();
-        cfg.deconstrucSSA();
-        cfg.removeDefUseChains();
-        cfg.fixupAddresses();
+        X86Level2Compiler.deSSAAndFixup(cfg);
         X86CodeGenerator x86cg = new X86CodeGenerator(method, os, code.getLength(), typeSizeInfo, stackFrame);
         List liveVariables = cfg.computeLiveVariables();
         LiveRange[] liveRanges = X86Level2Compiler.getLiveRanges(liveVariables);
@@ -865,9 +906,7 @@ public class L2PipelineTest {
         // Closure pair mirroring X86Level2Compiler.doCompile (ANCHOR-L2-060).
         cfg.optimize();
         cfg.removeUnusedVars();
-        cfg.deconstrucSSA();
-        cfg.removeDefUseChains();
-        cfg.fixupAddresses();
+        X86Level2Compiler.deSSAAndFixup(cfg);
         List liveVariables = cfg.computeLiveVariables();
         LiveRange[] liveRanges = X86Level2Compiler.getLiveRanges(liveVariables);
         X86Level2Compiler.allocate(liveRanges,

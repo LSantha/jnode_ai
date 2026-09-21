@@ -34,7 +34,7 @@ import org.jnode.vm.compiler.ir.Variable;
  */
 public class JsrQuad<T> extends AssignQuad<T> {
     private final int targetAddress;
-    private final IRBasicBlock<T> targetBlock;
+    private IRBasicBlock<T> targetBlock;
 
     public JsrQuad(int address, IRBasicBlock<T> block, int lhsIndex, int targetAddress) {
         super(address, block, lhsIndex);
@@ -69,6 +69,14 @@ public class JsrQuad<T> extends AssignQuad<T> {
      */
     public int getTargetBlockStartPC() {
         return targetBlock.getStartPC();
+    }
+
+    public IRBasicBlock<T> getTargetBlock() {
+        return targetBlock;
+    }
+
+    public void setTargetBlock(IRBasicBlock<T> newTargetBlock) {
+        targetBlock = newTargetBlock;
     }
 
     @Override

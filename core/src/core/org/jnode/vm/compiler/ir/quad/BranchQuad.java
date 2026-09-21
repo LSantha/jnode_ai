@@ -57,4 +57,8 @@ public abstract class BranchQuad<T> extends Quad<T> {
     public IRBasicBlock<T> getTargetBlock() {
         return targetBlock;
     }
+
+    public void setTargetBlock(IRBasicBlock<T> newTargetBlock) {
+        targetBlock = newTargetBlock;
+    }
 }

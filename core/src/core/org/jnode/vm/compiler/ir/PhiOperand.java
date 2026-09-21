@@ -78,6 +78,15 @@ public class PhiOperand<T> extends Operand<T> {
         return sourcePreds.get(i);
     }
 
+    public void replaceSourcePred(IRBasicBlock<T> oldPred,
+                                  IRBasicBlock<T> newPred) {
+        for (int i = 0; i < sourcePreds.size(); i++) {
+            if (sourcePreds.get(i) == oldPred) {
+                sourcePreds.set(i, newPred);
+            }
+        }
+    }
+
     public String toString() {
         StringBuilder sb = new StringBuilder();
         sb.append("phi(");

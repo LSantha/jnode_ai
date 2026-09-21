@@ -106,6 +106,14 @@ public class TableswitchQuad<T> extends Quad<T> {
         return targetBlocks;
     }
 
+    public void retarget(IRBasicBlock<T> oldTarget, IRBasicBlock<T> newTarget) {
+        for (int i = 0; i < targetBlocks.length; i++) {
+            if (targetBlocks[i] == oldTarget) {
+                targetBlocks[i] = newTarget;
+            }
+        }
+    }
+
     @Override
     public Operand<T> getDefinedOp() {
         return null;
