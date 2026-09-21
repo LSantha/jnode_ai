@@ -71,8 +71,41 @@ addressing of a long that straddles the handler's restored ESP is the
 suspected site (the S6.4 exceptional-dispatch approximation, which does
 not actually execute the tagged normal-edge copies).
 
-## Files
-- `tests/l2oracle/mauve-L2-forced.txt` — guest L2 output
-- `tests/l2oracle/mauve-L1A-baseline.txt` — host reference
-- `tests/l2oracle/Probes.java` — probes incl. ANCHOR-L2-137 complex-shape set
-- `tests/l2oracle/OracleDriver.java` — driver (disasm mode useful)
+## FIX (2026-09-21): ANCHOR-L2-138 synthetic-edge terminators
+Root cause: splitCriticalEdges created a synthetic single-edge block with
+`edge.getSuccessors().add(join)` but NO terminator quad, so the linear
+layout fell through to whatever followed it instead of reaching the merge.
+Guest disassembly of lookupLongTry showed it directly: the case blocks
+jump to their synthetic edge blocks, which then fall through past bci_67
+(where l1_12 = l1_7 and eax/edx are loaded) into the footer, so the
+normal-path long return reads uninitialized registers -> low half = the
+switch discriminant, high half = a stale pointer (0x11820000).
+switchLongLoop (no catch => no critical edge split) is unaffected and
+stayed green, which is what isolated it.
+
+Fix: add `UnconditionalBranchQuad` to each synthetic edge block (wired
+BEFORE the quad, since BranchQuad's ctor resolves the target against the
+block's successors). 236 tests green.
+
+Result after fix (force|79): lookupLongTry fully fixed, nestedCatchLong(5)
+fixed, nestedCatchLong(-3) improved from a garbled pointer to off-by-3
+(0x63 vs 0x60). div_iii MIN/-1 remains the known pre-existing #DE mapping.
+
+## Residual (2026-09-21): nestedCatchLong(-3) — nested handler reads pre-try version
+Host 0x60 (96), guest 0x63 (99). 99 = 0 - 1 + 100, i.e. the guest behaves
+as if the inner try's `acc = acc + (long)n` did not take effect before the
+inner catch ran (acc stayed 0, then -1, then +100).
+
+Guest disassembly of nestedCatchLong(-3) traces it exactly: the inner
+catch handler (ex_handler1 -> bci_36) does
+    mov dword[ebp-56],0x00000000   ; acc = 0  <-- pre-try version
+    mov dword[ebp-52],0x00000000
+instead of reading the post-inner-try-body phi value (-3, which lives at
+[ebp-40]/[ebp-36] after qb_2). So the nested handler reads the OUTER try's
+pre-try version rather than the INNER try's post-body version.
+
+This is the ANCHOR-L2-129 handler-entry versioning approximation (S6.4),
+now specifically for NESTED handlers: the inner catch's acc phi source on
+the exceptional dispatch is the entry version, not the post-inner-body
+version. Same bug class as the lookupLongTry fall-through, but deeper
+(nested handler scopes), and not yet fixed.

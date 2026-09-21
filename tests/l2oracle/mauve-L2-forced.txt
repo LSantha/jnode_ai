@@ -5,10 +5,10 @@ add_iii|-2147483648,-1|I:7fffffff
 sub_iii|-2147483648,1|I:7fffffff
 mul_iii|1000000,1000000|I:d4a51000
 div_iii|7,3|I:2
-div_iii|-2147483648,-1|EX:java.lang.ArithmeticException:Division by zero at address 3BEBA5B7
-div_iii|1,0|EX:java.lang.ArithmeticException:Division by zero at address 3BEBA5B7
+div_iii|-2147483648,-1|EX:java.lang.ArithmeticException:Division by zero at address 4D4BAD87
+div_iii|1,0|EX:java.lang.ArithmeticException:Division by zero at address 4D4BAD87
 rem_iii|7,3|I:1
-rem_iii|1,0|EX:java.lang.ArithmeticException:Division by zero at address 3BEC0867
+rem_iii|1,0|EX:java.lang.ArithmeticException:Division by zero at address 4D4C1037
 rem_iii|-7,3|I:ffffffff
 shl_iii|1,33|I:2
 shl_iii|-1,31|I:80000000
@@ -111,14 +111,14 @@ aadd_iii|100,20|I:78
 loopLongTryFinally|5|EX:java.lang.RuntimeException:boom
 loopLongTryFinally|0|J:0
 loopLongTryFinally|10|EX:java.lang.RuntimeException:boom
-nestedCatchLong|5|J:118200000000
-nestedCatchLong|-3|J:3c1724a800000000
+nestedCatchLong|5|J:69
+nestedCatchLong|-3|J:63
 switchLongLoop|5|J:458
 switchLongLoop|0|J:0
 switchLongLoop|10|J:8b9
 lookupLongTry|-1|J:ffffffffffffffff
-lookupLongTry|0|J:118200000000
-lookupLongTry|2|J:118200000002
+lookupLongTry|0|J:2
+lookupLongTry|2|J:8
 lookupLongTry|9|J:10
 finallyThrowsLong|5|J:3ed
 finallyThrowsLong|0|EX:java.lang.IllegalStateException:finally
