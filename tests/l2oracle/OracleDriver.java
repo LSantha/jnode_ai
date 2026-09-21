@@ -143,6 +143,25 @@ public class OracleDriver {
         {"altoi_ji", "8589934591"},
         {"altoi_ji", "-1"},
         {"aadd_iii", "100", "20"},
+        // ANCHOR-L2-137: complex-shape probes (loops, nested handlers,
+        // finally, table/lookup switches, long accumulators).
+        {"loopLongTryFinally", "5"},
+        {"loopLongTryFinally", "0"},
+        {"loopLongTryFinally", "10"},
+        {"nestedCatchLong", "5"},
+        {"nestedCatchLong", "-3"},
+        {"switchLongLoop", "5"},
+        {"switchLongLoop", "0"},
+        {"switchLongLoop", "10"},
+        {"lookupLongTry", "-1"},
+        {"lookupLongTry", "0"},
+        {"lookupLongTry", "2"},
+        {"lookupLongTry", "9"},
+        {"finallyThrowsLong", "5"},
+        {"finallyThrowsLong", "0"},
+        {"loopSwitchLong", "5"},
+        {"loopSwitchLong", "0"},
+        {"loopSwitchLong", "10"},
     };
 
     /**
