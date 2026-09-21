@@ -495,7 +495,11 @@ public class L2PipelineTest {
             "discriminant", "simpleWhile", "const1", "switchDense",
             "tryCatch", "twoCatches", "syncThrow", "arrayCatch", "syncBlock",
             "syncMethod", "concat", "hello", "callVirt", "ldiv",
-            "dupArrAssign", "dupArrUse", "instOf"};
+            "dupArrAssign", "dupArrUse", "instOf",
+            // ANCHOR-L2-137 synthetic complex-shape probes: loops, nested
+            // handlers, finally, table/lookup switches, long accumulators.
+            "loopLongTryFinally", "nestedCatchLong", "switchLongLoop",
+            "lookupLongTry", "finallyThrowsLong", "loopSwitchLong"};
         for (int i = 0; i < methods.length; i++) {
             VmMethod m = findMethod(methods[i]);
             IRControlFlowGraph cfg = runToPostDce(m);
@@ -615,44 +619,61 @@ public class L2PipelineTest {
         cfg2.removeUnusedVars();
         cfg2.removeDefUseChains();
         cfg2.fixupAddresses();
-v = SSAVerifier.verifyPostDessA(cfg2);
+        v = SSAVerifier.verifyPostDessA(cfg2);
             if (v != null) {
                 fail("SSA violation (post-deSSA) in remPiOver2: " + v);
             }
-        }
 
-        // ANCHOR-L2-137: sweep the real boot classes the L2 backend compiles
-        // in the ISO. The hand-picked corpus is tiny; the L2 boot crash
-        // (#GP with a wild pointer, a long truncated to one 32-bit word) is a
-        // miscompile of a boot method, not a corpus method. Run the full
-        // verifier (pre/post-deSSA + width) over every method of the classes
-        // that were on the crashing path: MemoryBlockManager (the init that
-        // ran immediately before the panic) and VmSystem (nanoTime, the long
-        // arithmetic that exposed the type-corruption class).
-        String[] bootClasses = {"org.jnode.vm.MemoryBlockManager",
-            "org.jnode.vm.VmSystem"};
-        for (int ci = 0; ci < bootClasses.length; ci++) {
-            VmType t = loader.loadClass(bootClasses[ci], true);
-            int n = t.getNoDeclaredMethods();
-            for (int mi = 0; mi < n; mi++) {
-                VmMethod m = t.getDeclaredMethod(mi);
-                IRControlFlowGraph cfg = runToPostDce(m);
-                String v = SSAVerifier.verifyPreDessA(cfg);
-                if (v != null) {
-                    fail("SSA violation (pre-deSSA) in " + bootClasses[ci] + "#"
-                        + m.getName() + ": " + v);
+        // ANCHOR-L2-137: synthetic complex-shape probes (loops, nested
+        // handlers, finally, table/lookup switches, long accumulators).
+        String[] complex = {"loopLongTryFinally", "nestedCatchLong",
+            "switchLongLoop", "lookupLongTry", "finallyThrowsLong",
+            "loopSwitchLong"};
+        sweepBootClasses(new String[]{"org.jnode.vm.compiler.ir.PrimitiveTest"},
+            complex);
+    }
+
+    private static void sweepBootClasses(String[] classNames, String[] methodNames)
+        throws Exception {
+        for (int ci = 0; ci < classNames.length; ci++) {
+            sweepClass(classNames[ci], methodNames);
+        }
+    }
+
+    private static void sweepClass(String className, String[] methodNames)
+        throws Exception {
+        VmType t = loader.loadClass(className, true);
+        int n = t.getNoDeclaredMethods();
+        for (int mi = 0; mi < n; mi++) {
+            VmMethod m = t.getDeclaredMethod(mi);
+            if (methodNames != null) {
+                boolean hit = false;
+                for (int k = 0; k < methodNames.length; k++) {
+                    if (methodNames[k].equals(m.getName())) {
+                        hit = true;
+                        break;
+                    }
                 }
-                X86Level2Compiler.deSSAAndFixup(cfg);
-                v = SSAVerifier.verifyPostDessA(cfg);
-                if (v != null) {
-                    fail("SSA violation (post-deSSA) in " + bootClasses[ci] + "#"
-                        + m.getName() + ": " + v);
+                if (!hit) {
+                    continue;
                 }
-                v = SSAVerifier.verifyWidths(cfg);
-                if (v != null) {
-                    fail("width violation in " + bootClasses[ci] + "#"
-                        + m.getName() + ": " + v);
-                }
+            }
+            IRControlFlowGraph cfg = runToPostDce(m);
+            String v = SSAVerifier.verifyPreDessA(cfg);
+            if (v != null) {
+                fail("SSA violation (pre-deSSA) in " + className + "#"
+                    + m.getName() + ": " + v);
+            }
+            X86Level2Compiler.deSSAAndFixup(cfg);
+            v = SSAVerifier.verifyPostDessA(cfg);
+            if (v != null) {
+                fail("SSA violation (post-deSSA) in " + className + "#"
+                    + m.getName() + ": " + v);
+            }
+            v = SSAVerifier.verifyWidths(cfg);
+            if (v != null) {
+                fail("width violation in " + className + "#"
+                    + m.getName() + ": " + v);
             }
         }
     }

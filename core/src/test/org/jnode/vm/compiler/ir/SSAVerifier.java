@@ -28,6 +28,7 @@ import org.jnode.vm.compiler.ir.quad.JsrQuad;
 import org.jnode.vm.compiler.ir.quad.PhiAssignQuad;
 import org.jnode.vm.compiler.ir.quad.Quad;
 import org.jnode.vm.compiler.ir.quad.RetQuad;
+import org.jnode.vm.compiler.ir.quad.VariableRefAssignQuad;
 
 /**
  * Test-only SSA verifier for the L2 IR (review item: 2026-09-18 IR/SSA
@@ -341,16 +342,24 @@ public final class SSAVerifier {
      * SEMANTIC check the dominance/written-on-path invariants cannot express.
      */
     public static String verifyWidths(IRControlFlowGraph cfg) {
+        // Width invariant, for COPY quads only. A copy must preserve the
+        // wide/narrow character of its operands: the L2 backend assumes wide
+        // values use stack shapes and that a copy moves both halves
+        // (ANCHOR-L2-082), so a mismatched copy silently drops the high half
+        // at codegen and the result is later used as a pointer.
+        //
+        // Scoped to VariableRefAssignQuad: array loads/stores (ArrayLoadQuad,
+        // ArrayStoreQuad) expose the array reference and index in
+        // getReferencedOps(), not the element value, so comparing the lhs
+        // type against refs[0] there is meaningless (dupArrUse: s4_2 =
+        // a0_1[a1_1], lhs LONG vs "rhs" the array reference).
         Iterator blocks = cfg.iterator();
         while (blocks.hasNext()) {
             IRBasicBlock b = (IRBasicBlock) blocks.next();
             List quads = b.getQuads();
             for (int i = 0; i < quads.size(); i++) {
                 Quad q = (Quad) quads.get(i);
-                if (q.isDeadCode() || !(q instanceof AssignQuad)) {
-                    continue;
-                }
-                if (q instanceof PhiAssignQuad) {
+                if (q.isDeadCode() || !(q instanceof VariableRefAssignQuad)) {
                     continue;
                 }
                 Operand lhs = ((AssignQuad) q).getLHS();

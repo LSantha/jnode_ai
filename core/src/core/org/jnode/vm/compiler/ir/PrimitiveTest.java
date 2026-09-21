@@ -879,4 +879,135 @@ public class PrimitiveTest {
         }
         return r;
     }
+
+    // ---------------- ANCHOR-L2-137 synthetic complex-shape probes ----------------
+    // These exercise the exception-flow, switch and loop machinery the L2
+    // backend's SSA/deSSA has only approximated. Each is loadable by the host
+    // verifier harness (runToPostDce) so a structural defect surfaces here
+    // rather than at a guest-VM panic.
+
+    /**
+     * Loop-carried long accumulator behind a try/finally. The long value
+     * crosses the finally boundary, so its phi sources include a version
+     * defined after the try block -- the shape that exposed the
+     * REFERENCE-typed-long copy (L2-137).
+     */
+    public static long loopLongTryFinally(int n) {
+        long acc = 0L;
+        int i = 0;
+        while (i < n) {
+            try {
+                acc += (long) i;
+                if (i == 3) {
+                    throw new RuntimeException("boom");
+                }
+            } finally {
+                i++;
+            }
+        }
+        return acc;
+    }
+
+    /**
+     * Nested handlers with a long local: outer catch re-reads the long after
+     * the inner catch modified it. Sibling-handler read must bind the pre-try
+     * version (ANCHOR-L2-129), and both halves must survive.
+     */
+    public static long nestedCatchLong(int n) {
+        long acc = 0L;
+        try {
+            try {
+                acc = acc + (long) n;
+                if (n < 0) {
+                    throw new IllegalArgumentException();
+                }
+            } catch (IllegalArgumentException e) {
+                acc = acc - 1L;
+            }
+            acc = acc + 100L;
+        } catch (RuntimeException e2) {
+            acc = acc - 1000L;
+        }
+        return acc;
+    }
+
+    /**
+     * Table switch with a long accumulator and a loop. Switch targets merge
+     * through phis; the long must keep both halves.
+     */
+    public static long switchLongLoop(int n) {
+        long acc = 0L;
+        for (int i = 0; i < n; i++) {
+            switch (i % 4) {
+                case 0: acc += 1L; break;
+                case 1: acc += 10L; break;
+                case 2: acc += 100L; break;
+                default: acc += 1000L; break;
+            }
+        }
+        return acc;
+    }
+
+    /**
+     * Lookup switch feeding a long phi inside a try/catch. The exception
+     * handler re-reads the long; the phi source on the exceptional edge is
+     * the pre-try value (S6.4 approximation).
+     */
+    public static long lookupLongTry(int n) {
+        long acc = 0L;
+        try {
+            switch (n) {
+                case -1: acc = 1L; throw new IllegalStateException();
+                case 0: acc = 2L; break;
+                case 1: acc = 4L; break;
+                case 2: acc = 8L; break;
+                default: acc = 16L; break;
+            }
+        } catch (IllegalStateException e) {
+            acc = -1L;
+        } catch (RuntimeException e2) {
+            acc = -2L;
+        }
+        return acc;
+    }
+
+    /**
+     * finally that throws, with a long accumulator updated in both the try
+     * and the finally. The finally's throw must not lose the long's halves.
+     */
+    public static long finallyThrowsLong(int n) {
+        long acc = 0L;
+        try {
+            acc = acc + (long) n;
+        } finally {
+            acc = acc + 1000L;
+            if (n == 0) {
+                throw new IllegalStateException("finally");
+            }
+        }
+        return acc;
+    }
+    public static long loopSwitchLong(int n) {
+        long acc = 0L;
+        int i = 0;
+        outer:
+        while (i < n) {
+            switch (i & 3) {
+                case 0:
+                    acc += (long) i;
+                    i++;
+                    continue;
+                case 1:
+                    acc -= (long) i;
+                    break;
+                case 2:
+                    acc *= 2L;
+                    break;
+                default:
+                    break outer;
+            }
+            i++;
+        }
+        return acc;
+    }
 }
