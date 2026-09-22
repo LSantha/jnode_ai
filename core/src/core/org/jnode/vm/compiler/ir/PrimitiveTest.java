@@ -987,8 +987,7 @@ public class PrimitiveTest {
         }
         return acc;
     }
-    public static long loopSwitchLong(int n) {
-        long acc = 0L;
+    public static long loopSwitchLong(int n) {        long acc = 0L;
         int i = 0;
         outer:
         while (i < n) {
@@ -1009,5 +1008,23 @@ public class PrimitiveTest {
             i++;
         }
         return acc;
+    }
+
+    /**
+     * ANCHOR-L2-141: narrow array load whose temp the allocator homes in
+     * ECX while ECX is live across the load (loop length). The emitter
+     * preserves ECX with push/pop around its index temp; writing the result
+     * into ECX pre-fix died at the POP (guest: sum 9 instead of 294).
+     */
+    public static int baloadEcxLoop() {
+        byte[] b = new byte[3];
+        b[0] = 97;
+        b[1] = 98;
+        b[2] = 99;
+        int sum = 0;
+        for (int i = 0; i < b.length; i++) {
+            sum += b[i];
+        }
+        return sum;
     }
 }

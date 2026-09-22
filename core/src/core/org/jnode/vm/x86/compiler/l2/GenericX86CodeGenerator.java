@@ -651,12 +651,27 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
                 throw new IllegalArgumentException("Unknown operation: " + operation);
 
             case I2B: {
+                // ANCHOR-L2-140: ESI/EDI/EBP have no 8-bit alias in 32-bit
+                // mode, so a reg-reg byte movsx with such a SOURCE silently
+                // encodes an AH/CH/DH/BH read (guest: StringTest #14/#17 read
+                // DH garbage instead of the operand, although the text disasm
+                // prints a plausible "byte esi"). Route an unsuitable source
+                // through the stack; an unsuitable DEST goes via SR1.
                 GPR lhsGpr = (GPR) lhsReg;
-                if (lhsGpr.isSuitableForBits8()) {
-                    os.writeMOVSX(lhsGpr, (GPR) rhsReg, BYTESIZE);
+                GPR rhsGpr = (GPR) rhsReg;
+                if (rhsGpr.isSuitableForBits8() && lhsGpr.isSuitableForBits8()) {
+                    os.writeMOVSX(lhsGpr, rhsGpr, BYTESIZE);
                 } else {
-                    os.writeMOVSX(SR1, lhsGpr, BYTESIZE);
-                    os.writeMOV(X86Constants.BITS32, lhsGpr, SR1);
+                    if (rhsGpr.isSuitableForBits8()) {
+                        os.writeMOVSX(SR1, rhsGpr, BYTESIZE);
+                    } else {
+                        os.writePUSH(rhsGpr);
+                        os.writeMOVSX(SR1, X86Register.ESP, 0, BYTESIZE);
+                        os.writeADD(X86Register.ESP, 4);
+                    }
+                    if (!lhsGpr.equals(SR1)) {
+                        os.writeMOV(X86Constants.BITS32, lhsGpr, SR1);
+                    }
                 }
                 break;
             }
@@ -833,12 +848,23 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
             case D2F:
                 throw new IllegalArgumentException("Unknown operation: " + operation);
 
-            case I2B:
+            case I2B: {
+                // ANCHOR-L2-140: same unsuitable-source hazard as the reg-reg
+                // I2B above (no 8-bit alias for ESI/EDI/EBP); bounce through
+                // the stack when the source register lacks one.
+                GPR rhsGpr = (GPR) rhsReg;
                 os.writePUSH(SR1);
-                os.writeMOVSX(SR1, (GPR) rhsReg, BYTESIZE);
+                if (rhsGpr.isSuitableForBits8()) {
+                    os.writeMOVSX(SR1, rhsGpr, BYTESIZE);
+                } else {
+                    os.writePUSH(rhsGpr);
+                    os.writeMOVSX(SR1, X86Register.ESP, 0, BYTESIZE);
+                    os.writeADD(X86Register.ESP, 4);
+                }
                 os.writeMOV(X86Constants.BITS32, X86Register.EBP, lhsDisp, SR1);
                 os.writePOP(SR1);
                 break;
+            }
 
             case I2C:
                 os.writePUSH(SR1);
@@ -5141,8 +5167,8 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
      * value), then one width-specific sequence. Long/double results always
      * spill; sub-word results are ints (R/S).
      */
-    private void loadWideOrNarrowArray(ArrayAssignQuad quad, Variable lhs, Variable ref, Operand ind,
-                                       int arrayDataOffset) {
+     private void loadWideOrNarrowArray(ArrayAssignQuad quad, Variable lhs, Variable ref, Operand ind,
+                                        int arrayDataOffset) {
         if (ref.getAddressingMode() == REGISTER) {
             GPR refr = (GPR) ((RegisterLocation) ref.getLocation()).getRegister();
             os.writeMOV(BITS32, X86Register.EAX, refr);
@@ -5153,6 +5179,11 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
             throw new IllegalArgumentException();
         }
         os.writePUSH(X86Register.ECX);
+        // ANCHOR-L2-141: ECX is pushed live across narrow loads/stores and
+        // reused as the index temp; a result/value homed in ECX must be
+        // staged elsewhere (see resultr check below). Tracks whether the
+        // restore at the end already happened inside a branch.
+        boolean ecxRestored = false;
         if (ind.getAddressingMode() == REGISTER) {
             GPR indr = (GPR) ((RegisterLocation) ((Variable) ind).getLocation()).getRegister();
             if (indr != X86Register.ECX) {
@@ -5201,7 +5232,22 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
             final int size = (elemType == Operand.BYTE) ? BYTESIZE : WORDSIZE;
             if (lhs.getAddressingMode() == REGISTER) {
                 GPR resultr = (GPR) ((RegisterLocation) lhs.getLocation()).getRegister();
-                if (signed) {
+                if (resultr == X86Register.ECX) {
+                    // ANCHOR-L2-141: ECX is pushed live across the load and
+                    // used as the index temp; a result homed in ECX would die
+                    // at the POP below (guest: BALOAD temp in a length-checked
+                    // loop read back the stale length, sum 9 instead of 294).
+                    // Stage via SR1 (EAX is free: ref already consumed into
+                    // EDX), restore ECX, then publish the result home.
+                    if (signed) {
+                        os.writeMOVSX(SR1, X86Register.EDX, 0, size);
+                    } else {
+                        os.writeMOVZX(SR1, X86Register.EDX, 0, size);
+                    }
+                    os.writePOP(X86Register.ECX);
+                    os.writeMOV(BITS32, X86Register.ECX, SR1);
+                    ecxRestored = true;
+                } else if (signed) {
                     os.writeMOVSX(resultr, X86Register.EDX, 0, size);
                 } else {
                     os.writeMOVZX(resultr, X86Register.EDX, 0, size);
@@ -5219,7 +5265,9 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
                 throw new IllegalArgumentException();
             }
         }
-        os.writePOP(X86Register.ECX);
+        if (!ecxRestored) {
+            os.writePOP(X86Register.ECX);
+        }
     }
 
     @Override
@@ -5472,13 +5520,21 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
             final int size = (elemType == Operand.BYTE) ? BYTESIZE : WORDSIZE;
             if (rhs.getAddressingMode() == REGISTER) {
                 GPR valr = (GPR) ((RegisterLocation) ((Variable) rhs).getLocation()).getRegister();
+                if (valr == X86Register.ECX) {
+                    // ANCHOR-L2-141: ECX was repurposed as the index temp
+                    // above, so the value must come from the PUSH slot (our
+                    // own pushed home). No pushes intervene on the narrow
+                    // path between that PUSH and this read; keep it that way.
+                    os.writeMOV(BITS32, SR1, X86Register.ESP, 0);
+                } else {
+                    os.writeMOV(BITS32, SR1, valr);
+                }
                 if (size == BYTESIZE) {
                     // ANCHOR-L2-084: byte stores need a low-byte source (no
                     // SIL/DIL pre-REX); route ESI/EDI/EBP/ESP via SR1 (EAX).
-                    os.writeMOV(BITS32, SR1, valr);
                     os.writeMOV(BITS8, X86Register.EDX, 0, SR1);
                 } else {
-                    os.writeMOV(BITS16, X86Register.EDX, 0, valr);
+                    os.writeMOV(BITS16, X86Register.EDX, 0, SR1);
                 }
             } else if (rhs.getAddressingMode() == STACK) {
                 int disp = ((StackLocation) ((Variable) rhs).getLocation()).getDisplacement();

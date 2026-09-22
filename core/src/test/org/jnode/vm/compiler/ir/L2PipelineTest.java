@@ -752,6 +752,22 @@ public class L2PipelineTest {
         assertNoResultSharesRefHome("discriminant");
     }
 
+    /**
+     * ANCHOR-L2-141: a narrow-array-load temp homed in ECX must survive the
+     * emitter's push/pop ECX preservation around its index temp. Pre-fix the
+     * result died at the POP (guest: BALOAD loop sum 9 instead of 294;
+     * decode #1-6 from the CALOAD twin). The probe below reproduces the
+     * allocator's ECX-homing through the same pipeline the guest runs.
+     */
+    @Test
+    public void testNarrowLoadEcxResult() throws Exception {
+        String text = compileToText(findMethod("baloadEcxLoop"));
+        java.util.regex.Pattern killer = java.util.regex.Pattern.compile(
+            "mov(sx|zx) ecx,(byte|word) \\[edx\\]\\s*\n\\s*pop ecx");
+        assertFalse("narrow load result clobbered by ECX restore, got:\n"
+            + text, killer.matcher(text).find());
+    }
+
     private static void assertNoResultSharesRefHome(String name) throws Exception {
         CompileResult r = compileMethod(findMethod(name));
         final java.util.HashMap<Variable, Location> homes =

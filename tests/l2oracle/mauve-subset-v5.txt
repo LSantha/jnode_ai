@@ -1,0 +1,79 @@
+# v5: scalar / collection / text / reflect shapes not yet covered by v1-v4.
+# Covers: Math/StrictMath FP, Integer/Double/Float/String, BigInteger/BigDecimal,
+# ArrayList/HashMap/Hashtable/BitSet, regex, DecimalFormat/SimpleDateFormat,
+# Calendar, Proxy, Class, Object. No GUI (awt/swing), no net, no io File/Socket.
+# All verified via javap to implement gnu.testlet.Testlet; no same-package
+# sibling CONSTANT_Class refs (verified via javap -v).
+
+# --- g1: scalar math/lang
+gnu.testlet.java.lang.Math.MathTest
+gnu.testlet.java.lang.StrictMath.cbrt
+gnu.testlet.java.lang.Integer.IntegerTest
+gnu.testlet.java.lang.Double.DoubleTest
+gnu.testlet.java.lang.Double.toHexString
+gnu.testlet.java.lang.Float.FloatTest
+gnu.testlet.java.lang.String.StringTest
+gnu.testlet.java.lang.String.decode
+gnu.testlet.java.lang.String.equals
+gnu.testlet.java.lang.String.replaceAll
+gnu.testlet.java.lang.String.startsWith
+gnu.testlet.java.lang.String.to
+
+# --- g2: BigInteger/BigDecimal
+gnu.testlet.java.math.BigInteger.abs
+gnu.testlet.java.math.BigInteger.ctor
+gnu.testlet.java.math.BigInteger.divide
+gnu.testlet.java.math.BigInteger.equals
+gnu.testlet.java.math.BigInteger.modInverse
+gnu.testlet.java.math.BigInteger.modPow
+gnu.testlet.java.math.BigInteger.multiply
+gnu.testlet.java.math.BigInteger.setBit
+gnu.testlet.java.math.BigInteger.shift
+gnu.testlet.java.math.BigInteger.signum
+gnu.testlet.java.math.BigInteger.toString
+gnu.testlet.java.math.BigInteger.valueOf
+gnu.testlet.java.math.BigDecimal.compareTo
+gnu.testlet.java.math.BigDecimal.DiagBigDecimal
+
+# --- g3: collections
+gnu.testlet.java.util.ArrayList.AcuniaArrayListTest
+gnu.testlet.java.util.HashMap.AcuniaHashMapTest
+gnu.testlet.java.util.Hashtable.ContainsHash
+gnu.testlet.java.util.Hashtable.EnumerateAndModify
+gnu.testlet.java.util.Hashtable.HashContains
+gnu.testlet.java.util.Hashtable.NullValue
+gnu.testlet.java.util.BitSet.clear
+gnu.testlet.java.util.BitSet.flip
+gnu.testlet.java.util.BitSet.get
+gnu.testlet.java.util.BitSet.jdk10
+
+# --- g4: regex/text
+gnu.testlet.java.util.regex.Pattern.matches
+gnu.testlet.java.util.regex.Pattern.pcrematches
+gnu.testlet.java.util.regex.PatternSplit
+gnu.testlet.java.util.regex.Pattern.UnicodeSimpleCategory
+gnu.testlet.java.text.DecimalFormat.applyPattern
+gnu.testlet.java.text.DecimalFormat.constructors
+gnu.testlet.java.text.DecimalFormat.formatExp
+gnu.testlet.java.text.DecimalFormat.position
+gnu.testlet.java.text.DecimalFormat.toPattern
+gnu.testlet.java.text.SimpleDateFormat.Test
+gnu.testlet.java.text.SimpleDateFormat.applyPattern
+gnu.testlet.java.text.SimpleDateFormat.constructors
+gnu.testlet.java.text.SimpleDateFormat.parse
+gnu.testlet.java.text.SimpleDateFormat.regress
+gnu.testlet.java.text.SimpleDateFormat.toPattern
+
+# --- g5: calendar/reflect/class/object
+gnu.testlet.java.util.Calendar.simple
+gnu.testlet.java.util.Calendar.add
+gnu.testlet.java.util.Calendar.getInstance
+gnu.testlet.java.util.Calendar.roll
+gnu.testlet.java.util.Calendar.set
+gnu.testlet.java.lang.reflect.Proxy.ToString
+gnu.testlet.java.lang.reflect.Proxy.DeclaringClass
+gnu.testlet.java.lang.reflect.Proxy.ExceptionRaising
+gnu.testlet.java.lang.Class.ClassTest
+gnu.testlet.java.lang.Object.clone
+gnu.testlet.java.lang.Object.ObjectTest
+gnu.testlet.java.lang.Object.wait

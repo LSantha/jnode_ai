@@ -308,9 +308,50 @@ public class L2ModeMatrixTest {
         }
     }
 
+    /**
+     * ANCHOR-L2-140: ESI/EDI/EBP have no 8-bit alias in 32-bit mode, so a
+     * reg-reg byte movsx with such a SOURCE silently encodes an AH/CH/DH/BH
+     * read (guest: StringTest test_Basics #14/#17 read DH garbage). The
+     * emitter must route unsuitable sources through the stack, never print
+     * them as a byte-register source.
+     */
     @Test
-    public void testUnaryConstantRhsStillThrows() throws Exception {
-        EmitterHarness h = new EmitterHarness();
+    public void testI2BUnsuitableRegisters() throws Exception {
+        // lhs ESI <- rhs ECX: must read ecx (via SR1), never "byte esi".
+        EmitterHarness h1 = new EmitterHarness();
+        h1.cg.generateCodeFor(dummyUnaryQuad(0), (Object) X86Register.ESI,
+            UnaryOperation.I2B, (Object) X86Register.ECX);
+        String t1 = h1.text();
+        assertTrue("I2B ESI<-ECX must read ecx, got:\n" + t1,
+            t1.contains("ecx") && !t1.contains("byte esi"));
+
+        // lhs ESI <- rhs ESI: stack round-trip, no byte-register source.
+        EmitterHarness h2 = new EmitterHarness();
+        h2.cg.generateCodeFor(dummyUnaryQuad(0), (Object) X86Register.ESI,
+            UnaryOperation.I2B, (Object) X86Register.ESI);
+        String t2 = h2.text();
+        assertTrue("I2B ESI<-ESI must bounce via stack, got:\n" + t2,
+            t2.contains("[esp") && !t2.contains("byte esi"));
+
+        // lhs ECX <- rhs ESI: stack round-trip as well.
+        EmitterHarness h3 = new EmitterHarness();
+        h3.cg.generateCodeFor(dummyUnaryQuad(0), (Object) X86Register.ECX,
+            UnaryOperation.I2B, (Object) X86Register.ESI);
+        String t3 = h3.text();
+        assertTrue("I2B ECX<-ESI must bounce via stack, got:\n" + t3,
+            t3.contains("[esp") && !t3.contains("byte esi"));
+
+        // lhs ECX <- rhs EBX (both suitable): direct form, no round-trip.
+        EmitterHarness h4 = new EmitterHarness();
+        h4.cg.generateCodeFor(dummyUnaryQuad(0), (Object) X86Register.ECX,
+            UnaryOperation.I2B, (Object) X86Register.EBX);
+        String t4 = h4.text();
+        assertTrue("I2B ECX<-EBX must stay direct, got:\n" + t4,
+            t4.contains("ebx") && !t4.contains("[esp"));
+    }
+
+    @Test
+    public void testUnaryConstantRhsStillThrows() throws Exception {        EmitterHarness h = new EmitterHarness();
         UnaryQuad q = dummyUnaryQuad(0);
         Constant c = Constant.getInstance(5);
         boolean thrown = false;
