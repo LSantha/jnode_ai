@@ -119,6 +119,29 @@ it if the fold triggers; else add `foldTwoUses`). Gate: census may show an
 OK gain (previously-killed defs survive) — review the delta, expect zero
 new failures.
 
+Status 2026-09-23 (applied as ANCHOR-L2-142, both twins): the hunk is in,
+but the shape proved UNTRIGGERABLE in the current pipeline, so there is
+deliberately no red->green regression test (a test passing both pre- and
+post-fix would be vacuous and was removed). Firing analysis, verified by
+`L2Dump --pre/--ir` inspection of four probe variants (straight-line
+copy, ternary stack-join, loop-carried store, loop-backedge phi):
+(1) every doPass2 reader simplifies, and every keeper heals
+(`BinaryQuad.maybeKeepVariable`, `PhiAssignQuad`/`PhiOperand` else-branch);
+(2) `optimize()` visits ALL quads every round, so round 2 re-heals any
+round-1 kill while a keeper exists; (3) substituters (RefAssign,
+RefStore, Return, branch/switch/monitor/call operands) leave constants
+behind, consistent with the kill; (4) a foldable-def variable can never
+become a deSSA phiMove source -- stores/pushes always interpose a fresh
+variable whose doPass2 already substituted the constant (dominating defs
+are not phi sources by construction). Hence the kill always coincides
+with full substitution: census is byte-identical pre/post
+(FAILED 169, OTHER 29, MAGIC 7, SSATAG 0/92), T0 17/17, T3 15/15, T1
+27/28 (known anomaly only). Hunk kept as hardening on the L2-132
+precedent: the kill is wrong by construction and would fire if a future
+pipeline change ever adds a non-healing keeper or a post-deSSA
+simplify site. If such a change lands, re-probe with the loop-backedge
+`foldTwoUses` shape first.
+
 ## P2: `VariableRefAssignQuad.propagate` DF-only kill
 
 Current (`VariableRefAssignQuad.java:72-102`, verbatim): scans only
@@ -144,6 +167,23 @@ Repro — host: copy with a same-block second use plus a `ret`/switch-key
 use; assert in `--ir` post-`doPass2` the def survives. Gate: census-diff
 (expected: identical or small OK gain), full suite, oracle green.
 
+Status 2026-09-23 (applied as ANCHOR-L2-143, minimal variant: only the
+`setDeadCode(true)` deleted, DF-scan rewiring kept): FIRES IN CORPUS.
+A whole-corpus walk (10,795 methods compiled, live-reader-on-dead-def
+check) found exactly one offender pre-fix, zero post-fix:
+`NativeCodeCompiler#doCompile` -- the null-check branch on `l9_1` read a
+copy (`24: l9_1 = s14_16`) killed via a deSSA phiMove whose DF scan
+missed the branch (same block, and phi sources are invisible to
+`getReferencedOps`). Red->green regression test:
+`L2PipelineTest.testNoDeadDefBranchDoCompile` (fails pre-fix with
+`live 26: if l9_1 != null ... reads l9_1 whose def is dead`, passes
+post-fix; post-fix `--ir` shows the copy live at emission). The same
+corpus walk showed zero Unary/Binary-def offenders (P1 hardening
+confirmed untriggerable) and zero from any other quad class. Census
+byte-identical pre/post (FAILED 169, OTHER 29, MAGIC 7, SSATAG 0/92);
+T0 17/17, T3 15/15, T1 28/29 (new test in the 28; only the known
+`testSSAVerifierCorpus` anomaly fails).
+
 ## P3: `Variable.equals` without `hashCode` undercounts DCE uses
 
 Current (`Variable.java:179-186`, verbatim): `equals` on
@@ -167,6 +207,29 @@ but not `equals`, so the base hash is consistent — re-verify while editing.
 Repro — host unit test: two equal-but-not-identical clones as map keys
 must collapse to one entry; census-diff (possible OK gain). Guest: oracle
 must stay green.
+
+Status 2026-09-23 (applied as ANCHOR-L2-144, hunk verbatim): audit first --
+only two plain-`HashMap<Variable,...>` sites exist, both in
+`IRControlFlowGraph` (`getVariableUsage` DCE counts, deSSA `noteCopy`
+dedup); every other Variable-keyed map is an `IdentityHashMap`
+(unaffected), which confirms the plain maps intend equals-semantics.
+[confirm] held: no `equals`/`hashCode` in either subclass or in
+`Operand`/`PhiOperand`. Red->green contract test:
+`L2HostTest.testAnchorL2_144_CloneKeysCollapseInHashMap` (fails pre-fix
+with 2 map entries, passes post-fix with 1 entry count 2; T0 now 18).
+Side finding: `clone()` does NOT preserve `ssaValue` (copy ctor copies
+only type+index), so the test builds the equal pair directly -- no
+`clone()` semantics touched (out of scope). Corpus walk showed zero
+live-reader-on-dead-def offenders attributable to P3 (the only offender
+was P2's), so like P1 this is hardening against a proven-wrong
+contract, with the mechanism locked by the unit test. Census:
+OK 11369->11370, FAILED 169 / OTHER 29 / MAGIC 7 / HANDLERS 454 /
+SSATAG 0/92 byte-identical; per-method outcome logging proved the +1 is
+the new `Variable#hashCode` method itself compiling (same "OK +1 (new
+probe)" pattern as L2-141), not a behavior change. Cross-class note:
+`equals` ignores the Local/Stack distinction, so the merge also applies
+across classes -- contract-correct as written; no census/guest signal
+against it. T0 18/18, T3 15/15, T1 28/29 (known anomaly only).
 
 ## P4: `IRBasicBlock.add` terminator guard + deSSA flush order
 
@@ -208,7 +271,27 @@ private static boolean isTerminator(Quad<T> q) {   // [confirm] generic bounds +
 ```
 
 Quad names verified against `ir/quad/` listing (`VarReturnQuad`,
-`RetQuad`, `ThrowQuad`, `JsrQuad` all exist). Repro — host probe:
+`RetQuad`, `ThrowQuad`, `JsrQuad` all exist). Status 2026-09-23
+(applied as ANCHOR-L2-145, with two deliberate deviations -- see below).
+A whole-corpus walk (10,796 methods, live-non-terminator-after-live-
+terminator check) found exactly two offenders pre-fix, zero post-fix,
+both `ThrowQuad`-followed-by-live-copy in `PrimitiveTest`
+(`loopLongTryFinally`: `13: l3_4 = l3_2` after `12: throw s5_8`;
+`nestedCatchLong` likewise); zero switch/ret cases. `--pre` proves both
+copies are deSSA flush phiMoves (absent pre-deSSA) placed into the
+throwing try block for the handler edge -- benign here (a dominating
+same-value def exists) but lost in general. Red->green regression test:
+`L2PipelineTest.testNoLiveCopyAfterTerminator` (fails pre-fix with the
+exact shape above, passes post-fix). Deviations from the proposed hunk:
+(1) `JsrQuad` EXCLUDED -- jsr returns, so a copy after it executes
+normally (current placement correct), and hoisting it pre-call would
+change subroutine-observable frame state (finally shapes); (2)
+`VoidReturnQuad` ADDED (plan omission -- `return;` never falls through,
+same reasoning as `VarReturnQuad`). `Quad<?>` bounds for the static
+helper. Census: OK 11370->11371 (+1 is the new `isTerminator` method
+itself compiling; FAILED 169 / OTHER 29 / MAGIC 7 / SSATAG 0/92
+byte-identical). T0 18/18, T3 15/15, T1 29/30 (new test in the 29;
+only the known anomaly fails). Repro -- host probe:
 
 ```java
 static int switchDefUse(int n) {
@@ -237,6 +320,32 @@ trap-capable with a comment), and share one predicate with P6 (see P12).
 Repro — host: dead `arr[i]` / `arr.length` / `x/0` inside try with a handler
 asserting the throw; assert the quad survives DCE in `--ir`. Guest: throw-
 observation probe (add `deadThrowObserved` to `Probes` + `CASES`).
+
+Status 2026-09-23 (applied as ANCHOR-L2-146): FIRES DRAMATICALLY.
+Pre-fix `--pre` of the new `PrimitiveTest.deadThrowObserved` probe shows
+the whole try body gone (bare `return 1`; handler unreachable) -- the
+unused `arr[n]`, `arr.length`, `1/n` all deleted. Post-fix all three
+survive (`s5_2 = a0_1[a1_1]`, `s5_4 = a0_1.length`, `s5_6 = 1 / a1_1`).
+Hunk is the plan's twins plus a local `isThrowingBinary`
+(IDIV/IREM/LDIV/LREM) placed for P6 reuse; `MemLoad`/`MagicOp`
+deliberately NOT kept (no trap-capable instance identified -- comment in
+code; shared predicate deferred to P19 as planned). Red->green:
+`L2PipelineTest.testDeadThrowingDefsSurviveDce` (fails pre-fix on the
+first assert, passes post-fix). Census: OK 11371->11373 (+2), HANDLERS
+454->455 (+1); FAILED 169 / OTHER 29 / MAGIC 7 / SSATAG 0/92 identical --
+the +2 OK is exactly the two new methods themselves (`isThrowingBinary`
+helper, no handler; `deadThrowObserved` probe, with handler), same
+new-method-self pattern as P3/P4, so no behavior flip. T0 18/18,
+T3 15/15, T1 30/31 (new test in the 30; only the known anomaly fails).
+Guest follow-up DONE 2026-09-23 (VBox full regression, cold boots):
+`deadThrowObserved` added to `Probes`+`CASES` (3 rows); oracle
+force|80 green with rows 1/0/0 matching host -- the fix holds on guest.
+Full guest record: oracle green (sole accepted MIN/-1 #DE); mauve v1
+green, v3 green, v4 green, StringTest 150/0 + decode 25/1 identical
+force/noforce; v2 51/52 with `AcuniaPropertiesTest` force crash PROVEN
+pre-existing (reproduces on unmodified 9e6738ce0 cold boot; isolated
+crash under L1A too -- state-dependent, separate triage, not this
+batch).
 
 ## P6: IR `isCallLike` misses `LDIV/LREM` (drift from its mirror)
 

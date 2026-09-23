@@ -230,6 +230,20 @@ public class Probes {
         }
     }
 
+    // ANCHOR-L2-146: dead throwing defs in a try. All three loads/divs
+    // are unused but must still trap (precise exceptions); pre-fix DCE
+    // deleted them and the try compiled to a bare `return 1`.
+    public static int deadThrowObserved(int[] a, int n) {
+        try {
+            int x = a[n];
+            int y = a.length;
+            int z = 1 / n;
+            return 1;
+        } catch (RuntimeException e) {
+            return 0;
+        }
+    }
+
     public static int tryFinally(int x) {
         try {
             return x * 2;

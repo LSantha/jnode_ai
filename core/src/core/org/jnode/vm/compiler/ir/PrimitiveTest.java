@@ -1027,4 +1027,20 @@ public class PrimitiveTest {
         }
         return sum;
     }
+
+    /**
+     * ANCHOR-L2-146: dead throwing defs inside a try. Each load/div is
+     * unused but must still trap (precise exceptions); DCE must keep them.
+     * Pre-fix all three vanished (try body compiled to bare `return 1`).
+     */
+    public static int deadThrowObserved(int[] arr, int n) {
+        try {
+            int a = arr[n];
+            int b = arr.length;
+            int c = 1 / n;
+            return 1;
+        } catch (RuntimeException e) {
+            return 0;
+        }
+    }
 }

@@ -184,4 +184,16 @@ public abstract class Variable<T> extends Operand<T> implements Cloneable {
         }
         return false;
     }
+
+    /**
+     * ANCHOR-L2-144: equals/hashCode contract. equals is on
+     * (index, ssaValue) but hashCode was missing, so equal-but-not-identical
+     * clones (SSAStack/location-preserving clones) landed in different
+     * HashMap buckets and DCE use counts came out too low (the def could be
+     * killed while a clone still read it). Subclasses override clone() but
+     * not equals, so this base hash is consistent for all of them.
+     */
+    public int hashCode() {
+        return index * 31 + ssaValue;
+    }
 }

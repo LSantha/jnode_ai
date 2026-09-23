@@ -768,6 +768,130 @@ public class L2PipelineTest {
             + text, killer.matcher(text).find());
     }
 
+    /**
+     * ANCHOR-L2-143: no live reader on a dead def in
+     * NativeCodeCompiler#doCompile. Pre-fix the deSSA phiMove's
+     * VariableRefAssignQuad.propagate killed the `l9_1 = s14_16` copy
+     * (its DF scan misses branch-condition and other non-DF readers)
+     * while the live null-check branch still read l9_1 -- codegen
+     * emitted no write for that home. Found by a whole-corpus walk
+     * (10,795 methods, exactly one offender, a VariableRefAssignQuad).
+     */
+    @Test
+    public void testNoDeadDefBranchDoCompile() throws Exception {
+        CompileResult r = compileMethod(findMethodIn(
+            "org.jnode.vm.compiler.NativeCodeCompiler", "doCompile"));
+        for (Object b0 : (Iterable<?>) r.cfg) {
+            final IRBasicBlock b = (IRBasicBlock) b0;
+            for (Object q0 : (List<?>) b.getQuads()) {
+                final Quad q = (Quad) q0;
+                if (q.isDeadCode()) {
+                    continue;
+                }
+                Operand[] refs = q.getReferencedOps();
+                if (refs == null) {
+                    continue;
+                }
+                for (int j = 0; j < refs.length; j++) {
+                    if (!(refs[j] instanceof Variable)) {
+                        continue;
+                    }
+                    Variable v = (Variable) refs[j];
+                    AssignQuad def = v.getAssignQuad();
+                    assertFalse("live " + q + " reads " + v
+                        + " whose def is dead: " + def,
+                        def != null && def.isDeadCode());
+                }
+            }
+        }
+    }
+
+    /**
+     * ANCHOR-L2-145: no live copy after a terminator. Pre-fix the deSSA
+     * flush (`b.add(move)`) appended edge copies after `throw` in try
+     * blocks (a whole-corpus walk over 10,796 methods found exactly two
+     * offenders, both `ThrowQuad`-followed-by-live-copy, zero switch/ret
+     * cases): the copy never executes on the edge. The guard now keeps
+     * every non-fallthrough terminator last.
+     */
+    @Test
+    public void testNoLiveCopyAfterTerminator() throws Exception {
+        assertNoLiveCopyAfterTerminator("loopLongTryFinally");
+        assertNoLiveCopyAfterTerminator("nestedCatchLong");
+    }
+
+    private static void assertNoLiveCopyAfterTerminator(String name)
+        throws Exception {
+        CompileResult r = compileMethod(findMethod(name));
+        for (Object b0 : (Iterable<?>) r.cfg) {
+            final IRBasicBlock b = (IRBasicBlock) b0;
+            Quad term = null;
+            for (Object q0 : (List<?>) b.getQuads()) {
+                final Quad q = (Quad) q0;
+                if (q.isDeadCode()) {
+                    continue;
+                }
+                assertFalse(name + ": live " + q + " after live terminator "
+                    + term, term != null);
+                if (q instanceof org.jnode.vm.compiler.ir.quad.BranchQuad
+                    || q instanceof org.jnode.vm.compiler.ir.quad.TableswitchQuad
+                    || q instanceof org.jnode.vm.compiler.ir.quad.LookupswitchQuad
+                    || q instanceof org.jnode.vm.compiler.ir.quad.ThrowQuad
+                    || q instanceof org.jnode.vm.compiler.ir.quad.RetQuad
+                    || q instanceof org.jnode.vm.compiler.ir.quad.VarReturnQuad
+                    || q instanceof org.jnode.vm.compiler.ir.quad.VoidReturnQuad) {
+                    term = q;
+                }
+            }
+        }
+    }
+
+    /**
+     * ANCHOR-L2-146: dead throwing defs survive DCE. Pre-fix
+     * `removeUnusedVars` deleted the unused `arr[n]`, `arr.length` and
+     * `1/n` (none in the keep-list) and the try body compiled to a bare
+     * `return 1` -- precise exceptions silently lost.
+     */
+    @Test
+    public void testDeadThrowingDefsSurviveDce() throws Exception {
+        CompileResult r = compileMethod(findMethod("deadThrowObserved"));
+        boolean arrayLoad = false, arrayLength = false, idiv = false;
+        for (Object b0 : (Iterable<?>) r.cfg) {
+            final IRBasicBlock b = (IRBasicBlock) b0;
+            for (Object q0 : (List<?>) b.getQuads()) {
+                final Quad q = (Quad) q0;
+                if (q.isDeadCode()) {
+                    continue;
+                }
+                if (q instanceof org.jnode.vm.compiler.ir.quad.ArrayAssignQuad) {
+                    arrayLoad = true;
+                } else if (q instanceof org.jnode.vm.compiler.ir.quad.ArrayLengthAssignQuad) {
+                    arrayLength = true;
+                } else if (q instanceof BinaryQuad
+                    && ((BinaryQuad) q).getOperation() == BinaryOperation.IDIV) {
+                    idiv = true;
+                }
+            }
+        }
+        assertTrue("dead arr[n] was deleted by DCE", arrayLoad);
+        assertTrue("dead arr.length was deleted by DCE", arrayLength);
+        assertTrue("dead 1/n was deleted by DCE", idiv);
+    }
+
+    private static VmMethod findMethodIn(String className, String name)
+        throws Exception {
+        VmType type = loader.loadClass(className, true);
+        int n = type.getNoDeclaredMethods();
+        for (int i = 0; i < n; i++) {
+            VmMethod m = type.getDeclaredMethod(i);
+            if (name.equals(m.getName())) {
+                return m;
+            }
+        }
+        fail("corpus method not found: " + className + "#" + name);
+        return null;
+    }
+
     private static void assertNoResultSharesRefHome(String name) throws Exception {
         CompileResult r = compileMethod(findMethod(name));
         final java.util.HashMap<Variable, Location> homes =

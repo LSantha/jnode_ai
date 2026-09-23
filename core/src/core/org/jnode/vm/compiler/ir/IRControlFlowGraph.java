@@ -33,8 +33,11 @@ import org.jnode.vm.bytecode.BytecodeParser;
 import org.jnode.vm.classmgr.VmByteCode;
 import org.jnode.vm.classmgr.VmInterpretedExceptionHandler;
 import org.jnode.vm.compiler.ir.quad.ArrayAssignQuad;
+import org.jnode.vm.compiler.ir.quad.ArrayLengthAssignQuad;
 import org.jnode.vm.compiler.ir.quad.ArrayStoreQuad;
 import org.jnode.vm.compiler.ir.quad.AssignQuad;
+import org.jnode.vm.compiler.ir.quad.BinaryOperation;
+import org.jnode.vm.compiler.ir.quad.BinaryQuad;
 import org.jnode.vm.compiler.ir.quad.BranchQuad;
 import org.jnode.vm.compiler.ir.quad.CallAssignQuad;
 import org.jnode.vm.compiler.ir.quad.CallQuad;
@@ -67,6 +70,7 @@ public class IRControlFlowGraph<T> implements Iterable<IRBasicBlock<T>> {
     // be replaced by the tags (C3).
     public static int tagDisagreements = 0;
     public static int tagHandlerEntryPhis = 0;
+    static final boolean SSATAG_LOG = Boolean.getBoolean("jnode.l2.ssatag");
 
     private SSAStack<T>[] renumberArray;
     private IRBasicBlock<T>[] bblocks;
@@ -144,7 +148,19 @@ public class IRControlFlowGraph<T> implements Iterable<IRBasicBlock<T>> {
                     dq instanceof NewObjectArrayAssignQuad ||
                     dq instanceof NewPrimitiveArrayAssignQuad ||
                     dq instanceof NewMultiArrayAssignQuad ||
-                    dq instanceof JsrQuad) {
+                    dq instanceof JsrQuad ||
+                    // ANCHOR-L2-146: throwing defs are live for their
+                    // effects. An apparently-unused arr[i] (bounds/NPE),
+                    // arr.length (NPE) or idiv/irem/ldiv/lrem
+                    // (ArithmeticException) inside a try must still trap;
+                    // deleting it silently drops the precise exception
+                    // (witness: deadThrowObserved compiled to bare
+                    // `return 1`). MemLoad/MagicOp deliberately NOT kept:
+                    // no trap-capable instance identified (revisit with
+                    // evidence). Shared throwing-predicate is P19.
+                    dq instanceof ArrayAssignQuad ||
+                    dq instanceof ArrayLengthAssignQuad ||
+                    isThrowingBinary(dq)) {
                     //todo optimize it, could be transformed to CallQuad
                     // (JsrQuad: control effects -- entering the subroutine.
                     // ANCHOR-L2-079.)
@@ -170,6 +186,20 @@ public class IRControlFlowGraph<T> implements Iterable<IRBasicBlock<T>> {
                 break;
             }
         } while (loop);
+    }
+
+    /**
+     * ANCHOR-L2-146 (shared with P6): integer divide/remainder traps
+     * {@code ArithmeticException} on a zero divisor. Used by the DCE
+     * keep-list above; P6 reuses it for {@code isCallLike}.
+     */
+    static boolean isThrowingBinary(Quad<?> q) {
+        if (q instanceof BinaryQuad) {
+            final BinaryOperation op = ((BinaryQuad<?>) q).getOperation();
+            return op == BinaryOperation.IDIV || op == BinaryOperation.IREM
+                || op == BinaryOperation.LDIV || op == BinaryOperation.LREM;
+        }
+        return false;
     }
 
     public void removeDefUseChains() {
@@ -1225,7 +1255,7 @@ public class IRControlFlowGraph<T> implements Iterable<IRBasicBlock<T>> {
             if (x != tag && !(blockDominates(x, tag)
                 && blockDominates(e.getKey().defBlock, x))) {
                 tagDisagreements++;
-                if (tagDisagreements <= 20) {
+                if (SSATAG_LOG && tagDisagreements <= 20) {
                     System.err.println("[ssatag] DISAGREE phi for " + lhs
                         + ": copy in " + x + " but source arrived from "
                         + tag + " (def in " + e.getKey().defBlock + ")");
@@ -1691,13 +1721,9 @@ public class IRControlFlowGraph<T> implements Iterable<IRBasicBlock<T>> {
         // pushed back AFTER popVariables (ANCHOR-L2-129) so sibling scopes
         // renamed later see the pre-try values, not the handler's defs.
         java.util.ArrayList<Variable<T>> handlerPopped = null;
-        java.util.ArrayList<Variable<T>> handlerPres = null;
-        java.util.ArrayList<Variable<T>> handlerTops = null;
         if (block.isStartOfExceptionHandler()) {
             handlerPopped = new java.util.ArrayList<Variable<T>>();
-            handlerPres = new java.util.ArrayList<Variable<T>>();
-            handlerTops = new java.util.ArrayList<Variable<T>>();
-            popHandlerVersions(block, handlerPopped, handlerTops, handlerPres);
+            popHandlerVersions(block, handlerPopped);
             // ANCHOR-L2-128: the exception slot's SSA value at handler entry
             // is the VM-pushed thrown object, not any pre-try stack state.
             // Push a fresh ExceptionArgument so the handler's first read
@@ -1769,9 +1795,7 @@ public class IRControlFlowGraph<T> implements Iterable<IRBasicBlock<T>> {
      * slot) and the pre-try version (stack top after the pops) are recorded.
      */
     private void popHandlerVersions(IRBasicBlock<T> block,
-        java.util.ArrayList<Variable<T>> popped,
-        java.util.ArrayList<Variable<T>> tops,
-        java.util.ArrayList<Variable<T>> pres) {
+        java.util.ArrayList<Variable<T>> popped) {
         final List<IRBasicBlock<T>> preds = block.getPredecessors();
         if (preds == null || preds.isEmpty()) {
             return;
@@ -1784,7 +1808,6 @@ public class IRControlFlowGraph<T> implements Iterable<IRBasicBlock<T>> {
             if (st == null) {
                 continue;
             }
-            Variable<T> top = null;
             int cnt = 0;
             Variable<T> peeked;
             while ((peeked = st.peek()) != null) {
@@ -1807,15 +1830,8 @@ public class IRControlFlowGraph<T> implements Iterable<IRBasicBlock<T>> {
                 if (!isDefUnwrittenOnExceptionalEdge(peeked, defBlock)) {
                     break;
                 }
-                if (cnt == 0) {
-                    top = peeked;
-                }
                 popped.add(st.pop());
                 cnt++;
-            }
-            if (cnt > 0) {
-                tops.add(top);
-                pres.add(st.peek());
             }
         }
     }
@@ -2009,10 +2025,6 @@ public class IRControlFlowGraph<T> implements Iterable<IRBasicBlock<T>> {
                 break;
             }
             PhiAssignQuad<T> aq = (PhiAssignQuad<T>) q;
-            if (succ.getStartPC() == 164) {
-                System.err.println("[rewrite] pred=" + pred + " dead="
-                    + aq.isDeadCode() + " lhs=" + aq.getLHS());
-            }
             if (aq.isDeadCode()) {
                 continue;
             }

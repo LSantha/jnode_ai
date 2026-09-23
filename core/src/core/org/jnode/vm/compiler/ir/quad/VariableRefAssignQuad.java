@@ -91,7 +91,12 @@ public class VariableRefAssignQuad<T> extends AssignQuad<T> {
                 }
             }
             if (!found) {
-                setDeadCode(true);
+                // ANCHOR-L2-143: no kill here; removeUnusedVars decides
+                // (cf. L2-132/L2-142). The DF scan above misses same-block
+                // second uses, branch conditions and other non-DF readers:
+                // eager killing left them on a dead def (witness:
+                // NativeCodeCompiler#doCompile, branch on l9_1 whose copy
+                // died via a deSSA phiMove) while codegen emitted no write.
                 return refs[0];
             } else {
                 return operand;

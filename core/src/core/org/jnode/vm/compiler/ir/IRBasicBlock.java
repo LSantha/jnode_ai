@@ -22,8 +22,14 @@ package org.jnode.vm.compiler.ir;
 
 import java.util.List;
 import org.jnode.vm.compiler.ir.quad.BranchQuad;
+import org.jnode.vm.compiler.ir.quad.LookupswitchQuad;
 import org.jnode.vm.compiler.ir.quad.PhiAssignQuad;
 import org.jnode.vm.compiler.ir.quad.Quad;
+import org.jnode.vm.compiler.ir.quad.RetQuad;
+import org.jnode.vm.compiler.ir.quad.TableswitchQuad;
+import org.jnode.vm.compiler.ir.quad.ThrowQuad;
+import org.jnode.vm.compiler.ir.quad.VarReturnQuad;
+import org.jnode.vm.compiler.ir.quad.VoidReturnQuad;
 import org.jnode.vm.objects.BootableArrayList;
 
 /**
@@ -181,11 +187,30 @@ public class IRBasicBlock<T> {
     public void add(Quad<T> q) {
         addDef(q);
         int n = quads.size();
-        if (n < 1 || q instanceof BranchQuad || !(quads.get(n - 1) instanceof BranchQuad)) {
+        if (n < 1 || isTerminator(q) || !isTerminator(quads.get(n - 1))) {
             quads.add(q);
         } else {
             quads.add(n - 1, q);
         }
+    }
+
+    /**
+     * ANCHOR-L2-145: a deSSA edge copy appended after a terminator never
+     * executes on the edge (witness: flush phiMoves landing after `throw`
+     * in try blocks). BranchQuad was the only recognized terminator, so
+     * copies flushed into switch/throw/ret/return blocks were silently
+     * lost. JsrQuad is deliberately NOT a terminator here: jsr returns,
+     * so a copy after it executes normally, and hoisting it before the
+     * call would change subroutine-observable frame state.
+     */
+    private static boolean isTerminator(Quad<?> q) {
+        return q instanceof BranchQuad
+            || q instanceof TableswitchQuad
+            || q instanceof LookupswitchQuad
+            || q instanceof ThrowQuad
+            || q instanceof RetQuad
+            || q instanceof VarReturnQuad
+            || q instanceof VoidReturnQuad;
     }
 
     public void add(PhiAssignQuad<T> paq) {

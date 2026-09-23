@@ -77,7 +77,7 @@ public class UnaryQuad<T> extends AssignQuad<T> {
     public Operand<T> propagate(Variable<T> operand) {
         Quad<T> quad = foldConstants();
         if (quad instanceof ConstantRefAssignQuad) {
-            setDeadCode(true);
+            // ANCHOR-L2-142: no kill here; removeUnusedVars decides (cf. L2-132).
             ConstantRefAssignQuad<T> cop = (ConstantRefAssignQuad<T>) quad;
             return cop.getRHS();
         }

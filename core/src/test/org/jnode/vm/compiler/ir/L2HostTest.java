@@ -209,6 +209,25 @@ public class L2HostTest {
         assertFalse(a.equals(c));
     }
 
+    @Test
+    public void testAnchorL2_144_CloneKeysCollapseInHashMap() {
+        // Equal-but-not-identical: same (index, ssaValue), distinct objects
+        // (clone() does NOT preserve ssaValue, so build the pair directly).
+        LocalVariable a = new LocalVariable(JvmType.INT, 3);
+        a.setSSAValue(2);
+        LocalVariable b = new LocalVariable(JvmType.INT, 3);
+        b.setSSAValue(2);
+        assertEquals(a, b);
+        assertEquals(a.hashCode(), b.hashCode());
+        java.util.HashMap<Variable, Integer> uses =
+            new java.util.HashMap<Variable, Integer>();
+        uses.put(a, 1);
+        Integer c = uses.get(b);
+        uses.put(b, (c == null) ? 1 : c + 1);
+        assertEquals(1, uses.size());
+        assertEquals(Integer.valueOf(2), uses.get(a));
+    }
+
     // ---------------- BranchCondition taxonomy ----------------
 
     @Test
