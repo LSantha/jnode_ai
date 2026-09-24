@@ -5923,6 +5923,15 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
         os.writePUSH(X86Register.EDX);
         callJavaMethod(stackFrame.getEntryPoints().getClassCastFailedMethod());
         os.setObjectRef(trueLabel);
+        // ANCHOR-L2-152: the success path jumped straight here from inside
+        // writeInstanceTest with EBX+ECX still pushed (the POPs above are
+        // on the false fallthrough only), leaking 8 bytes of stack per
+        // successful checkcast -- masked by EBP-relative locals until it
+        // corrupts ESP-relative addressing or overflows in a loop. Same
+        // shape as the instanceof twin. The null path jumps to endLabel
+        // BEFORE the pushes, so it needs no restore.
+        os.writePOP(X86Register.EBX);
+        os.writePOP(X86Register.ECX);
         os.setObjectRef(endLabel);
     }
 

@@ -1090,6 +1090,38 @@ public class L2PipelineTest {
     }
 
     /**
+     * ANCHOR-L2-152: the checkcast success path must restore EBX+ECX.
+     * Pre-fix `cc_true` jumped out of the type test with both registers
+     * still pushed (the POPs were on the false fallthrough only), leaking
+     * 8 bytes of stack per successful cast. The null path jumps to
+     * `cc_end` BEFORE the pushes and needs no restore; only `cc_true`
+     * does. Emission pin on the `cc_true` block.
+     */
+    @Test
+    public void testCheckcastSuccessRestoresTemps() throws Exception {
+        String text = compileToText(findMethod("castString"));
+        String[] lines = text.split("\n");
+        int trueAt = -1;
+        for (int i = 0; i < lines.length; i++) {
+            if (lines[i].trim().endsWith("cc_true:")) {
+                trueAt = i;
+                break;
+            }
+        }
+        assertTrue("no cc_true label in castString emission:\n" + text,
+            trueAt >= 0);
+        int pops = 0;
+        for (int i = trueAt + 1; i < Math.min(lines.length, trueAt + 4); i++) {
+            String s = lines[i].trim();
+            if (s.startsWith("pop ")) {
+                pops++;
+            }
+        }
+        assertTrue("checkcast cc_true does not restore EBX+ECX (8-byte "
+            + "stack leak per successful cast):\n" + text, pops == 2);
+    }
+
+    /**
      * ANCHOR-L2-151: a constant zero behind a local must stay a variable
      * divisor, so the trapping IDIV survives to emission. Pre-fix the
      * const/const fold evaluated host division and compilation threw

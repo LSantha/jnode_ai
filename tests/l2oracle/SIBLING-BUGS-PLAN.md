@@ -769,6 +769,55 @@ throws ArithmeticException out of the pipeline). Census OK
 counted by the census), FAILED-169 identical. T0 18/18, T3 16/16,
 T1 35/35, all-junit 247/0/0.
 
+## H5 (deep review): successful checkcast leaks 8 bytes of stack
+
+Source: deep review H5. Status 2026-09-26 (applied as ANCHOR-L2-152):
+FIRES, red-green. `generateCodeFor(CheckcastQuad)` popped EBX+ECX on
+the false fallthrough only; the success path jumps out of
+`writeInstanceTest` to `cc_true` with both still pushed, leaking 8
+bytes of ESP per successful cast (the null path jumps to `cc_end`
+BEFORE the pushes, so it is unaffected). The instanceof twin already
+had the pops at its true-label. Fix: restore EBX+ECX at `cc_true`.
+Regression: `L2PipelineTest.testCheckcastSuccessRestoresTemps` (emission
+pin on the `cc_true` block; red pre-fix). Census byte-identical. T0
+18/18, T3 16/16, T1 36/36. Boot: unchanged (0x18E11B family, EIP
+shifted by layout).
+
+## Boot-bug class hypothesis (2026-09-26): emitter stack discipline
+
+The two boot blockers are downstream VALUE symptoms, not root causes:
+(1) `Integer.stringSize` reads a null static array although the
+clinit's store provably lands (sentinel-store experiments, both the
+wide and the REF path, moved the fault elsewhere) -- the stored local
+is null despite earlier successful dereferences; (2) the sentinel run
+reached the long-standing `allocObject` flags write with result=16 (a
+too-small/garbage size upstream). H5 (checkcast ESP leak) is the same
+CLASS: emitter stack discipline. Next structural gate (deep review
+Wave B, adapted): an ESP-depth consistency lint over the emitted text
+of every corpus method (per-edge push/pop depth must agree), which
+finds the remaining instances automatically instead of crash-by-crash.
+
+## finallyThrowsLong anomaly: root cause localized (2026-09-26)
+
+The long-standing intermittent `testSSAVerifierCorpus` failure is a
+REAL latent bug, now with a deterministic repro. Probe recipe (kept out
+of the corpus on purpose -- it would make the suite deterministically
+red, i.e. a gate regression): in `PrimitiveTest.finallyThrowsLong`
+change the try body to `acc = acc + (long) n / (long) n;`. The divide
+makes the handler path reachable; post-deSSA the handler entry then
+contains the self-referential `s4_8 = s4_8 + 1000` (the pre-try `acc`
+version is never materialized on the exceptional edge), which the
+verifier flags deterministically (3/3 runs). Root cause, localized by
+reading the routing: for a HANDLER-ENTRY join the source's copy is
+routed by `routeCandidates` into the TRY block (the exceptional
+"predecessor" as recorded in the CFG), which does not execute on the
+exceptional edge, while `taggedUsableEdge` rejects the correct target
+(`tag == join`). The floor (`firstPhiMove == null`) has the same blind
+spot. Correct fix: place such copies at the TOP of the handler-entry
+block (they then run on every entry path) -- part of the Wave C unit
+(P19 predicate, P7, P18), not a standalone hunk. The corpus probe
+itself was reverted (all suites back to their previous state).
+
 ## Merged forward queue (2026-09-24) -- single guide going forward
 
 Source: `../../local/docs/L2-DEEP-REVIEW.md` (H1-H7, M1-M5, Waves A-E;
@@ -784,8 +833,9 @@ review (its section 3 entries for them are stale).
 | H3 | putstatic wide-const never stores (zeroed clinits) | LANDED L2-149 (red-green, census clean) |
 | H1 | shift-ECX SAL slip | LANDED L2-150 (mode-matrix sweep, red-green) |
 | H7 | fold zero-divisor compile crash | LANDED L2-151 (red-green, census clean) |
-| boot | Integer.stringSize null sizeTable (0x18E11B) | open: layout-sensitive; sentinel run reached the allocObject crash behind it |
-| H5 | checkcast ESP leak + EBX/ECX hazards | queued (boot suspect) |
+| H5 | checkcast ESP leak on success | LANDED L2-152 (emission pin, census identical) |
+| boot | Integer.stringSize null sizeTable (0x18E11B) | open: layout-sensitive value corruption; sentinel runs prove the store lands |
+| infra | ESP-depth per-edge lint over corpus emission (H5 class) | next |
 | M2 | forcedSpills omissions incl. class-init | queued (boot suspect) |
 | H7 | fold zero-divisor compile crash | queued (loud; composes w/ P5) |
 | H1 | shift-ECX SAL slip (verified) | queued (2-word fix) |
