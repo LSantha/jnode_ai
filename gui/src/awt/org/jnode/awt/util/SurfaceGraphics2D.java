@@ -996,7 +996,7 @@ public abstract class SurfaceGraphics2D extends Graphics2D {
 
     public void fillRect(int x, int y, int width, int height) {
 //        if(clip2D == null){
-        if (paint == null) {
+        if (paint == null || (paint instanceof Color && ((Color) paint).getAlpha() == 255)) {
             simpleGraphics.fillRect(x, y, width, height);
         } else {
             x = x + simpleGraphics.origin.x;
