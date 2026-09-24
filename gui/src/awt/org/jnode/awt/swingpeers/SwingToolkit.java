@@ -112,6 +112,10 @@ import sun.awt.SunToolkit;
 @SharedStatics
 public final class SwingToolkit extends JNodeToolkit {
 
+    private static final int MAX_ACTIVATION_WARNINGS = 3;
+
+    private int activationWarningCount;
+
     /**
      * An empty border
      */
@@ -510,8 +514,21 @@ public final class SwingToolkit extends JNodeToolkit {
             if (f.isShowing() && !f.isSelected()) {
                 try {
                     f.setSelected(true);
-                } catch (PropertyVetoException pve) {
-                    //ignore
+                    activationWarningCount = 0;
+                } catch (PropertyVetoException e) {
+                    if (log.isDebugEnabled()) {
+                        log.debug("Internal frame refused selection", e);
+                    }
+                } catch (RuntimeException e) {
+                    if (activationWarningCount < MAX_ACTIVATION_WARNINGS) {
+                        activationWarningCount++;
+                        log.warn("Unable to activate internal frame", e);
+                    } else if (activationWarningCount == MAX_ACTIVATION_WARNINGS) {
+                        activationWarningCount++;
+                        log.warn("Further internal-frame activation failures suppressed", e);
+                    } else if (log.isDebugEnabled()) {
+                        log.debug("Internal-frame activation failure suppressed", e);
+                    }
                 }
             }
         }
