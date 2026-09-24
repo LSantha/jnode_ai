@@ -1090,6 +1090,37 @@ public class L2PipelineTest {
     }
 
     /**
+     * ANCHOR-L2-151: a constant zero behind a local must stay a variable
+     * divisor, so the trapping IDIV survives to emission. Pre-fix the
+     * const/const fold evaluated host division and compilation threw
+     * `ArithmeticException: / by zero`.
+     */
+    @Test
+    public void testZeroDivisorSurvivesFold() throws Exception {
+        assertZeroDivisorSurvives("divByZeroLocal", BinaryOperation.IDIV);
+        assertZeroDivisorSurvives("ldivByZeroLocal", BinaryOperation.LDIV);
+    }
+
+    private static void assertZeroDivisorSurvives(String name, BinaryOperation op)
+        throws Exception {
+        CompileResult r = compileMethod(findMethod(name));
+        boolean div = false;
+        for (Object b0 : (Iterable<?>) r.cfg) {
+            final IRBasicBlock b = (IRBasicBlock) b0;
+            for (Object q0 : (List<?>) b.getQuads()) {
+                final Quad q = (Quad) q0;
+                if (q.isDeadCode() || !(q instanceof BinaryQuad)) {
+                    continue;
+                }
+                if (((BinaryQuad) q).getOperation() == op) {
+                    div = true;
+                }
+            }
+        }
+        assertTrue(name + ": trapping " + op + " was folded away", div);
+    }
+
+    /**
      * ANCHOR-L2-149: a wide CONSTANT `putstatic` must store both halves.
      * Pre-fix the register/CONSTANT arm materialized the two halves into
      * SR1/EDX and fell off the end without any store, so

@@ -740,6 +740,35 @@ L2 re-materializes it from `[ebp-20]` (written exactly once, by the
 `newarray` helper call). Next discriminator: sentinel-store experiment
 (force a known non-null ref at the store; observe CR2 at the fault).
 
+## H1 (deep review): ECX-count shift arms emit SAL
+
+Source: `../../local/docs/L2-DEEP-REVIEW.md` H1. Status 2026-09-25
+(applied as ANCHOR-L2-150): FIRES, red-green, two-word fix. The RRR
+`ISHR`/`IUSHR` arms' `reg3 == ECX` branch (count already in CL) emitted
+`writeSAL_CL` -- copy-paste from the `ISHL` arm -- silently turning
+`a >> b` / `a >>> b` into `a << b`. The mode matrix never reached it:
+its RRR row uses reg3 = ESI. Regression:
+`L2ModeMatrixTest.testShiftCountInEcx` sweeps all four allocatable
+count registers and asserts sar/shr (and sal for ISHL); fails pre-fix,
+passes post-fix. T3 15->16.
+
+## H7 (deep review): constant-fold IDIV/IREM by zero crashes compilation
+
+Source: deep review H7. Status 2026-09-25 (applied as ANCHOR-L2-151):
+FIRES, red-green. `BinaryQuad.maybeKeepVariable` substituted a
+constant ZERO divisor (the wide-const pin only covered long/double/
+float), so the const/const fold (`Constant.iDiv`) evaluated host
+division: `int lz = 0; return 10 / lz;` failed L2 compilation with
+`ArithmeticException: / by zero` instead of trapping at runtime. Fix:
+never substitute a zero divisor for idiv/irem/ldiv/lrem (keep the
+variable, pin the def; the L2-146 keep-list retains it). Regression:
+`L2PipelineTest.testZeroDivisorSurvivesFold` + `PrimitiveTest`
+probes `divByZeroLocal` / `ldivByZeroLocal` (pre-fix the test run
+throws ArithmeticException out of the pipeline). Census OK
+11377->11381 (+2 probes, +2 new private helpers `isZero`/`isDivRem`
+counted by the census), FAILED-169 identical. T0 18/18, T3 16/16,
+T1 35/35, all-junit 247/0/0.
+
 ## Merged forward queue (2026-09-24) -- single guide going forward
 
 Source: `../../local/docs/L2-DEEP-REVIEW.md` (H1-H7, M1-M5, Waves A-E;
@@ -753,7 +782,9 @@ review (its section 3 entries for them are stale).
 |---|---|---|
 | P10 | removeDefUseChains lhs aliasing | investigated: 4150 splices / 0 stale refs, NOT landed |
 | H3 | putstatic wide-const never stores (zeroed clinits) | LANDED L2-149 (red-green, census clean) |
-| boot | Integer.stringSize null sizeTable (0x18E11B) | in progress: sentinel experiment next |
+| H1 | shift-ECX SAL slip | LANDED L2-150 (mode-matrix sweep, red-green) |
+| H7 | fold zero-divisor compile crash | LANDED L2-151 (red-green, census clean) |
+| boot | Integer.stringSize null sizeTable (0x18E11B) | open: layout-sensitive; sentinel run reached the allocObject crash behind it |
 | H5 | checkcast ESP leak + EBX/ECX hazards | queued (boot suspect) |
 | M2 | forcedSpills omissions incl. class-init | queued (boot suspect) |
 | H7 | fold zero-divisor compile crash | queued (loud; composes w/ P5) |

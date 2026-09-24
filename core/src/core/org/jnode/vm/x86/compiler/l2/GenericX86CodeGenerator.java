@@ -1753,7 +1753,9 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
                     os.writeSAR_CL((GPR) reg1);
                     os.writePOP(X86Register.ECX);
                 } else {
-                    os.writeSAL_CL((GPR) reg1);
+                    // ANCHOR-L2-150: ECX-count arm was SAR, not SAL
+                    // (copy-paste from ISHL; silent `a >> b` -> `a << b`).
+                    os.writeSAR_CL((GPR) reg1);
                 }
                 break;
 
@@ -1774,7 +1776,8 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
                     os.writeSHR_CL((GPR) reg1);
                     os.writePOP(X86Register.ECX);
                 } else {
-                    os.writeSAL_CL((GPR) reg1);
+                    // ANCHOR-L2-150: ECX-count arm was SAL, not SHR.
+                    os.writeSHR_CL((GPR) reg1);
                 }
                 break;
 

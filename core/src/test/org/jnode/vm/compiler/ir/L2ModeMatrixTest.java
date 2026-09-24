@@ -51,6 +51,7 @@ import org.jnode.vm.x86.compiler.l2.X86StackFrame;
 import org.junit.BeforeClass;
 import org.junit.Test;
 
+import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
 import static org.junit.Assert.fail;
 
@@ -248,6 +249,48 @@ public class L2ModeMatrixTest {
         assertIntOp(BinaryOperation.ISHL, "sal ");
         assertIntOp(BinaryOperation.ISHR, "sar ");
         assertIntOp(BinaryOperation.IUSHR, "shr ");
+    }
+
+    /**
+     * ANCHOR-L2-150: the RRR shift arms with the COUNT already in ECX
+     * (the count IS the implicit CL operand) took the reg3 == ECX
+     * branch, which emitted SAL_CL for ISHR and IUSHR -- copy-paste from
+     * the ISHL arm -- silently turning `a >> b` / `a >>> b` into
+     * `a << b`. The mode matrix never hit it: its RRR row uses
+     * reg3 = ESI. This row pins all four allocatable count registers.
+     */
+    @Test
+    public void testShiftCountInEcx() throws Exception {
+        X86Register[] counts = {X86Register.EAX, X86Register.EBX,
+            X86Register.ECX, X86Register.ESI};
+        for (int i = 0; i < counts.length; i++) {
+            X86Register cnt = counts[i];
+            EmitterHarness ishr = new EmitterHarness();
+            ishr.cg.generateBinaryOP(X86Register.EBX, X86Register.ESI,
+                BinaryOperation.ISHR, cnt);
+            String ishrText = ishr.text();
+            assertTrue("ISHR with count in " + cnt + " must emit sar: "
+                + ishrText, ishrText.contains("sar "));
+            assertFalse("ISHR with count in " + cnt
+                + " must not emit sal: " + ishrText,
+                ishrText.contains("sal "));
+
+            EmitterHarness iushr = new EmitterHarness();
+            iushr.cg.generateBinaryOP(X86Register.EBX, X86Register.ESI,
+                BinaryOperation.IUSHR, cnt);
+            String iushrText = iushr.text();
+            assertTrue("IUSHR with count in " + cnt + " must emit shr: "
+                + iushrText, iushrText.contains("shr "));
+            assertFalse("IUSHR with count in " + cnt
+                + " must not emit sal: " + iushrText,
+                iushrText.contains("sal "));
+
+            EmitterHarness ishl = new EmitterHarness();
+            ishl.cg.generateBinaryOP(X86Register.EBX, X86Register.ESI,
+                BinaryOperation.ISHL, cnt);
+            assertTrue("ISHL with count in " + cnt + " must emit sal: "
+                + ishl.text(), ishl.text().contains("sal "));
+        }
     }
 
     /**

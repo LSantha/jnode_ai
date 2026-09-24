@@ -1087,6 +1087,23 @@ public class PrimitiveTest {
     }
 
     /**
+     * ANCHOR-L2-151: divide by a constant zero hidden behind a local.
+     * Pre-fix copy propagation substituted the zero and the const/const
+     * fold evaluated host division: L2 compilation died with
+     * `ArithmeticException: / by zero at Constant.iDiv`. The JVM must
+     * trap at RUN time instead.
+     */
+    public static int divByZeroLocal() {
+        int lz = 0;
+        return 10 / lz;
+    }
+
+    public static long ldivByZeroLocal() {
+        long lz = 0L;
+        return 10L / lz;
+    }
+
+    /**
      * ANCHOR-L2-146: dead throwing defs inside a try. Each load/div is
      * unused but must still trap (precise exceptions); DCE must keep them.
      * Pre-fix all three vanished (try body compiled to bare `return 1`).

@@ -26,6 +26,7 @@ import org.jnode.vm.compiler.ir.Constant;
 import org.jnode.vm.compiler.ir.DoubleConstant;
 import org.jnode.vm.compiler.ir.FloatConstant;
 import org.jnode.vm.compiler.ir.IRBasicBlock;
+import org.jnode.vm.compiler.ir.IntConstant;
 import org.jnode.vm.compiler.ir.LongConstant;
 import org.jnode.vm.compiler.ir.Operand;
 import org.jnode.vm.compiler.ir.RegisterLocation;
@@ -408,8 +409,39 @@ public class BinaryQuad<T> extends AssignQuad<T> {
                 }
                 return ref;
             }
+            // ANCHOR-L2-151: never substitute a ZERO divisor for
+            // idiv/irem/ldiv/lrem. With both operands constant the fold
+            // (or the emitter's CC mode) evaluates HOST division and
+            // throws ArithmeticException at compile time, replacing the
+            // JVM's runtime trap (repro: `int lz = 0; return 10 / lz;`
+            // failed L2 compilation with `/ by zero at Constant.iDiv`).
+            // Keep the variable so the trapping quad survives to
+            // emission; the DCE keep-list (L2-146) retains the def.
+            if (isZero(c) && isDivRem(operation)) {
+                AssignQuad<T> def = ((Variable<T>) ref).getAssignQuad();
+                if (def != null) {
+                    def.setDeadCode(false);
+                }
+                return ref;
+            }
         }
         return simplified;
+    }
+
+    private static boolean isZero(Constant<?> c) {
+        if (c instanceof IntConstant) {
+            return ((IntConstant<?>) c).getValue() == 0;
+        }
+        if (c instanceof LongConstant) {
+            LongConstant lc = (LongConstant) c;
+            return lc.getMSInt() == 0 && lc.getLSInt() == 0;
+        }
+        return false;
+    }
+
+    private static boolean isDivRem(BinaryOperation op) {
+        return op == BinaryOperation.IDIV || op == BinaryOperation.IREM
+            || op == BinaryOperation.LDIV || op == BinaryOperation.LREM;
     }
 
     /**
