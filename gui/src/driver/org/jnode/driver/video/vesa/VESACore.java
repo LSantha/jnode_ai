@@ -290,7 +290,7 @@ public class VESACore extends AbstractSurface implements HardwareCursorAPI {
      * @see org.jnode.driver.video.Surface#copyArea(int, int, int, int, int,
      *      int)
      */
-    public void copyArea(int x, int y, int width, int height, int dx, int dy) {
+    public synchronized void copyArea(int x, int y, int width, int height, int dx, int dy) {
         bitmapGraphics.copyArea(x, y, width, height, dx, dy);
         updateScreen(dx, dy, width, height);
     }
@@ -308,8 +308,8 @@ public class VESACore extends AbstractSurface implements HardwareCursorAPI {
      * @param bgColor The background color to use for transparent pixels. If
      *            null, no transparent pixels are unmodified on the destination
      */
-    public void drawCompatibleRaster(Raster src, int srcX, int srcY, int x, int y, int w, int h,
-            Color bgColor) {
+    public synchronized void drawCompatibleRaster(Raster src, int srcX, int srcY, int x, int y, int w,
+            int h, Color bgColor) {
         if (bgColor != null) {
             bitmapGraphics.drawImage(src, srcX, srcY, x, y, w, h, convertColor(bgColor));
         } else {
@@ -347,20 +347,25 @@ public class VESACore extends AbstractSurface implements HardwareCursorAPI {
      * @param color
      * @param mode
      */
-    public final void fillRect(int x, int y, int width, int height, int color, int mode) {
+    public final synchronized void fillRect(int x, int y, int width, int height, int color, int mode) {
+        if (width <= 0 || height <= 0) {
+            return;
+        }
         if (x < 0) {
-            width = Math.max(0, x + width);
+            width += x;
             x = 0;
         }
         if (y < 0) {
-            height = Math.max(0, y + height);
+            height += y;
             y = 0;
         }
-        if ((width > 0) && (height > 0)) {
-            // TODO optimize it like in VMWareCore ?
-            for (int line = y + height - 1; line >= y; line--) {
-                bitmapGraphics.drawPixels(x, line, width, color, mode);
-            }
+        if (x >= this.width || y >= this.height) {
+            return;
+        }
+        width = Math.min(width, this.width - x);
+        height = Math.min(height, this.height - y);
+        if (width > 0 && height > 0) {
+            bitmapGraphics.fillRect(x, y, width, height, color, mode);
         }
     }
 
@@ -387,7 +392,7 @@ public class VESACore extends AbstractSurface implements HardwareCursorAPI {
      * @param y
      * @param color
      */
-    public final void drawPixel(int x, int y, int color, int mode) {
+    public final synchronized void drawPixel(int x, int y, int color, int mode) {
         bitmapGraphics.drawPixels(x, y, 1, color, mode);
     }
 
@@ -401,7 +406,7 @@ public class VESACore extends AbstractSurface implements HardwareCursorAPI {
      * @param c
      * @param mode
      */
-    public final void drawLine(int x1, int y1, int x2, int y2, int c, int mode) {
+    public final synchronized void drawLine(int x1, int y1, int x2, int y2, int c, int mode) {
         if (x1 == x2) {
             // Vertical line
             fillRect(x1, Math.min(y1, y2), 1, Math.abs(y2 - y1), c, mode);
@@ -415,7 +420,7 @@ public class VESACore extends AbstractSurface implements HardwareCursorAPI {
         }
     }
 
-    protected final void drawHorizontalLine(int x, int y, int w, int color, int mode) {
+    protected final synchronized void drawHorizontalLine(int x, int y, int w, int color, int mode) {
         if ((x >= 0) && (x < width) && (y >= 0) && (y < height)) {
             w = Math.min(width - x, w);
             final int ofsY = bytesPerLine * y;
@@ -582,7 +587,7 @@ public class VESACore extends AbstractSurface implements HardwareCursorAPI {
      * 
      * @param cursor
      */
-    public void setCursorImage(HardwareCursor cursor) {
+    public synchronized void setCursorImage(HardwareCursor cursor) {
         bitmapGraphics.setCursorImage(cursor);
     }
 
@@ -591,19 +596,19 @@ public class VESACore extends AbstractSurface implements HardwareCursorAPI {
      *      java.awt.geom.AffineTransform, int, int, int, int, int, int,
      *      java.awt.Color)
      */
-    public void drawAlphaRaster(Raster raster, AffineTransform tx, int srcX, int srcY, int dstX,
-            int dstY, int width, int height, Color color) {
+    public synchronized void drawAlphaRaster(Raster raster, AffineTransform tx, int srcX, int srcY,
+            int dstX, int dstY, int width, int height, Color color) {
         bitmapGraphics.drawAlphaRaster(raster, tx, srcX, srcY, dstX, dstY, width, height,
                 convertColor(color));
     }
 
     @Override
-    public int getRGBPixel(int x, int y) {
+    public synchronized int getRGBPixel(int x, int y) {
         return bitmapGraphics.doGetPixel(x, y);
     }
 
     @Override
-    public int[] getRGBPixels(Rectangle region) {
+    public synchronized int[] getRGBPixels(Rectangle region) {
         return bitmapGraphics.doGetPixels(region);
     }
 }
