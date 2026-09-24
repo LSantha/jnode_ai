@@ -723,6 +723,14 @@ not the boot bug; boot crash pinned separately to
 
 ## Boot investigation (2026-09-25): `Integer.stringSize` null `sizeTable`
 
+Update 2026-09-26 (post-H2, commit 28fe9a373): the L2 image still
+panics at the same site, byte-identical signature and EIP:
+`CODE(0018E243): 8B 00 3B 45 F0 ...` = `mov eax,[eax]` with eax=0 (the
+null `Integer.sizeTable`) then the loop compare, `int_die_halt`. Same
+EIP as the post-H5 run (0x18E243) despite H1/H2/H3/H5/H7 being added
+in between, so the boot-path value corruption is upstream of all of
+them (consistent with the stack-discipline class hypothesis).
+
 Method: KDB panic EIP + the raw `bootimage.bin` byte pattern
 (`FF 75 EC FF 75 F0 FF 97 8C 05 00 00 8B 45 EC 8B 00 3B 45 F0 0F 86`)
 gives 27 candidate sites; load base is 0x100000 (multiboot 1MB), and
