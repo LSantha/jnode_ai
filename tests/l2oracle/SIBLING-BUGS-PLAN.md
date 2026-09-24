@@ -571,6 +571,18 @@ Hunk: clone `vq.getLHS()` before aliasing (P8 clone API). Repro: single-use
 wide-def coalescing followed by a narrow use — assert both lhs types
 post-splice in `--ir`.
 
+Status 2026-09-25: INVESTIGATED, NOT LANDED (test-guard policy). Temp
+instrumentation over the full census (11,376 compiling methods):
+`P10 splices=4150 staleRefs=0 equalsOnly=0` -- the splice fires often, but
+(a) the RHS match is always identity-exact (never an equals-only clone
+pairing), and (b) after the splice NO live quad references the orphaned
+old LHS object by identity. The "two quads share one lhs" claim does not
+materialize: the copy is marked dead before its LHS is adopted, so only
+one live quad ever holds the object. The P8-family re-type vector is
+independently proven dormant (P8's own `fold2Count=0` census probe).
+Instrumentation reverted (diff verified clean). Revisit only with a
+firing identity-stale repro.
+
 ## P11: fall-through / ret-resume edges never explicit
 
 `isExplicitEdge`/`retargetEdge` (`:602-653`, per sweep) skip quad-less
@@ -688,6 +700,46 @@ mauve where marked.
   test: `baloadEcxLoop` + `testNarrowLoadEcxResult`. Full record:
   `ORACLE-RESULTS-2026-09-21.md` § "FIXED (2026-09-22 evening)".
 
+## H3 (deep review): `putstatic` wide CONSTANT never stores
+
+Source: `../../local/docs/L2-DEEP-REVIEW.md` H3. Status 2026-09-25
+(applied as ANCHOR-L2-149): FIRES, red-green. The wide-CONSTANT arm of
+the static-store emission materialized both halves into SR1/EDX and fell
+off the end without the store (the STACK arm below already had it), so
+`static long X = 5L;` kept its zero default. Witness (pre-fix `<clinit>`
+emission of `PrimitiveTest`): `mov eax,0x00000005 / mov edx,0x00000000`
+then straight to the footer; post-fix adds the isolated-store sequence
+(`push ebx / fs mov ebx,[+12] / mov dword[ebx+148],edx / mov
+dword[ebx+144],eax / pop ebx`). Regression:
+`L2PipelineTest.testWideConstPutStaticStores` (fails pre-fix with
+`wide-const putstatic never stored the high half`, passes post-fix;
+non-vacuous: also pins that the materialization ran). Corpus: new
+`PrimitiveTest.wideConstStatic` + getter. Census: OK 11376->11377 (+1 =
+the new getter), FAILED-169 identical. T0 18/18, T3 15/15, T1 34/34.
+Boot: L2 image still panics at 0x18E11B (unchanged) -- H3 is real but
+not the boot bug; boot crash pinned separately to
+`java.lang.Integer.stringSize` reading a null `sizeTable`
+(see "Boot investigation" section below).
+
+## Boot investigation (2026-09-25): `Integer.stringSize` null `sizeTable`
+
+Method: KDB panic EIP + the raw `bootimage.bin` byte pattern
+(`FF 75 EC FF 75 F0 FF 97 8C 05 00 00 8B 45 EC 8B 00 3B 45 F0 0F 86`)
+gives 27 candidate sites; load base is 0x100000 (multiboot 1MB), and
+the fault lands at file offset 0x8E11B = EIP 0x18E11B exactly. Walking
+`bootimage.txt` sites in image order maps the faulting site to
+`java.lang.Integer.stringSize(int)`: the L2 array-bounds-check idiom
+(`$$cbtest`: `mov eax,[arr] / cmp eax,[idx] / jbe`) on a NULL
+`sizeTable` static (isolated statics slot 0x31DC). The clinit's final
+`mov dword[edx+0x31DC],eax` (EIP 0x18DFC0, confirmed by the unique
+`mov dword[eax+0x28],0x7FFFFFFF` tail fill) is on every fall-through
+path, and the `$$init_java.lang.Integer` wrapper calls
+`VmType.initialize` BEFORE the flag is set, so a throwing clinit cannot
+explain it. L1A keeps the array in a register across the init call;
+L2 re-materializes it from `[ebp-20]` (written exactly once, by the
+`newarray` helper call). Next discriminator: sentinel-store experiment
+(force a known non-null ref at the store; observe CR2 at the fault).
+
 ## Merged forward queue (2026-09-24) -- single guide going forward
 
 Source: `../../local/docs/L2-DEEP-REVIEW.md` (H1-H7, M1-M5, Waves A-E;
@@ -699,8 +751,9 @@ review (its section 3 entries for them are stale).
 
 | # | Item | State |
 |---|---|---|
-| P10 | removeDefUseChains lhs aliasing | in progress (dormancy check) |
-| H3 | putstatic wide-const never stores (zeroed clinits) | next (boot suspect) |
+| P10 | removeDefUseChains lhs aliasing | investigated: 4150 splices / 0 stale refs, NOT landed |
+| H3 | putstatic wide-const never stores (zeroed clinits) | LANDED L2-149 (red-green, census clean) |
+| boot | Integer.stringSize null sizeTable (0x18E11B) | in progress: sentinel experiment next |
 | H5 | checkcast ESP leak + EBX/ECX hazards | queued (boot suspect) |
 | M2 | forcedSpills omissions incl. class-init | queued (boot suspect) |
 | H7 | fold zero-divisor compile crash | queued (loud; composes w/ P5) |

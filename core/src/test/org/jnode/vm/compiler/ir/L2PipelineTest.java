@@ -1089,6 +1089,40 @@ public class L2PipelineTest {
         return false;
     }
 
+    /**
+     * ANCHOR-L2-149: a wide CONSTANT `putstatic` must store both halves.
+     * Pre-fix the register/CONSTANT arm materialized the two halves into
+     * SR1/EDX and fell off the end without any store, so
+     * `static long X = 5L;` silently kept the zero default (witness: the
+     * `<clinit>` emission went `mov eax,5 / mov edx,0` straight to the
+     * footer). The test pins materialization AND the missing store.
+     */
+    @Test
+    public void testWideConstPutStaticStores() throws Exception {
+        String text = compileToText(findMethod("<clinit>"));
+        assertTrue("wide-const putstatic arm never ran: " + text,
+            text.contains("mov eax,0x00000005")
+                && text.contains("mov edx,0x00000000"));
+        String[] lines = text.split("\n");
+        int high = -1;
+        for (int i = 0; i < lines.length; i++) {
+            if (lines[i].contains("mov edx,0x00000000")) {
+                high = i;
+                break;
+            }
+        }
+        assertTrue("no wide-const materialization line found", high >= 0);
+        boolean stored = false;
+        for (int i = high + 1; i < Math.min(lines.length, high + 8); i++) {
+            if (lines[i].matches(".*mov\\s+\\S*dword\\[[^]]+\\],edx.*")) {
+                stored = true;
+                break;
+            }
+        }
+        assertTrue("wide-const putstatic never stored the high half: " + text,
+            stored);
+    }
+
     private static VmMethod findMethodIn(String className, String name)
         throws Exception {
         VmType type = loader.loadClass(className, true);

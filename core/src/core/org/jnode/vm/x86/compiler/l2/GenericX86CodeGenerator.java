@@ -6734,6 +6734,18 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
                 }
                 os.writeMOV_Const(SR1, (int) (bits & 0xFFFFFFFFL));
                 os.writeMOV_Const(X86Register.EDX, (int) ((bits >>> 32) & 0xFFFFFFFFL));
+                // ANCHOR-L2-149: the wide-CONSTANT arm fell off the end here,
+                // silently leaving the static at its default. Store both
+                // halves like the STACK arm below (which was already right).
+                if (sf.isShared()) {
+                    stackFrame.getHelper().writePutStaticsEntry64(curInstrLabel, SR1, X86Register.EDX,
+                        (VmSharedStaticsEntry) sf);
+                } else {
+                    os.writePUSH(X86Register.EBX);
+                    stackFrame.getHelper().writePutStaticsEntry64(curInstrLabel, SR1, X86Register.EDX,
+                        (VmIsolatedStaticsEntry) sf, X86Register.EBX);
+                    os.writePOP(X86Register.EBX);
+                }
             } else if (val.getAddressingMode() != STACK) {
                 // Wide values always spill; a register here is unreachable.
                 throw new IllegalArgumentException("Wide static from register");

@@ -1075,6 +1075,18 @@ public class PrimitiveTest {
     }
 
     /**
+     * ANCHOR-L2-149: wide constant static store. Pre-fix the
+     * `putstatic` wide-CONSTANT arm materialized both halves into
+     * SR1/EDX and fell off the end without the store, leaving the
+     * field at its zero default (guest: `static long X = 5L;` read 0).
+     */
+    private static long wideConstStatic = 5L;
+
+    public static long getWideConstStatic() {
+        return wideConstStatic;
+    }
+
+    /**
      * ANCHOR-L2-146: dead throwing defs inside a try. Each load/div is
      * unused but must still trap (precise exceptions); DCE must keep them.
      * Pre-fix all three vanished (try body compiled to bare `return 1`).
