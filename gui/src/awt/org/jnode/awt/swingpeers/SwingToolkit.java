@@ -434,7 +434,7 @@ public final class SwingToolkit extends JNodeToolkit {
         return desktopFrame;
     }
 
-    List<Rectangle> getWindowPaintRegions(SwingBaseWindow source) {
+    List<Rectangle> getWindowPaintRegions(JInternalFrame source) {
         if (source == null || source instanceof SwingWindow) {
             return null;
         }

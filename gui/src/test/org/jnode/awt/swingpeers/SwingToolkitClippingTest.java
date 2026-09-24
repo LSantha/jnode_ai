@@ -19,7 +19,6 @@
  */
 package org.jnode.awt.swingpeers;
 
-import java.awt.Frame;
 import java.awt.Rectangle;
 import java.util.List;
 import javax.swing.JDesktopPane;
@@ -34,8 +33,7 @@ import static org.junit.Assert.assertTrue;
 
 public class SwingToolkitClippingTest {
     private JDesktopPane desktop;
-    private Frame target;
-    private SwingFrame source;
+    private JInternalFrame source;
     private SwingToolkit toolkit;
 
     @Before
@@ -43,8 +41,7 @@ public class SwingToolkitClippingTest {
         toolkit = new SwingToolkit();
         desktop = new JDesktopPane();
         desktop.setSize(800, 600);
-        target = new Frame();
-        source = new SwingFrame(target, "source");
+        source = new JInternalFrame("source");
         source.setBounds(5, 0, 237, 564);
         desktop.add(source);
         source.setVisible(true);
@@ -57,9 +54,6 @@ public class SwingToolkitClippingTest {
             for (JInternalFrame frame : frames) {
                 frame.dispose();
             }
-        }
-        if (target != null) {
-            target.dispose();
         }
     }
 
