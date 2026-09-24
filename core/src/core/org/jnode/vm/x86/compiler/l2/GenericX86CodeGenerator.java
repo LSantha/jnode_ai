@@ -2184,40 +2184,44 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
                 break;
 
             case LCMP: {
+                // ANCHOR-L2-154: const-long compare with a register
+                // result and a spilled long operand. The old code
+                // SUB/SBB'd the immediates INTO the operand's spill slot
+                // (the ANCHOR-L2-061 defect, fixed in the SSC twin but
+                // not here), destroying a live spilled long and then
+                // reading the destroyed slot back. Compare with
+                // CMP_Const against SR1; materialize 0/1/-1 in the
+                // result register.
                 final Label curInstrLabel = getInstrLabel(quad.getAddress());
                 final Label ltLabel = new Label(curInstrLabel + "lt");
+                final Label gtLabel = new Label(curInstrLabel + "gt");
                 final Label endLabel = new Label(curInstrLabel + "end");
                 GPR gpr1 = (GPR) reg1;
 
-                // Calculate
                 if (os.isCode32()) {
                     long value = ((LongConstant<T>) c3).getValue();
                     final int v_lsb = (int) (value & 0xFFFFFFFFL);
                     final int v_msb = (int) ((value >>> 32) & 0xFFFFFFFFL);
                     int disp2lsb = disp2 - stackFrame.getHelper().SLOTSIZE;
-                    int disp2msb = disp2;
-                    os.writeXOR(gpr1, gpr1);
-                    os.writeSUB(BITS32, X86Register.EBP, disp2lsb, v_lsb);
-                    os.writeSBB(BITS32, X86Register.EBP, disp2msb, v_msb);
-                    os.writeJCC(ltLabel, X86Constants.JL); // JL
+                    os.writeMOV(BITS32, SR1, X86Register.EBP, disp2);
+                    os.writeCMP_Const(SR1, v_msb);
+                    os.writeJCC(ltLabel, X86Constants.JL);
+                    os.writeJCC(gtLabel, X86Constants.JG);
                     os.writeMOV(BITS32, SR1, X86Register.EBP, disp2lsb);
-                    os.writeOR(SR1, X86Register.EBP, disp2msb);
+                    os.writeCMP_Const(SR1, v_lsb);
+                    os.writeJCC(ltLabel, X86Constants.JB);
+                    os.writeJCC(gtLabel, X86Constants.JA);
+                    os.writeXOR(gpr1, gpr1);
+                    os.writeJMP(endLabel);
+                    os.setObjectRef(gtLabel);
+                    os.writeMOV_Const(gpr1, 1);
+                    os.writeJMP(endLabel);
+                    os.setObjectRef(ltLabel);
+                    os.writeMOV_Const(gpr1, -1);
+                    os.setObjectRef(endLabel);
+                } else {
+                    throw new IllegalArgumentException("Unknown operation: " + operation);
                 }
-//                else {
-//                    final GPR64 v2r = v2.getRegister(eContext);
-//                    final GPR64 v1r = v1.getRegister(eContext);
-//                    os.writeCMP(v1r, v2r);
-//                    os.writeJCC(ltLabel, X86Constants.JL); // JL
-//                }
-
-                os.writeJCC(endLabel, X86Constants.JZ); // value1 == value2
-                /** GT */
-                os.writeINC(gpr1);
-                os.writeJMP(endLabel);
-                /** LT */
-                os.setObjectRef(ltLabel);
-                os.writeDEC(gpr1);
-                os.setObjectRef(endLabel);
                 break;
             }
             case LADD:

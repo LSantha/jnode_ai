@@ -35,6 +35,7 @@ import org.jnode.vm.classmgr.VmType;
 import org.jnode.vm.compiler.CompiledMethod;
 import org.jnode.vm.compiler.EntryPoints;
 import org.jnode.vm.compiler.ir.quad.ArrayAssignQuad;
+import org.jnode.vm.compiler.ir.LongConstant;
 import org.jnode.vm.compiler.ir.quad.BinaryOperation;
 import org.jnode.vm.compiler.ir.quad.BinaryQuad;
 import org.jnode.vm.compiler.ir.quad.JsrQuad;
@@ -562,6 +563,37 @@ public class L2ModeMatrixTest {
         assertTrue("LSHL SSR must SHLD, got:\n" + ssr, ssr.contains("shld"));
         String ssc = emitBinary(S, S, C, BinaryOperation.LSHR);
         assertTrue("LSHR SSC must SHRD, got:\n" + ssc, ssc.contains("shrd"));
+    }
+
+    /**
+     * ANCHOR-L2-154: LCMP with the int result in a register, the long
+     * operand in a stack slot and the compared value a CONSTANT (R,S,C).
+     * Pre-fix this arm SUB/SBB'd the constant's halves INTO the spilled
+     * long's slot (the ANCHOR-L2-061 defect, fixed in the S,S,C twin
+     * only), destroying a live spilled long and then comparing the
+     * destroyed slot back through MOV+OR. Pin: compare with CMP in a
+     * scratch register, materialize 0/1/-1 in the result register, and
+     * never write a memory destination with SUB/SBB.
+     */
+    @Test
+    public void testLcmpRSCKeepsOperandSlot() throws Exception {
+        EmitterHarness h = new EmitterHarness();
+        h.cg.generateBinaryOP(dummyBinaryQuad(0), X86Register.ECX, -16,
+            BinaryOperation.LCMP, new LongConstant(0x123456789L));
+        String text = h.text();
+        assertTrue("LCMP RSC arm emitted nothing", text.trim().length() > 0);
+        String[] lines = text.split("\n");
+        for (int i = 0; i < lines.length; i++) {
+            String s = lines[i].trim();
+            assertTrue("LCMP RSC destroys its spilled long operand: " + s,
+                !s.matches("sub\\s+dword\\[.*") && !s.matches("sbb\\s+dword\\[.*"));
+        }
+        assertTrue("LCMP RSC must CMP the high half against the constant: " + text,
+            text.contains("cmp eax,0x00000001"));
+        assertTrue("LCMP RSC must CMP the low half against the constant: " + text,
+            text.contains("cmp eax,0x23456789"));
+        assertTrue("LCMP RSC must materialize -1 for the LT case: " + text,
+            text.contains("0xFFFFFFFF"));
     }
 
     private static String emitUnarySS(UnaryOperation op) throws Exception {

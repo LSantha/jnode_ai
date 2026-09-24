@@ -1104,6 +1104,29 @@ public class PrimitiveTest {
     }
 
     /**
+     * ANCHOR-L2-154: long compare against a long constant with the long
+     * operand spilled. Pre-fix the LCMP register-result arm SUB/SBB'd the
+     * constant INTO the operand's spill slot (the ANCHOR-L2-061 defect,
+     * fixed in the stack-stack twin only) and then read the destroyed
+     * slot back: both the comparison result and every later use of the
+     * long were garbage.
+     */
+    public static int lcmpSpilledOperand(long a, int n) {
+        long b = a + 0x111111111L;
+        long c = a * 0x100000001L;
+        long d = a - 7L;
+        int r;
+        if (0x123456789L > a) {
+            r = 1;
+        } else if (0x123456789L == a) {
+            r = 2;
+        } else {
+            r = 3;
+        }
+        return r + (int) (b + c + d) + n;
+    }
+
+    /**
      * ANCHOR-L2-146: dead throwing defs inside a try. Each load/div is
      * unused but must still trap (precise exceptions); DCE must keep them.
      * Pre-fix all three vanished (try body compiled to bare `return 1`).

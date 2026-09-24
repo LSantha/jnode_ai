@@ -270,6 +270,25 @@ public class Probes {
         return v;
     }
 
+    // ANCHOR-L2-154: long compare against a long constant with the
+    // compared long under spill pressure. Exercises the reachable
+    // spilled-operand LCMP path end to end; the constant-pre-spill and
+    // slot-preserving compare must survive force compilation.
+    public static int lcmpSpill(int mode, long a) {
+        long b = a + 0x111111111L;
+        long c = a * 0x100000001L;
+        long d = a - 7L;
+        int r;
+        if (a < 0x123456789L) {
+            r = 1;
+        } else if (a == 0x123456789L) {
+            r = 2;
+        } else {
+            r = 3;
+        }
+        return r + (int) (b + c + d) + mode;
+    }
+
     // ANCHOR-L2-146: dead throwing defs in a try. All three loads/divs
     // are unused but must still trap (precise exceptions); pre-fix DCE
     // deleted them and the try compiled to a bare `return 1`.

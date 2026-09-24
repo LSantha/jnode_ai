@@ -783,6 +783,105 @@ pin on the `cc_true` block; red pre-fix). Census byte-identical. T0
 18/18, T3 16/16, T1 36/36. Boot: unchanged (0x18E11B family, EIP
 shifted by layout).
 
+## H2 (deep review): LCMP register-result arm destroys its spilled operand
+
+Source: deep review H2. Status 2026-09-26 (applied as ANCHOR-L2-154):
+FIRES, red-green. The LCMP arm `generateBinaryOP(BinaryQuad, T reg1, int
+disp2, op, Constant c3)` (result in a register, long operand in a spill
+slot, compared value a CONSTANT -- the R,S,C matrix shape) did
+`XOR result / SUB dword[EBP+disp2lsb], imm / SBB dword[EBP+disp2msb],
+imm` -- i.e. it wrote `op1 - op2` INTO the spilled long's own slot (the
+ANCHOR-L2-061 defect, fixed in the S,S,C twin at line ~3576 but missed
+here) and then compared the destroyed slot back via MOV+OR. Every later
+use of that long read garbage. Fix: mirror the SSC twin -- `MOV SR1,
+[EBP+disp2] / CMP_Const` the high half, JL/JG, then the low half, JB/JA,
+materializing 0/1/-1 in the result register (`MOV_Const(gpr1, ...)`);
+never write a memory destination.
+Regression: `L2ModeMatrixTest.testLcmpRSCKeepsOperandSlot` (emission pin:
+no memory-destination SUB/SBB, CMP against both constant halves,
+0xFFFFFFFF materialized; red pre-fix with the exact defect line
+`sub dword[ebp-20],0x23456789`). T3 16 -> 17. Census OK 11381 -> 11382
+(+1 = the new probe). Guest: `Probes.lcmpSpill` (5 CASES rows) green
+under force; oracle `force|84`, only the known `div MIN/-1` divergence.
+Bytecode reachability note: javac's constant operand is pre-spilled by
+the long-operand path, so a bytecode method reaches the S,S,C twin, not
+this arm -- the arm is guarded white-box through the matrix harness
+(`emitBinary(R, S, C, LCMP)` is the same call), and the probe
+`PrimitiveTest.lcmpSpilledOperand` covers the reachable spilled-long
+compare path end to end.
+
+## M2 (deep review): forcedSpills omits slow-path-calling quads -- SCANNED, not landed
+
+Status 2026-09-26: decisive census-style scan (temp test over 10,807
+corpus methods): pooled (EBX/ESI) live ranges spanning an omitted
+call-like quad = 1,829 sites -- RefStore 993, StaticRef 392, Checkcast
+366, Instanceof 78. But the checkcast/instanceof slow paths explicitly
+PUSH EBX around their init calls and EBX/ESI are callee-saved by the
+JNode convention, so no value-level failure is demonstrated and the
+test-guard policy blocks the landing; the only real exposure is the GC
+write barrier (RefStore). Landing `isCallLike` additions now would be a
+large allocator pessimization on an unproven clobber. Kept as a recipe:
+the scan is a `LiveRange.getAssignAddress() <= hazardAddr <=
+getLastUseAddress()` filter over `CheckcastQuad`/`InstanceofAssignQuad`
+/`StaticRef*Quad`/`RefStoreQuad` in `CompileResult.cfg`.
+
+## NEW FINDING (2026-09-26): mauve v1 `Long.LongTest` NPEs under force only
+
+First seen in the post-H2 v1 run: `CRASH-ONLY-FORCE: gnu.testlet.java.lang.Long.LongTest runEX (base pass=60)` --
+`java.lang.NullPointerException: NPE at address <code addr>` after
+`pass=41`. DETERMINISTIC (3/3 force runs, 41 checks, address differs per
+run = value corruption, not a fixed site) and PRE-EXISTING: repro'd with
+the H1/H3/H5/H7/H2 backend fully reverted (dbab40ddc generator +
+BinaryQuad), so the unvalidated H-batch is NOT the cause. (Older
+/tmp/v1-*.txt from 2026-09-23 08:02 show it crashing under BOTH modes;
+today only under force.) Sep-23 data is the pre-P-batch era; the P-batch
+"v1 green" datum is not reproducible from /tmp, so treat the regression
+status as OPEN-UNKNOWN, not as caused or cleared by this branch.
+Isolated to ONE method with a ~90-line guest driver (LongBisect, pattern
+worth keeping): force methods one at a time (alphabetical), re-run the
+whole testlet after each, first EX wins:
+`forced#1 long_dec_bad ok ... forced#13 test_intValue ok /
+forced#14 test_parseLong -> EX NPE at ...3973671E / CULPRIT=test_parseLong`.
+So L2-miscompiling `LongTest#test_parseLong(V)` alone (its callees run
+L1A) NPEs. Stack trace: `test_parseLong(LongTest.java:240)`, i.e. the
+second typed-catch try, `try { Long.parseLong("Hazelnut", 10);
+harness.fail(...) } catch (NumberFormatException e) {}` (bytecode
+233-249, handler 252); the byte before it (213-229 "99" radix 8, the
+same shape) works. Disasm of the culprit (1127 lines, pulled via
+`LongBisect disasm test_parseLong <out>`) shows both tries emitted
+identically (`push ecx / push [ebp-string] / push radix / call
+[edi+56960] / pop ecx`, then the `harness` static re-read through
+`fs mov edx,[+12] / mov eax,[edx+46124]`, then an IMT virtual call
+`mov eax,[esp+N] / mov eax,[eax-4] / mov eax,[eax+144] / call [eax+36]`
+with NO explicit null check), and the first handler (bci 232) simply
+falls into the second try's first block (bci 233). OPEN: which
+instruction faults and why the second identical try fails where the
+first passes -- no gdb; KDB has no register/memory/breakpoint commands
+(only thread/queue inspection), so the next step is a host-side
+structural read of the emission around the two bci_232/bci_252 handler
+entries plus the IMT-call argument slot choice (`[esp+8]` vs `[esp+0]`
+for a 3-slot call looks suspicious: qb_88 pushes FOUR slots before the
+IMT read). Repro assets: LongBisect.java in this session's /tmp
+(guest-pushable via `serial_cmd.py --write`; needs the staged
+`gnu/testlet/**` classes copied next to it and run with cwd=/jnode/tmp/mv
+because JNode's `java` takes no -cp).
+
+## Process lesson (2026-09-26): verify the CLASS, not the source
+
+A "red" check was faked by a stale class: after `git stash push` +
+`javac -d core/build/classes`, the source was pre-fix but a later dump
+still showed the FIXED emission, and a "red" JUnit run passed because it
+ran the fixed class. Always `javap -p -c -classpath <dir> <class> |
+grep -c <anchor-call>` to confirm which class is in the run (javap on
+this JDK needs `-classpath`, NOT `-cp`), and prefer the overlay
+technique for red checks: compile the pre-fix file into
+`/tmp/opencode/prefix-over` (with the package dirs) and prepend that dir
+to the JUnit classpath -- the overlay class wins deterministically and
+the build tree is never touched. Overlay verified here: pre-fix
+overlay = 14 `writeCMP_Const` refs vs 16 in the fixed class, and the
+new test failed with exactly `LCMP RSC destroys its spilled long
+operand: sub dword[ebp-20],0x23456789`.
+
 ## Boot-bug class hypothesis (2026-09-26): emitter stack discipline
 
 The two boot blockers are downstream VALUE symptoms, not root causes:
