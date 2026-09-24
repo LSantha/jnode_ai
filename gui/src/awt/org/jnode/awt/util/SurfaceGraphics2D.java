@@ -56,6 +56,7 @@ import java.awt.image.WritableRaster;
 import java.awt.image.renderable.RenderableImage;
 import java.text.AttributedCharacterIterator;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import org.jnode.awt.JNodeToolkit;
 import org.jnode.awt.font.FontManager;
@@ -984,6 +985,10 @@ public abstract class SurfaceGraphics2D extends Graphics2D {
         simpleGraphics.setClip(clip);
         //todo improve support for Graphics2D
         //clip2D = null;
+    }
+
+    public void setPaintClip(List<Rectangle> regions) {
+        simpleGraphics.setPaintClip(regions);
     }
 
     public void copyArea(int x, int y, int width, int height, int dx, int dy) {

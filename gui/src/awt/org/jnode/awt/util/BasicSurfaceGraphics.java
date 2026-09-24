@@ -26,6 +26,8 @@ import java.awt.Graphics;
 import java.awt.Image;
 import java.awt.Rectangle;
 import java.awt.Toolkit;
+import java.util.ArrayList;
+import java.util.List;
 import java.awt.image.AreaAveragingScaleFilter;
 import java.awt.image.BufferedImage;
 import java.awt.image.ColorModel;
@@ -54,6 +56,7 @@ import sun.awt.image.ToolkitImage;
 public class BasicSurfaceGraphics extends BasicGraphics {
     private final AbstractSurface surface;
     private int mode = Surface.PAINT_MODE;
+    private List<Rectangle> paintClip;
 
     protected BasicSurfaceGraphics(AbstractSurface surface) {
         this.surface = surface;
@@ -63,6 +66,40 @@ public class BasicSurfaceGraphics extends BasicGraphics {
         super(g);
         this.surface = g.surface;
         this.mode = g.mode;
+        if (g.paintClip != null) {
+            this.paintClip = new ArrayList<Rectangle>();
+            for (Rectangle region : g.paintClip) {
+                this.paintClip.add(new Rectangle(region));
+            }
+        }
+    }
+
+    public void setPaintClip(List<Rectangle> regions) {
+        if (regions == null || regions.isEmpty()) {
+            paintClip = regions == null ? null : new ArrayList<Rectangle>();
+            return;
+        }
+        paintClip = new ArrayList<Rectangle>();
+        for (Rectangle region : regions) {
+            if (region != null && region.width > 0 && region.height > 0) {
+                paintClip.add(new Rectangle(region));
+            }
+        }
+    }
+
+    private List<Rectangle> clipToPaint(Rectangle bounds) {
+        final List<Rectangle> result = new ArrayList<Rectangle>();
+        if (paintClip == null) {
+            result.add(new Rectangle(bounds));
+            return result;
+        }
+        for (Rectangle region : paintClip) {
+            final Rectangle clipped = region.intersection(bounds);
+            if (!clipped.isEmpty()) {
+                result.add(clipped);
+            }
+        }
+        return result;
     }
 
     /**
@@ -484,8 +521,12 @@ public class BasicSurfaceGraphics extends BasicGraphics {
                 r = clip.intersection(r);
 
             if (!r.isEmpty()) {
-                surface.drawCompatibleRaster(rast, r.x - tx, r.y - ty, r.x, r.y, r.width, r.height, bgcolor);
-                surface.update(r.x, r.y, r.width, r.height);
+                final List<Rectangle> regions = clipToPaint(r);
+                for (Rectangle region : regions) {
+                    surface.drawCompatibleRaster(rast, region.x - tx, region.y - ty,
+                        region.x, region.y, region.width, region.height, bgcolor);
+                    surface.update(region.x, region.y, region.width, region.height);
+                }
             }
             return true;
         } catch (InterruptedException ie) {
@@ -537,8 +578,12 @@ public class BasicSurfaceGraphics extends BasicGraphics {
                 r = clip.intersection(r);
 
             if (!r.isEmpty()) {
-                surface.drawCompatibleRaster(rast, r.x - tx, r.y - ty, r.x, r.y, r.width, r.height, null);
-                surface.update(r.x, r.y, r.width, r.height);
+                final List<Rectangle> regions = clipToPaint(r);
+                for (Rectangle region : regions) {
+                    surface.drawCompatibleRaster(rast, region.x - tx, region.y - ty,
+                        region.x, region.y, region.width, region.height, null);
+                    surface.update(region.x, region.y, region.width, region.height);
+                }
             }
             return true;
         } catch (InterruptedException ie) {

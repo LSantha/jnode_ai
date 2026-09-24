@@ -80,12 +80,15 @@ import java.awt.peer.TextAreaPeer;
 import java.awt.peer.TextFieldPeer;
 import java.awt.peer.WindowPeer;
 import java.beans.PropertyVetoException;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.WeakHashMap;
 import java.lang.reflect.Method;
 import java.lang.reflect.Field;
 import java.security.AccessController;
 import java.security.PrivilegedAction;
 import javax.swing.JComponent;
+import javax.swing.JDesktopPane;
 import javax.swing.JInternalFrame;
 import javax.swing.JMenuBar;
 import javax.swing.RepaintManager;
@@ -429,6 +432,83 @@ public final class SwingToolkit extends JNodeToolkit {
 
     public JNodeAwtContext getAwtContext() {
         return desktopFrame;
+    }
+
+    List<Rectangle> getWindowPaintRegions(SwingBaseWindow source) {
+        if (source == null || source instanceof SwingWindow) {
+            return null;
+        }
+        final JDesktopPane desktop = source.getDesktopPane();
+        if (desktop == null) {
+            return null;
+        }
+        final int sourceZ = desktop.getComponentZOrder(source);
+        if (sourceZ < 0) {
+            return null;
+        }
+        final List<Rectangle> occlusions = new ArrayList<Rectangle>();
+        final JInternalFrame[] frames = desktop.getAllFrames();
+        for (JInternalFrame frame : frames) {
+            if (frame == source || !frame.isVisible() || frame.isIcon()) {
+                continue;
+            }
+            final int frameZ = desktop.getComponentZOrder(frame);
+            if (frameZ >= 0 && frameZ < sourceZ) {
+                occlusions.add(frame.getBounds());
+            }
+        }
+        Rectangle sourceBounds = new Rectangle(source.getX(), source.getY(), source.getWidth(),
+            source.getHeight());
+        sourceBounds = sourceBounds.intersection(new Rectangle(0, 0, desktop.getWidth(),
+            desktop.getHeight()));
+        if (sourceBounds.isEmpty()) {
+            return new ArrayList<Rectangle>();
+        }
+        if (occlusions.isEmpty()) {
+            final Rectangle fullBounds = new Rectangle(source.getX(), source.getY(),
+                source.getWidth(), source.getHeight());
+            if (sourceBounds.equals(fullBounds)) {
+                return null;
+            }
+            final List<Rectangle> clipped = new ArrayList<Rectangle>();
+            clipped.add(sourceBounds);
+            return clipped;
+        }
+        List<Rectangle> regions = new ArrayList<Rectangle>();
+        regions.add(sourceBounds);
+        for (Rectangle occlusion : occlusions) {
+            final List<Rectangle> remaining = new ArrayList<Rectangle>();
+            for (Rectangle region : regions) {
+                subtract(region, occlusion, remaining);
+            }
+            regions = remaining;
+        }
+        return regions;
+    }
+
+    private static void subtract(Rectangle region, Rectangle occlusion,
+            List<Rectangle> result) {
+        if (!region.intersects(occlusion)) {
+            result.add(region);
+            return;
+        }
+        final int left = Math.max(region.x, occlusion.x);
+        final int right = Math.min(region.x + region.width, occlusion.x + occlusion.width);
+        final int top = Math.max(region.y, occlusion.y);
+        final int bottom = Math.min(region.y + region.height, occlusion.y + occlusion.height);
+        if (top > region.y) {
+            result.add(new Rectangle(region.x, region.y, region.width, top - region.y));
+        }
+        if (bottom < region.y + region.height) {
+            result.add(new Rectangle(region.x, bottom, region.width,
+                region.y + region.height - bottom));
+        }
+        if (left > region.x) {
+            result.add(new Rectangle(region.x, top, left - region.x, bottom - top));
+        }
+        if (right < region.x + region.width) {
+            result.add(new Rectangle(right, top, region.x + region.width - right, bottom - top));
+        }
     }
 
     /**
