@@ -1136,12 +1136,12 @@ public class IRControlFlowGraph<T> implements Iterable<IRBasicBlock<T>> {
                 // l6_5 and got no copy, so return l6_6 in B1000 read an
                 // unwritten home). Tags are distinct per source (pre-deSSA
                 // verifier), so a free tag is this source's alone.
-                IRBasicBlock<T> tagged =
-                    taggedUsableEdge(join, preds, claimed, s.tag, s.defBlock);
+                IRBasicBlock<T> tagged = taggedUsableEdge(join, preds,
+                    claimed, s.tag, s.defBlock, s.rhs);
                 IRBasicBlock<T> ab = (tagged != null) ? tagged : null;
                 if (ab == null) {
-                    List<IRBasicBlock<T>> cands =
-                        routeCandidates(join, preds, claimed, s.defBlock);
+                    List<IRBasicBlock<T>> cands = routeCandidates(join,
+                        preds, claimed, s.defBlock, s.rhs);
                     if (cands.size() == 1) {
                         ab = cands.get(0);
                     }
@@ -1170,8 +1170,8 @@ public class IRControlFlowGraph<T> implements Iterable<IRBasicBlock<T>> {
             }
             if (!progress) {
                 for (PhiSource<T> s : next) {
-                    List<IRBasicBlock<T>> cands =
-                        routeCandidates(join, preds, claimed, s.defBlock);
+                    List<IRBasicBlock<T>> cands = routeCandidates(join,
+                        preds, claimed, s.defBlock, s.rhs);
                     IRBasicBlock<T> ab = cands.isEmpty() ? s.defBlock : cands.get(0);
                     if (ab == null) {
                         continue;
@@ -1364,7 +1364,8 @@ public class IRControlFlowGraph<T> implements Iterable<IRBasicBlock<T>> {
     private List<IRBasicBlock<T>> routeCandidates(IRBasicBlock<T> join,
                                                   List<IRBasicBlock<T>> preds,
                                                   java.util.HashSet<IRBasicBlock<T>> claimed,
-                                                  IRBasicBlock<T> defBlock) {
+                                                  IRBasicBlock<T> defBlock,
+                                                  Variable<T> version) {
         List<IRBasicBlock<T>> out = new ArrayList<IRBasicBlock<T>>();
         if (preds == null || preds.isEmpty()) {
             return out;
@@ -1384,7 +1385,8 @@ public class IRControlFlowGraph<T> implements Iterable<IRBasicBlock<T>> {
                 continue;
             }
             final boolean internal = blockReaches(join, p, null);
-            if (inLoop == internal && isUsableEdge(join, p, hflow, defBlock)) {
+            if (inLoop == internal
+                && isUsableEdge(join, p, hflow, defBlock, version)) {
                 out.add(p);
             }
         }
@@ -1404,7 +1406,8 @@ public class IRControlFlowGraph<T> implements Iterable<IRBasicBlock<T>> {
                                              List<IRBasicBlock<T>> preds,
                                              java.util.HashSet<IRBasicBlock<T>> claimed,
                                              IRBasicBlock<T> tag,
-                                             IRBasicBlock<T> defBlock) {
+                                             IRBasicBlock<T> defBlock,
+                                             Variable<T> version) {
         if (tag == null || tag == join || !preds.contains(tag)
             || claimed.contains(tag)) {
             return null;
@@ -1421,7 +1424,7 @@ public class IRControlFlowGraph<T> implements Iterable<IRBasicBlock<T>> {
             return null;
         }
         final java.util.HashSet<IRBasicBlock<T>> hflow = handlerFlowSet();
-        return isUsableEdge(join, tag, hflow, defBlock) ? tag : null;
+        return isUsableEdge(join, tag, hflow, defBlock, version) ? tag : null;
     }
 
     /**
@@ -1437,7 +1440,8 @@ public class IRControlFlowGraph<T> implements Iterable<IRBasicBlock<T>> {
      */
     private boolean isUsableEdge(IRBasicBlock<T> join, IRBasicBlock<T> p,
                                  java.util.HashSet<IRBasicBlock<T>> hflow,
-                                 IRBasicBlock<T> defBlock) {
+                                 IRBasicBlock<T> defBlock,
+                                 Variable<T> version) {
         if (defBlock == null) {
             return true;
         }
@@ -1447,7 +1451,15 @@ public class IRControlFlowGraph<T> implements Iterable<IRBasicBlock<T>> {
                 return false;
             }
             List<IRBasicBlock<T>> epreds = h.getPredecessors();
-            return epreds == null || !epreds.contains(defBlock);
+            // ANCHOR-L2-148: a def preceding every call-like quad in
+            // defBlock DID execute on the exceptional edge (L2-139), so
+            // it stays usable on handler flow (witness: handlerAlwaysExec
+            // entry edge carrying the always-executed in-try def).
+            if (epreds == null || !epreds.contains(defBlock)
+                || !isDefUnwrittenOnExceptionalEdge(version, defBlock)) {
+                return true;
+            }
+            return false;
         }
         return blockDominatesNormal(defBlock, p)
             || blockReachesNormal(defBlock, p, join);
@@ -1874,7 +1886,14 @@ public class IRControlFlowGraph<T> implements Iterable<IRBasicBlock<T>> {
             || q instanceof NewAssignQuad || q instanceof NewObjectArrayAssignQuad
             || q instanceof NewPrimitiveArrayAssignQuad
             || q instanceof NewMultiArrayAssignQuad
-            || q instanceof ArrayAssignQuad || q instanceof ArrayStoreQuad;
+            || q instanceof ArrayAssignQuad || q instanceof ArrayStoreQuad
+            // ANCHOR-L2-147: LDIV/LREM trap like the X86 mirror says
+            // (plus IDIV/IREM: the backend emits trapping IDIV -- the
+            // mirror's omission there is documented drift, not a model).
+            // Without this, a def after a divide was deemed
+            // always-executed and handler/resume phis read a never-written
+            // home (witness: divInTry handler returning in-try s7_3).
+            || isThrowingBinary(q);
     }
 
     /**

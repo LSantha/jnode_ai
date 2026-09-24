@@ -1029,6 +1029,52 @@ public class PrimitiveTest {
     }
 
     /**
+     * ANCHOR-L2-147: ldiv in try; the handler must see the pre-try
+     * version. Pre-fix `isCallLike` missed LDIV/LREM, so the in-try def
+     * was deemed always-executed and the handler read a never-written
+     * home when the divide threw.
+     */
+    public static long divInTry(long a, long b) {
+        long acc = 0;
+        try {
+            acc = acc + (a / b);
+        } catch (ArithmeticException e) {
+            return acc;
+        }
+        return acc + 100;
+    }
+
+    public static long divAfterAdd(long a, long n) {
+        long acc = 0;
+        try {
+            acc = acc + n;
+            acc = acc + (a / (n - n));
+        } catch (ArithmeticException e) {
+            return acc;
+        }
+        return -1;
+    }
+
+    /**
+     * TEMP-P9 probe: always-executed in-try def + in-handler join.
+     * The handler join must see the in-try version on the entry edge.
+     */
+    public static int handlerAlwaysExec(int[] arr, int n, int m) {
+        int v = 0;
+        try {
+            v = n + 1;
+            int t = arr[n];
+            v = v + t;
+        } catch (RuntimeException e) {
+            if (m > 0) {
+                v = v + 100;
+            }
+            return v;
+        }
+        return v;
+    }
+
+    /**
      * ANCHOR-L2-146: dead throwing defs inside a try. Each load/div is
      * unused but must still trap (precise exceptions); DCE must keep them.
      * Pre-fix all three vanished (try body compiled to bare `return 1`).

@@ -230,6 +230,46 @@ public class Probes {
         }
     }
 
+    // ANCHOR-L2-147: ldiv in try; the handler must see the pre-try
+    // version, not the in-try def.
+    public static long divInTry(long a, long b) {
+        long acc = 0;
+        try {
+            acc = acc + (a / b);
+        } catch (ArithmeticException e) {
+            return acc;
+        }
+        return acc + 100;
+    }
+
+    public static long divAfterAdd(long a, long n) {
+        long acc = 0;
+        try {
+            acc = acc + n;
+            acc = acc + (a / (n - n));
+        } catch (ArithmeticException e) {
+            return acc;
+        }
+        return -1;
+    }
+
+    // ANCHOR-L2-148: always-executed in-try def with an in-handler join;
+    // the handler-entry edge must carry the in-try version.
+    public static int handlerAlwaysExec(int[] a, int n, int m) {
+        int v = 0;
+        try {
+            v = n + 1;
+            int t = a[n];
+            v = v + t;
+        } catch (RuntimeException e) {
+            if (m > 0) {
+                v = v + 100;
+            }
+            return v;
+        }
+        return v;
+    }
+
     // ANCHOR-L2-146: dead throwing defs in a try. All three loads/divs
     // are unused but must still trap (precise exceptions); pre-fix DCE
     // deleted them and the try compiled to a bare `return 1`.

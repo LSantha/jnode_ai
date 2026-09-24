@@ -140,7 +140,17 @@ with full substitution: census is byte-identical pre/post
 precedent: the kill is wrong by construction and would fire if a future
 pipeline change ever adds a non-healing keeper or a post-deSSA
 simplify site. If such a change lands, re-probe with the loop-backedge
-`foldTwoUses` shape first.
+`foldTwoUses` shape first. Addendum 2026-09-23: per the test-guard policy
+an isolation check (revert P1, expect P2 test to stay green) was
+attempted -- it went red on `testNoDeadDefBranchDoCompile`, but the
+result is VOID: the run executed a STALE `VariableRefAssignQuad.class`
+(bisect-era reverted bytecode shadowing the batch source; `javap`
+confirmed `setDeadCode` present in class, absent in source). After
+recompiling all batch-touched classes from source the suite is green
+again. Lesson: no isolation verdict without `javap`-verifying the exact
+classes under test (stale-class discipline from the T0-17 incident
+applies to core classes too). P1 stays: untriggerable-alone, and its
+only behavior delta rides inside P2-guarded shapes.
 
 ## P2: `VariableRefAssignQuad.propagate` DF-only kill
 
@@ -403,6 +413,24 @@ Host test asserts the handler-bound SSA version per case (`--ssa`). Guest:
 both to `Probes.java` + `CASES` (`divInTry(10,0)`, `divAfterAdd(10,3)`),
 expect L1==L2.
 
+Status 2026-09-23 (applied as ANCHOR-L2-147, IR `isCallLike` only -- the
+X86 mirror keeps its LDIV/LREM-only shape; IDIV/IREM coverage here is
+deliberately stricter since the backend emits trapping IDIV, documented
+as drift rather than mirrored): FIRES. New `PrimitiveTest.divInTry` /
+`divAfterAdd` probes; pre-fix `--pre` shows the handler returning the
+in-try def (`B14: return s7_3`, def `8: s7_3 = s7_2 + s9_2` after LDIV
+quad 7 -- garbage home when the divide throws). Red->green:
+`L2PipelineTest.testHandlerReadsPreThrowDefs` (fails pre-fix with that
+exact shape; passes post-fix, where the handler resolves to the pre-try
+constant and folds -- zero Variable reads left, so the test asserts no
+post-throw def among handler reads plus handler-block existence against
+vacuity). Census: OK 11373->11375 (+2), HANDLERS 455->457 (+2) -- exactly
+the two new probes (both have handlers); FAILED 169 / OTHER 29 /
+MAGIC 7 / SSATAG 0/92 identical. T0 18/18, T3 15/15, T1 32/32.
+Guest follow-up DONE (VBox, P6+P9 image): `divInTry`/`divAfterAdd` in
+`Probes`+`CASES` (4 rows); oracle force|83 green with all rows
+bit-identical to host (sole accepted MIN/-1 #DE).
+
 ## P7: `deconstructOnePhi` primaries bypass usability
 
 Current (`IRControlFlowGraph.java:1062-1065`, verbatim):
@@ -424,6 +452,20 @@ other source (fallback: demote unusable primary to ambiguous). Repro: the
 init + in-try redefine + try/catch fallthrough + use); assert `--ir` edge
 copies (normal=in-try, handler=pre-try). Guest: existing `HashProbe5` 3/0
 must hold + new probe rows.
+
+Status 2026-09-23: INVESTIGATED, NOT LANDED (test-guard policy: no
+firing case, no landing). Two faithful shapes checked on host, both
+route correctly: (1) int null-init + throwing-load redefine + handler
+use -- handler already reads the pre-try constant (folds); (2) a close
+`test_keySet` mirror (null `Set` + in-try `keySet()` + fall-through
+handler + second-try `add`) -- `--ir` shows handler edge `l2_3 = 0`
+(pre-try null) and normal edge `l2_3 = s4_3` (in-try result), exactly
+right. The territory is triple-guarded already (L2-125 resume phis,
+L2-127 usability routing, L2-139 popHandlerVersions, all guest-validated;
+SSATAG tripwire at 0 disagreements; guest `HashProbe5` 3/0 green), and
+the exact claimed shape (local phi AT a handler-entry join) could not
+be constructed to misfire. TEMP probes removed. Revisit only with a
+firing repro: run it through the same `--pre`/`--ir` inspection first.
 
 ## P8: `foldConstants2` shared-lhs re-type (Unary live, Binary dormant)
 
@@ -452,6 +494,19 @@ shape) — assert stack-homed result, no `MODE_SRS`/`Unknown operation:
 LSUB`. Guest: `wideFoldSub` probe row if existing long rows don't trigger
 the fallback.
 
+Status 2026-09-23: INVESTIGATED, NOT LANDED (test-guard policy: zero
+firings, nothing to guard). Callers verified: only the two
+`UnaryQuad.generateCode` fallback sites (`:224`, `:245`);
+`BinaryQuad.foldConstants2` has no production caller (dormant as
+claimed). A temporary firing counter + re-type detector in
+`foldConstants2`, run over the full census (11,375 compiling methods),
+reported `count=0 retype=0` -- the "probably won't happen" fallback
+never fires corpus-wide, so the shared-lhs re-type is unreachable.
+Instrumentation fully reverted (verified via diff); post-revert census
+is byte-identical to the P6 baseline. Do not land without a firing
+method: the way to find one (if it exists) is the same counter, left
+as a documented procedure, not as code.
+
 ## P9: deSSA `isUsableEdge` ignores always-executed defs
 
 Current (`IRControlFlowGraph.java:1408-1424`, verbatim): handler-flow
@@ -478,6 +533,26 @@ if (hflow.contains(p)) {
 
 Repro/gate: P6's `divAfterAdd` `--ir` (handler edge routes post-add
 version) + guest rows.
+
+Status 2026-09-23 (applied as ANCHOR-L2-148): FIRES. New
+`PrimitiveTest.handlerAlwaysExec` probe (always-executed in-try def +
+in-handler join); pre-fix `--ir` shows the entry-edge block with a bare
+`goto` (no copy -- the join reads a stale home), post-fix it carries
+`l3_5 = s5_3` (the B2 `l3_5 = s5_3` normal-path copy is gone, routed to
+the edge where it belongs). Hunk threads the `PhiSource.rhs` version
+through `routeCandidates`/`taggedUsableEdge`/`isUsableEdge` (3 signature
++ 3 call-site changes) and reuses `isDefUnwrittenOnExceptionalEdge`
+(L2-139, now correct for LDIV via L2-147). Red->green:
+`L2PipelineTest.testHandlerEdgeCarriesAlwaysExecDef` (fails pre-fix with
+`handler edge into B30 carries no live def of l3_5`, passes post-fix;
+shape-matched with a vacuity guard). Census: OK 11375->11376 (+1),
+HANDLERS 457->458 (+1) -- the new probe itself; FAILED 169 identical.
+T0 18/18, T3 15/15, T1 32/33 (new test in the 32; only the known
+anomaly fails). Guest follow-up DONE (VBox, P6+P9 image):
+`handlerAlwaysExec` in `Probes`+`CASES` (3 rows, incl. the always-exec
+values 108/8) bit-identical force vs host; `HashProbe5` 3/0 under both
+noforce and force -- handler-flow routing holds on the real-library
+shape.
 
 ## P10: `removeDefUseChains` lhs aliasing
 

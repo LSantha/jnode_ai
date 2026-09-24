@@ -58,6 +58,7 @@ import org.jnode.vm.compiler.ir.quad.BinaryOperation;
 import org.jnode.vm.compiler.ir.quad.BinaryQuad;
 import org.jnode.vm.compiler.ir.quad.CallAssignQuad;
 import org.jnode.vm.compiler.ir.quad.CallQuad;
+import org.jnode.vm.compiler.ir.quad.ConditionalBranchQuad;
 import org.jnode.vm.compiler.ir.quad.JsrQuad;
 import org.jnode.vm.compiler.ir.quad.MonitorenterQuad;
 import org.jnode.vm.compiler.ir.quad.MonitorexitQuad;
@@ -68,6 +69,8 @@ import org.jnode.vm.compiler.ir.quad.NewPrimitiveArrayAssignQuad;
 import org.jnode.vm.compiler.ir.quad.PhiAssignQuad;
 import org.jnode.vm.compiler.ir.quad.Quad;
 import org.jnode.vm.compiler.ir.quad.ThrowQuad;
+import org.jnode.vm.compiler.ir.quad.UnconditionalBranchQuad;
+import org.jnode.vm.compiler.ir.quad.VarReturnQuad;
 import org.jnode.vm.compiler.ir.quad.VariableRefAssignQuad;
 import org.junit.BeforeClass;
 import org.junit.Test;
@@ -876,6 +879,214 @@ public class L2PipelineTest {
         assertTrue("dead arr[n] was deleted by DCE", arrayLoad);
         assertTrue("dead arr.length was deleted by DCE", arrayLength);
         assertTrue("dead 1/n was deleted by DCE", idiv);
+    }
+
+    /**
+     * ANCHOR-L2-147: handler reads must bind pre-throw defs. Pre-fix
+     * `isCallLike` missed LDIV/LREM, so `isDefUnwrittenOnExceptionalEdge`
+     * deemed an in-try def always-executed and the handler read a home
+     * never written when the divide threw (witness: divInTry handler
+     * returning the in-try `s7_3`).
+     */
+    @Test
+    public void testHandlerReadsPreThrowDefs() throws Exception {
+        assertHandlerReadsPreThrowDefs("divInTry");
+        assertHandlerReadsPreThrowDefs("divAfterAdd");
+    }
+
+    private static void assertHandlerReadsPreThrowDefs(String name)
+        throws Exception {
+        CompileResult r = compileMethod(findMethod(name));
+        boolean handlerBlock = false;
+        for (Object b0 : (Iterable<?>) r.cfg) {
+            final IRBasicBlock b = (IRBasicBlock) b0;
+            if (!b.isStartOfExceptionHandler()) {
+                continue;
+            }
+            handlerBlock = true;
+            for (Object q0 : (List<?>) b.getQuads()) {
+                final Quad q = (Quad) q0;
+                if (q.isDeadCode()) {
+                    continue;
+                }
+                Operand[] refs = q.getReferencedOps();
+                if (refs == null) {
+                    continue;
+                }
+                for (int j = 0; j < refs.length; j++) {
+                    if (!(refs[j] instanceof Variable)) {
+                        continue;
+                    }
+                    Variable v = (Variable) refs[j];
+                    AssignQuad def = v.getAssignQuad();
+                    assertFalse(name + ": handler " + q + " reads " + v
+                        + " possibly unwritten (def after throwing quad): "
+                        + def, defPrecededByThrowingBinary(def));
+                }
+            }
+        }
+        // The fixed handler resolves to the pre-try constant and folds,
+        // leaving zero Variable reads: absence of reads is a PASS here.
+        // Only a missing handler block itself is vacuous (loud fail).
+        assertTrue(name + ": no handler block found, test is vacuous",
+            handlerBlock);
+    }
+
+    private static boolean defPrecededByThrowingBinary(AssignQuad def) {
+        if (def == null) {
+            return false;
+        }
+        IRBasicBlock block = def.getBasicBlock();
+        if (block == null) {
+            return false;
+        }
+        final int defAddr = def.getAddress();
+        for (Object q0 : (List<?>) block.getQuads()) {
+            final Quad q = (Quad) q0;
+            if (q.isDeadCode() || q.getAddress() > defAddr) {
+                continue;
+            }
+            if (q instanceof BinaryQuad) {
+                BinaryOperation op = ((BinaryQuad) q).getOperation();
+                if (op == BinaryOperation.IDIV || op == BinaryOperation.IREM
+                    || op == BinaryOperation.LDIV
+                    || op == BinaryOperation.LREM) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    /**
+     * ANCHOR-L2-148: handler-flow edges carry always-executed defs.
+     * Pre-fix `isUsableEdge` deemed any in-try def unusable on handler
+     * flow, so the entry edge into an in-handler join got no copy and the
+     * join read a stale home (witness: handlerAlwaysExec `l3_5` never
+     * written on the entry-edge path). Post-fix the edge block carries
+     * `l3_5 = s5_3`.
+     */
+    @Test
+    public void testHandlerEdgeCarriesAlwaysExecDef() throws Exception {
+        CompileResult r = compileMethod(findMethod("handlerAlwaysExec"));
+        boolean checked = false;
+        for (Object b0 : (Iterable<?>) r.cfg) {
+            final IRBasicBlock b = (IRBasicBlock) b0;
+            if (!b.isStartOfExceptionHandler()) {
+                continue;
+            }
+            // Handler entry with a conditional branch: some arms reach
+            // the join through an edge block carrying the always-exec def.
+            boolean hasBranch = false;
+            for (Object q0 : (List<?>) b.getQuads()) {
+                final Quad q = (Quad) q0;
+                if (!q.isDeadCode()
+                    && q instanceof ConditionalBranchQuad) {
+                    hasBranch = true;
+                }
+            }
+            if (!hasBranch) {
+                continue;
+            }
+            List<?> succs = b.getSuccessors();
+            if (succs == null) {
+                continue;
+            }
+            for (Object s0 : succs) {
+                final IRBasicBlock s = (IRBasicBlock) s0;
+                // Direct join or one hop through an edge block.
+                java.util.ArrayList<IRBasicBlock> tgts =
+                    new java.util.ArrayList<IRBasicBlock>();
+                tgts.add(s);
+                List<?> ss = s.getSuccessors();
+                if (ss != null && ss.size() == 1
+                    && isGotoBlock(s, (IRBasicBlock) ss.get(0))) {
+                    tgts.add((IRBasicBlock) ss.get(0));
+                }
+                for (int ti = 0; ti < tgts.size(); ti++) {
+                    final IRBasicBlock tgt = tgts.get(ti);
+                    Variable v = joinReturnVar(tgt);
+                    if (v == null) {
+                        continue;
+                    }
+                    for (Object e0 : (Iterable<?>) r.cfg) {
+                        final IRBasicBlock e = (IRBasicBlock) e0;
+                        if (e == b || e == tgt || !isGotoBlock(e, tgt)) {
+                            continue;
+                        }
+                        if (!isHandlerFlow(e)) {
+                            continue;
+                        }
+                        checked = true;
+                        assertTrue("handler edge into " + tgt + " carries"
+                            + " no live def of " + v
+                            + " (join reads stale home)",
+                            edgeDefines(e, v));
+                    }
+                }
+            }
+        }
+        assertTrue("no handler-entry branch/join shape found, test vacuous",
+            checked);
+    }
+
+    private static Variable joinReturnVar(IRBasicBlock s) {
+        for (Object q0 : (List<?>) s.getQuads()) {
+            final Quad q = (Quad) q0;
+            if (q.isDeadCode() || !(q instanceof VarReturnQuad)) {
+                continue;
+            }
+            Operand[] refs = q.getReferencedOps();
+            if (refs != null && refs.length > 0
+                && refs[0] instanceof Variable) {
+                return (Variable) refs[0];
+            }
+        }
+        return null;
+    }
+
+    private static boolean isGotoBlock(IRBasicBlock e, IRBasicBlock s) {
+        List<?> qs = e.getQuads();
+        if (qs == null || qs.isEmpty()) {
+            return false;
+        }
+        final Quad last = (Quad) qs.get(qs.size() - 1);
+        if (last.isDeadCode()
+            || !(last instanceof UnconditionalBranchQuad)) {
+            return false;
+        }
+        List<?> succs = e.getSuccessors();
+        return succs != null && succs.size() == 1 && succs.get(0) == s;
+    }
+
+    private static boolean isHandlerFlow(IRBasicBlock b) {
+        if (b.isStartOfExceptionHandler()) {
+            return true;
+        }
+        List<?> preds = b.getPredecessors();
+        if (preds == null || preds.isEmpty()) {
+            return false;
+        }
+        for (Object p0 : preds) {
+            final IRBasicBlock p = (IRBasicBlock) p0;
+            if (p == null || !isHandlerFlow(p)) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private static boolean edgeDefines(IRBasicBlock e, Variable v) {
+        for (Object q0 : (List<?>) e.getQuads()) {
+            final Quad q = (Quad) q0;
+            if (q.isDeadCode() || !(q instanceof AssignQuad)) {
+                continue;
+            }
+            if (((AssignQuad) q).getLHS().equals(v)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private static VmMethod findMethodIn(String className, String name)
