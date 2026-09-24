@@ -818,6 +818,26 @@ block (they then run on every entry path) -- part of the Wave C unit
 (P19 predicate, P7, P18), not a standalone hunk. The corpus probe
 itself was reverted (all suites back to their previous state).
 
+## Infra attempt: ESP-depth lint (built, validated, NOT shipped)
+
+Idea (deep review Wave B adapted): lint the emitted text for
+stack-depth errors of the H5 class. Built as a census pass with
+per-label depth propagation (join consistency + ret-depth vs the
+frame). Validated: with the H5 bug reintroduced it flags exactly one
+method (`GenericX86CodeGenerator#startMethod`, retDepths=4) out of
+11,381; with H5 fixed, 0. NOT SHIPPED because the model is unsound in
+both directions: (1) JNode calls are callee-cleanup with stack args
+(`push args; call; pop save` -- the callee's `ret N` is invisible to
+the text lint, so arg pushes look like leaks; every method using the
+arg convention skews); (2) throw helpers (`call [edi+1420]`) never
+return but the text has no terminal marker, so their arg pushes look
+like join mismatches (3,529 false positives when run over
+`bootimage.txt`). Shipping a noisy gate is worse than none. A sound
+version needs emitter-side depth tracking (annotate each label with
+its ESP depth at emission time in the X86TextAssembler) -- the right
+place is the assembler, not a post-hoc text scan. Kept here as a
+recipe; the census text is unchanged.
+
 ## Merged forward queue (2026-09-24) -- single guide going forward
 
 Source: `../../local/docs/L2-DEEP-REVIEW.md` (H1-H7, M1-M5, Waves A-E;
