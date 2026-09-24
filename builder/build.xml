@@ -97,18 +97,40 @@
 		</condition>
 	</target>
 
+	<!-- native2ascii was removed from the JDK (11+). The JNAsm grammars are
+	     ASCII-clean (verified), so conversion is a no-op: when the tool is
+	     absent the generated sources are moved back unconverted. -->
+	<condition property="native2ascii.available">
+		<or>
+			<available file="${java.home}/bin/native2ascii"/>
+			<available file="${java.home}/bin/native2ascii.exe"/>
+		</or>
+	</condition>
+
 	<target name="native2ascii" depends="javacc" if="run.native2ascii">
-		<!-- Don't swap move & native2ascii tasks ! On Windows, we need to call them 
-  	         in that order because native2ascii prevent from overwritting its source file -->
+		<!-- Don't swap move & native2ascii tasks ! On Windows, we need to call them
+    	         in that order because native2ascii prevent from overwritting its source file -->
 		<move file="${jnasm-preprocessor-gen.dir}/JNAsmPP.java"
         tofile="${jnasm-preprocessor-gen.dir}/JNAsmPP" overwrite="yes"/>
-		<native2ascii src="${jnasm-preprocessor-gen.dir}" includes="JNAsmPP"
-                 dest="${jnasm-preprocessor-gen.dir}" ext=".java"/>
-
 		<move file="${jnasm-assembler-gen.dir}/JNAsm.java"
         tofile="${jnasm-assembler-gen.dir}/JNAsm" overwrite="yes"/>
+		<antcall target="native2ascii-do-convert"/>
+		<antcall target="native2ascii-do-copyback"/>
+	</target>
+
+	<target name="native2ascii-do-convert" if="native2ascii.available">
+		<native2ascii src="${jnasm-preprocessor-gen.dir}" includes="JNAsmPP"
+                 dest="${jnasm-preprocessor-gen.dir}" ext=".java"/>
 		<native2ascii src="${jnasm-assembler-gen.dir}" includes="JNAsm"
                  dest="${jnasm-assembler-gen.dir}" ext=".java"/>
+	</target>
+
+	<target name="native2ascii-do-copyback" unless="native2ascii.available">
+		<echo message="native2ascii tool not available (JDK 11+); generated parser sources are ASCII-clean, using unconverted."/>
+		<move file="${jnasm-preprocessor-gen.dir}/JNAsmPP"
+        tofile="${jnasm-preprocessor-gen.dir}/JNAsmPP.java" overwrite="yes"/>
+		<move file="${jnasm-assembler-gen.dir}/JNAsm"
+        tofile="${jnasm-assembler-gen.dir}/JNAsm.java" overwrite="yes"/>
 	</target>
 
 	<!-- Compile all subproject java files -->

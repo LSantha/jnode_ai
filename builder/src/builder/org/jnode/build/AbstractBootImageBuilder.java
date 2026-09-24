@@ -29,9 +29,14 @@ import java.io.IOException;
 import java.io.OutputStreamWriter;
 import java.io.PrintStream;
 import java.io.PrintWriter;
+import java.lang.reflect.Array;
+import java.lang.reflect.Constructor;
 import java.lang.reflect.Field;
 import java.net.URL;
 import java.nio.ByteBuffer;
+import java.security.Permission;
+import java.util.HashMap;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
@@ -90,6 +95,7 @@ import org.jnode.vm.facade.VmUtils;
 import org.jnode.vm.memmgr.HeapHelper;
 import org.jnode.vm.memmgr.VmHeapManager;
 import org.jnode.vm.objects.BootableHashMap;
+import org.jnode.vm.objects.BootableObject;
 import org.jnode.vm.objects.VmSystemObject;
 import org.jnode.vm.scheduler.VmProcessor;
 import org.vmmagic.unboxed.UnboxedObject;
@@ -176,6 +182,61 @@ public abstract class AbstractBootImageBuilder extends AbstractPluginsTask {
      * Enable the compilation of the nano-kernel source via jnasm.
      */
     private boolean enableJNasm = false;
+
+    /**
+     * Opt-in isolation mode: fail the build on any in-exact host/JNode
+     * field match instead of warning and continuing. Legacy default is
+     * false so existing builds are unaffected; set via
+     * {@code failOnInexact="true"} or {@code -Djnode.bootimage.strict=true}.
+     */
+    private boolean failOnInexact = false;
+
+    /**
+     * Class names (or {@code prefix.*} patterns) whose statics must not be
+     * copied from the host heap. Target slots keep their zero defaults so the
+     * target {@code <clinit>} owns them. Set via {@code noCopyClasses="a.b.C,x.y.*"}
+     * or {@code -Djnode.bootimage.nocopy=...}. Empty by default.
+     */
+    private final Set<String> noCopyPatterns = new HashSet<String>();
+
+    /**
+     * Strict-mode audit: distinct {@code Type.field} statics copied from host.
+     * Populated only when strict or collect mode is on.
+     */
+    private final Set<String> auditCopiedStatics = new HashSet<String>();
+
+    /**
+     * Strict-mode audit: types skipped via the no-copy list.
+     * Populated only when strict or collect mode is on.
+     */
+    private final Set<String> auditSkippedStatics = new HashSet<String>();
+
+    /**
+     * Collect mode: like strict mode but records violations and continues
+     * with legacy emit instead of failing. Activated via
+     * {@code -Djnode.bootimage.strict=collect}. Produces the full work list
+     * for isolation in a single build.
+     */
+    private boolean strictCollect = false;
+
+    /**
+     * Collect-mode record of static-copy violations that would fail strict.
+     */
+    private final Set<String> collectStaticViolations = new TreeSet<String>();
+
+    /**
+     * Collect-mode record of all in-exact host/JNode matches seen.
+     */
+    private final Set<String> auditInexactTypes = new TreeSet<String>();
+
+    /**
+     * Canonical substitutes per static ({@code Type.field} key), stable for
+     * the whole build. copyStaticFields runs on every emit loop iteration, so
+     * substitutes MUST be created once and reused: fresh instances per
+     * iteration would register new object refs each round and the emit loop
+     * would never stabilize.
+     */
+    private final Map<String, Object> canonicalCache = new HashMap<String, Object>();
 
     /**
      * Construct a new BootImageBuilder.
@@ -397,6 +458,70 @@ public abstract class AbstractBootImageBuilder extends AbstractPluginsTask {
 
         debug = (getProject().getProperty("jnode.debug") != null);
 
+        if (!failOnInexact && getProject().getProperty("jnode.bootimage.strict") != null) {
+            final String strictProp = getProject().getProperty("jnode.bootimage.strict");
+            if ("collect".equalsIgnoreCase(strictProp)) {
+                strictCollect = true;
+            } else {
+                failOnInexact = Boolean.parseBoolean(strictProp);
+            }
+        }
+        if (failOnInexact) {
+            log("Bootimage strict isolation mode enabled (fail on in-exact matches)",
+                Project.MSG_WARN);
+        }
+        if (strictCollect) {
+            log("Bootimage collect mode enabled (record violations, legacy emit)",
+                Project.MSG_WARN);
+        }
+        noCopyPatterns.clear();
+        auditCopiedStatics.clear();
+        auditSkippedStatics.clear();
+        auditInexactTypes.clear();
+        collectStaticViolations.clear();
+        canonicalCache.clear();
+        // Validated no-copy defaults: host statics proven dead at boot.
+        // gnu.classpath.SystemProperties.defaultProperties is only read by
+        // setProperties(null), which has no callers in-tree; live properties
+        // come from VmSystem.insertSystemProperties via NativeSystemProperties.
+        // Boot-tested with null template (QEMU smoke boot, no regressions).
+        // ServiceFactory.LOGGER stays opt-in: null would NPE its log() paths,
+        // which app workloads (JAXP lookups) can reach; it needs a runtime
+        // lazy-init fix, not a null.
+        noCopyPatterns.add("gnu.classpath.SystemProperties");
+        // Batch (experimental, boot-validated below, one build):
+        // - sun.misc.SharedSecrets: FileDescriptor$1 holder already degrades
+        //   to null in legacy emit (host anonymous class); the other three
+        //   holders go null explicitly instead of carrying host access
+        //   objects. Revert this line on any SharedSecrets NPE at boot.
+        // - ItemFactory.itemFactory: plain ThreadLocal, null-safe get() by
+        //   construction, and host copy only leaks build-thread scratch.
+        // - ServiceFactory (LOGGER): null-safe iff log() never fires; the
+        //   boot test decides. Revert on NPE.
+        noCopyPatterns.add("sun.misc.SharedSecrets");
+        noCopyPatterns.add("org.jnode.vm.x86.compiler.l1a.ItemFactory");
+        noCopyPatterns.add("gnu.classpath.ServiceFactory");
+        // Batch 2 (proven dead, boot-validated below):
+        // - sun.misc.Cleaner: zero users in core/classlib-nio (JNode NIO
+        //   overlay does not use it); dummyQueue never filled.
+        // - sun.misc.Signal: only JNode's NativeSignal overlay references it,
+        //   and only in javadoc @see tags; the handler tables are untouched.
+        noCopyPatterns.add("sun.misc.Cleaner");
+        noCopyPatterns.add("sun.misc.Signal");
+        // Batch 3: sun.misc.Launcher roots the host App/ExtClassLoader graph
+        // (host URLs + host AccessControlContext) in the image. VmThread has
+        // no loader fields, so Launcher statics are the only static root;
+        // nulled target recreates loaders on demand. Revert on boot NPE in
+        // getSystemClassLoader paths.
+        noCopyPatterns.add("sun.misc.Launcher");
+        final String noCopyProp = getProject().getProperty("jnode.bootimage.nocopy");
+        if (noCopyProp != null) {
+            parseNoCopyClasses(noCopyProp);
+        }
+        if (!noCopyPatterns.isEmpty()) {
+            log("Bootimage no-copy statics: " + noCopyPatterns, Project.MSG_VERBOSE);
+        }
+
         final long lmKernel = kernelFile.lastModified();
         final long lmDest = destFile.lastModified();
         final long lmPIL = getPluginListFile().lastModified();
@@ -589,6 +714,15 @@ public abstract class AbstractBootImageBuilder extends AbstractPluginsTask {
             // Twice, this is intended!
             emitObjects(os, arch, blockedObjects, true);
 
+            if (failOnInexact || strictCollect) {
+                log("Strict static audit: " + auditCopiedStatics.size()
+                    + " statics copied from host, " + auditSkippedStatics.size()
+                    + " types skipped (nocopy)", Project.MSG_WARN);
+                if (!auditSkippedStatics.isEmpty()) {
+                    log("Skipped static types: " + auditSkippedStatics, Project.MSG_VERBOSE);
+                }
+            }
+
             // Emit the remaining objects
             log("Emit rest; blocked=" + blockedObjects, Project.MSG_VERBOSE);
             emitObjects(os, arch, null, true);
@@ -645,6 +779,17 @@ public abstract class AbstractBootImageBuilder extends AbstractPluginsTask {
                 + (totalHighMethodSize / totalHighMethods) + ", tot size " + totalHighMethodSize);
             log("Ondemand comp. methods: " + totalLowMethods + ", avg size " + (totalLowMethodSize / totalLowMethods)
                 + ", tot size " + totalLowMethodSize);
+            if (strictCollect) {
+                log("COLLECT in-exact types (" + auditInexactTypes.size() + "): " + auditInexactTypes,
+                    Project.MSG_WARN);
+                log("COLLECT static violations (" + collectStaticViolations.size() + "):",
+                    Project.MSG_WARN);
+                for (String violation : collectStaticViolations) {
+                    log("COLLECT violation: " + violation, Project.MSG_WARN);
+                }
+                log("COLLECT statics copied from host: " + auditCopiedStatics.size()
+                    + ", types skipped: " + auditSkippedStatics.size(), Project.MSG_WARN);
+            }
             log("Done.");
 
             os.clear();
@@ -675,6 +820,8 @@ public abstract class AbstractBootImageBuilder extends AbstractPluginsTask {
                 debugOut = new PrintWriter(new FileWriter(debugFile, true));
             }
             final ObjectEmitter emitter = new ObjectEmitter(clsMgr, os, debugOut, legalInstanceClasses);
+            emitter.setFailOnInexact(failOnInexact);
+            emitter.setChainDiagnostics(strictCollect);
             final long start = System.currentTimeMillis();
             int cnt = 0;
             int lastUnresolved = -1;
@@ -764,6 +911,9 @@ public abstract class AbstractBootImageBuilder extends AbstractPluginsTask {
             }
             final long end = System.currentTimeMillis();
             log("Emitted " + cnt + " objects, took " + (end - start) + "ms in " + loops + " loops");
+            if (strictCollect) {
+                auditInexactTypes.addAll(emitter.getInexactTypes());
+            }
             if (debugOut != null) {
                 debugOut.close();
                 debugOut = null;
@@ -1436,7 +1586,34 @@ public abstract class AbstractBootImageBuilder extends AbstractPluginsTask {
             final String name = type.getName();
             final int cnt = type.getNoDeclaredFields();
             if ((cnt > 0) && !name.startsWith("java.")) {
-                final Class<?> javaType = Class.forName(type.getName());
+                if (isNoCopyType(name)) {
+                    if (failOnInexact || strictCollect) {
+                        auditSkippedStatics.add(name);
+                    }
+                    continue;
+                }
+                final Class<?> javaType;
+                try {
+                    javaType = Class.forName(type.getName());
+                } catch (ClassNotFoundException ex) {
+                    // Host has no counterpart for this JNode type: nothing to
+                    // leak from the host heap. Target keeps zero defaults and
+                    // owns the statics via its own <clinit>.
+                    log("No host counterpart for " + name + ", skipping static copy",
+                        Project.MSG_VERBOSE);
+                    continue;
+                } catch (LinkageError err) {
+                    // Host counterpart exists but cannot initialize/link on
+                    // this host JDK (e.g. sun.misc.VM.<clinit> calling
+                    // natives removed in JDK 11, NoClassDefFoundError for
+                    // removed host APIs). Host <clinit> must never run for
+                    // the image anyway: skip, target owns the statics.
+                    // (ExceptionInInitializerError and UnsatisfiedLinkError
+                    // are LinkageErrors, so one catch covers them.)
+                    log("Host counterpart of " + name + " not usable (" + err
+                        + "), skipping static copy", Project.MSG_WARN);
+                    continue;
+                }
                 try {
                     final FieldInfo fieldInfo = emitter.getFieldInfo(javaType);
                     final Field[] jdkFields = fieldInfo.getJdkStaticFields();
@@ -1496,6 +1673,9 @@ public abstract class AbstractBootImageBuilder extends AbstractPluginsTask {
                         throw new IllegalArgumentException("Unknown wide type " + fType);
                 }
                 statics.setLong(idx, lval);
+                if (failOnInexact || strictCollect) {
+                    auditCopiedStatics.add(type.getName() + "." + f.getName());
+                }
             } else {
                 final int ival;
                 final Class<?> jfType = jf.getType();
@@ -1515,6 +1695,9 @@ public abstract class AbstractBootImageBuilder extends AbstractPluginsTask {
                     throw new IllegalArgumentException("Unknown wide type " + fType);
                 }
                 statics.setInt(idx, ival);
+                if (failOnInexact || strictCollect) {
+                    auditCopiedStatics.add(type.getName() + "." + f.getName());
+                }
             }
         } else if (f.isAddressType()) {
             if (val == null) {
@@ -1531,10 +1714,220 @@ public abstract class AbstractBootImageBuilder extends AbstractPluginsTask {
         } else {
             if (!Modifier.isAddressType(f.getSignature())) {
                 if (val != null) {
-                    emitter.testForValidEmit(val, type.getName());
-                    os.getObjectRef(val);
+                    final Object emitVal = isolateStaticValue(type, f, val);
+                    if (strictCollect && emitVal instanceof ClassLoader) {
+                        log("LOADERSTATIC: " + type.getName() + "." + f.getName()
+                            + " -> " + emitVal.getClass().getName(), Project.MSG_WARN);
+                    }
+                    emitter.testForValidEmit(emitVal, type.getName());
+                    os.getObjectRef(emitVal);
+                    statics.setObject(idx, emitVal);
+                } else {
+                    statics.setObject(idx, null);
                 }
-                statics.setObject(idx, val);
+                if (failOnInexact || strictCollect) {
+                    auditCopiedStatics.add(type.getName() + "." + f.getName());
+                }
+            }
+        }
+    }
+
+    /**
+     * Isolate a static object value for the boot image.
+     *
+     * <p>Returns the value to emit: the original for immutable or
+     * deterministic values, or a canonical fresh instance for transient
+     * runtime state (empty containers, thread-locals, stateless singletons).
+     * Fresh instances are canonical host constructions (e.g. {@code new
+     * HashMap()}), so they carry no build-machine state, while their exact
+     * by-name layout still passes the strict emit gate.
+     *
+     * <p>Note: substitution breaks host object identity (two statics sharing
+     * one host container emit two distinct targets). Safe here because all
+     * substituted shapes are empty and interchangeable; never extend this to
+     * populated or identity-compared instances.
+     *
+     * @param type owning JNode type (for diagnostics)
+     * @param f    the static field being copied
+     * @param val  host static value (non-null)
+     * @return value to emit (possibly a fresh substitute)
+     * @throws BuildException in strict mode when the value cannot be isolated.
+     */
+    private Object isolateStaticValue(VmType<?> type, VmField f, Object val) throws BuildException {
+        final String key = type.getName() + "." + f.getName();
+        final Object cached = canonicalCache.get(key);
+        if (cached != null) {
+            return cached;
+        }
+        // Bug 4944382 protocol (see ProviderConfig sources): LOCK starts as a
+        // temporary plain lock until the system loader exists, upgrading
+        // lazily in getLock(). Reproduce exactly that state: a fresh Object,
+        // never the host loader (which would drag host URLs + ACC along).
+        // Cached above: a new instance per emit iteration would register new
+        // object refs each round and the emit loop would never stabilize.
+        if (type.getName().equals("sun.security.jca.ProviderConfig") && f.getName().equals("LOCK")) {
+            final Object lock = new Object();
+            canonicalCache.put(key, lock);
+            return lock;
+        }
+        final Object canonical = freshCanonicalInstance(val);
+        if (canonical != null) {
+            canonicalCache.put(key, canonical);
+            return canonical;
+        }
+        if (isCopyAllowedStaticValue(val)) {
+            return val;
+        }
+        final Class<?> vc = val.getClass();
+        final String msg;
+        if (vc.isArray()) {
+            Class<?> comp = vc.getComponentType();
+            while (comp.isArray()) {
+                comp = comp.getComponentType();
+            }
+            if (!comp.isPrimitive() && !comp.getName().startsWith("java.")) {
+                return val; // JNode-typed arrays: elements validated at emit time.
+            }
+            msg = "Strict isolation: static " + type.getName() + "." + f.getName()
+                + " is an array of host classlib type " + comp.getName()
+                + ". Replace with BootableArrayList/BootableHashMap, String[] or primitives.";
+        } else {
+            if (!vc.getName().startsWith("java.")) {
+                return val; // JNode-typed: validated at emit time.
+            }
+            msg = "Strict isolation: static " + type.getName() + "." + f.getName()
+                + " holds host classlib instance " + vc.getName()
+                + ". Replace with Bootable* / primitive / String, or drop it from bootimage reachability.";
+        }
+        if (failOnInexact) {
+            throw new BuildException(msg);
+        }
+        if (strictCollect) {
+            collectStaticViolations.add(msg);
+            log("COLLECT: " + msg, Project.MSG_WARN);
+        }
+        return val;
+    }
+
+    /**
+     * Fresh canonical instance for transient runtime state, or null when the
+     * value is not a recognized substitutable shape. Applies in all modes:
+     * canonical empties are strictly more correct than host garbage.
+     *
+     * @param val host static value (non-null)
+     * @return fresh substitute, or null to keep the original value.
+     * @throws BuildException when a recognized shape cannot be constructed.
+     */
+    private Object freshCanonicalInstance(Object val) throws BuildException {
+        final Class<?> vc = val.getClass();
+        if (vc == HashMap.class) {
+            return new HashMap<Object, Object>();
+        }
+        if (vc == ConcurrentHashMap.class) {
+            return new ConcurrentHashMap<Object, Object>();
+        }
+        if (vc == ThreadLocal.class || vc == InheritableThreadLocal.class) {
+            try {
+                return vc.newInstance();
+            } catch (Exception ex) {
+                throw new BuildException("Cannot canonicalize ThreadLocal " + vc.getName(), ex);
+            }
+        }
+        if ("java.util.Collections$SynchronizedMap".equals(vc.getName())) {
+            return Collections.synchronizedMap(new HashMap<Object, Object>());
+        }
+        if ("java.lang.reflect.ReflectAccess".equals(vc.getName())) {
+            try {
+                final Constructor<?> ctor = vc.getDeclaredConstructor();
+                ctor.setAccessible(true);
+                return ctor.newInstance();
+            } catch (Exception ex) {
+                throw new BuildException("Cannot canonicalize ReflectAccess", ex);
+            }
+        }
+        return null;
+    }
+
+    /**
+     * Copy-allowed static values: immutable or deterministic content that
+     * cannot leak build-machine state (null handled by the caller).
+     *
+     * @param val host static value (non-null)
+     * @return true when the value may be emitted as-is.
+     */
+    private boolean isCopyAllowedStaticValue(Object val) {
+        if (val instanceof BootableObject || val instanceof String || val instanceof Class
+            || val instanceof Integer || val instanceof Long || val instanceof Float
+            || val instanceof Double || val instanceof Boolean || val instanceof Character
+            || val instanceof Short || val instanceof Byte) {
+            return true;
+        }
+        // Immutable value objects: final String-derived state (name/actions),
+        // no host handles. Layout drift on future hosts is still caught by
+        // the strict emit (inexact) gate.
+        if (val instanceof Permission) {
+            return true;
+        }
+        // Deterministic content built by constant <clinit> loops, independent
+        // of host environment.
+        if (val instanceof java.util.BitSet) {
+            return true;
+        }
+        final Class<?> vc = val.getClass();
+        if (vc.isArray()) {
+            // Zero-length arrays carry no host state by construction: no
+            // elements to leak, uniform layout. Always safe to emit.
+            if (Array.getLength(val) == 0) {
+                return true;
+            }
+            Class<?> comp = vc.getComponentType();
+            while (comp.isArray()) {
+                comp = comp.getComponentType();
+            }
+            return comp.isPrimitive() || comp == String.class || comp == Class.class
+                || comp == Integer.class || comp == Long.class || comp == Float.class
+                || comp == Double.class || comp == Boolean.class || comp == Character.class
+                || comp == Short.class || comp == Byte.class
+                || Permission.class.isAssignableFrom(comp)
+                || BootableObject.class.isAssignableFrom(comp);
+        }
+        return false;
+    }
+
+    /**
+     * Test whether a JNode type is excluded from host static copying via the
+     * no-copy list. Entries are exact class names or {@code prefix.*} patterns.
+     *
+     * @param typeName JNode type name (dotted).
+     * @return true when host statics must not be copied for this type.
+     */
+    protected boolean isNoCopyType(String typeName) {
+        for (String pattern : noCopyPatterns) {
+            if (pattern.endsWith(".*")) {
+                final String prefix = pattern.substring(0, pattern.length() - 1);
+                if (typeName.startsWith(prefix)) {
+                    return true;
+                }
+            } else if (typeName.equals(pattern)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Parse a comma-separated no-copy list into {@link #noCopyPatterns}.
+     *
+     * @param csv e.g. {@code "a.b.C,x.y.*"}; null/empty clears nothing.
+     */
+    protected void parseNoCopyClasses(String csv) {
+        if (csv == null) {
+            return;
+        }
+        for (String token : csv.split(",")) {
+            final String entry = token.trim();
+            if (!entry.isEmpty()) {
+                noCopyPatterns.add(entry);
             }
         }
     }
@@ -1573,5 +1966,35 @@ public abstract class AbstractBootImageBuilder extends AbstractPluginsTask {
      */
     public final void setEnableJNasm(boolean enableJNasm) {
         this.enableJNasm = enableJNasm;
+    }
+
+    /**
+     * @return true when strict isolation mode is enabled.
+     */
+    public final boolean isFailOnInexact() {
+        return failOnInexact;
+    }
+
+    /**
+     * Opt-in strict isolation mode for the bootimage builder. When true,
+     * any in-exact host/JNode field match fails the build; when false
+     * (legacy default) it only warns. Activated in build time via
+     * {@code failOnInexact="true"} or {@code -Djnode.bootimage.strict=true}.
+     *
+     * @param failOnInexact true to fail on in-exact matches.
+     */
+    public final void setFailOnInexact(boolean failOnInexact) {
+        this.failOnInexact = failOnInexact;
+    }
+
+    /**
+     * Build-time no-copy list for host static copying. Comma-separated class
+     * names or {@code prefix.*} patterns whose statics keep target-zero
+     * defaults. Empty by default.
+     *
+     * @param csv e.g. {@code "a.b.C,x.y.*"}.
+     */
+    public final void setNoCopyClasses(String csv) {
+        parseNoCopyClasses(csv);
     }
 }

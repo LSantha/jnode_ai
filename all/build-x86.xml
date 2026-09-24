@@ -204,7 +204,12 @@
 
 	<!-- Build the java object file  -->
 	<target name="java-image" depends="asm-native">
-		<taskdef name="bootimage" classname="org.jnode.build.x86.BootImageBuilder" classpathref="cp-x86" />
+		<!-- Bootimage builder selection (build-time opt-in for isolation):
+		     -Djnode.bootimage.builder=org.jnode.build.x86.IsolatedBootImageBuilder
+		     Strict in-exact checking can also be enabled on the legacy builder via
+		     -Djnode.bootimage.strict=true. Legacy builder stays the default. -->
+		<property name="jnode.bootimage.builder" value="org.jnode.build.x86.BootImageBuilder"/>
+		<taskdef name="bootimage" classname="${jnode.bootimage.builder}" classpathref="cp-x86" />
 
 		<bootimage 
 			destfile="${build.bootimage.dir}/bootimage.bin" 
