@@ -59,7 +59,7 @@ jobs:
           OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY }}
           OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
         with:
-          model: openrouter/cohere/north-mini-code:free
+          model: opencode/space-bunny-free
           variant: high
           use_github_token: true
           prompt: "You are triaging JNode GitHub issue #${{ github.event.issue.number }}. Load the jnode-triage-issue skill and execute it end to end: kind/area label audit first, then exactly one issue comment opening with '## Triage' and the completed skill template, then the body addendum. No preamble, no environment commentary, no branches, commits, pushes, or pull requests. Do not stop until all three are verified done (re-read labels, confirm the comment posted, confirm addendum markers in body). Never end with a status update or acknowledgement."

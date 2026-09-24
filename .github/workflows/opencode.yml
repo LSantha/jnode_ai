@@ -67,7 +67,7 @@ jobs:
           OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY }}
           OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
         with:
-          model: openrouter/cohere/north-mini-code:free
+          model: opencode/space-bunny-free
           variant: high
           use_github_token: true
 
