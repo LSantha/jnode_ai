@@ -591,9 +591,15 @@ public final class SwingToolkit extends JNodeToolkit {
         WindowPeer p = (WindowPeer) w.getPeer();
         if (p instanceof SwingBaseWindowPeer) {
             JInternalFrame f = (JInternalFrame) ((SwingBaseWindowPeer<?, ?>) p).peerComponent;
-            if (f.isShowing() && !f.isSelected()) {
+            if (f.isShowing()) {
                 try {
                     f.setSelected(true);
+                    f.getDesktopPane().setSelectedFrame(f);
+                    f.toFront();
+                    f.getDesktopPane().repaint();
+                    if (f.getDesktopPane().getParent() != null) {
+                        f.getDesktopPane().getParent().repaint();
+                    }
                     activationWarningCount = 0;
                 } catch (PropertyVetoException e) {
                     if (log.isDebugEnabled()) {

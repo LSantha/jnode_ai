@@ -123,11 +123,36 @@ public class WindowBar extends JPanel {
             }
         }
         try {
-            if (sel != null)
+            if (sel != null) {
                 sel.setSelected(true);
+                sel.toFront();
+                sel.getDesktopPane().repaint();
+                SwingToolkit.getJNodeToolkit().getAwtContext().getAwtRoot().repaint();
+                repaint();
+            }
         } catch (PropertyVetoException x) {
             //ignore
         }
+    }
+
+    private boolean isTopFrame(JInternalFrame frame) {
+        final JDesktopPane desktop = frame.getDesktopPane();
+        if (desktop == null) {
+            return true;
+        }
+        final int frameZ = desktop.getComponentZOrder(frame);
+        if (frameZ < 0) {
+            return false;
+        }
+        final JInternalFrame[] frames = desktop.getAllFrames();
+        for (JInternalFrame other : frames) {
+            if (other != frame && other.isVisible() && !other.isIcon()
+                && desktop.getComponentZOrder(other) >= 0
+                && desktop.getComponentZOrder(other) < frameZ) {
+                return false;
+            }
+        }
+        return true;
     }
 
     private class FrameWrapper extends JButton {
@@ -146,13 +171,18 @@ public class WindowBar extends JPanel {
                         if (frame.isIcon()) {
                             frame.setIcon(false);
                             frame.setSelected(true);
-                        } else if (frame.isSelected()) {
+                            frame.toFront();
+                        } else if (frame.isSelected() && isTopFrame(frame)) {
                             frame.setSelected(false);
                             frame.setIcon(true);
                             selectNextFrame(frame.getDesktopPane());
                         } else {
                             frame.setSelected(true);
+                            frame.toFront();
                         }
+                        frame.getDesktopPane().repaint();
+                        SwingToolkit.getJNodeToolkit().getAwtContext().getAwtRoot().repaint();
+                        repaint();
                     } catch (PropertyVetoException ex) {
                         log.warn("", ex);
                     }
