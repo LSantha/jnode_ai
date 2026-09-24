@@ -687,3 +687,35 @@ mauve where marked.
   hotswapped live; decode 25/1 == noforce, force|79 green. Regression
   test: `baloadEcxLoop` + `testNarrowLoadEcxResult`. Full record:
   `ORACLE-RESULTS-2026-09-21.md` § "FIXED (2026-09-22 evening)".
+
+## Merged forward queue (2026-09-24) -- single guide going forward
+
+Source: `../../local/docs/L2-DEEP-REVIEW.md` (H1-H7, M1-M5, Waves A-E;
+read + spot-verified 2026-09-24: H1/H7/harness-divergence confirmed by
+direct read) merged with the P-queue above by boot-unlocking priority.
+This section is the authoritative order; item sections keep the detail,
+`local/RESUME.md` keeps the session handoff. P6+P9 LANDED since the deep
+review (its section 3 entries for them are stale).
+
+| # | Item | State |
+|---|---|---|
+| P10 | removeDefUseChains lhs aliasing | in progress (dormancy check) |
+| H3 | putstatic wide-const never stores (zeroed clinits) | next (boot suspect) |
+| H5 | checkcast ESP leak + EBX/ECX hazards | queued (boot suspect) |
+| M2 | forcedSpills omissions incl. class-init | queued (boot suspect) |
+| H7 | fold zero-divisor compile crash | queued (loud; composes w/ P5) |
+| H1 | shift-ECX SAL slip (verified) | queued (2-word fix) |
+| H2 | LCMP RSC destroys spilled operand | queued |
+| H4 | F2L/D2I/D2L rounding via helpers | queued |
+| H6 | dup2 form-1 transposition | queued (hand-built test) |
+| - | FAILED=169 attribution + terminator lint | queued (cheap gate) |
+| P18 | inter-block over-pop (instrument-first) | queued |
+| P11-P15 | edge explicitness, fixType, phi types, undef sources, loops | queued, repro-driven |
+| P19 | shared throwing predicate + leftovers | queued |
+| M5 | comparator, INT stamps, keep-list get/setfield, PhiAssign hashCode | queued, low |
+| B/D/E | verifier wiring, tag-gate, copy completeness, harness delegation, guest grid, fuzz | queued (infra) |
+| P7/P8 | investigated, NOT landed (no firing case) | closed unless repro appears |
+
+Standing rules: test-guard policy (red-green per fix, javap-verify
+classes, ASCII-clean diffs); census FAILED-identity + OK attribution;
+guest oracle/mauve where marked; cold boot per guest run.
