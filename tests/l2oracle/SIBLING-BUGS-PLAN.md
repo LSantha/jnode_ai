@@ -833,6 +833,44 @@ the scan is a `LiveRange.getAssignAddress() <= hazardAddr <=
 getLastUseAddress()` filter over `CheckcastQuad`/`InstanceofAssignQuad`
 /`StaticRef*Quad`/`RefStoreQuad` in `CompileResult.cfg`.
 
+## Wave C attempt: handler-entry phi copies -- REVERTED, root cause moved one level deeper
+
+Status 2026-09-26 morning: deterministic repro re-established first
+(PrimitiveTest.finallyThrowsLong with the try body
+`acc = acc + (long) n / (long) n`; 3/3 runs red). Pre-SSA IR of the
+repro (the smoking gun, from `L2Dump --pre`):
+
+    B30 (finally handler entry):
+      30: l1_4 = phi(s4_5, l1_5)   <- acc (local 1) exceptional version
+      30: l3_2 = e4_0
+      31: s4_8 = l1_4               <- stack copy feeding acc + 1000
+      35: s4_9 = s4_8 + s6_6
+
+The handler-entry copy is CROSS-NAMESPACE (stack <- local). After SSA
+renaming the stack version's incoming value collapses to ITSELF:
+post-deSSA the method contains `s4_8 = s4_8 + s6_6` -- a def whose rhs
+is its own uninitialized version. The post-deSSA verifier flags exactly
+that ("read of s4_8 at 13 ... not written on every path").
+Attempted fix (REVERTED, do not re-apply blind): insert deSSA copies
+destined for a handler-ENTRY block at the TOP of that block
+(`IRBasicBlock.addFirst` + the deconstructOnePhi flush) instead of
+appending them at its end -- the appended copy indeed lands after the
+block's own use of the copied value. Result: the finallyThrowsLong
+violation disappears, the self-referential COPY remains (the renamer
+issue above), and a NEW violation appears in `nestedCatchLong`
+("read of l1_3 at 11: l1_6 = l1_3 in B22 is not written on every
+path"). So copy PLACEMENT is the wrong lever; the defect is in the
+renamer/local-version modeling of the finally: the phi sources at B30
+are (s4_5, l1_5) -- the normal-path stack result and the handler's own
+version -- while the exceptional path needs acc's PRE-TRY value, and
+the stack<-local copy must become `s4_8 = l1_<pre-try version>`
+instead of renaming into a self-copy. The fix belongs where the
+finally/local versions are constructed (IRGenerator finally handling +
+constructSSA), not in deSSA. Kept reverted: no half-fix landed, all
+gates back to their committed state. Repro recipe for the next
+attempt: the one-line try-body change above (do NOT leave it in the
+corpus while the bug lives -- deterministic red is a gate regression).
+
 ## L2-156 (LANDED): D2I / F2L / D2L went through raw FISTP (wrong rounding, NaN, infinities)
 
 Source: deep review H4. Status 2026-09-26 morning (applied as
