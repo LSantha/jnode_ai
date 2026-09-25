@@ -130,6 +130,19 @@ public class DefaultInterpreterSequenceTest {
     }
 
     @Test
+    public void testAppendRedirectIsRejected() throws Exception {
+        TestableRedirecting interp = new TestableRedirecting();
+        StubShell shell = newStub();
+        try {
+            interp.runLine(shell, "echo 'HashProbe5' >> /tmp/mini.txt");
+            Assert.fail("Expected unsupported append redirection");
+        } catch (ShellSyntaxException ex) {
+            Assert.assertEquals("unsupported '>>' redirection: use '>' instead", ex.getMessage());
+        }
+        Assert.assertEquals(0, shell.executed.size());
+    }
+
+    @Test
     public void testParseSequenceAdjacentOperators() throws Exception {
         TestableDefault interp = new TestableDefault();
         Assert.assertEquals(2, interp.parseSize("a&&b", false));
