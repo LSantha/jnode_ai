@@ -895,6 +895,39 @@ SECOND ATTEMPT (same day, also reverted) -- much sharper map, from
   the ladd a DISTINCT result slot object (or make the refs loop skip
   the lhs slot consistently) -- and then re-check `nestedCatchLong`
   and the census FAILED set.
+Both attempts reverted; gates at the committed intermittent state.
+
+THIRD PASS -- the fix is now fully specified (two halves, one
+change). Facts, all verified:
+1. SSA RENAMING IS CORRECT. `doRenameVariables` traces on the repro's
+   handler block: the handler-entry copy comes out `s4_8 = l1_4` and
+   the update `s4_9 = s4_8 + s6_6`, the store-back `l1_5 = s4_9`.
+   The corruption is entirely POST-SSA, in deSSA.
+2. HALF A (placement): a deconstructed phi's edge copy that belongs to
+   the handler-entry block is APPENDED at its end -- after the block's
+   own use of the version -- so the version has no reaching def on that
+   edge. `IRBasicBlock.addFirst` + front-insertion in the
+   deconstructOnePhi flush fixes `finallyThrowsLong` deterministically
+   (3/3 green with the throwing-try-body recipe).
+3. HALF B (versioning) -- found by diffing `nestedCatchLong` with and
+   without half A: WITHOUT it, the handler's deSSA copies sit at the
+   block end and read the value the handler JUST computed
+   (`l1_6 = l1_3` after `l1_3 = s4_3 - s6_3`): wrong VALUE, verifier
+   silent. WITH it, the copies move to the top and read `l1_3` whose
+   only visible def is the handler's own update -- the PRE-catch def
+   is gone because the handler body REDEFINES the pre-try local
+   version instead of creating a fresh one. So the handler-body local
+   updates (and the exception-slot reuse found in pass two) must be
+   versioned like any other def: the pre-try version survives, the
+   handler's updates get new versions, the top-of-block copies read
+   the pre-try value (JVM finally/catch semantics).
+4. The complete change is (A)+(B) together; either alone leaves a
+   violation (A alone: nestedCatchLong; B alone: the original
+   self-reference). Attempting (B) needs the handler-body versioning
+   in constructSSA/IRGenerator with the deterministic recipe as the
+   oracle, then nestedCatchLong + the census FAILED set as the
+   regression net. Half A alone was NOT landed (it would trade one
+   deterministic violation for another).
 Both attempts reverted; gates at the committed intermittent state. Repro recipe for the next
 attempt: the one-line try-body change above (do NOT leave it in the
 corpus while the bug lives -- deterministic red is a gate regression).
