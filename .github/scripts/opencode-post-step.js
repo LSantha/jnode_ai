@@ -48,13 +48,19 @@ function isDuplicateSignal(body) {
   return /duplicate-of-#\d+/i.test(body);
 }
 
+function isPRCreationComment(body) {
+  if (!body) return false;
+  return /\b(?:Created|Opened) PR #\d+\b/i.test(body);
+}
+
 function isInvestigationReport(body) {
   if (!body) return false;
   return /## .*Investigation Report/i.test(body);
 }
 
 function isAgentHeading(body) {
-  return body && (isRefusalComment(body) || isNeedsInfoComment(body) || isInvestigationReport(body) || isTriageComment(body));
+  return body && (isRefusalComment(body) || isNeedsInfoComment(body) || isInvestigationReport(body) ||
+    isTriageComment(body) || isPRCreationComment(body));
 }
 
 function findLatestAgentComment(comments) {
@@ -82,6 +88,9 @@ function decideAgentLabel({ existing, conclusion, latestComment, labels, isPR })
   }
   if (isDuplicateSignal(latestComment)) {
     return { label: 'agent/duplicate', reason: 'duplicate-of link detected in comment' };
+  }
+  if (isPRCreationComment(latestComment)) {
+    return { label: 'agent/done', reason: 'PR creation comment detected' };
   }
   if (isTriageClearComment(latestComment)) {
     return { label: null, clearNeedsInfo: true, reason: 'clear triage, no blocking label' };

@@ -27,6 +27,7 @@ function createMocks(eventName, {
   prNumber = 99,
   prBody = "Closes #42",
   prLabels = [],
+  prHeadRef = "opencode/issue42-fix",
   reviewUser = { login: "LSantha", type: "User" },
   reviewAssociation = "OWNER",
   reviewState = "approved",
@@ -49,7 +50,7 @@ function createMocks(eventName, {
 
   let currentPRBody = prBody;
   let currentPRLabels = [...prLabels];
-  let currentPRHead = { ref: "opencode/issue42-fix", sha: "abc123" };
+  let currentPRHead = { ref: prHeadRef, sha: "abc123" };
 
   let commentsOnPR = [];
   let commentsOnIssue = [];
@@ -572,7 +573,8 @@ test("ticket-runner.js event handling suite", async (t) => {
 
     const mocks = createMocks("workflow_run", {
       issueBody: initialBody,
-      issueLabels: [{ name: "agent/done" }, { name: "kind/bug" }]
+      runConclusion: "failure",
+      prHeadRef: "unrelated-branch"
     });
     await runTicketRunner(mocks);
 
@@ -582,6 +584,55 @@ test("ticket-runner.js event handling suite", async (t) => {
     assert.strictEqual(mocks.calls.createComment.length, 1);
     assert.strictEqual(mocks.calls.createComment[0].issue_number, 99);
     assert.ok(mocks.calls.createComment[0].body.includes("/oc review"));
+  });
+
+  await t.test("Workflow run advances DEV -> REVIEW from a PR comment when the pulls API is delayed", async () => {
+    const initialBody = _replaceOrAppendStatus("Task", {
+      phase: "DEV",
+      pr: null,
+      turn: 0,
+      max_turns: 3,
+      retries: 0,
+      started: new Date().toISOString(),
+      history: []
+    }, 42);
+
+    const mocks = createMocks("workflow_run", {
+      issueBody: initialBody,
+      issueLabels: [{ name: "kind/chore" }],
+      prHeadRef: "unrelated-branch",
+      prBody: "unrelated"
+    });
+    mocks.setIssueComments([{ body: "Created PR #99" }]);
+    await runTicketRunner(mocks);
+
+    const state = _parseState(mocks.getIssueBody());
+    assert.strictEqual(state.phase, "REVIEW");
+    assert.strictEqual(state.pr, 99);
+    assert.strictEqual(mocks.calls.createComment.length, 1);
+    assert.strictEqual(mocks.calls.createComment[0].issue_number, 99);
+  });
+
+  await t.test("Workflow run does not short-circuit a DEV run with an existing PR and needs-info", async () => {
+    const initialBody = _replaceOrAppendStatus("Task", {
+      phase: "DEV",
+      pr: null,
+      turn: 0,
+      max_turns: 3,
+      retries: 0,
+      started: new Date().toISOString(),
+      history: []
+    }, 42);
+
+    const mocks = createMocks("workflow_run", {
+      issueBody: initialBody,
+      issueLabels: [{ name: "kind/bug" }, { name: "agent/needs-info" }]
+    });
+    await runTicketRunner(mocks);
+
+    const state = _parseState(mocks.getIssueBody());
+    assert.strictEqual(state.phase, "REVIEW");
+    assert.strictEqual(state.pr, 99);
   });
 
   await t.test("Workflow run retries on DEV failure", async () => {
@@ -597,7 +648,9 @@ test("ticket-runner.js event handling suite", async (t) => {
 
     const mocks = createMocks("workflow_run", {
       issueBody: initialBody,
-      runConclusion: "failure"
+      runConclusion: "failure",
+      prHeadRef: "unrelated-branch",
+      prBody: "unrelated"
     });
     await runTicketRunner(mocks);
 
@@ -622,7 +675,9 @@ test("ticket-runner.js event handling suite", async (t) => {
 
     const mocks = createMocks("workflow_run", {
       issueBody: initialBody,
-      runConclusion: "failure"
+      runConclusion: "failure",
+      prHeadRef: "unrelated-branch",
+      prBody: "unrelated"
     });
     await runTicketRunner(mocks);
 
@@ -646,7 +701,9 @@ test("ticket-runner.js event handling suite", async (t) => {
 
     const mocks = createMocks("workflow_run", {
       issueBody: initialBody,
-      issueLabels: [{ name: "agent/skip" }]
+      issueLabels: [{ name: "agent/skip" }],
+      prHeadRef: "unrelated-branch",
+      prBody: "unrelated"
     });
     await runTicketRunner(mocks);
 

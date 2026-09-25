@@ -587,13 +587,44 @@ module.exports = async ({ github, context, core }) => {
     }
   }
 
+  async function findPRForIssueWithComment(issueNumber) {
+    var prNumber = await h.findPRForIssue(issueNumber);
+    if (prNumber) return prNumber;
+
+    try {
+      var comments = await github.rest.issues.listComments({
+        owner, repo, issue_number: issueNumber, per_page: 100
+      });
+      var list = (comments && comments.data) ? comments.data : comments;
+      for (var i = list.length - 1; i >= 0; i--) {
+        var body = (list[i] && list[i].body) || "";
+        var match = body.match(/\b(?:Created|Opened) PR #(\d+)\b/i);
+        if (match) return parseInt(match[1], 10);
+      }
+    } catch (err) {
+      core.warning("findPRForIssueWithComment failed: " + err.message);
+    }
+    return null;
+  }
+
   async function handleDevCompletion(issueNumber, state, phaseFailed) {
+    var prNumber = await findPRForIssueWithComment(issueNumber);
+    if (prNumber) {
+      state.pr = prNumber;
+      state.phase = "REVIEW";
+      state.retries = 0;
+      state.history.push({ event: "dev_done", pr: prNumber, timestamp: new Date().toISOString() });
+      await updateIssueState(issueNumber, state);
+      await h.triggerTask(prNumber, h.getReviewPrompt());
+      core.info("Ticket runner: #" + issueNumber + " -> REVIEW on PR #" + prNumber);
+      return;
+    }
+
     if (phaseFailed) {
       await retryOrFail(issueNumber, state);
       return;
     }
 
-    // Check labels for short-circuit
     var issueData = await github.rest.issues.get({
       owner, repo, issue_number: issueNumber
     });
@@ -608,16 +639,7 @@ module.exports = async ({ github, context, core }) => {
     }
 
     if (labels.includes("agent/done")) {
-      var prNumber = await h.findPRForIssue(issueNumber);
-      if (prNumber) {
-        state.pr = prNumber;
-        state.phase = "REVIEW";
-        state.retries = 0;
-        state.history.push({ event: "dev_done", pr: prNumber, timestamp: new Date().toISOString() });
-        await updateIssueState(issueNumber, state);
-        await h.triggerTask(prNumber, h.getReviewPrompt());
-        core.info("Ticket runner: #" + issueNumber + " -> REVIEW on PR #" + prNumber);
-      } else if (labels.includes("kind/feature") || labels.includes("kind/bug")) {
+      if (labels.includes("kind/feature") || labels.includes("kind/bug")) {
         // agent/done but no PR -- for bug/feature this is unexpected, retry
         core.error("Ticket runner: #" + issueNumber + " agent/done but no PR found. Retrying.");
         await retryOrFail(issueNumber, state);

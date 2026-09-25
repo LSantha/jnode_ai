@@ -142,6 +142,19 @@ test('opencode-post-step.js test suite', async (t) => {
     assert.ok(calls.addLabels.includes('agent/needs-info'));
   });
 
+  await t.test('PR creation comment applies agent/done after a clear triage', async () => {
+    const { core, github, context, calls, setIssueData, setComments } = createMocks();
+    process.env.PREV_CONCLUSION = 'success';
+    setIssueData({ labels: ['kind/chore', 'area/docs'], state: 'open' });
+    setComments([
+      { body: '## Triage\n\n- [x] **Suggested next:** fix' },
+      { body: 'Created PR #99\n\n[opencode session](https://opencode.ai/s/test)' }
+    ]);
+
+    await runPostStep({ github, context, core });
+    assert.ok(calls.addLabels.includes('agent/done'));
+  });
+
   await t.test('Clear triage applies no agent label', async () => {
     const { core, github, context, calls, setIssueData, setComments } = createMocks();
     process.env.PREV_CONCLUSION = 'success';
