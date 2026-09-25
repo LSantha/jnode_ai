@@ -1013,6 +1013,23 @@ test("ticket-runner.js event handling suite", async (t) => {
     assert.ok(mocks.calls.createComment.some(c => c.body.includes("/oc Please proceed")));
   });
 
+  await t.test("Triage workflow completion auto-starts DEV after the report lands", async () => {
+    const mocks = createMocks("workflow_run", {
+      runName: "Triage",
+      runDisplayTitle: "Triage #42 - Bug description",
+      issueBody: "Bug description",
+      issueLabels: [{ name: "kind/chore" }]
+    });
+    mocks.setIssueComments([
+      { body: "## Triage\n\n- [x] **Suggested next:** fix" }
+    ]);
+    await runTicketRunner(mocks);
+
+    const state = _parseState(mocks.getIssueBody());
+    assert.strictEqual(state.phase, "DEV");
+    assert.ok(mocks.calls.createComment.some(c => c.body.includes("/oc Please proceed")));
+  });
+
   await t.test("workflow_run with no state and no triage waits", async () => {
     const mocks = createMocks("workflow_run", {
       issueBody: "Bug description",

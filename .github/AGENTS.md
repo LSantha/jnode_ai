@@ -28,7 +28,7 @@ CI infrastructure, agent automation, and label conventions for JNode.
 | `opencode` | `issue_comment: [created]` and `pull_request_review_comment: [created]` | body matches `/oc ` (prefix or preceded by space) AND verb is NOT `triage` AND body has no `opencode.ai/s/` session link (agent self-trigger guard) AND author is COLLABORATOR / MEMBER / OWNER |
 | `triage` | `issue_comment: [created]` on issues (not PRs) | body verb is `triage` AND no session link AND author is COLLABORATOR / MEMBER / OWNER |
 | `auto-triage` | `issues: [opened]`, `issue_comment: [created]` | opened (non-bot, no `no-auto`, untriaged) OR human reply on a `needs-info` waiter (prior `## Triage`, <3 passes, no `in-progress`) |
-| `ticket-runner` | `issue_comment: [created]` (body starts with `/run`), `issues: [labeled]` (label starts with `kind/`), `workflow_run: [opencode, Java CI, completed]`, `pull_request_review: [submitted]` | startsWith `/run` OR actionable `kind/` label with clear triage OR `workflow_run` OR `pull_request_review` |
+| `ticket-runner` | `issue_comment: [created]` (body starts with `/run`), `issues: [labeled]` (label starts with `kind/`), `workflow_run: [opencode, Java CI, Triage, completed]`, `pull_request_review: [submitted]` | startsWith `/run` OR actionable `kind/` label with clear triage OR `workflow_run` OR `pull_request_review` |
 | `orchestrator` | `issue_comment: [created]` (body starts with `/orchestrate`) OR `workflow_run: [opencode, Java CI, completed]` | event is `issue_comment` with `/orchestrate` OR event is `workflow_run` |
 | `ant` (Java CI) | `push: [master]`, `pull_request: [master]` | always |
 
@@ -56,7 +56,7 @@ CI infrastructure, agent automation, and label conventions for JNode.
 
 - **opencode** is the worker. It runs the agent once per trigger, posts a result, and exits.
 - **auto-triage** is the receptionist. On every new issue it posts `/oc triage` (owned by the `jnode-triage-issue` skill); on reporter replies to vague triage it re-posts `/oc triage` so sufficiency is re-judged against the full thread.
-- **ticket-runner** auto-starts DEV without manual `/run` once an actionable kind (`bug`, `feature`, `chore`, `wiki`, `test`) plus a CLEAR `## Triage` comment exist (via `issues: labeled` or the `workflow_run` triage-clear path). Triage-first: labeled-but-untriaged issues get `/oc triage` before any run. `no-auto` opts an issue out of all auto paths; manual `/oc` and `/run` still work.
+- **ticket-runner** auto-starts DEV without manual `/run` once an actionable kind (`bug`, `feature`, `chore`, `wiki`, `test`) plus a CLEAR `## Triage` comment exist (via `issues: labeled` or the `Triage` workflow completion path). Triage-first: labeled-but-untriaged issues get `/oc triage` before any run. `no-auto` opts an issue out of all auto paths; manual `/oc` and `/run` still work.
 - **orchestrator** is the foreman. It holds a JSON state in the master issue body, picks the next child task from the queue, and tracks its phase (DEV, REVIEW, HUMAN_REVIEW, FEEDBACK, MERGE).
 - `orchestrator.yml` listens for `workflow_run` from `opencode` and `Java CI` plus `pull_request_review`. It advances the phase, loops back via `/oc fix` or `/oc review`, or merges the PR. On `Java CI` success it re-runs review for a deferred active PR; on failure it posts one `/oc fix` per SHA.
 

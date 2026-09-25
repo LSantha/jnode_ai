@@ -10,7 +10,7 @@ on:
   issues:
     types: [labeled]
   workflow_run:
-    workflows: ["opencode", "Java CI"]
+    workflows: ["opencode", "Java CI", "Triage"]
     types: [completed]
   pull_request_review:
     types: [submitted]

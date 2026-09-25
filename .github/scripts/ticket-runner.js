@@ -442,6 +442,13 @@ module.exports = async ({ github, context, core }) => {
     if (conclusion === "skipped") return;
 
     var wfName = context.payload.workflow_run.name || "opencode";
+    if (wfName === "Triage") {
+      var triageTitle = context.payload.workflow_run.display_title || "";
+      var triageMatch = triageTitle.match(/Triage #(\d+)/);
+      if (!triageMatch) return;
+      await maybeAutoStartAfterTriage(parseInt(triageMatch[1], 10));
+      return;
+    }
     if (wfName === "Java CI") {
       await handleJavaCICompletion();
       return;
