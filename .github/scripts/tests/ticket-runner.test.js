@@ -1016,7 +1016,7 @@ test("ticket-runner.js event handling suite", async (t) => {
 
   await t.test("Triage workflow completion auto-starts DEV after the report lands", async () => {
     const mocks = createMocks("workflow_run", {
-      runName: "Triage",
+      runName: "Triage #42 - Bug description",
       runDisplayTitle: "Triage #42 - Bug description",
       issueBody: "Bug description",
       issueLabels: [{ name: "kind/chore" }]

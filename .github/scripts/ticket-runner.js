@@ -443,7 +443,7 @@ module.exports = async ({ github, context, core }) => {
     if (conclusion === "skipped") return;
 
     var wfName = context.payload.workflow_run.name || "opencode";
-    if (wfName === "Triage") {
+    if (wfName === "Triage" || wfName.indexOf("Triage #") === 0) {
       var triageTitle = context.payload.workflow_run.display_title || "";
       var triageMatch = triageTitle.match(/Triage #(\d+)/);
       if (!triageMatch) return;
