@@ -41,6 +41,7 @@ final class FileHandleImpl implements VMFileHandle {
     private final boolean readOnly;
     /** The manager i'll use to close me */
     private final FileHandleManager fhm;
+    private final Thread owner;
     /** Am i closed? */
     private boolean closed;
     /** Position within this file */
@@ -58,6 +59,7 @@ final class FileHandleImpl implements VMFileHandle {
         this.file = file;
         this.readOnly = (mode == VMOpenMode.READ);
         this.fhm = fhm;
+        this.owner = Thread.currentThread();
         this.closed = false;
 
         // WRITE only mode, i.e. NOT APPEND mode. Thus we have to set the
@@ -194,6 +196,18 @@ final class FileHandleImpl implements VMFileHandle {
         file.flush();
         closed = true;
         fhm.close(this);
+    }
+
+    void closeFromManager() throws IOException {
+        try {
+            file.flush();
+        } finally {
+            closed = true;
+        }
+    }
+
+    boolean isOwnerAlive() {
+        return owner.isAlive();
     }
 
     /**

@@ -24,6 +24,7 @@ import java.io.IOException;
 import java.io.VMOpenMode;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.Iterator;
 import java.util.Map;
 
 import org.apache.log4j.Logger;
@@ -47,6 +48,15 @@ final class FileHandleManager {
      * @throws IOException
      */
     public synchronized FileHandleImpl open(FSFile file, VMOpenMode mode) throws IOException {
+        Iterator<FileData> files = openFiles.values().iterator();
+        while (files.hasNext()) {
+            FileData openFile = files.next();
+            openFile.closeStaleHandles();
+            if (!openFile.hasHandles()) {
+                files.remove();
+            }
+        }
+
         FileData fd = openFiles.get(file);
         if (fd == null) {
             fd = new FileData(file);
@@ -156,6 +166,25 @@ final class FileHandleManager {
                 return newHandle;
             } else {
                 throw new IOException("FileHandle is not known in FileData.dup!!");
+            }
+        }
+
+        void closeStaleHandles() {
+            Iterator<FileHandleImpl> staleHandles = handles.iterator();
+            while (staleHandles.hasNext()) {
+                FileHandleImpl handle = staleHandles.next();
+                if (!handle.isOwnerAlive()) {
+                    try {
+                        handle.closeFromManager();
+                    } catch (IOException e) {
+                        fdLog.warn("Unable to flush a stale file handle", e);
+                    } finally {
+                        staleHandles.remove();
+                        if (handle.getMode().canWrite()) {
+                            hasWriters = false;
+                        }
+                    }
+                }
             }
         }
 
