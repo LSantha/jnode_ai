@@ -42,6 +42,7 @@ final class FileHandleImpl implements VMFileHandle {
     /** The manager i'll use to close me */
     private final FileHandleManager fhm;
     private final Thread owner;
+    private final boolean canWrite;
     /** Am i closed? */
     private boolean closed;
     /** Position within this file */
@@ -60,6 +61,7 @@ final class FileHandleImpl implements VMFileHandle {
         this.readOnly = (mode == VMOpenMode.READ);
         this.fhm = fhm;
         this.owner = Thread.currentThread();
+        this.canWrite = mode.canWrite();
         this.closed = false;
 
         // WRITE only mode, i.e. NOT APPEND mode. Thus we have to set the
@@ -70,6 +72,24 @@ final class FileHandleImpl implements VMFileHandle {
             } catch (IOException e) {
                 // todo improve it - RuntimeException is not the best choice
                 // here
+                throw new RuntimeException(e);
+            }
+        }
+    }
+
+    FileHandleImpl(FSFile file, boolean canWrite, FileHandleManager fhm) {
+        this.mode = null;
+        this.file = file;
+        this.readOnly = !canWrite;
+        this.fhm = fhm;
+        this.owner = Thread.currentThread();
+        this.canWrite = canWrite;
+        this.closed = false;
+
+        if (canWrite) {
+            try {
+                file.setLength(0);
+            } catch (IOException e) {
                 throw new RuntimeException(e);
             }
         }
@@ -245,6 +265,10 @@ final class FileHandleImpl implements VMFileHandle {
      */
     public boolean isReadOnly() {
         return readOnly;
+    }
+
+    boolean isWrite() {
+        return canWrite;
     }
 
     public int available() {
