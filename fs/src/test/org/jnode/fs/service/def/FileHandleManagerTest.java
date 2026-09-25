@@ -20,9 +20,6 @@
 
 package org.jnode.fs.service.def;
 
-import java.io.IOException;
-import java.io.VMOpenMode;
-
 import org.jnode.fs.FSFile;
 import org.junit.Test;
 
@@ -42,7 +39,7 @@ public class FileHandleManagerTest {
         Thread thread = new Thread(new Runnable() {
             public void run() {
                 try {
-                    opened[0] = manager.open(file, VMOpenMode.WRITE);
+                    opened[0] = manager.open(file, true);
                 } catch (Throwable t) {
                     failure[0] = t;
                 }
@@ -57,7 +54,7 @@ public class FileHandleManagerTest {
             throw new AssertionError(failure[0]);
         }
 
-        FileHandleImpl replacement = manager.open(file, VMOpenMode.WRITE);
+        FileHandleImpl replacement = manager.open(file, true);
         assertTrue(opened[0].isClosed());
         assertNotSame(opened[0], replacement);
         replacement.close();

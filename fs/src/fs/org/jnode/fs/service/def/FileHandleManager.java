@@ -48,6 +48,10 @@ final class FileHandleManager {
      * @throws IOException
      */
     public synchronized FileHandleImpl open(FSFile file, VMOpenMode mode) throws IOException {
+        return open(file, mode.canWrite());
+    }
+
+    synchronized FileHandleImpl open(FSFile file, boolean canWrite) throws IOException {
         Iterator<FileData> files = openFiles.values().iterator();
         while (files.hasNext()) {
             FileData openFile = files.next();
@@ -63,7 +67,7 @@ final class FileHandleManager {
             openFiles.put(file, fd);
         }
 
-        return fd.open(mode);
+        return fd.open(canWrite);
     }
 
     /**
@@ -128,15 +132,15 @@ final class FileHandleManager {
          * 
          * @throws IOException if file is already open in write mode.
          */
-        public FileHandleImpl open(VMOpenMode mode) throws IOException {
-            if (mode.canWrite()) {
+        public FileHandleImpl open(boolean canWrite) throws IOException {
+            if (canWrite) {
                 if (hasWriters) {
                     throw new IOException("File is already open for writing");
                 } else {
                     hasWriters = true;
                 }
             }
-            final FileHandleImpl handle = new FileHandleImpl(file, mode, FileHandleManager.this);
+            final FileHandleImpl handle = new FileHandleImpl(file, canWrite, FileHandleManager.this);
             handles.add(handle);
             return handle;
         }
@@ -180,7 +184,7 @@ final class FileHandleManager {
                         fdLog.warn("Unable to flush a stale file handle", e);
                     } finally {
                         staleHandles.remove();
-                        if (handle.getMode().canWrite()) {
+                        if (handle.isWrite()) {
                             hasWriters = false;
                         }
                     }
@@ -198,7 +202,7 @@ final class FileHandleManager {
         public void close(FileHandleImpl handle) throws IOException {
             if (handles.contains(handle)) {
                 handles.remove(handle);
-                if (handle.getMode().canWrite()) {
+                if (handle.isWrite()) {
                     hasWriters = false;
                 }
             } else {
