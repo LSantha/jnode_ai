@@ -928,6 +928,25 @@ change). Facts, all verified:
    oracle, then nestedCatchLong + the census FAILED set as the
    regression net. Half A alone was NOT landed (it would trade one
    deterministic violation for another).
+5. FOURTH PASS -- the general placement rule, now derived (two
+   variants tried and reverted in one session):
+   - hoist-everything in a handler entry: finallyThrowsLong green,
+     nestedCatchLong red (`l1_6 = l1_3` above `l1_3 = s4_3 - s6_3`).
+   - hoist only copies whose SOURCE is defined outside the block:
+     nestedCatchLong green, finallyThrowsLong red (its phi copy's
+     source is the handler's own later def, so the copy stays
+     appended and the self-reference returns).
+   => Neither all nor none is right; the rule is PER COPY: place the
+   copy at the EARLIEST position in its block that is (a) after every
+   source def located inside the block and (b) before every use of the
+   copy's own lhs version. Both violations are instances of getting
+   one of (a)/(b) wrong. Implement placement as that per-copy
+   computation in the deconstructOnePhi flush (it needs the block's
+   quad positions plus each source's def position), then verify with
+   the recipe + nestedCatchLong + the census FAILED set. SSAStack's
+   counter is already monotonic per slot (SSAStack.getNewVariable), so
+   the version reuse seen in the dumps is object sharing through
+   `push(existingVersion)` (ANCHOR-L2-125/129), not a counter bug.
 Both attempts reverted; gates at the committed intermittent state. Repro recipe for the next
 attempt: the one-line try-body change above (do NOT leave it in the
 corpus while the bug lives -- deterministic red is a gate regression).
