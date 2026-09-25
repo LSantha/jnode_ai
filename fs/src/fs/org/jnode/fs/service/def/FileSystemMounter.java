@@ -41,8 +41,6 @@ import org.jnode.fs.service.FileSystemService;
 import org.jnode.naming.InitialNaming;
 import org.jnode.partitions.PartitionTableEntry;
 import org.jnode.plugin.PluginException;
-import org.jnode.work.Work;
-import org.jnode.work.WorkUtils;
 
 /**
  * A FileSystemMounter listens to the DeviceManager and once a Device that
@@ -100,13 +98,7 @@ final class FileSystemMounter implements DeviceListener {
      */
     public final void deviceStarted(final Device device) {
         if (device.implementsAPI(FSBlockDeviceAPI.class)) {
-            // add it to the queue of devices to be mounted only if the action
-            // is not already pending
-            WorkUtils.add(new Work("Mounting " + device.getId()) {
-                public void execute() {
-                    asyncDeviceStarted(device);
-                }
-            });
+            asyncDeviceStarted(device);
         }
     }
 

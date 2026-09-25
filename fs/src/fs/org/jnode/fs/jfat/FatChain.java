@@ -147,11 +147,13 @@ public class FatChain {
 
         final int last;
         int i, found = 0, l = 0;
+        int suffixFound = 0;
         int k = (offset > 0) ? 2 : 1;
 
         for (i = fat.getLastFree(); i < fat.size(); i++) {
             if (fat.isFreeEntry(i)) {
                 l = i;
+                suffixFound++;
                 found++;
             }
             if (found == n)
@@ -160,14 +162,17 @@ public class FatChain {
 
         if (found < n) {
             for (i = fat.firstCluster(); i < fat.getLastFree(); i++) {
-                if (fat.isFreeEntry(i))
+                if (fat.isFreeEntry(i)) {
+                    if (suffixFound == 0)
+                        l = i;
                     found++;
+                }
                 if (found == n)
                     break;
             }
         }
 
-        if (found < n)
+        if (found < n || l < fat.firstCluster())
             throw new FileSystemFullException("no free clusters");
 
         last = l;
@@ -190,7 +195,7 @@ public class FatChain {
         l = last;
         i = last;
         //
-        for (; found < (n - m - k); i--) {
+        for (; found < (n - m - k) && i >= fat.firstCluster(); i--) {
             if (fat.isFreeEntry(i)) {
                 fat.set(i, l);
                 if (dolog)
@@ -201,7 +206,7 @@ public class FatChain {
         }
         //
         if (offset > 0) {
-            for (;; i--) {
+            for (; i >= fat.firstCluster(); i--) {
                 if (fat.isFreeEntry(i)) {
                     fat.clearCluster(i, 0, offset);
                     fat.set(i, l);
@@ -215,7 +220,7 @@ public class FatChain {
             }
         }
         //
-        for (; found < (n - 1); i--) {
+        for (; found < (n - 1) && i >= fat.firstCluster(); i--) {
             if (fat.isFreeEntry(i)) {
                 fat.clearCluster(i);
                 fat.set(i, l);
@@ -225,6 +230,9 @@ public class FatChain {
                 found++;
             }
         }
+
+        if (found < n - 1)
+            throw new FileSystemFullException("no free clusters");
 
         //
         // Set the free-cluster hint to one past the last allocated cluster
@@ -733,6 +741,9 @@ public class FatChain {
         public int next() throws IOException {
             if (!hasNext())
                 throw new NoSuchElementException();
+
+            if (index >= fat.size())
+                throw new IOException("circular chain at: " + cursor);
 
             address = cursor;
 
