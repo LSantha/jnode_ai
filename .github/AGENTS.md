@@ -163,7 +163,7 @@ State is stored in the issue body as a markdown status block and a hidden JSON c
 ### Commands and Flags
 
 - `/run`: Start a new multi-turn run, or re-trigger an existing run that stalled.
-- `/run --turns <N>`: Start with custom turn limit (default: 3).
+- `/run --turns <N>` (equivalently `/run --max-turns <N>`): Start with a custom review feedback turn limit (default: 3). The argument `N` caps how many review feedback turns the run may take before the issue is marked `agent/failed`.
 - `/run --reset` or `/run --fresh`: Reset state and start fresh even if a run was already in progress or completed.
 
 ### Key Behaviors
