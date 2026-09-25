@@ -970,6 +970,19 @@ Census OK=11392 (the 7 probes), FAILED list identical, zero lint hits.
 Boot: unchanged (panic 0x18E5E3 this build -- the same stringSize
 null-sizeTable signature at a shifted EIP, as always layout-dependent).
 
+## M3 (deep review): float-const CCE / FREM arm -- CLOSED as not-reproducible (2026-09-26)
+
+Both halves of the M3 claim were tested directly on the current tree
+with a hand-built probe (`a * 2.0f`, `a / 4.0f`, `a * 2.0`, `a % 4.0`
+compiled through the full L2 pipeline via L2Dump):
+- No ClassCastException anywhere. The constant operand is materialized
+  into a frame slot (`mov dword[ebp-4],0x40800000` / push-pair +
+  fstp) and the op emits normally (`fld/fdiv/fstp`, `fld/fmul/fstp`).
+- The DREM-with-constant arm carries the FPREM completion loop
+  (`fprem / fnstsw ax / sahf / jp ...again`) and has NO stray `fsub32`
+  ahead of it. The review's line references predate the L2-076/082-era
+  constant-arm work; the claim is stale on this branch. No change made.
+
 ## L2-155 (LANDED): call argument pushes must follow the SIGNATURE, not stale operand types
 
 ROOT CAUSE of the LongTest NPE below, found and fixed 2026-09-26
