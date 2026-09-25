@@ -76,6 +76,12 @@ public class IRControlFlowGraph<T> implements Iterable<IRBasicBlock<T>> {
     private IRBasicBlock<T>[] bblocks;
     private List<IRBasicBlock<T>> postOrderList;
     private IRBasicBlock<T> startBlock;
+    /**
+     * ANCHOR-L2-159 (Wave C): per handler-entry block, the pre-try top
+     * version of every slot, snapshotted at handler entry (after
+     * popHandlerVersions). The exceptional edge's phi source.
+     */
+    private java.util.HashMap<IRBasicBlock<T>, Variable<T>[]> handlerEntryTops;
     private final IRBasicBlockFinder<T> finder;
     /**
      * Pre-fixup bytecode address per quad (104: exception tables). The
@@ -1089,6 +1095,37 @@ public class IRControlFlowGraph<T> implements Iterable<IRBasicBlock<T>> {
             } else {
                 defBlock = assignQuad.getBasicBlock();
             }
+            // ANCHOR-L2-159 (Wave C): the EXCEPTIONAL edge into a
+            // handler is not a CFG edge, so its phi source (the pre-try
+            // top, tagged with the handler block itself by
+            // rewritePhiParams) would be routed by the normal-flow
+            // heuristic onto a NORMAL predecessor -- a copy that never
+            // runs on the dispatch, leaving the handler's reads without a
+            // definition (guest: finallyThrowsLong `s4_8 = s4_8 + s6_6`).
+            // Such a source is copied INSIDE the handler, and the copy is
+            // placed by the per-copy rule (before the handler's first
+            // read of the version, since the pre-try source is defined
+            // outside the block).
+            if (join.isStartOfExceptionHandler()
+                && (tag == join || defBlock == join)) {
+                AssignQuad<T> hndMove =
+                    newPhiMove(join, lhs, rhs, originalAssignQuad);
+                hndMove.doPass2();
+                List<AssignQuad<T>> list = priBucket.get(join);
+                if (list == null) {
+                    list = new ArrayList<AssignQuad<T>>();
+                    priBucket.put(join, list);
+                }
+                list.add(hndMove);
+                placed.put(new PhiSource<T>(rhs, join, tag), join);
+                claimed.add(join);
+                if (firstBlock == null
+                    || join.getStartPC() < firstBlock.getStartPC()) {
+                    firstBlock = join;
+                    firstPhiMove = hndMove;
+                }
+                continue;
+            }
             if (defBlock != null && preds.contains(defBlock)
                 && !claimed.contains(defBlock)) {
                 primaries.add(new PhiSource<T>(rhs, defBlock, tag));
@@ -1277,7 +1314,7 @@ public class IRControlFlowGraph<T> implements Iterable<IRBasicBlock<T>> {
             if (amb != null) {
                 for (AssignQuad<T> q : amb) {
                     if (noteCopy(seen, q)) {
-                        b.add(q);
+                        flushCopy(b, q);
                     } else {
                         q.setDeadCode(true);
                     }
@@ -1287,7 +1324,7 @@ public class IRControlFlowGraph<T> implements Iterable<IRBasicBlock<T>> {
             if (pri != null) {
                 for (AssignQuad<T> q : pri) {
                     if (noteCopy(seen, q)) {
-                        b.add(q);
+                        flushCopy(b, q);
                     } else {
                         q.setDeadCode(true);
                     }
@@ -1321,6 +1358,74 @@ public class IRControlFlowGraph<T> implements Iterable<IRBasicBlock<T>> {
         }
         paq.setDeadCode(true);
         return representativeMove;
+    }
+
+    /**
+     * ANCHOR-L2-159 (Wave C half A): place one deconstructed-phi copy in
+     * its destination block at the EARLIEST position that is (a) after
+     * every in-block definition of the copy's source and (b) before every
+     * use of the version the copy defines. Appending (the old behavior)
+     * violates (b) whenever the block reads that version itself -- the
+     * handler-entry case in finallyThrowsLong -- and hoisting everything
+     * violates (a) whenever the source is computed in the block --
+     * nestedCatchLong. Returns -1 when the block never uses the copy's
+     * lhs version, i.e. the append is the correct (and historical)
+     * placement.
+     */
+    private void flushCopy(IRBasicBlock<T> b, AssignQuad<T> q) {
+        final List<Quad<T>> quads = b.getQuads();
+        final Variable<T> lhs = q.getLHS();
+        int firstUse = -1;
+        for (int i = 0; i < quads.size(); i += 1) {
+            final Quad<T> u = quads.get(i);
+            if (u == q || u.isDeadCode()) {
+                continue;
+            }
+            if (readsVersion(u, lhs)) {
+                firstUse = i;
+                break;
+            }
+        }
+        if (firstUse < 0) {
+            b.add(q);
+            return;
+        }
+        int after = 0;
+        final Operand<T>[] refs = q.getReferencedOps();
+        if (refs != null) {
+            for (int i = 0; i < refs.length; i += 1) {
+                if (!(refs[i] instanceof Variable)) {
+                    continue;
+                }
+                for (int j = 0; j < quads.size(); j += 1) {
+                    if (quads.get(j) != q && !quads.get(j).isDeadCode()
+                        && quads.get(j).getDefinedOp() == refs[i]) {
+                        if (j + 1 > after) {
+                            after = j + 1;
+                        }
+                        break;
+                    }
+                }
+            }
+        }
+        b.insertQuadAt(after > firstUse ? firstUse : after, q);
+    }
+
+    /**
+     * True if {@code u} reads exactly this SSA version (identity, not
+     * slot: two versions of one slot are different values).
+     */
+    private boolean readsVersion(Quad<T> u, Variable<T> v) {
+        final Operand<T>[] refs = u.getReferencedOps();
+        if (refs == null) {
+            return false;
+        }
+        for (int i = 0; i < refs.length; i += 1) {
+            if (refs[i] == v) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /**
@@ -1746,6 +1851,28 @@ public class IRControlFlowGraph<T> implements Iterable<IRBasicBlock<T>> {
             // instead of the caught NoSuchMethodException.)
             final int excSlot = block.getStackOffset();
             if (excSlot < renumberArray.length && renumberArray[excSlot] != null) {
+                // ANCHOR-L2-159 (Wave C): snapshot the pre-try tops of
+                // every slot NOW (after popHandlerVersions, before the
+                // exception is pushed and before the handler's own
+                // definitions). A handler-entry phi's EXCEPTIONAL-edge
+                // source must be one of these: the handler sees the
+                // locals as of the try entry (the same approximation
+                // popHandlerVersions restores for the handler body's
+                // reads). Without it the only source left is whatever
+                // the handler itself computes, and the deconstructed
+                // copy reads the handler's own store-back (guest:
+                // finallyThrowsLong `l1_4 = l1_5` feeding the lload).
+                if (handlerEntryTops == null) {
+                    handlerEntryTops = new java.util.HashMap<IRBasicBlock<T>,
+                        Variable<T>[]>();
+                }
+                Variable<T>[] tops = new Variable[renumberArray.length];
+                for (int i = 0; i < renumberArray.length; i += 1) {
+                    if (renumberArray[i] != null) {
+                        tops[i] = renumberArray[i].peek();
+                    }
+                }
+                handlerEntryTops.put(block, tops);
                 // Push ONCE and never pop: the exception behaves like the
                 // method arguments (version at the bottom of the slot's SSA
                 // stack, invisible once real versions stack above). A
@@ -2049,6 +2176,23 @@ public class IRControlFlowGraph<T> implements Iterable<IRBasicBlock<T>> {
             }
             SSAStack<T> st = getStack(aq.getLHS());
             Variable<T> var = st.peek();
+            // ANCHOR-L2-159 (Wave C): a handler-entry phi rewritten from
+            // the handler's OWN edge (the exceptional dispatch is modeled
+            // as a self-tagged source) would take a version the handler
+            // body computes -- the finally reading back its own store-back.
+            // The exceptional path's value is the pre-try top, snapshotted
+            // at handler entry.
+            if (var != null && succ.isStartOfExceptionHandler()
+                && var.getIndex() < renumberArray.length) {
+                final AssignQuad<T> varDef = var.getAssignQuad();
+                if (varDef != null && varDef.getBasicBlock() == succ
+                    && handlerEntryTops != null) {
+                    final Variable<T>[] tops = handlerEntryTops.get(succ);
+                    if (tops != null && tops[var.getIndex()] != null) {
+                        var = tops[var.getIndex()];
+                    }
+                }
+            }
             if (var == null) {
                 // Pure SSA placement admits joins whose incoming edge has no
                 // reaching definition. Keep that fact explicit until de-SSA.

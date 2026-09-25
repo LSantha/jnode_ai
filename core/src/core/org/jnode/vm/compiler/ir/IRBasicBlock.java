@@ -220,6 +220,28 @@ public class IRBasicBlock<T> {
         }
     }
 
+    /**
+     * ANCHOR-L2-159 (Wave C half A): insert a deSSA edge copy at an
+     * explicit position instead of appending it at the block end. A copy
+     * appended after the block's own USE of the version it defines leaves
+     * that use without a reaching definition on the edge (post-deSSA
+     * verifier: "read of s4_8 ... not written on every path"), and a copy
+     * placed before its source's in-block definition reads a stale value
+     * (guest: nestedCatchLong `l1_6 = l1_3` above `l1_3 = s4_3 - s6_3`).
+     * The position itself is computed by the deconstructOnePhi flush.
+     */
+    public void insertQuadAt(int pos, Quad<T> q) {
+        addDef(q);
+        int at = pos;
+        if (at < 0) {
+            at = 0;
+        }
+        if (at > quads.size()) {
+            at = quads.size();
+        }
+        quads.add(at, q);
+    }
+
     private void addDef(Quad<T> q) {
         Operand<T> def = q.getDefinedOp();
         if (def instanceof Variable &&

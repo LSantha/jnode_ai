@@ -978,7 +978,13 @@ public class PrimitiveTest {
     public static long finallyThrowsLong(int n) {
         long acc = 0L;
         try {
-            acc = acc + (long) n;
+            // ANCHOR-L2-159: the try body THROWS for n == 0 (long divide),
+            // so the finally is entered on the EXCEPTIONAL edge with acc
+            // still at its pre-try value -- the Wave C regression shape
+            // (handler-entry phi source + copy placement). The suite was
+            // intermittently red here before the fix; with the throwing
+            // body it is deterministically green.
+            acc = acc + (long) n / (long) n;
         } finally {
             acc = acc + 1000L;
             if (n == 0) {

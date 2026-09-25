@@ -951,6 +951,68 @@ Both attempts reverted; gates at the committed intermittent state. Repro recipe 
 attempt: the one-line try-body change above (do NOT leave it in the
 corpus while the bug lives -- deterministic red is a gate regression).
 
+## Wave C (LANDED, ANCHOR-L2-159): handler-entry phi source + edge-copy placement
+
+Fifth pass, and it closes finallyThrowsLong DETERMINISTICALLY (the
+intermittent all-junit red is gone: 250/0). The recipe from the passes
+above is now permanent in the corpus: the try body is
+`acc = acc + (long) n / (long) n`, so it THROWS for n == 0 and the
+finally is entered on the exceptional edge with `acc` still pre-try.
+
+Root cause, finally pinned by tracing the deconstructOnePhi flush
+(`[wc] copy ... -> <block>`): the EXCEPTIONAL edge into a handler
+contributes no phi source at all. `rewritePhiParams` fills a
+handler-entry phi's sources from CFG predecessors only, so the only
+source left for the dispatch path was a version the HANDLER BODY
+itself computes:
+
+    [wc] copy 0: l1_4 = l1_5 -> B30   (l1_5 = the handler's own store-back)
+    [wc] copy 0: l1_4 = s4_5 -> B2    (the normal edge)
+
+The first copy (whose "source" is defined later in the same block) was
+appended at B30's end, the second sat on a normal edge that never runs
+on the dispatch -- so the handler's lload had no reaching definition,
+deSSA resolved the stack slot to the ladd's own lhs, and the method
+contained `s4_8 = s4_8 + s6_6`.
+
+The fix is three coordinated parts (all in the IR frontend/deSSA, no
+emitter change):
+1. `renameVariables` snapshots the pre-try top of every slot at handler
+   entry (after `popHandlerVersions`, before the exception push).
+2. `rewritePhiParams` uses that snapshot when a handler-entry phi's
+   source would be a version DEFINED IN THE HANDLER -- the exceptional
+   edge's value is the pre-try top, the same approximation
+   `popHandlerVersions` already restores for the handler body's reads.
+3. `deconstructOnePhi` routes a source whose tag is the handler block
+   (the dispatch edge) INTO the handler instead of the normal-flow
+   heuristic, and the flush places each copy at the EARLIEST position
+   in its block that is after every in-block source def and before
+   every read of the version it defines (new
+   `IRBasicBlock.insertQuadAt`). This is the per-copy rule the fourth
+   pass derived; it replaces both rejected variants (hoist-all,
+   hoist-only-external) because the source classification now makes the
+   two cases fall out naturally.
+
+IRGenerator also re-arms the handler's exception slot with a fresh
+StackVariable after the handler's first instruction (the ExceptionArgument
+was left in the block's variables clone, so every later handler push at
+that slot cloned the exception as its lhs -- ANCHOR-L2-128's
+never-popped version absorbed the handler's own computation). With the
+correct phi source this is no longer load-bearing for the repro, but
+the slot reuse is a real defect and the re-arm removes it.
+
+Red-green: pre-fix overlay (`git show HEAD:` for the three files)
+2/2 deterministic red with the documented violation (`read of s4_8 at
+15: s4_8 = s4_8 + s6_6 in B30`); post-fix 3/3 green, T0 18/18, T3
+17/17, all-junit **250 tests / 0 failures** (first fully green
+all-junit on this branch). Census OK=11396 SKIP=1522 MAGIC=7
+HANDLERS=459 FAIL_64=0, FAILED list byte-identical to the 169 baseline,
+zero lint hits. Guest: oracle `force|91` (only the known div MIN/-1
+divergence), mauve v1 20/20 in both runs with zero force-only
+regressions. Boot: unchanged -- same `Integer.stringSize` null
+sizeTable panic at a shifted EIP (0x18EC3B this build), so the boot
+bug is a different defect.
+
 ## L2-156 (LANDED): D2I / F2L / D2L went through raw FISTP (wrong rounding, NaN, infinities)
 
 Source: deep review H4. Status 2026-09-26 morning (applied as
@@ -1341,6 +1403,7 @@ review (its section 3 entries for them are stale).
 | B/D/E | verifier wiring, tag-gate, copy completeness, harness delegation, guest grid, fuzz | queued (infra) |
 | P7/P8 | investigated, NOT landed (no firing case) | closed unless repro appears |
 | M1 | poll-free loop back edges (numeric back-edge test + 3 branch overloads) | LANDED L2-158 (lint 1954 -> 0, census clean, mauve v1 20/20) |
+| Wave C | handler-entry phi source + copy placement (finallyThrowsLong) | LANDED L2-159 (all-junit 250/0 green, census clean, mauve v1 20/20) |
 
 Standing rules: test-guard policy (red-green per fix, javap-verify
 classes, ASCII-clean diffs); census FAILED-identity + OK attribution;

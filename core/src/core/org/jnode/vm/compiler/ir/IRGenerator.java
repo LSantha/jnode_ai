@@ -165,6 +165,8 @@ public class IRGenerator<T> extends BytecodeVisitor {
     private int maxStack;
     private int stackOffset;
     private Variable<T>[] variables;
+    private int exceptionSlot = -1;
+    private boolean handlerEntry;
     private int address;
     private Iterator<IRBasicBlock<T>> basicBlockIterator;
     private IRBasicBlock<T> currentBlock;
@@ -189,6 +191,8 @@ public class IRGenerator<T> extends BytecodeVisitor {
         nLocals = code.getNoLocals();
         maxStack = code.getMaxStack();
         stackOffset = nLocals;
+        exceptionSlot = -1;
+        handlerEntry = false;
         variables = new Variable[nLocals + maxStack];
         int index = 0;
         int argCount = method.getNoArguments();
@@ -235,6 +239,19 @@ public class IRGenerator<T> extends BytecodeVisitor {
                 currentBlock.setVariables(variables.clone());
                 currentBlock.getVariables()[stackOffset] =
                     new ExceptionArgument(Operand.REFERENCE, stackOffset);
+                // ANCHOR-L2-159 (Wave C half B): the exception slot is live
+                // only until the handler's FIRST instruction consumes it
+                // (the implicit astore of the thrown object). Leaving the
+                // ExceptionArgument in the block's variables clone made
+                // every later handler push at that slot clone the
+                // ExceptionArgument as its lhs, so the renamer chained
+                // the handler's own computation onto the never-popped
+                // exception version and deSSA produced a self-copy
+                // (guest: finallyThrowsLong `s4_8 = s4_8 + s6_6`).
+                // endInstruction() re-arms the slot with a fresh stack
+                // variable right after that first instruction.
+                exceptionSlot = stackOffset;
+                handlerEntry = true;
                 stackOffset++;
             } else {
 //                return;
@@ -264,6 +281,22 @@ public class IRGenerator<T> extends BytecodeVisitor {
     }
 
     public void endInstruction() {
+        // ANCHOR-L2-159 (Wave C half B): the thrown object has now been
+        // stored (or otherwise consumed) -- the operand slot is free.
+        // Re-arm it with a fresh stack variable in BOTH the block's
+        // variables clone (quad constructors clone their lhs from it) and
+        // the generator's own array (visitors type through it), so the
+        // handler body's pushes are ordinary slot defs. Operand reads
+        // resolve by INDEX during renaming, so the implicit astore's read
+        // of the exception is unaffected.
+        if (handlerEntry && exceptionSlot >= 0) {
+            StackVariable<T> fresh =
+                new StackVariable<T>(Operand.UNKNOWN, exceptionSlot);
+            currentBlock.getVariables()[exceptionSlot] = fresh;
+            variables[exceptionSlot] = fresh;
+            exceptionSlot = -1;
+            handlerEntry = false;
+        }
     }
 
     public void visit_nop() {
