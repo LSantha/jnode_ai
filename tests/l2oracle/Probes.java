@@ -716,4 +716,94 @@ public class Probes {
         }
         return acc;
     }
+
+    /**
+     * ANCHOR-L2-160: static-read probes. Force-only failures in the
+     * Class/ClassLoader cluster (mauve v3 Class.init 1->7 fails, v4
+     * ClassLoader.initialize skipped under L1A but runs under force) all
+     * reduce to a forced method reading a STATIC of another class, and
+     * the boot crash is a java.* static array reading null. These probe
+     * the getstatic shapes at value level: own class, nested class,
+     * another top-level class in this file, and a static array element
+     * (the Integer.sizeTable shape).
+     */
+    public static class Statics {
+        public static int nestedInt = 7;
+        public static long nestedLong = 11L;
+        public static int[] nestedArray = new int[]{3, 5, 13};
+    }
+
+    static int ownStatic = 41;
+    static long ownStaticLong = 43L;
+    static int[] ownArray = new int[]{17, 19, 23};
+    static int counter;
+
+    public static int staticsOwn_i(int bump) {
+        counter += bump;
+        return ownStatic + counter;
+    }
+
+    public static int staticsNested_i(int bump) {
+        Statics.nestedInt += bump;
+        return Statics.nestedInt + (int) Statics.nestedLong;
+    }
+
+    public static int staticsArray_i(int i) {
+        Statics.nestedArray[0] += i;
+        return ownArray[i] + Statics.nestedArray[0] + ownArray[2];
+    }
+
+    public static long staticsMixed_j(int i) {
+        Statics.nestedLong += i;
+        return Statics.nestedLong * 2L + ownStaticLong + counter;
+    }
+
+    /**
+     * ANCHOR-L2-160: class-literal shapes. The force-only mauve failures
+     * that survive the getstatic probes are all class metadata reached
+     * through a class LITERAL (`int[].class`, `String.class`,
+     * `Boolean.TYPE`): old javac compiles those into a synthetic
+     * `class$` static array + aastore + ldc + checkcast, and the guest
+     * javac (1.4-era) is what compiles this corpus. getName() is a
+     * constant per class, getModifiers() a constant bit mask, so any
+     * divergence is a codegen bug in the literal pattern itself.
+     */
+    public static int classLiteral_i(int which) {
+        switch (which) {
+            case 0:
+                return Boolean.TYPE.getName().length();
+            case 1:
+                return Integer.TYPE.getName().length();
+            case 2:
+                return int[].class.getName().length();
+            case 3:
+                return String.class.getName().length();
+            case 4:
+                return Boolean.TYPE.getModifiers();
+            case 5:
+                return int[].class.getModifiers();
+            case 6:
+                return Object.class.getModifiers();
+            case 7:
+                return "x".getClass().getName().length();
+            default:
+                return -1;
+        }
+    }
+
+    /**
+     * ANCHOR-L2-160: class literal used as a VALUE (not just metadata):
+     * identity comparison and array use, which exercise the same
+     * synthetic class$ array without any reflective call.
+     */
+    public static int classLiteralValue_i(int which) {
+        Class<?> c = (which & 1) == 0 ? String.class : Integer.class;
+        if (c == String.class) {
+            return 1;
+        }
+        if (c == Integer.class) {
+            return 2;
+        }
+        return 3;
+    }
 }

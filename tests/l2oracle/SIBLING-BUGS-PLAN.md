@@ -1408,3 +1408,80 @@ review (its section 3 entries for them are stale).
 Standing rules: test-guard policy (red-green per fix, javap-verify
 classes, ASCII-clean diffs); census FAILED-identity + OK attribution;
 guest oracle/mauve where marked; cold boot per guest run.
+
+## L2-160 (probes landed): static-read shapes are CORRECT; the v3/v4 "new fails" are state artifacts
+
+Closing the mauve v2/v3/v4 validation gap for the whole H-batch + M1 +
+Wave C (all three previously validated on v1 only), via the `tests.jgz`
+plugin path (no staging, list read off the CD):
+
+- v1 20/20 both runs, zero force-only regressions (unchanged).
+- v2 52/52 both runs; one force-only crash,
+  `Properties.AcuniaPropertiesTest runEX ... String index out of
+  range: 882789416` -- the SAME testlet as the documented pre-existing
+  v2 51/52 (proven pre-existing on 9e6738ce0, state-dependent).
+- v3 17/17 both runs; `Class.init base fail=1 -> force fail=7` and
+  `ClassTest base fail=14 -> force fail=7`, `ClassLoader.initialize
+  base 0 checks -> force 1 fail`.
+- v4 19/19 both runs; `ClassLoader.initialize base fail=0 -> force
+  fail=1` (same testlet as v3).
+
+The v3 `Class.init` diff looked like a state artifact: the serial log
+(`/tmp/jnode_serial_resp/*.out`, the mux keeps per-batch console
+captures there) showed `mauve|...Class.init|force=0` in the LIST run --
+zero methods L2-compiled, yet different results. **Isolated per-testlet
+runs (one testlet per JVM) reverse that conclusion: it is a REAL bug.**
+Isolated `Class.init`: baseline `pass=14 fail=1`, forced `force=9`
+`pass=8 fail=7` -- same seven checks (#1,2,5,7,10,13,14) fail
+reproducibly with 9 methods genuinely compiled by L2. In the list run
+the class was reached already compiled (`force=0`), which is why the
+diff there was noise. `ClassLoader.initialize` is still unconfirmed
+(isolated force run sent the guest into an endless GC loop before
+reporting; its baseline never runs a check because the rogue finalizer
+does not publish the loader under L1A). Both are queued for the
+isolated-repro harness (below), NOT filed as compiler bugs until the
+minimal repro is in hand.
+
+Static-read probes (added, all GREEN, kept as guards): own-class,
+nested-class, cross-class and static-ARRAY reads, int/long, with
+mutating writes, all match the host exactly under force
+(`staticsOwn_i|staticsNested_i|staticsArray_i|staticsMixed_j`, oracle
+`force|95`). So plain `getstatic` addressing -- including another
+class's slot and array elements -- is correct in L2, which matches the
+boot-crash ledger (the `<clinit>` store lands) and keeps the boot
+crash's `Integer.sizeTable` null read unexplained by getstatic alone.
+Class-literal probes (`classLiteral_i`, `classLiteralValue_i`:
+`Boolean.TYPE`, `int[].class`, `String.class` metadata through the
+old-javac synthetic `class$` array) are added to Probes + CASES but
+their guest run is still pending.
+
+TRAPS (paid for today):
+- A guest command that never returns is indistinguishable from a slow
+  one unless the CALLER enforces a hard timeout. All guest work now
+  goes through `/tmp/opencode/gsh.sh <sec> <label> <cmd...>`: hard
+  `timeout`, then it classifies the failure by counting mark/sweep/oom
+  markers in the newest mux console capture, reports GC LOOP vs WEDGED
+  vs VM-OFF, powers the VM off and returns non-zero. Never issue a raw
+  long `serial_cmd` batch again.
+- `pgrep -f "mk-ox-iso.sh"` self-matches the polling shell -> infinite
+  wait. Use the recorded PID, or a pattern that cannot match your own
+  command line.
+- RAMFS is wiped on EVERY reboot: `mkdir /jnode/tmp/mv` first in each
+  new boot, or every `--write` and driver output file fails with
+  `parent directory does not exist` (which looks like a compiler
+  failure in the serial log but is not).
+- With the VM powered off, `serial_cmd` batches return nothing at all
+  (mux link stays "up", no guest answers). Check
+  `vboxmanage showvminfo JNode --machinereadable | grep VMState` and
+  `serial_cmd.py --status` (link=down means recover with poweroff +
+  startvm, never reset).
+- Do not sleep a fixed 170s for boot: probe with
+  `serial_cmd --timeout 15 "echo alive"` in a loop
+  (`/tmp/opencode/boot-wait.sh`, writes /tmp/jnode-ready). Measured
+  readiness: 10s after this boot, i.e. the 170s sleep was ~95% idle.
+- Per-check `FAIL` lines go to the SERIAL CONSOLE only (System.out in
+  MauveDriver's Harness), never to the out file; capture the batch
+  console (do not filter it) to get failing checkpoints.
+- Killing a serial client mid-batch loses that batch's console (the
+  mux writes the capture only on completion) -- power the VM off and
+  re-run instead of killing the client if you want the evidence.

@@ -188,6 +188,17 @@ public class OracleDriver {
         {"loopSwitchLong", "5"},
         {"loopSwitchLong", "0"},
         {"loopSwitchLong", "10"},
+        // ANCHOR-L2-160: getstatic shapes behind the force-only
+        // Class/ClassLoader failures and the boot crash's null
+        // java.* static array.
+        {"staticsOwn_i", "1"},
+        {"staticsOwn_i", "2"},
+        {"staticsNested_i", "1"},
+        {"staticsNested_i", "3"},
+        {"staticsArray_i", "0"},
+        {"staticsArray_i", "2"},
+        {"staticsMixed_j", "1"},
+        {"staticsMixed_j", "5"},
     };
 
     /**
