@@ -835,6 +835,57 @@ getLastUseAddress()` filter over `CheckcastQuad`/`InstanceofAssignQuad`
 
 ## NEW FINDING (2026-09-26): mauve v1 `Long.LongTest` NPEs under force only
 
+### Deep-dive results (what is proven, what is ruled out)
+
+PROVEN by guest experiment (drivers committed under `tests/l2oracle/diag/`):
+1. Deterministic single-method repro: forcing ONLY
+   `gnu.testlet.java.lang.Long.LongTest#test_parseLong` with L2 makes the
+   testlet NPE after exactly 41 checks. `LongBisect` does the
+   one-method-at-a-time bisect (CULPRIT line) and can dump any method's
+   L2 disassembly (`LongBisect disasm <method> <out>`).
+2. The NPE is at the FIRST check of test_parseLong, NOT the Hazelnut
+   try: `LongTest.java:240` is the line entry at bci 0-28 (the
+   LineNumberTable of test_parseLong starts 240:0, 243:29, 246:54, ...
+   265:233, 266:241, 267:249). My earlier attribution to the
+   NumberFormatException try was WRONG (matched the wrong method's line
+   table). The 41 passing checks come from the earlier sub-methods of
+   the testlet; the first check of the forced method NPEs.
+3. The receiver is NOT null and the static access is CORRECT:
+   `StaticProbe` shows `harness` set after the NPE (reflection), and
+   `IndexProbe` shows every method of the class -- compiled in one boot,
+   in any order -- emits the SAME isolated-statics offset (46216 =
+   16 + 11553*4, matching `getIsolatedStaticsIndex()`). Cross-boot
+   differences (45880 vs 46124) were just different class-load orders.
+4. The failing emission is structurally IDENTICAL to passing forced
+   methods: same prologue, same `fs mov edx,[+12] / mov eax,[edx+off]`
+   static read, same cp-constant reads `[edi+off]`, same static-call
+   shape, same IMT dispatch (`mov eax,[esp+8] / mov eax,[eax-4] /
+   mov eax,[eax+144 or 84] / call [eax+36]`), same per-block stack
+   guard (`fs cmp edi,[72] / je / int 0x88`).
+5. NEGATIVE results (do not re-tread): `FrameProbe` forces six
+   variants under L2 -- shallow vs ~200-byte frame, interface call
+   after the frame is grown, try/catch, try+big frame, static-field
+   receiver, static+big frame -- ALL GREEN for two inputs. So frame
+   size, guard-extension, try/catch and static-call shapes are NOT
+   sufficient triggers.
+6. `AotClinitProbe`: an L2-forced `<clinit>` (the AOT path the
+   bootimage uses) is visible across threads; `ThreadProbe`: plain
+   cross-thread isolated statics are fine. Per-thread statics + AOT
+   clinit is NOT broken in the normal runtime path.
+
+OPEN: the remaining trigger is some interaction inside the real
+method (ConstString cp loads + LCMP + boolean materialization + two
+static calls + interface call + very large frame, ~500 bytes of slots)
+or a runtime code-cache/heap interaction at that call site. The
+linear next step is prefix-truncation: replicate test_parseLong's
+statements one by one in a probe, forcing each, until the NPE appears
+(each cycle is one guest run, ~10 min); the alternative is a KDB-free
+memory read of the faulting code-cache address, which needs a new
+kernel-debugger command (KDB today only has thread/queue commands --
+no registers, no memory, no breakpoints; gdb is off limits per user
+directive).
+
+
 First seen in the post-H2 v1 run: `CRASH-ONLY-FORCE: gnu.testlet.java.lang.Long.LongTest runEX (base pass=60)` --
 `java.lang.NullPointerException: NPE at address <code addr>` after
 `pass=41`. DETERMINISTIC (3/3 force runs, 41 checks, address differs per
@@ -873,6 +924,48 @@ IMT read). Repro assets: LongBisect.java in this session's /tmp
 (guest-pushable via `serial_cmd.py --write`; needs the staged
 `gnu/testlet/**` classes copied next to it and run with cwd=/jnode/tmp/mv
 because JNode's `java` takes no -cp).
+
+## Boot-crash evidence ledger (2026-09-26, for the next session)
+
+PROVEN:
+- The fault site is NOT stable across builds: 0x18E11B -> 0x18E243
+  (post-H5) -> 0x18E243 (post-H2, byte-identical signature) ->
+  0x10B807 (same compiler sources, only diagnostic instrumentation
+  added). Data/layout-sensitive corruption, not one fixed codegen
+  site; EIPs are comparable only within one build.
+- The `<clinit>` store provably executes and lands; sentinel stores
+  (wide arm and ref arm) move the fault elsewhere.
+- The AOT/runtime statics-INDEX-mismatch theory is DEAD: the builder
+  bakes `Integer.sizeTable` at isolated index 3190, but at runtime
+  `VmStaticField`'s constructor never runs for java.lang.Integer
+  (instrumented print, zero lines in the boot log) -- the image
+  carries the VmFields, so the runtime uses the builder's indices.
+  (Cross-image index differences -- 3190 vs the default image's 2971
+  -- are just different class sets in L2 vs L1A images.)
+- Per-thread isolated statics are NOT the cause: cross-thread reads
+  are green, and an L2-FORCED `<clinit>` is visible from other
+  threads (`AotClinitProbe`, `ThreadProbe`).
+
+STILL SUSPECT (unproven):
+- `AbstractBootImageBuilder.copyStaticFields` skips every `java.*`
+  class (line ~1438: `if ((cnt > 0) && !name.startsWith("java."))`),
+  so java.* static VALUES are never seeded into the image while
+  their AOT `<clinit>`s run at boot on whichever thread gets there
+  first. The boot threads' statics tables are serialized separately
+  (`clsMgr.getIsolatedStatics().getTable()` is an image object), so
+  java.* slots start as whatever the image template holds. This
+  asymmetry is the cleanest remaining explanation for a java.lang.*
+  static reading null in an AOT boot while non-java classes work.
+  Fix candidates: (a) also copy java.* values, (b) mark java.* image
+  classes NOT-always-initialized so their clinit runs per-thread at
+  runtime, (c) seed each new boot thread's statics from the image
+  template. Needs a red repro first: an instrumented L2 boot with a
+  print of (a) which thread runs Integer's doInitialize and (b) the
+  identity of each thread's statics table -- the first attempt at
+  this instrumentation produced NO prints (early boot bypasses
+  VmThread.getIsolatedStatics/doInitialize on the AOT path), so the
+  print must go somewhere the AOT boot actually executes (e.g. the
+  compiled-method entry helper or the native boot code).
 
 ## Process lesson (2026-09-26): verify the CLASS, not the source
 
