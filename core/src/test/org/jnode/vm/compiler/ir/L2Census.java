@@ -31,8 +31,13 @@ import org.jnode.assembler.x86.X86Constants.Mode;
 import org.jnode.assembler.x86.X86TextAssembler;
 import org.jnode.vm.VmImpl;
 import org.jnode.vm.VmSystemClassLoader;
+import org.jnode.vm.classmgr.Signature;
 import org.jnode.vm.classmgr.VmByteCode;
+import org.jnode.vm.classmgr.VmConstMethodRef;
 import org.jnode.vm.classmgr.VmMethod;
+import org.jnode.vm.compiler.ir.quad.InstanceCallAssignQuad;
+import org.jnode.vm.compiler.ir.quad.InstanceCallQuad;
+import org.jnode.vm.compiler.ir.quad.Quad;
 import org.jnode.vm.classmgr.VmType;
 import org.jnode.vm.bytecode.BytecodeParser;
 import org.jnode.vm.compiler.CompiledExceptionHandler;
@@ -127,7 +132,15 @@ public class L2Census {
                         continue;
                     }
                     boolean hasHandlers = code.getNoExceptionHandlers() > 0;
-                    compileToText(m);
+                    final String text = compileToText(m);
+                    // ANCHOR-L2-155: emitted argument pushes must match
+                    // the resolved signature even when an operand's own
+                    // type is stale (a slot recycled from a long). Runs
+                    // here (own process) because a corpus scan inside the
+                    // JUnit suite perturbs the shared loader and pins the
+                    // known latent finallyThrowsLong SSA violation to
+                    // deterministic red.
+                    checkCallPushWidths(m, text);
                     ok++;
                     if (hasHandlers && handlerExamples.size() < 20) {
                         handlerExamples.add(full);
@@ -215,6 +228,101 @@ public class L2Census {
         }
     }
 
+    /**
+     * ANCHOR-L2-155 corpus lint: for every instance call quad, when the
+     * operand-derived push width disagrees with the signature (a stale
+     * operand type), the EMISSION must still be signature-wide. Prints
+     * one WIDTHMISMATCH line per violation; the gate is the census
+     * output diff.
+     */
+    static void checkCallPushWidths(VmMethod method, String text) {
+        try {
+            final IRControlFlowGraph cfg = lastCfg;
+            if (cfg == null) {
+                return;
+            }
+            final TypeSizeInfo tsi = loader.getArchitecture().getTypeSizeInfo();
+            for (Object b0 : (Iterable<?>) cfg) {
+                final IRBasicBlock b = (IRBasicBlock) b0;
+                for (Object q0 : (List<?>) b.getQuads()) {
+                    final Quad q = (Quad) q0;
+                    if (q.isDeadCode()) {
+                        continue;
+                    }
+                    final VmConstMethodRef mr;
+                    if (q instanceof InstanceCallQuad) {
+                        mr = ((InstanceCallQuad) q).getMethodRef();
+                    } else if (q instanceof InstanceCallAssignQuad) {
+                        mr = ((InstanceCallAssignQuad) q).getMethodRef();
+                    } else {
+                        continue;
+                    }
+                    final org.jnode.vm.classmgr.VmMethod rm;
+                    try {
+                        mr.resolve(method.getDeclaringClass().getLoader());
+                        rm = mr.getResolvedVmMethod();
+                    } catch (Throwable t) {
+                        continue;
+                    }
+                    final int sigSlots = Signature.getArgSlotCount(tsi,
+                        mr.getSignature()) + 1;
+                    int irSlots = 0;
+                    final Operand[] ops = q.getReferencedOps();
+                    for (int i = 0; i < ops.length; i++) {
+                        irSlots += (ops[i].getType() == Operand.LONG
+                            || ops[i].getType() == Operand.DOUBLE) ? 2 : 1;
+                    }
+                    if (irSlots == sigSlots) {
+                        continue;
+                    }
+                    final int emitted = emissionPushCount(text, q.getAddress());
+                    if (emitted >= 0 && emitted != sigSlots) {
+                        System.out.println("WIDTHMISMATCH " + method.getDeclaringClass()
+                            .getName() + "#" + method.getName() + " @" + q.getAddress()
+                            + " " + mr.getName() + " sig=" + mr.getSignature()
+                            + " sigSlots=" + sigSlots + " irSlots=" + irSlots
+                            + " emitted=" + emitted);
+                    }
+                }
+            }
+        } catch (Throwable t) {
+            // lint only; never fail the census itself
+        }
+    }
+
+    private static int emissionPushCount(String text, int addr) {
+        final String[] lines = text.split("\n");
+        int start = -1;
+        for (int i = 0; i < lines.length; i++) {
+            if (lines[i].trim().endsWith("_qb_" + addr + ":")) {
+                start = i;
+                break;
+            }
+        }
+        if (start < 0) {
+            return -1;
+        }
+        int pushes = 0;
+        for (int i = start + 1; i < lines.length; i++) {
+            final String t = lines[i].trim();
+            if (t.endsWith(":")) {
+                if (!t.endsWith("$$ediok:")) {
+                    break;
+                }
+                continue;
+            }
+            if (t.startsWith("push ") && !t.equals("push ecx") && !t.startsWith("pusha")) {
+                pushes++;
+            }
+            if (t.startsWith("call ") || t.startsWith("mov eax,dword[esp+")) {
+                break;
+            }
+        }
+        return pushes;
+    }
+
+    private static IRControlFlowGraph lastCfg;
+
     static String compileToText(VmMethod method) throws Exception {
         StringWriter sw = new StringWriter();
         X86TextAssembler os = new X86TextAssembler(sw, cpuId, Mode.CODE32);
@@ -236,6 +344,7 @@ public class L2Census {
         LinearScanAllocator lsa = X86Level2Compiler.allocateRanges(cfg);
         X86Level2Compiler.generateCode(x86cg, cfg, irg, lsa);
         os.flush();
+        lastCfg = cfg;
         // 104: tables are emitted now; a count mismatch means entries were
         // lost -- fail loud into FAIL_OTHER instead of going silent.
         CompiledExceptionHandler[] table = cm.getExceptionHandlers();

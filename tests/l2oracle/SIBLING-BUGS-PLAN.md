@@ -833,9 +833,59 @@ the scan is a `LiveRange.getAssignAddress() <= hazardAddr <=
 getLastUseAddress()` filter over `CheckcastQuad`/`InstanceofAssignQuad`
 /`StaticRef*Quad`/`RefStoreQuad` in `CompileResult.cfg`.
 
+## L2-155 (LANDED): call argument pushes must follow the SIGNATURE, not stale operand types
+
+ROOT CAUSE of the LongTest NPE below, found and fixed 2026-09-26
+morning. `writeParameters` (GenericX86CodeGenerator) pushed a STACK
+operand as a long pair whenever `operand.getType() == LONG/DOUBLE`,
+but the receiver fetch in every instance-call sequence is computed
+from `Signature.getArgSlotCount(typeSizeInfo, methodRef.getSignature())`.
+An operand type can be STALE: a stack slot recycled from an `lcmp`'s
+long operands keeps the LONG type through deSSA, so a boolean argument
+was pushed as two slots, the push sequence became 4 wide for a
+3-slot signature, and the IMT read `mov eax,[esp+8]` landed on the
+BOOLEAN (0/1) -- `mov eax,[eax-4]` then faulted in the CALLER. Live
+witness: `LongTest#test_parseLong`, NPE at its first
+`harness.check(lcmp-result, msg)` under force, deterministic 3/3, and
+only that method (the others never have a boolean in a recycled long
+slot). `L2Dump --calls` (new mode) shows it directly:
+`op1 s3_6 type=6(LONG) ... pushSlots=4` against
+`sigSlots=3`.
+Fix: `writeParameters(quad, methodRef)` derives every push width from
+the RESOLVED SIGNATURE (receiver = 1 slot by definition), falling back
+to operand types only when the operand count does not match the
+signature. Routs all eight instance/static call quads through it.
+Corpus scale (census lint, own process): PRE-fix THREE core methods
+emitted wrong widths -- `DefaultPluginManager#startSystemPlugins`
+(append, 3 pushes for 2 slots), and in the GARBAGE COLLECTOR
+`GCManager#markHeap` (`walk`: 6 for 5; `getNext`: 2 for 1) -- a
+shifted receiver fetch in the GC mark path is a credible contributor
+to the boot-image corruption family. POST-fix: zero.
+Guards: `L2PipelineTest.testStaleArgTypeUsesSignatureWidth` (synthetic
+quad with a deliberately stale LONG operand -- red pre-fix via class
+overlay: 3 pushes vs 2; the argc==0 arm covers the receiver slot) plus
+the census lint `WIDTHMISMATCH` lines (a corpus scan inside the JUnit
+suite perturbed the shared loader and pinned the known latent
+`finallyThrowsLong` SSA violation to deterministic red -- gate
+regression -- so the corpus sweep lives in L2Census's own process).
+Guest: `LongBisect` forced#14 `test_parseLong -> ok` (was
+deterministic NPE), mauve v1 20/20 with ZERO force-only regressions
+(the v1 regression is closed), oracle force|84 green (known div MIN/-1
+only). T0 18/18, T3 17/17, T1 37 (+1), all-junit 250 back to its
+pre-existing intermittent, census OK=11385 with identical FAILED list
+and no WIDTHMISMATCH. Boot: unchanged (0x18E243, stringSize null
+sizeTable) -- this fix is orthogonal to that crash.
+
 ## NEW FINDING (2026-09-26): mauve v1 `Long.LongTest` NPEs under force only
 
 ### Deep-dive results (what is proven, what is ruled out)
+
+STATUS: ROOT CAUSED AND FIXED as L2-155 (see the L2-155 entry
+above): stale LONG operand type on a boolean argument desynced the
+push width from the signature-derived receiver fetch. The guest NPE
+and the mauve v1 force-only regression are GONE after the fix
+(LongBisect forced#14 ok, v1 20/20 zero regressions). The evidence
+below is kept as the investigation record.
 
 PROVEN by guest experiment (drivers committed under `tests/l2oracle/diag/`):
 1. Deterministic single-method repro: forcing ONLY

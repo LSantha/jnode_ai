@@ -169,6 +169,61 @@ public class L2Dump {
             }
             return;
         }
+        if (args[args.length - 1].equals("--calls")) {
+            // Per call quad: every referenced operand with its type and
+            // assigned location. Used to audit writeParameters pushes
+            // against Signature.getArgSlotCount (ANCHOR-L2-154 era: a
+            // stale LONG/DOUBLE stack-slot type made the push sequence
+            // wider than the receiver-offset math assumed).
+            for (Object b0 : cfg) {
+                final org.jnode.vm.compiler.ir.IRBasicBlock b =
+                    (org.jnode.vm.compiler.ir.IRBasicBlock) b0;
+                for (Object q0 : b.getQuads()) {
+                    final org.jnode.vm.compiler.ir.quad.Quad q =
+                        (org.jnode.vm.compiler.ir.quad.Quad) q0;
+                    if (q.isDeadCode() || !q.getClass().getName().endsWith("CallQuad")
+                        && !q.getClass().getName().endsWith("CallAssignQuad")) {
+                        continue;
+                    }
+                    System.out.println(q + "  [" + q.getClass().getSimpleName() + "]");
+                    if (q instanceof org.jnode.vm.compiler.ir.quad.InstanceCallQuad) {
+                        try {
+                            final org.jnode.vm.classmgr.VmConstMethodRef mr =
+                                ((org.jnode.vm.compiler.ir.quad.InstanceCallQuad) q).getMethodRef();
+                            mr.resolve(method.getDeclaringClass().getLoader());
+                            final org.jnode.vm.classmgr.VmMethod rm = mr.getResolvedVmMethod();
+                            final StringBuilder sb = new StringBuilder();
+                            for (int i = 0; i < rm.getNoArguments(); i++) {
+                                sb.append(' ').append(rm.getArgumentType(i).getName())
+                                    .append('/').append(rm.getArgumentType(i).getJvmType());
+                            }
+                            System.out.println("    resolved=" + rm.getName() + " args=["
+                                + sb.toString().trim() + "] sig=" + mr.getSignature());
+                        } catch (Throwable e) {
+                            System.out.println("    resolved=? " + e);
+                        }
+                    }
+                    final org.jnode.vm.compiler.ir.Operand[] ops = q.getReferencedOps();
+                    int slots = 0;
+                    for (int i = 0; i < ops.length; i++) {
+                        final org.jnode.vm.compiler.ir.Operand op = ops[i];
+                        int slots1 = 1;
+                        if (op.getType() == org.jnode.vm.compiler.ir.Operand.LONG
+                            || op.getType() == org.jnode.vm.compiler.ir.Operand.DOUBLE) {
+                            slots1 = 2;
+                        }
+                        slots += slots1;
+                        System.out.println("    op" + i + " " + op + " type=" + op.getType()
+                            + " mode=" + op.getAddressingMode() + " slots=" + slots1
+                            + " loc=" + (op instanceof org.jnode.vm.compiler.ir.Variable
+                            ? ((org.jnode.vm.compiler.ir.Variable) op).getLocation()
+                            : "n/a"));
+                    }
+                    System.out.println("    pushSlots=" + slots);
+                }
+            }
+            return;
+        }
         X86Level2Compiler.generateCode(x86cg, cfg, irg, lsa);
         os.flush();
         System.out.println(sw.toString());

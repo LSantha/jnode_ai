@@ -7335,7 +7335,7 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
             //dropParameters(sm, true);
             // Preserve ECX below the arguments (frame-shift reason).
             os.writePUSH(X86Register.ECX);
-            writeParameters(quad);
+            writeParameters(quad, methodRef);
             // Call the methods code from the statics table (EAX-result model;
             // ECX is caller-saved, ANCHOR-L2-076).
             callJavaMethod(sm);
@@ -7362,7 +7362,7 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
             //dropParameters(sm, true);
             // Preserve ECX below the arguments (frame-shift reason).
             os.writePUSH(X86Register.ECX);
-            writeParameters(quad);
+            writeParameters(quad, methodRef);
             // Call the methods code from the statics table (ECX preserved).
             callJavaMethod(sm);
             os.writePOP(X86Register.ECX);
@@ -7400,7 +7400,7 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
             // convention. The receiver fetch stays: pushes above ECX are
             // exactly the writeParameters words.
             os.writePUSH(X86Register.ECX);
-            writeParameters(quad);
+            writeParameters(quad, methodRef);
 //            dropParameters(mts, true);
 
             if (method.isFinal() || method.isPrivate() || declClass.isFinal()) {
@@ -7469,7 +7469,7 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
 
             // ANCHOR-L2-101: ECX below the arguments (see VirtualCallAssign).
             os.writePUSH(X86Register.ECX);
-            writeParameters(quad);
+            writeParameters(quad, methodRef);
 //            dropParameters(mts, true);
 
             if (method.isFinal() || method.isPrivate() || declClass.isFinal()) {
@@ -7523,7 +7523,7 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
         } else {
             // Preserve ECX below the arguments (frame-shift reason).
             os.writePUSH(X86Register.ECX);
-            writeParameters(quad);
+            writeParameters(quad, methodRef);
             //todo handle return types
             final int offset = stackFrame.getHelper().getSharedStaticsOffset(method);
             // ECX is caller-saved across the call (ANCHOR-L2-076).
@@ -7546,7 +7546,7 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
         } else {
             // Preserve ECX below the arguments (frame-shift reason).
             os.writePUSH(X86Register.ECX);
-            writeParameters(quad);
+            writeParameters(quad, methodRef);
             final int offset = stackFrame.getHelper().getSharedStaticsOffset(method);
             // ECX is caller-saved across the call (ANCHOR-L2-076).
             os.writeCALL(stackFrame.getHelper().STATICS, offset);
@@ -7566,7 +7566,7 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
         final int argSlotCount = Signature.getArgSlotCount(typeSizeInfo, methodRef.getSignature());
         // ANCHOR-L2-101: ECX below the arguments (see VirtualCallAssign).
         os.writePUSH(X86Register.ECX);
-        writeParameters(quad);
+        writeParameters(quad, methodRef);
         // Get objectref -> EAX (ECX already below: SP math holds).
         // emitInvokeInterface takes EAX and uses no SP math itself.
         X86CompilerHelper helper = stackFrame.getHelper();
@@ -7592,7 +7592,7 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
         // remove parameters from vstack
         // ANCHOR-L2-101: ECX below the arguments (see VirtualCallAssign).
         os.writePUSH(X86Register.ECX);
-        writeParameters(quad);
+        writeParameters(quad, methodRef);
         // Get objectref -> EAX (ECX already below: SP math holds).
         X86CompilerHelper helper = stackFrame.getHelper();
         os.writeMOV(helper.ADDRSIZE, helper.AAX, helper.SP, argSlotCount * helper.SLOTSIZE);
@@ -7608,9 +7608,59 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
     }
 
     private void writeParameters(Quad quad) {
+        writeParameters(quad, null);
+    }
+
+    /**
+     * ANCHOR-L2-155: for instance calls the RESOLVED SIGNATURE is the only
+     * authority on argument width. An operand's own type can be stale (a
+     * stack slot recycled from a long keeps the LONG type through
+     * deSSA), and the receiver fetch in the call sequences is computed
+     * from {@code Signature.getArgSlotCount}: a push sequence of a
+     * different width lands the receiver fetch on an argument (or past
+     * the receiver) and faults in the CALLER. Witness:
+     * `LongTest#test_parseLong` NPE'd under force because a boolean
+     * argument typed LONG was pushed as a long pair, so
+     * `mov eax,[esp+8]` dereferenced the boolean 0/1. Signature-driven
+     * widths make the two computations agree by construction (and fix
+     * the mirror case: a real long argument with a stale int type).
+     */
+    private void writeParameters(Quad quad, VmConstMethodRef methodRef) {
         Operand<T>[] referencedOps = quad.getReferencedOps();
+        VmType<?>[] argTypes = null;
+        if (methodRef != null) {
+            try {
+                methodRef.resolve(currentMethod.getDeclaringClass().getLoader());
+                final VmMethod rm = methodRef.getResolvedVmMethod();
+                final int argc = rm.getNoArguments();
+                if (argc == referencedOps.length - 1) {
+                    argTypes = new VmType<?>[argc];
+                    for (int i = 0; i < argc; i++) {
+                        argTypes[i] = rm.getArgumentType(i);
+                    }
+                }
+            } catch (Throwable t) {
+                argTypes = null;
+            }
+        }
         for (int i = 0; i < referencedOps.length; i++) {
             Operand operand = referencedOps[i];
+            // Signature width for argument i (op0 is the receiver, which
+            // is always exactly one reference slot).
+            boolean wideBySignature = false;
+            boolean haveSignature = false;
+            if (argTypes != null) {
+                if (i == 0) {
+                    haveSignature = true;
+                } else if (i - 1 < argTypes.length) {
+                    final VmType at = argTypes[i - 1];
+                    haveSignature = true;
+                    if (at.isPrimitive()) {
+                        final int jt = at.getJvmType();
+                        wideBySignature = jt == JvmType.LONG || jt == JvmType.DOUBLE;
+                    }
+                }
+            }
             if (operand.getAddressingMode() == CONSTANT) {
                 // ANCHOR-L2-076 (CG-4e, B14): all constant kinds, halves in
                 // callee order (MSB/high pushed first, like L1A and the spill
@@ -7635,13 +7685,9 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
                 os.writePUSH(reg);
             } else if (operand.getAddressingMode() == STACK) {
                 int disp = ((StackLocation) ((Variable) operand).getLocation()).getDisplacement();
-                if (operand.getType() == Operand.LONG) {
-                    os.writePUSH(GPR.EBP, disp);
-                    os.writePUSH(GPR.EBP, disp - stackFrame.getHelper().SLOTSIZE);
-                } else if (operand.getType() == Operand.DOUBLE) {
-                    // ANCHOR-L2-082: high-base convention (see DADD): high
-                    // half at [disp] pushed first, low half at [disp-4]
-                    // second -- same order as the LONG path above.
+                final boolean wide = haveSignature ? wideBySignature
+                    : (operand.getType() == Operand.LONG || operand.getType() == Operand.DOUBLE);
+                if (wide) {
                     os.writePUSH(GPR.EBP, disp);
                     os.writePUSH(GPR.EBP, disp - stackFrame.getHelper().SLOTSIZE);
                 } else {

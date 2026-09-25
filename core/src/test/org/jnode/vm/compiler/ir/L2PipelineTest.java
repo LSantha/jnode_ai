@@ -38,6 +38,8 @@ import org.jnode.vm.JvmType;
 import org.jnode.vm.VmSystemClassLoader;
 import org.jnode.vm.bytecode.BytecodeParser;
 import org.jnode.vm.classmgr.VmByteCode;
+import org.jnode.vm.classmgr.Signature;
+import org.jnode.vm.classmgr.VmConstMethodRef;
 import org.jnode.vm.classmgr.VmMethod;
 import org.jnode.vm.classmgr.VmType;
 import org.jnode.vm.compiler.CompiledExceptionHandler;
@@ -52,6 +54,9 @@ import org.jnode.vm.x86.compiler.l2.X86CodeGenerator;
 import org.jnode.vm.x86.compiler.l2.X86Level2Compiler;
 import org.jnode.vm.x86.compiler.l2.X86StackFrame;
 import org.jnode.vm.compiler.ir.quad.ArrayAssignQuad;
+import org.jnode.vm.compiler.ir.StackVariable;
+import org.jnode.vm.compiler.ir.quad.InstanceCallQuad;
+import org.jnode.vm.compiler.ir.quad.VirtualCallAssignQuad;
 import org.jnode.vm.compiler.ir.quad.ArrayStoreQuad;
 import org.jnode.vm.compiler.ir.quad.AssignQuad;
 import org.jnode.vm.compiler.ir.quad.BinaryOperation;
@@ -156,6 +161,7 @@ public class L2PipelineTest {
         CompiledMethod cm;
         IRControlFlowGraph cfg;
         LiveRange[] liveRanges;
+        TypeSizeInfo typeSizeInfo;
     }
 
     private static CompileResult compileMethod(VmMethod method) throws Exception {
@@ -193,6 +199,7 @@ public class L2PipelineTest {
         r.cm = cm;
         r.cfg = cfg;
         r.liveRanges = liveRanges;
+        r.typeSizeInfo = typeSizeInfo;
         return r;
     }
 
@@ -1184,6 +1191,229 @@ public class L2PipelineTest {
         }
         assertTrue("wide-const putstatic never stored the high half: " + text,
             stored);
+    }
+
+    /** Minimal concrete Variable for synthetic-quad emission tests. */
+    private static final class TypedVar extends StackVariable {
+        TypedVar(int type) {
+            super(type, 0);
+        }
+
+        public Object clone() {
+            return this;
+        }
+    }
+
+    /**
+     * ANCHOR-L2-155: an argument whose stack slot kept a stale LONG type
+     * (the slot was recycled from an lcmp's long operands -- the exact
+     * situation in `LongTest#test_parseLong`, which NPE'd under force)
+     * must still be pushed at its SIGNATURE width, so the receiver fetch
+     * (`Signature.getArgSlotCount` slots deep) lands on the receiver and
+     * not on the argument. Synthetic: builds a call quad for
+     * `Checker.check(Z,Ljava/lang/String;)I` with the boolean operand
+     * deliberately typed LONG. Pre-fix the emission contains four arg
+     * pushes and the IMT read dereferences the boolean (0/1).
+     */
+    @Test
+    public void testStaleArgTypeUsesSignatureWidth() throws Exception {
+        VmMethod probe = null;
+        VmConstMethodRef checkRef = null;
+        // Harvest a resolved instance-call methodRef with a one-slot
+        // primitive first argument from the existing corpus (the test
+        // deliberately adds NO corpus method: a new probe perturbed the
+        // SSA sweep order and made the known latent finallyThrowsLong
+        // violation deterministic -- a gate regression).
+        final Object[] harvested = findOneSlotPrimitiveInstanceCall();
+        assertNotNull("no one-slot-primitive instance call in the corpus",
+            harvested);
+        checkRef = (VmConstMethodRef) harvested[0];
+        probe = (VmMethod) harvested[1];
+
+        final org.jnode.vm.classmgr.VmMethod rm = checkRef.getResolvedVmMethod();
+        final int argc = rm.getNoArguments();
+        // Synthetic block shaped exactly like the signature: receiver,
+        // then one slot per argument -- except argument 0, deliberately
+        // typed LONG (the stale-slot-type scenario).
+        final Variable[] vars = new Variable[argc + 2];
+        final int[] offs = new int[argc + 1];
+        // argc==0: stale-type the RECEIVER slot (signature says
+        // REFERENCE); argc>0: stale-type argument 0 (the LongTest case).
+        final Variable receiver = new TypedVar(argc == 0 ? Operand.LONG : Operand.REFERENCE);
+        receiver.setLocation(new StackLocation(-8));
+        vars[0] = receiver;
+        offs[0] = 0;
+        int expectedPushes = 1;
+        if (argc == 0) {
+            // the receiver's stale LONG must not widen the push either
+            final IRBasicBlock b0 = new IRBasicBlock(0);
+            final Variable[] v0 = new Variable[]{receiver,
+                new TypedVar(Operand.INT)};
+            v0[1].setLocation(new StackLocation(-12));
+            b0.setVariables(v0);
+            final int[] offs0 = new int[]{0};
+            final org.jnode.vm.compiler.ir.quad.VirtualCallQuad q0 =
+                new org.jnode.vm.compiler.ir.quad.VirtualCallQuad(0, b0, checkRef, offs0);
+            final StringWriter sw0 = new StringWriter();
+            final X86TextAssembler os0 = new X86TextAssembler(sw0, cpuId, Mode.CODE32);
+            final EntryPoints ctx0 = new EntryPoints(loader,
+                VmUtils.getVm().getHeapManager(), 1);
+            final X86CompilerHelper h0 = new X86CompilerHelper(os0, null, ctx0, true);
+            h0.setMethod(probe);
+            final CompiledMethod cm0 = new CompiledMethod(1);
+            final X86StackFrame sf0 = new X86StackFrame(os0, h0, probe, ctx0, cm0);
+            new X86CodeGenerator(probe, os0, 16, loader.getArchitecture()
+                .getTypeSizeInfo(), sf0).generateCodeFor(q0);
+            os0.flush();
+            int pushes0 = 0;
+            final String[] l0 = sw0.toString().split("\n");
+            for (int li = 0; li < l0.length; li++) {
+                final String t = l0[li].trim();
+                if (t.startsWith("push ") && !t.equals("push ecx")) {
+                    pushes0++;
+                }
+                if (t.startsWith("mov eax,dword[esp+")) {
+                    break;
+                }
+            }
+            assertEquals("stale LONG-typed receiver pushed as a long pair; the "
+                + "receiver fetch then misses it (ANCHOR-L2-155):\n" + sw0,
+                1, pushes0);
+        }
+        for (int i = 0; i < argc; i++) {
+            final org.jnode.vm.classmgr.VmType at = rm.getArgumentType(i);
+            final boolean wide = at.isPrimitive()
+                && (at.getJvmType() == JvmType.LONG || at.getJvmType() == JvmType.DOUBLE);
+            final int type = i == 0 ? Operand.LONG
+                : (wide ? Operand.LONG : (at.isPrimitive() ? Operand.INT : Operand.REFERENCE));
+            vars[i + 1] = new TypedVar(type);
+            vars[i + 1].setLocation(new StackLocation(-12 - 4 * (i + 1)));
+            offs[i + 1] = i + 1;
+            expectedPushes += wide ? 2 : 1;
+        }
+        vars[argc + 1] = new TypedVar(Operand.INT);
+        vars[argc + 1].setLocation(new StackLocation(-12 - 4 * (argc + 1)));
+        final IRBasicBlock block = new IRBasicBlock(0);
+        block.setVariables(vars);
+        final VirtualCallAssignQuad q = new VirtualCallAssignQuad(0, block, argc + 1,
+            checkRef, offs);
+
+        final StringWriter sw = new StringWriter();
+        final X86TextAssembler os = new X86TextAssembler(sw, cpuId, Mode.CODE32);
+        final EntryPoints context = new EntryPoints(loader,
+            VmUtils.getVm().getHeapManager(), 1);
+        final X86CompilerHelper helper = new X86CompilerHelper(os, null, context, true);
+        helper.setMethod(probe);
+        final CompiledMethod cm = new CompiledMethod(1);
+        final TypeSizeInfo tsi = loader.getArchitecture().getTypeSizeInfo();
+        final X86StackFrame sf = new X86StackFrame(os, helper, probe, context, cm);
+        final X86CodeGenerator cg = new X86CodeGenerator(probe, os, 16, tsi, sf);
+        cg.generateCodeFor(q);
+        os.flush();
+        final String text = sw.toString();
+        int pushes = 0;
+        final String[] lines = text.split("\n");
+        for (int i = 0; i < lines.length; i++) {
+            final String s = lines[i].trim();
+            if (s.startsWith("push ") && !s.equals("push ecx")) {
+                pushes++;
+            }
+            if (s.startsWith("mov eax,dword[esp+")) {
+                break;
+            }
+        }
+        assertEquals("stale LONG-typed argument pushed as a long pair; the "
+            + "receiver fetch then dereferences it (ANCHOR-L2-155):\n" + text,
+            expectedPushes, pushes);
+    }
+
+    /**
+     * Count the argument pushes emitted for the basic block starting at
+     * bytecode address {@code addr}, ignoring register saves, up to the
+     * receiver fetch / call. Returns -1 when the block is not found.
+     */
+    private static int emissionPushCount(String text, int addr) {
+        final String[] lines = text.split("\n");
+        int start = -1;
+        for (int i = 0; i < lines.length; i++) {
+            if (lines[i].trim().endsWith("_qb_" + addr + ":")) {
+                start = i;
+                break;
+            }
+        }
+        if (start < 0) {
+            return -1;
+        }
+        int pushes = 0;
+        for (int i = start + 1; i < lines.length; i++) {
+            final String t = lines[i].trim();
+            if (t.endsWith(":") || t.startsWith(";")) {
+                if (t.endsWith(":") && !t.endsWith("$$ediok:")) {
+                    break;
+                }
+                continue;
+            }
+            if (t.startsWith("push ") && !t.equals("push ecx")
+                && !t.startsWith("pusha")) {
+                pushes++;
+            }
+            if (t.startsWith("call ") || t.startsWith("mov eax,dword[esp+")) {
+                break;
+            }
+        }
+        return pushes;
+    }
+
+    /**
+     * Harvest a resolved instance-call methodRef from a SHORT fixed list
+     * of existing corpus methods (deliberately tiny: a full corpus scan
+     * in this JVM perturbed the shared class loader enough to pin the
+     * known latent finallyThrowsLong SSA violation to deterministic red --
+     * a gate regression. The corpus-wide version of this check lives in
+     * L2Census, which runs in its own process.)
+     */
+    private static Object[] findOneSlotPrimitiveInstanceCall() throws Exception {
+        final String[] names = {"tryCatch", "tryFinally", "castString", "arraySum",
+            "strOf", "deadThrowObserved"};
+        for (int i = 0; i < names.length; i++) {
+            final VmMethod m;
+            try {
+                m = findMethod(names[i]);
+            } catch (Throwable t) {
+                continue;
+            }
+            final CompileResult r;
+            try {
+                r = compileMethod(m);
+            } catch (Throwable t) {
+                continue;
+            }
+            for (Object b0 : (Iterable<?>) r.cfg) {
+                final IRBasicBlock b = (IRBasicBlock) b0;
+                for (Object q0 : (List<?>) b.getQuads()) {
+                    final Quad q = (Quad) q0;
+                    if (q.isDeadCode()) {
+                        continue;
+                    }
+                    final VmConstMethodRef mr;
+                    if (q instanceof InstanceCallQuad) {
+                        mr = ((InstanceCallQuad) q).getMethodRef();
+                    } else if (q instanceof org.jnode.vm.compiler.ir.quad.InstanceCallAssignQuad) {
+                        mr = ((org.jnode.vm.compiler.ir.quad.InstanceCallAssignQuad) q)
+                            .getMethodRef();
+                    } else {
+                        continue;
+                    }
+                    try {
+                        mr.resolve(m.getDeclaringClass().getLoader());
+                        return new Object[]{mr, m};
+                    } catch (Throwable t) {
+                        // keep scanning
+                    }
+                }
+            }
+        }
+        return null;
     }
 
     private static VmMethod findMethodIn(String className, String name)
