@@ -867,7 +867,35 @@ the stack<-local copy must become `s4_8 = l1_<pre-try version>`
 instead of renaming into a self-copy. The fix belongs where the
 finally/local versions are constructed (IRGenerator finally handling +
 constructSSA), not in deSSA. Kept reverted: no half-fix landed, all
-gates back to their committed state. Repro recipe for the next
+gates back to their committed state.
+
+SECOND ATTEMPT (same day, also reverted) -- much sharper map, from
+`L2Dump --ir` plus temporary traces in `doRenameVariables` and
+`visit_astore`:
+- In the repro's handler block B30, the trace shows the quads'
+  operands are the EXCEPTION variable: the handler's implicit astore
+  (addr 30, `l3_0 = e4_0`) consumes the exception, but the lload
+  (addr 31) and the ladd (addr 35) that follow have `lhs = e4_0(idx4)`
+  -- the ExceptionArgument instance is being reused as the ordinary
+  operand-stack slot 4, so the finally's `acc + 1000` is emitted as
+  defs OF THE EXCEPTION VARIABLE. The renamer then chains them onto
+  the never-popped exception version (ANCHOR-L2-128 pushes it once)
+  and the deSSA'd read is a self-reference.
+- Structural detail that broke the first fix attempt: `startInstruction`
+  installs the ExceptionArgument into the BLOCK's variables clone
+  (`currentBlock.getVariables()[stackOffset] = ...`), NOT the
+  generator's field array, and the Quad constructors resolve stack
+  operands through the BLOCK's array. Re-arming the field array alone
+  is a no-op; re-arming the block array (astore path) removes the
+  exception object from the operands but does NOT remove the
+  self-copy: the ladd's LHS and its first operand are then the SAME
+  fresh stack variable instance at index 4, and the refs-then-lhs
+  order in `doRenameVariables` still ends up substituting the operand
+  with the version the ladd itself pushes. A correct fix must give
+  the ladd a DISTINCT result slot object (or make the refs loop skip
+  the lhs slot consistently) -- and then re-check `nestedCatchLong`
+  and the census FAILED set.
+Both attempts reverted; gates at the committed intermittent state. Repro recipe for the next
 attempt: the one-line try-body change above (do NOT leave it in the
 corpus while the bug lives -- deterministic red is a gate regression).
 
