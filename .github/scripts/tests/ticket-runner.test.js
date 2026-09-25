@@ -248,6 +248,7 @@ test("ticket-runner.js internal utilities", async (t) => {
     assert.strictEqual(s1.turn, 0);
     assert.strictEqual(s1.max_turns, 3);
     assert.strictEqual(s1.retries, 0);
+    assert.strictEqual(s1.review_in_progress, false);
     assert.strictEqual(s1.pr, null);
     assert.deepStrictEqual(s1.history, []);
 
@@ -573,14 +574,14 @@ test("ticket-runner.js event handling suite", async (t) => {
 
     const mocks = createMocks("workflow_run", {
       issueBody: initialBody,
-      runConclusion: "failure",
-      prHeadRef: "unrelated-branch"
+      issueLabels: [{ name: "agent/done" }, { name: "kind/bug" }]
     });
     await runTicketRunner(mocks);
 
     const state = _parseState(mocks.getIssueBody());
     assert.strictEqual(state.phase, "REVIEW");
     assert.strictEqual(state.pr, 99);
+    assert.strictEqual(state.review_in_progress, true);
     assert.strictEqual(mocks.calls.createComment.length, 1);
     assert.strictEqual(mocks.calls.createComment[0].issue_number, 99);
     assert.ok(mocks.calls.createComment[0].body.includes("/oc review"));
@@ -1138,6 +1139,29 @@ test("ticket-runner.js event handling suite", async (t) => {
     await runTicketRunner(mocks);
 
     assert.ok(mocks.calls.createComment.some(c => c.issue_number === 99 && c.body.includes("/oc review")));
+  });
+
+  await t.test("Java CI success does not re-review while a review is in progress", async () => {
+    const initialBody = _replaceOrAppendStatus("Task", {
+      phase: "REVIEW",
+      pr: 99,
+      turn: 0,
+      max_turns: 3,
+      retries: 0,
+      review_in_progress: true,
+      started: new Date().toISOString(),
+      history: [{ event: "dev_done", pr: 99 }]
+    }, 42);
+
+    const mocks = createMocks("workflow_run", {
+      issueBody: initialBody,
+      runName: "Java CI",
+      runConclusion: "success",
+      issueLabels: [{ name: "kind/chore" }]
+    });
+    await runTicketRunner(mocks);
+
+    assert.strictEqual(mocks.calls.createComment.length, 0);
   });
 
   await t.test("Java CI failure posts one /oc fix per SHA", async () => {

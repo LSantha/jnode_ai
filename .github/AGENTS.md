@@ -154,6 +154,7 @@ State is stored in the issue body as a markdown status block and a hidden JSON c
   "turn": 0,
   "max_turns": 3,
   "retries": 0,
+  "review_in_progress": false,
   "started": "2026-09-06T22:00:00.000Z",
   "history": []
 }

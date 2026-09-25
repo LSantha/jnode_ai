@@ -38,6 +38,7 @@ function initState(maxTurns) {
     turn: 0,
     max_turns: typeof maxTurns === "number" && maxTurns > 0 ? maxTurns : 3,
     retries: 0,
+    review_in_progress: false,
     started: new Date().toISOString(),
     history: []
   };
@@ -425,7 +426,7 @@ module.exports = async ({ github, context, core }) => {
       var st = found.state;
       if (!st || st.phase === "DONE" || st.phase === "FAILED") continue;
       if (conclusion === "success") {
-        if (st.phase !== "REVIEW") continue;
+        if (st.phase !== "REVIEW" || st.review_in_progress) continue;
         st.history.push({ event: "ci_green_rereview", timestamp: new Date().toISOString() });
         await updateIssueState(found.issueNumber, st);
         await h.triggerTask(prNumber, h.getReviewPrompt());
@@ -620,6 +621,7 @@ module.exports = async ({ github, context, core }) => {
       state.pr = prNumber;
       state.phase = "REVIEW";
       state.retries = 0;
+      state.review_in_progress = true;
       state.history.push({ event: "dev_done", pr: prNumber, timestamp: new Date().toISOString() });
       await updateIssueState(issueNumber, state);
       await h.triggerTask(prNumber, h.getReviewPrompt());
@@ -665,6 +667,7 @@ module.exports = async ({ github, context, core }) => {
   }
 
   async function handleReviewCompletion(issueNumber, state, phaseFailed) {
+    state.review_in_progress = false;
     if (phaseFailed) {
       await retryOrFail(issueNumber, state);
       return;
@@ -775,6 +778,7 @@ module.exports = async ({ github, context, core }) => {
     // After feedback, go back to REVIEW
     state.phase = "REVIEW";
     state.retries = 0;
+    state.review_in_progress = true;
     state.history.push({ event: "feedback_done", timestamp: new Date().toISOString() });
     await updateIssueState(issueNumber, state);
     await h.triggerTask(state.pr, h.getReviewPrompt());
