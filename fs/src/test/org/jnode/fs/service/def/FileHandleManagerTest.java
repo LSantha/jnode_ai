@@ -26,9 +26,24 @@ import org.junit.Test;
 import static junit.framework.Assert.assertFalse;
 import static junit.framework.Assert.assertNotSame;
 import static junit.framework.Assert.assertTrue;
+import static org.mockito.Mockito.anyLong;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
 
 public class FileHandleManagerTest {
+
+    @Test
+    public void testOpenReadWritePreservesExistingContent() throws Exception {
+        final FileHandleManager manager = new FileHandleManager();
+        final FSFile file = mock(FSFile.class);
+
+        FileHandleImpl handle = manager.open(file, true, true);
+
+        verify(file, never()).setLength(anyLong());
+        assertTrue(handle.isWrite());
+        handle.close();
+    }
 
     @Test
     public void testOpenReclaimsHandleFromStoppedThread() throws Exception {

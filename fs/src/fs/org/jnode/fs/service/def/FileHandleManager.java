@@ -48,10 +48,14 @@ final class FileHandleManager {
      * @throws IOException
      */
     public synchronized FileHandleImpl open(FSFile file, VMOpenMode mode) throws IOException {
-        return open(file, mode.canWrite());
+        return open(file, mode.canRead(), mode.canWrite());
     }
 
     synchronized FileHandleImpl open(FSFile file, boolean canWrite) throws IOException {
+        return open(file, !canWrite, canWrite);
+    }
+
+    synchronized FileHandleImpl open(FSFile file, boolean canRead, boolean canWrite) throws IOException {
         Iterator<FileData> files = openFiles.values().iterator();
         while (files.hasNext()) {
             FileData openFile = files.next();
@@ -67,7 +71,7 @@ final class FileHandleManager {
             openFiles.put(file, fd);
         }
 
-        return fd.open(canWrite);
+        return fd.open(canRead, canWrite);
     }
 
     /**
@@ -132,7 +136,7 @@ final class FileHandleManager {
          * 
          * @throws IOException if file is already open in write mode.
          */
-        public FileHandleImpl open(boolean canWrite) throws IOException {
+        public FileHandleImpl open(boolean canRead, boolean canWrite) throws IOException {
             if (canWrite) {
                 if (hasWriters) {
                     throw new IOException("File is already open for writing");
@@ -140,7 +144,7 @@ final class FileHandleManager {
                     hasWriters = true;
                 }
             }
-            final FileHandleImpl handle = new FileHandleImpl(file, canWrite, FileHandleManager.this);
+            final FileHandleImpl handle = new FileHandleImpl(file, canRead, canWrite, FileHandleManager.this);
             handles.add(handle);
             return handle;
         }

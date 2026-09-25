@@ -77,7 +77,7 @@ final class FileHandleImpl implements VMFileHandle {
         }
     }
 
-    FileHandleImpl(FSFile file, boolean canWrite, FileHandleManager fhm) {
+    FileHandleImpl(FSFile file, boolean canRead, boolean canWrite, FileHandleManager fhm) {
         this.mode = null;
         this.file = file;
         this.readOnly = !canWrite;
@@ -86,13 +86,17 @@ final class FileHandleImpl implements VMFileHandle {
         this.canWrite = canWrite;
         this.closed = false;
 
-        if (canWrite) {
+        if (!canRead && canWrite) {
             try {
                 file.setLength(0);
             } catch (IOException e) {
                 throw new RuntimeException(e);
             }
         }
+    }
+
+    FileHandleImpl(FSFile file, boolean canWrite, FileHandleManager fhm) {
+        this(file, !canWrite, canWrite, fhm);
     }
 
     /**
