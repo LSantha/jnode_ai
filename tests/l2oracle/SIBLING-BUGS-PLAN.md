@@ -1456,6 +1456,34 @@ old-javac synthetic `class$` array) are added to Probes + CASES but
 their guest run is still pending.
 
 TRAPS (paid for today):
+- CLASS-LITERAL / Class.getModifiers DIVERGENCE, REPRODUCED at value
+  level (force vs host, isolated `one` runs, force|1 per method):
+  `classLiteral_i|4` (`Boolean.TYPE.getModifiers()`) and `|5`
+  (`int[].class.getModifiers()`) return **I:1** under L2, host says
+  **I:411** (PUBLIC|FINAL|ABSTRACT). `classLiteralValue_i|1` returns
+  **I:1** where the host says **I:2** -- the identity test
+  `c == String.class` matched with `c` loaded from `Integer.class`, so
+  either the two literals yield the same object or the `if_acmpne`
+  operands are miscompiled. The other rows are CORRECT under force
+  (`getName()` lengths 7 / 2 for `Boolean.TYPE` / `int[].class`), so
+  class RESOLUTION is right and the divergence is in the value the
+  receiver yields. Emission (L2Dump): each literal is
+  `mov eax,dword[edi+OFFSET]` + `call [edi+1664]`, i.e.
+  `writeResolveAndLoadClassToReg` -> `writeGetStaticsEntry` (the
+  per-class statics-entry address; the two literals get DIFFERENT
+  offsets, 4344 vs 4808, stride 464) -> native
+  `getClassForVmType(entry)`. Hypotheses, in order: (a) the two statics
+  entries alias / the entry stride or the getClassForVmType argument
+  derivation is off for some entries, so `getModifiers()` reads another
+  class's VmType; (b) an L2-compiled method writes 1 into a VmType's
+  modifiers (a field-offset bug) -- `Class.getName()` survives because
+  it reads a different field; (c) the `if_acmpne` operand pair in
+  `classLiteralValue_i` is miscompiled (spill/slot reuse) rather than
+  the literals themselves. Next: force `Class.getModifiers` itself and
+  compare the emitted receiver load; and run `classLiteralValue_i` with
+  the comparison operands forced apart (`c.getName()` instead of `==`)
+  to split (a)/(c). NOT yet localized to one line; the red repro is
+  committed in Probes/OracleDriver (ANCHOR-L2-160 rows).
 - A guest command that never returns is indistinguishable from a slow
   one unless the CALLER enforces a hard timeout. All guest work now
   goes through `/tmp/opencode/gsh.sh <sec> <label> <cmd...>`: hard

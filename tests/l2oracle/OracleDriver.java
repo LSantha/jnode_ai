@@ -199,6 +199,16 @@ public class OracleDriver {
         {"staticsArray_i", "2"},
         {"staticsMixed_j", "1"},
         {"staticsMixed_j", "5"},
+        {"classLiteral_i", "0"},
+        {"classLiteral_i", "2"},
+        {"classLiteral_i", "4"},
+        {"classLiteral_i", "5"},
+        {"classLiteralValue_i", "0"},
+        {"classLiteralValue_i", "1"},
+        {"nestedClinit_i", "0"},
+        {"nestedClinit_i", "1"},
+        {"nestedClinitSuper_i", "0"},
+        {"nestedClinitSuper_i", "1"},
     };
 
     /**

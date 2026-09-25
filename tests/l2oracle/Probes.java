@@ -806,4 +806,69 @@ public class Probes {
         }
         return 3;
     }
+
+    static boolean initI;
+    static boolean initC2;
+    static boolean initC3;
+
+    static long initI() {
+        initI = true;
+        return 5L;
+    }
+
+    static long initC2() {
+        initC2 = true;
+        return 5L;
+    }
+
+    static long initC3() {
+        initC3 = true;
+        return 5L;
+    }
+
+    public interface PI {
+        long l = initI();
+    }
+
+    public static class PC2 implements PI {
+        static long l = initC2();
+
+        public void m() {
+        }
+    }
+
+    public static class PC3 extends PC2 {
+        static long l = initC3();
+    }
+
+    /**
+     * ANCHOR-L2-160: nested-class initialization semantics, the shape
+     * mauve's Class.init checks (isolated: baseline pass=14/fail=1 vs
+     * forced force=9 pass=8/fail=7 -- checks #1,#2,#5,#7,#10,#13,#14,
+     * every one of them a nested-clinit flag). Reading PC3.l must run
+     * PC3's and PC2's <clinit> (flags visible afterwards) but NOT PI's,
+     * and the value must be the <clinit> result. which=0 must observe
+     * an untouched world -- it runs before any trigger.
+     */
+    public static int nestedClinit_i(int which) {
+        if (which == 0) {
+            return (initC2 ? 1 : 0) + (initC3 ? 2 : 0) + (initI ? 4 : 0);
+        }
+        long v = PC3.l;
+        return (int) v * 100 + (initC2 ? 1 : 0) + (initC3 ? 2 : 0)
+            + (initI ? 4 : 0);
+    }
+
+    /**
+     * ANCHOR-L2-160: same, one level down: reading a SUPERclass's static
+     * must initialize the superclass and the interface it implements,
+     * but not the subclass.
+     */
+    public static int nestedClinitSuper_i(int which) {
+        if (which == 0) {
+            return (initC2 ? 1 : 0) + (initI ? 2 : 0);
+        }
+        long v = PC2.l;
+        return (int) v * 10 + (initC2 ? 1 : 0) + (initI ? 2 : 0);
+    }
 }
