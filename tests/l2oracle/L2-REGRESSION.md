@@ -82,16 +82,16 @@ What the plugin path eliminates: per-testlet `cp --parents` staging,
 `$`-inner-class hunts, sibling `CONSTANT_Class` audits, the
 `Proxy.class` vs `Proxy/` ISO9660 collision workaround, and `isoinfo`
 extent checks for testlet content. Subset `.txt` files stay as pure name
-lists. CD staging (`ox/mauve/`) remains as fallback for default/full
-entries, which lack the plugin.
+lists.
 
-Open work item: hands-off tests boots need a `default 4` remaster (done
-once as scratch `/tmp/jnode-tests.iso`, since removed) — propose a
-`tests-default` variant in `mk-ox-iso.sh`; until then, boot entry 4 via a
-throwaway remaster of the current ISO (extract with `xorriso -osirrox`,
-drop `rr_moved`/`boot.catalog`, edit `boot/grub/menu.lst`, `mkisofs -R
--J -b boot/grub/eltorito.s2 -no-emul-boot -boot-load-size 4
--boot-info-table`), never by editing the attached ISO in place.
+DONE 2026-09-26: hands-off tests boots. `local/l2oracle/conf-x86-tests/`
+is the local conf-x86 copy with `default 4`; `local/mk-ox-iso.sh` builds
+with it, so every oracle ISO now boots the tests entry without a
+remaster or keypresses. The per-testlet staging block (sibling hunts,
+Proxy rename, `cp --parents` loop) is deleted from the script: `ox/mauve/`
+now holds only `MauveDriver*.class`, `Run1`/`HashProbe5`, the local
+`StrProbe` probe and the list/chunk files. The `default 1` conf
+(`conf-x86/`) is kept for full-plugin boots that do not need mauve.
 
 ### 3b. Execution oracle (Probes + OracleDriver + compare.sh)
 `OracleDriver.java` (126 CASES rows) + `compare.sh`. Status: **`force|79`

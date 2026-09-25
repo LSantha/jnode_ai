@@ -1257,6 +1257,58 @@ its ESP depth at emission time in the X86TextAssembler) -- the right
 place is the assembler, not a post-hoc text scan. Kept here as a
 recipe; the census text is unchanged.
 
+## M1 (deep review) / L2-158 (LANDED): poll-free loop back edges -- 1,954 of them at corpus scale
+
+Source: deep review M1. Status 2026-09-26 (applied as ANCHOR-L2-158):
+FIRES at corpus scale, fixed. Two defects composed:
+
+1. Three `ConditionalBranchQuad` overloads in
+   `GenericX86CodeGenerator` (disp1/const, disp1/reg2, reg1/const)
+   emitted the branch WITHOUT `yieldPoint`; the other overloads had it.
+   Every loop whose latch used one of those three forms ran with no
+   safepoint poll -- invisible to single-method tests because the poll
+   only matters once a switch request is pending.
+2. The back-edge test itself was numeric (`targetAddress < address`),
+   and address fixup INVERTS that comparison (fixup can even yield
+   negative targets such as `B-2147483646`), so the poll was skipped
+   exactly where it mattered. Replaced with a structural CFG test:
+   `X86Level2Compiler.generateCode` hands the CFG to the generator
+   (`setCFG`), and `isBackEdge` identifies the target by layout index
+   (exact successor `startPC == targetAddress`, else single successor,
+   else the successor that is not the layout-next block) and runs a
+   `reaches()` DFS to test strict ancestry. The unconditional branch is
+   routed through it as well. Polling belongs on the back edge (the
+   latch), NOT on a rotated loop's header test.
+
+Census lint `NOYIELDPOINT` (own process, like the width/conversion
+lints): per-branch -- for each Conditional/UnconditionalBranchQuad whose
+identified target is a strict CFG ancestor, that branch's own emitted
+block (located via the `qb_` label at `q.getAddress()`) must contain a
+`$$yp` poll. Methods annotated `@Uninterruptible` are skipped (e.g.
+`HeapHelperImpl#setFinalized`, a CAS retry loop -- a legitimate
+poll-free loop; the first lint version false-positived on it). Target
+identification mirrors the generator exactly.
+PRE-fix **1,954** poll-free loop back edges, including
+`VMProcess$ProcessThread#run`, `JNodeProcess#start`,
+`MathSupport#ldiv/lrem` and `VmThreadQueue#addToQueue`; POST-fix zero.
+Lint evolution (method-level `indexOf` was too coarse -- one polled
+loop masks another; any-successor ancestry over-flagged rotated loops,
+948 false positives post-fix; per-branch + exact target identification
+is the valid form) is visible in the commit.
+
+Guest: mauve v1 20/20 in BOTH runs, zero force-only regressions, run
+through the `tests.jgz` plugin path (no testlet staging at all -- see
+L2-REGRESSION.md 3a); oracle `force|91` unchanged (only the known
+`div_iii MIN/-1` divergence). T0 18/18, T3 17/17, T1 37 with only the
+known intermittent `finallyThrowsLong`, all-junit 2 of 3 runs green.
+Census OK=11393 SKIP=1522 MAGIC=7 HANDLERS=459 FAIL_64=0, FAILED list
+identical to baseline, zero NOYIELDPOINT/WIDTHMISMATCH/FISTPMISMATCH
+hits (an earlier run of the same tree reported OK=11395/SKIP=1523; the
+delta is census classpath composition -- junit-4.5.jar on the census
+CP -- not a method-status change, the FAILED list is identical). Boot: unchanged -- the `Integer.stringSize` null-`sizeTable`
+panic at a shifted EIP (0x18EC43 this build), as always
+layout-dependent.
+
 ## Merged forward queue (2026-09-24) -- single guide going forward
 
 Source: `../../local/docs/L2-DEEP-REVIEW.md` (H1-H7, M1-M5, Waves A-E;
@@ -1288,6 +1340,7 @@ review (its section 3 entries for them are stale).
 | M5 | comparator, INT stamps, keep-list get/setfield, PhiAssign hashCode | queued, low |
 | B/D/E | verifier wiring, tag-gate, copy completeness, harness delegation, guest grid, fuzz | queued (infra) |
 | P7/P8 | investigated, NOT landed (no firing case) | closed unless repro appears |
+| M1 | poll-free loop back edges (numeric back-edge test + 3 branch overloads) | LANDED L2-158 (lint 1954 -> 0, census clean, mauve v1 20/20) |
 
 Standing rules: test-guard policy (red-green per fix, javap-verify
 classes, ASCII-clean diffs); census FAILED-identity + OK attribution;

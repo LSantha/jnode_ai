@@ -147,6 +147,9 @@ public class X86Level2Compiler extends AbstractX86Compiler {
         X86CodeGenerator x86cg = (X86CodeGenerator) cg;
 //        x86cg.setArgumentVariables(irg.getVariables(), irg.getNoArgs());
         x86cg.setSpilledVariables(lsa.getSpilledVariables());
+        // ANCHOR-L2-158: the safepoint test is structural (CFG back
+        // edge), so the generator needs the CFG and a layout index.
+        x86cg.setCFG(cfg);
         x86cg.emitHeader();
         // 104: position the per-BCI helper labels the exception-table
         // trailer (X86StackFrame.emitTrailer) resolves start/end/handler

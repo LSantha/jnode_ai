@@ -397,7 +397,9 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
 
     public void generateCodeFor(UnconditionalBranchQuad<T> quad) {
         checkLabel(quad.getAddress());
-        if (quad.getTargetAddress() < quad.getAddress()) {
+        // ANCHOR-L2-158: same structural back-edge test as the
+        // conditional branches (see yieldPoint).
+        if (isBackEdge(quad.getBasicBlock(), quad.getAddress(), quad.getTargetAddress())) {
             stackFrame.getHelper().writeYieldPoint(getInstrLabel(quad.getAddress()));
         }
         os.writeJMP(getInstrLabel(quad.getTargetAddress()));
@@ -4441,6 +4443,12 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
 
     public void generateCodeFor(ConditionalBranchQuad<T> quad, int disp1, BranchCondition condition, Constant<T> c2) {
         checkLabel(quad.getAddress());
+        // ANCHOR-L2-158: back-edge safepoint (M1). The three sibling
+        // overloads that skipped yieldPoint left loops whose exit test
+        // lands in this mode with no poll on the back edge --
+        // thread-switch/GC starvation (B52 hang class; census witness
+        // HeapHelperImpl#setFinalized).
+        yieldPoint(quad);
         os.writeCMP_Const(BITS32, X86Register.EBP, disp1, ((IntConstant<T>) c2).getValue());
         generateJumpForBinaryCondition(quad, condition);
     }
@@ -4455,12 +4463,16 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
 
     public void generateCodeFor(ConditionalBranchQuad<T> quad, int disp1, BranchCondition condition, Object reg2) {
         checkLabel(quad.getAddress());
+        // ANCHOR-L2-158: back-edge safepoint (M1), see above.
+        yieldPoint(quad);
         os.writeCMP(X86Register.EBP, disp1, (GPR) reg2);
         generateJumpForBinaryCondition(quad, condition);
     }
 
     public void generateCodeFor(ConditionalBranchQuad<T> quad, Object reg1, BranchCondition condition, Constant<T> c2) {
         checkLabel(quad.getAddress());
+        // ANCHOR-L2-158: back-edge safepoint (M1), see above.
+        yieldPoint(quad);
         os.writeCMP_Const((GPR) reg1, ((IntConstant<T>) c2).getValue());
         generateJumpForBinaryCondition(quad, condition);
     }
@@ -4994,10 +5006,110 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
 //        this.startOffset = stackFrame.emitHeader();
     }
 
+    private org.jnode.vm.compiler.ir.IRControlFlowGraph cfg;
+    private java.util.HashMap lay;
+
+    /**
+     * ANCHOR-L2-158: hand the generator the CFG (and a block layout
+     * index) so the safepoint test can be structural. Set by
+     * {@code X86Level2Compiler.generateCode} before emission.
+     */
+    public void setCFG(org.jnode.vm.compiler.ir.IRControlFlowGraph c) {
+        cfg = c;
+        lay = new java.util.HashMap();
+        int i = 0;
+        for (Object bo : (Iterable<?>) c) {
+            lay.put(bo, Integer.valueOf(i++));
+        }
+    }
+
     private void yieldPoint(ConditionalBranchQuad<T> quad) {
-        if (quad.getTargetAddress() < quad.getAddress()) {
+        if (isBackEdge(quad.getBasicBlock(), quad.getAddress(), quad.getTargetAddress())) {
             stackFrame.getHelper().writeYieldPoint(getInstrLabel(quad.getAddress()));
         }
+    }
+
+    /**
+     * ANCHOR-L2-158: a loop back edge, decided WITHOUT addresses: the
+     * jump's target block reaches the branch's own block. The target
+     * successor is identified by LAYOUT (the conditional branch's
+     * fall-through is the block emitted right after this one; the other
+     * successor is the jump target) because post-fixup addresses are
+     * renumbered and the old numeric test (`targetAddress < address`)
+     * misses real loops -- census lint: dozens of poll-free back edges
+     * including MathSupport#ldiv/lrem and VmThreadQueue#addToQueue (B52
+     * thread-switch/GC starvation hang class; some fixup artifacts even
+     * produce negative target addresses). Falls back to the numeric test
+     * when the layout rule does not apply (direct generator use in the
+     * mode-matrix harness, which has no CFG).
+     */
+    private boolean isBackEdge(org.jnode.vm.compiler.ir.IRBasicBlock b, int address,
+        int targetAddress) {
+        if (cfg != null && lay != null && b != null) {
+            final Integer myIdx = (Integer) lay.get(b);
+            if (myIdx != null) {
+                org.jnode.vm.compiler.ir.IRBasicBlock target = null;
+                org.jnode.vm.compiler.ir.IRBasicBlock next = null;
+                int nsucc = 0;
+                for (Object so : (Iterable<?>) b.getSuccessors()) {
+                    nsucc++;
+                    final org.jnode.vm.compiler.ir.IRBasicBlock sb =
+                        (org.jnode.vm.compiler.ir.IRBasicBlock) so;
+                    // The address identifies WHICH successor is the jump
+                    // target (a loop head is often the next block in
+                    // layout); the back-edge DECISION never uses it.
+                    if (sb.getStartPC() == targetAddress) {
+                        target = sb;
+                    }
+                    final Integer si = (Integer) lay.get(so);
+                    if (si != null && si.intValue() == myIdx.intValue() + 1) {
+                        next = sb;
+                    }
+                }
+                if (target == null) {
+                    if (nsucc <= 1) {
+                        // unconditional: the only successor is the
+                        // target even when the addresses are corrupt
+                        if (nsucc == 1) {
+                            target = (org.jnode.vm.compiler.ir.IRBasicBlock)
+                                b.getSuccessors().get(0);
+                        }
+                    } else {
+                        // conditional with unusable addresses: the
+                        // fall-through is the next block in layout
+                        for (Object so : (Iterable<?>) b.getSuccessors()) {
+                            if (so != next) {
+                                target = (org.jnode.vm.compiler.ir.IRBasicBlock) so;
+                                break;
+                            }
+                        }
+                        if (target == null) {
+                            target = next;
+                        }
+                    }
+                }
+                if (target != null) {
+                    return reaches(target, b, new java.util.HashSet());
+                }
+            }
+        }
+        return targetAddress < address;
+    }
+
+    private boolean reaches(org.jnode.vm.compiler.ir.IRBasicBlock from,
+        org.jnode.vm.compiler.ir.IRBasicBlock to, java.util.HashSet seen) {
+        if (from == to) {
+            return true;
+        }
+        if (!seen.add(from)) {
+            return false;
+        }
+        for (Object so : (Iterable<?>) from.getSuccessors()) {
+            if (reaches((org.jnode.vm.compiler.ir.IRBasicBlock) so, to, seen)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     @Override

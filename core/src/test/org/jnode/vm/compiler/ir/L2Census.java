@@ -37,7 +37,9 @@ import org.jnode.vm.classmgr.VmConstMethodRef;
 import org.jnode.vm.classmgr.VmMethod;
 import org.jnode.vm.compiler.ir.quad.InstanceCallAssignQuad;
 import org.jnode.vm.compiler.ir.quad.InstanceCallQuad;
+import org.jnode.vm.compiler.ir.quad.ConditionalBranchQuad;
 import org.jnode.vm.compiler.ir.quad.Quad;
+import org.jnode.vm.compiler.ir.quad.UnconditionalBranchQuad;
 import org.jnode.vm.compiler.ir.quad.UnaryOperation;
 import org.jnode.vm.compiler.ir.quad.UnaryQuad;
 import org.jnode.vm.classmgr.VmType;
@@ -144,6 +146,7 @@ public class L2Census {
                     // deterministic red.
                     checkCallPushWidths(m, text);
                     checkFloatToIntConversion(m, text);
+                    checkBackEdgeYieldPoints(m, text);
                     ok++;
                     if (hasHandlers && handlerExamples.size() < 20) {
                         handlerExamples.add(full);
@@ -229,6 +232,132 @@ public class L2Census {
                 out.add(cn);
             }
         }
+    }
+
+    /**
+     * ANCHOR-L2-158 census lint: every BACKWARD conditional branch (a
+     * loop back edge, the only case `yieldPoint` acts on) must carry
+     * the safepoint poll -- its emission contains a `$$yp` label. Three
+     * ConditionalBranchQuad overloads (disp1/const, disp1/reg2,
+     * reg1/const) skipped `yieldPoint(quad)` while every sibling had
+     * it: a loop whose exit test lands in one of those modes has NO
+     * safepoint on its back edge -> thread-switch/GC starvation (B52
+     * hang class). One NOYIELDPOINT line per offending method.
+     */
+    static void checkBackEdgeYieldPoints(VmMethod method, String text) {
+        try {
+            final IRControlFlowGraph cfg = lastCfg;
+            if (cfg == null) {
+                return;
+            }
+            final java.util.HashMap lay = new java.util.HashMap();
+            int li = 0;
+            for (Object bo : (Iterable<?>) cfg) {
+                lay.put(bo, Integer.valueOf(li++));
+            }
+            for (Object b0 : (Iterable<?>) cfg) {
+                final IRBasicBlock b = (IRBasicBlock) b0;
+                for (Object q0 : (List<?>) b.getQuads()) {
+                    final Quad q = (Quad) q0;
+                    if (q.isDeadCode()) {
+                        continue;
+                    }
+                    if (!(q instanceof ConditionalBranchQuad)
+                        && !(q instanceof UnconditionalBranchQuad)) {
+                        continue;
+                    }
+                    // Identify the JUMP TARGET exactly as the generator
+                    // does (ANCHOR-L2-158): address match wins; else the
+                    // single successor (unconditional); else the
+                    // successor that is not the next block in LAYOUT
+                    // (the conditional's fall-through; the address
+                    // relation is only a fallback because post-fixup
+                    // renumbering breaks it). Only THAT successor's
+                    // ancestry matters -- in a rotated loop the header's
+                    // fall-through is the back edge and the safepoint
+                    // belongs there, not at this branch.
+                    final java.util.List<IRBasicBlock> succs =
+                        (java.util.List<IRBasicBlock>) (List<?>) b.getSuccessors();
+                    if (succs.isEmpty()) {
+                        continue;
+                    }
+                    final int tAddr = (q instanceof ConditionalBranchQuad)
+                        ? ((ConditionalBranchQuad) q).getTargetAddress()
+                        : ((UnconditionalBranchQuad) q).getTargetAddress();
+                    IRBasicBlock target = null;
+                    for (int i = 0; i < succs.size(); i++) {
+                        if (succs.get(i).getStartPC() == tAddr) {
+                            target = succs.get(i);
+                        }
+                    }
+                    if (target == null) {
+                        if (succs.size() == 1) {
+                            target = succs.get(0);
+                        } else {
+                            IRBasicBlock next = null;
+                            final Integer myIdx = (Integer) lay.get(b);
+                            for (int i = 0; i < succs.size(); i++) {
+                                final Integer si = (Integer) lay.get(succs.get(i));
+                                if (myIdx != null && si != null
+                                    && si.intValue() == myIdx.intValue() + 1) {
+                                    next = succs.get(i);
+                                }
+                            }
+                            if (next == null) {
+                                for (int i = 0; i < succs.size(); i++) {
+                                    if (succs.get(i).getStartPC() == b.getEndPC()) {
+                                        next = succs.get(i);
+                                    }
+                                }
+                            }
+                            for (int i = 0; i < succs.size(); i++) {
+                                if (succs.get(i) != next) {
+                                    target = succs.get(i);
+                                    break;
+                                }
+                            }
+                            if (target == null) {
+                                target = next != null ? next : succs.get(0);
+                            }
+                        }
+                    }
+                    if (target == b || !reachesBlock(target, b,
+                        new java.util.HashSet<IRBasicBlock>())) {
+                        continue;
+                    }
+                    // Per-branch: the poll is emitted with the branch
+                    // itself, so it must appear in this branch's block.
+                    // @Uninterruptible methods carry no safepoints BY
+                    // DESIGN (writeYieldPoint checks
+                    // method.isUninterruptible()).
+                    final String block = emissionBlock(text, q.getAddress());
+                    if (block != null && block.indexOf("$$yp") < 0
+                        && !method.isUninterruptible()) {
+                        System.out.println("NOYIELDPOINT "
+                            + method.getDeclaringClass().getName() + "#"
+                            + method.getName() + " @" + q.getAddress());
+                    }
+                }
+            }
+        } catch (Throwable t) {
+            // lint only
+        }
+    }
+
+    private static boolean reachesBlock(IRBasicBlock from, IRBasicBlock to,
+        java.util.HashSet<IRBasicBlock> seen) {
+        if (from == to) {
+            return true;
+        }
+        if (!seen.add(from)) {
+            return false;
+        }
+        for (Object s0 : (List<?>) from.getSuccessors()) {
+            if (reachesBlock((IRBasicBlock) s0, to, seen)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /**
