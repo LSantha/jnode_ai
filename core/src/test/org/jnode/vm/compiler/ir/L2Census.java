@@ -38,6 +38,8 @@ import org.jnode.vm.classmgr.VmMethod;
 import org.jnode.vm.compiler.ir.quad.InstanceCallAssignQuad;
 import org.jnode.vm.compiler.ir.quad.InstanceCallQuad;
 import org.jnode.vm.compiler.ir.quad.Quad;
+import org.jnode.vm.compiler.ir.quad.UnaryOperation;
+import org.jnode.vm.compiler.ir.quad.UnaryQuad;
 import org.jnode.vm.classmgr.VmType;
 import org.jnode.vm.bytecode.BytecodeParser;
 import org.jnode.vm.compiler.CompiledExceptionHandler;
@@ -141,6 +143,7 @@ public class L2Census {
                     // known latent finallyThrowsLong SSA violation to
                     // deterministic red.
                     checkCallPushWidths(m, text);
+                    checkFloatToIntConversion(m, text);
                     ok++;
                     if (hasHandlers && handlerExamples.size() < 20) {
                         handlerExamples.add(full);
@@ -226,6 +229,74 @@ public class L2Census {
                 out.add(cn);
             }
         }
+    }
+
+    /**
+     * ANCHOR-L2-156 corpus lint: D2I / F2L / D2L must go through the
+     * JLS-correct converter (FSTCW/FISTP/FLDCW: truncate toward zero,
+     * NaN -> 0, saturating infinities). A bare FISTP uses the global
+     * round-to-nearest word: (int) 3.7d == 4, NaN -> Integer.MIN_VALUE,
+     * +-Inf -> the x87 indefinite value. One FISTPMISMATCH line per
+     * offending conversion quad.
+     */
+    static void checkFloatToIntConversion(VmMethod method, String text) {
+        try {
+            final IRControlFlowGraph cfg = lastCfg;
+            if (cfg == null) {
+                return;
+            }
+            for (Object b0 : (Iterable<?>) cfg) {
+                final IRBasicBlock b = (IRBasicBlock) b0;
+                for (Object q0 : (List<?>) b.getQuads()) {
+                    final Quad q = (Quad) q0;
+                    if (q.isDeadCode() || !(q instanceof UnaryQuad)) {
+                        continue;
+                    }
+                    final UnaryOperation op = ((UnaryQuad) q).getOperation();
+                    if (op != UnaryOperation.D2I && op != UnaryOperation.F2L
+                        && op != UnaryOperation.D2L) {
+                        continue;
+                    }
+                    // The conversion helper expands to a multi-block
+                    // sequence and entry-address quads carry no qb_ label,
+                    // so fall back to the whole emission when the block
+                    // cannot be located.
+                    String block = emissionBlock(text, q.getAddress());
+                    if (block == null) {
+                        block = text;
+                    }
+                    if (block.indexOf("fstcw") < 0) {
+                        System.out.println("FISTPMISMATCH "
+                            + method.getDeclaringClass().getName() + "#"
+                            + method.getName() + " @" + q.getAddress() + " " + op);
+                    }
+                }
+            }
+        } catch (Throwable t) {
+            // lint only
+        }
+    }
+
+    private static String emissionBlock(String text, int addr) {
+        final String[] lines = text.split("\n");
+        final StringBuilder sb = new StringBuilder();
+        boolean in = false;
+        for (int i = 0; i < lines.length; i++) {
+            final String t = lines[i].trim();
+            if (!in && t.endsWith("_qb_" + addr + ":")) {
+                in = true;
+                continue;
+            }
+            if (in) {
+                // helper-internal labels (f2i_N_*) belong to the sequence
+                if (t.endsWith(":") && !t.endsWith("$$ediok:")
+                    && t.indexOf("f2i_") < 0 && t.indexOf("f2l_") < 0) {
+                    break;
+                }
+                sb.append(t).append('\n');
+            }
+        }
+        return in ? sb.toString() : null;
     }
 
     /**

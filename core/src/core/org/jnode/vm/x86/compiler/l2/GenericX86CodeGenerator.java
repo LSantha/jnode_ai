@@ -746,11 +746,19 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
             case D2I: {
                 // ANCHOR-L2-091: double stack source to int register dest via
                 // an 8-byte scratch (hi pushed first so lo lands on top).
+                // ANCHOR-L2-156: route through the JLS-correct converter
+                // (truncate-toward-zero control word, NaN -> 0, +Inf ->
+                // MAX_VALUE, -Inf/overflow -> MIN_VALUE). The raw FISTP
+                // used the global round-to-nearest word, so (int) 3.7d
+                // gave 4 and NaN gave Integer.MIN_VALUE.
                 int srcLo = rhsDisp - stackFrame.getHelper().SLOTSIZE;
                 os.writePUSH(X86Register.EBP, rhsDisp);
                 os.writePUSH(X86Register.EBP, srcLo);
                 os.writeFLD64(X86Register.ESP, 0);
-                os.writeFISTP32(X86Register.ESP, 0);
+                // Store through ESP (the helper shifts the displacement
+                // past its own scratch reservation), then pop into the
+                // register as before.
+                X86CompilerHelper.emitF2I(os, X86Register.ESP, 0);
                 os.writePOP((GPR) lhsReg);
                 os.writeADD(X86Register.ESP, 4);
                 break;
@@ -948,9 +956,12 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
                 break;
 
             case F2L:
-                // ANCHOR-L2-063 (CG-3): FISTP stores 8 bytes at [disp-SLOT].
+                // ANCHOR-L2-063 (CG-3): the long dest is [disp-SLOT].
+                // ANCHOR-L2-156: JLS-correct conversion (raw FISTP rounded
+                // to nearest and mapped NaN/Inf wrongly).
                 os.writeFLD32(X86Register.EBP, rhsDisp);
-                os.writeFISTP64(X86Register.EBP, lhsDisp - stackFrame.getHelper().SLOTSIZE);
+                X86CompilerHelper.emitF2L(os, X86Register.EBP,
+                    lhsDisp - stackFrame.getHelper().SLOTSIZE);
                 break;
             case F2D:
                 // ANCHOR-L2-063 (CG-3). ANCHOR-L2-082: high-base double dest.
@@ -959,14 +970,18 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
                 break;
             case D2I:
                 // ANCHOR-L2-063 (CG-3). ANCHOR-L2-082: high-base double source.
+                // ANCHOR-L2-156: JLS-correct conversion.
                 os.writeFLD64(X86Register.EBP, rhsDisp - stackFrame.getHelper().SLOTSIZE);
-                os.writeFISTP32(X86Register.EBP, lhsDisp);
+                X86CompilerHelper.emitF2I(os, X86Register.EBP, lhsDisp);
                 break;
             case D2L:
                 // ANCHOR-L2-063 (CG-3). ANCHOR-L2-082: high-base double source
-                // (the FISTP dest is a long: [disp-SLOT] is its low half).
+                // (the long dest is [disp-SLOT]). ANCHOR-L2-156: JLS-correct
+                // conversion (NaN -> 0, +Inf -> MAX_VALUE, -Inf -> MIN_VALUE;
+                // the raw FISTP produced the x87 indefinite value).
                 os.writeFLD64(X86Register.EBP, rhsDisp - stackFrame.getHelper().SLOTSIZE);
-                os.writeFISTP64(X86Register.EBP, lhsDisp - stackFrame.getHelper().SLOTSIZE);
+                X86CompilerHelper.emitF2L(os, X86Register.EBP,
+                    lhsDisp - stackFrame.getHelper().SLOTSIZE);
                 break;
             case D2F:
                 // ANCHOR-L2-063 (CG-3). ANCHOR-L2-082: high-base double source.

@@ -1093,6 +1093,41 @@ public class PrimitiveTest {
      * `ArithmeticException: / by zero at Constant.iDiv`. The JVM must
      * trap at RUN time instead.
      */
+    /**
+     * ANCHOR-L2-156: float/double -> int/long conversion semantics.
+     * Pre-fix these four L2 sites emitted a bare FISTP under the global
+     * round-to-nearest control word: (int) 3.7d gave 4, NaN gave
+     * Integer.MIN_VALUE, and +-Inf gave the x87 indefinite value. The
+     * JLS requires truncation toward zero, NaN -> 0 and saturation.
+     */
+    public static int d2iRounding(double d) {
+        return (int) d;
+    }
+
+    public static int d2iNaN(double d) {
+        return (int) d;
+    }
+
+    public static int d2iInf(double d) {
+        return (int) d;
+    }
+
+    public static long f2lRounding(float f) {
+        return (long) f;
+    }
+
+    public static long f2lNaN(float f) {
+        return (long) f;
+    }
+
+    public static long d2lNaN(double d) {
+        return (long) d;
+    }
+
+    public static long d2lInf(double d) {
+        return (long) d;
+    }
+
     public static int divByZeroLocal() {
         int lz = 0;
         return 10 / lz;

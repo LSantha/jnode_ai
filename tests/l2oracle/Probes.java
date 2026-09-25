@@ -270,6 +270,39 @@ public class Probes {
         return v;
     }
 
+    // ANCHOR-L2-156: float/double -> int/long conversion semantics.
+    // Pre-fix these emitted a bare FISTP under the global round-to-nearest
+    // control word: (int) 3.7d gave 4, NaN gave Integer.MIN_VALUE and
+    // +-Inf the x87 indefinite value. JLS: truncation toward zero,
+    // NaN -> 0, infinities saturate.
+    public static int d2iRounding(double d) {
+        return (int) d;
+    }
+
+    public static int d2iNaN(double d) {
+        return (int) d;
+    }
+
+    public static int d2iInf(double d) {
+        return (int) d;
+    }
+
+    public static long f2lRounding(float f) {
+        return (long) f;
+    }
+
+    public static long f2lNaN(float f) {
+        return (long) f;
+    }
+
+    public static long d2lNaN(double d) {
+        return (long) d;
+    }
+
+    public static long d2lInf(double d) {
+        return (long) d;
+    }
+
     // ANCHOR-L2-154: long compare against a long constant with the
     // compared long under spill pressure. Exercises the reachable
     // spilled-operand LCMP path end to end; the constant-pre-spill and

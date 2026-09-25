@@ -833,6 +833,44 @@ the scan is a `LiveRange.getAssignAddress() <= hazardAddr <=
 getLastUseAddress()` filter over `CheckcastQuad`/`InstanceofAssignQuad`
 /`StaticRef*Quad`/`RefStoreQuad` in `CompileResult.cfg`.
 
+## L2-156 (LANDED): D2I / F2L / D2L went through raw FISTP (wrong rounding, NaN, infinities)
+
+Source: deep review H4. Status 2026-09-26 morning (applied as
+ANCHOR-L2-156): FIRES at corpus scale, fixed. Four L2 sites emitted a
+bare `FLD + FISTP` (GenericX86CodeGenerator: the register-destination
+D2I at ~746 and the stack-destination F2L/D2I/D2L at ~947-969) while
+the global x87 control word is round-to-nearest (since c1b3b584f).
+JLS requires truncation toward zero, NaN -> 0 and saturating
+infinities; the raw FISTP gave `(int) 3.7d == 4`, NaN ->
+Integer.MIN_VALUE and +-Inf -> the x87 indefinite value. F2I had
+already been routed through the JLS-correct `X86CompilerHelper.emitF2I`
+and a correct `emitF2L` existed but had NO L2 call site. Fix: route all
+four through `emitF2I`/`emitF2L` (the register-destination D2I stores
+through ESP, whose displacement the helper shifts past its scratch,
+then pops into the register as before). No raw FISTP remains in the L2
+generator.
+Census lint `FISTPMISMATCH` (own process, like the L2-155 width lint):
+PRE-fix 22 offending conversion quads in the core corpus -- including
+`NativeStrictMath.floor` (D2L x2), `NativeStrictMath.exp` (D2I) and
+`NativeStrictMath.remPiOver2` (D2I x2) -- plus all 7 new probes;
+POST-fix zero. The lint extracts the emission block and requires
+`fstcw` (helper-internal labels `f2i_*`/`f2l_*` count as part of the
+sequence; entry-address quads have no `qb_` label, so those fall back
+to the whole emission -- the first lint version false-positived on
+exactly those).
+Guards: census lint (corpus) + 7 conversion probes in PrimitiveTest
+(rounding 3.7/-3.7, NaN, +-Inf for D2I/F2L/D2L) + 11 value-level
+oracle rows in Probes/OracleDriver (3.7 -> 3, -3.7 -> -3, NaN -> 0,
++Inf -> MAX_VALUE, -Inf -> MIN_VALUE for int and long).
+Guest: oracle `force|91`, ALL rows JLS-correct (only the known div
+MIN/-1 divergence); mauve v1 20/20 zero force-only regressions.
+T0 18/18, T3 17/17, T1 37, all-junit 250 still intermittent (3 of 4
+runs green -- the conversion probes did NOT pin the latent
+finallyThrowsLong coin, unlike the earlier L2-155 probe experiment).
+Census OK=11392 (the 7 probes), FAILED list identical, zero lint hits.
+Boot: unchanged (panic 0x18E5E3 this build -- the same stringSize
+null-sizeTable signature at a shifted EIP, as always layout-dependent).
+
 ## L2-155 (LANDED): call argument pushes must follow the SIGNATURE, not stale operand types
 
 ROOT CAUSE of the LongTest NPE below, found and fixed 2026-09-26
