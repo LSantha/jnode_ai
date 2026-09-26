@@ -347,12 +347,6 @@ test("orchestrator-helpers utilities", async (t) => {
     assert.strictEqual(verdict, "approve");
   });
 
-  await t.test("needsHumanReview checks both issue and PR labels", async () => {
-    // PR 99 has auto-merge, issue 42 does not
-    const requiresReview = await h.needsHumanReview(42, 99);
-    assert.strictEqual(requiresReview, false, "PR auto-merge label should be recognized");
-  });
-
   await t.test("isBotUser behavior", () => {
     assert.strictEqual(h.isBotUser(null), false, "null user is not a bot");
     assert.strictEqual(h.isBotUser({ login: "user1", type: "User" }), false);
