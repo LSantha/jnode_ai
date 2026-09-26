@@ -21,7 +21,7 @@ function isPRContext(context) {
 
 function isRefusalComment(body) {
   if (!body) return false;
-  return /refusal|out of scope|## 🤖 Refusal/i.test(body);
+  return /^\s*##\s*(?:🤖\s*)?Refusal\b/im.test(body);
 }
 
 function isNeedsInfoComment(body) {

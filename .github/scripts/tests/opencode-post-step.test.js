@@ -43,6 +43,17 @@ test('opencode-post-step.js test suite', async (t) => {
     assert.ok(calls.addLabels.includes('agent/failed'));
   });
 
+  await t.test('Does not treat incidental out-of-scope prose as a refusal', async () => {
+    const { core, github, context, calls, setIssueData, setComments } = createMocks();
+    process.env.PREV_CONCLUSION = 'success';
+    setIssueData({ labels: ['kind/bug'], state: 'open' });
+    setComments([{ body: 'Reviewed the diff. The issue is out of scope for this helper.\n\nVerdict: request-changes' }]);
+
+    await runPostStep({ github, context, core });
+    assert.ok(!calls.addLabels.includes('agent/skip'));
+    assert.ok(calls.addLabels.includes('agent/done'));
+  });
+
   await t.test('Applies agent/skip when refusal comment is found', async () => {
     const { core, github, context, calls, setComments } = createMocks();
     process.env.PREV_CONCLUSION = 'success';
