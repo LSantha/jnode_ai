@@ -73,6 +73,7 @@ function renderStatusSection(state, issueNumber) {
     "| **Turn** | " + state.turn + "/" + state.max_turns + " |",
     "| **Retries** | " + state.retries + "/3 |",
     "| **PR** | " + (state.pr ? "#" + state.pr : "-") + " |",
+    "| **Review in progress** | " + (state.review_in_progress ? "yes" : "no") + " |",
     "| **Started** | " + state.started + " |",
     ""
   ];
