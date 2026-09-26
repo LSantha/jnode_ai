@@ -27,7 +27,7 @@ post-deSSA on every method, so structural SSA regressions are corpus-wide.
 | A3 | P1 | `arraylength` clobbers EBX, an allocated register, with no push/pop | **LANDED** L2-163 | census lint `ARRAYLENGTHREG` (105 corpus sites -> 0) + T3 test, red on the pre-fix overlay |
 | A4 | P1 | shift arms destroy the destination when it is ECX (12 arms) | **LANDED** L2-165 | T3 test for all three shift ops with dst=ECX, red on the overlay; also closes invariant 5 for this shape |
 | A5 | P1 | `isCallLike` omits quads that really emit a `CALL` (`ConstantClassAssignQuad`, barriers) -> live ranges not force-spilled | **LANDED** L2-164 | census lint `CALLNOTCALLLIKE`, 243 sites in 161 methods -> 0; both predicate copies extended |
-| A6 | P2 | `FREM` with a constant left operand emits `FSUB` on an empty x87 stack | **OPEN, no firing case found**: all six FREM arms use FPREM with the operands in the right order, and the new FP oracle probes (L2-167, 14 rows) have no guest verdict yet | partially addressed: FP arithmetic/remainder probes now exist (invariant 6), live run pending |
+| A6 | P2 | `FREM` with a constant left operand emits `FSUB` on an empty x87 stack | **CLOSED-NB** (2026-09-27): all six FREM arms use FPREM with the operands loaded in the right order, and the 14 new FP oracle rows (L2-167, incl. the constant-LEFT shape the report names) match the host EXACTLY under L2 force | closed by measurement, not by reading; the probes are the guard and also close invariant 6 on the oracle side |
 | A7 | P2 | `writeParameters` signature gate never fires for `invokestatic` (the `- 1` assumes a receiver) | **LANDED** L2-166 | T1 test with a stale-typed static argument, red on the overlay; `WIDTHMISMATCH` extended to static calls (invariant 7) |
 | A8 | P3 | constant-null `getfield` never writes lhs, `putfield` emits a load (latent under the null-trap model) | **OPEN** | none |
 
@@ -126,3 +126,7 @@ classlib); its tools were throw-away and are not in the tree, but
 - mauve `Class.*` force-only diffs: cross-testlet state; isolated runs are
   identical (noforce 14/1, force `force=9` 14/1).
 - M3 float-const CCE / FREM arm: not reproducible on this branch.
+- A6 FREM-constant-left "FSUB on an empty stack": all six arms use FPREM
+  in the right order, and 14 FP oracle rows (add/sub/mul/div/rem, constant
+  left and right) match the host bit-for-bit under L2 force. The claim was
+  from reading only; the probes now hold the ground.
