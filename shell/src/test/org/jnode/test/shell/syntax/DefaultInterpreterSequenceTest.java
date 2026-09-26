@@ -20,6 +20,10 @@
 
 package org.jnode.test.shell.syntax;
 
+import java.io.ByteArrayInputStream;
+import java.io.ByteArrayOutputStream;
+import java.io.InputStream;
+import java.io.PrintStream;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -37,6 +41,7 @@ import org.jnode.shell.ShellException;
 import org.jnode.shell.ShellInvocationException;
 import org.jnode.shell.ShellSyntaxException;
 import org.jnode.shell.SymbolSource;
+import org.jnode.test.shell.Cassowary;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -107,6 +112,15 @@ public class DefaultInterpreterSequenceTest {
         }
     }
 
+    private static class StopAfterCommandShell extends StubShell {
+        public int invoke(CommandLine cmdLine, Properties sysProps,
+                          Map<String, String> env) throws ShellException {
+            int rc = super.invoke(cmdLine, sysProps, env);
+            consoleClosed(null);
+            return rc;
+        }
+    }
+
     private StubShell newStub() {
         StubShell shell = new StubShell();
         shell.rcByCommand.put("true", Integer.valueOf(0));
@@ -127,6 +141,53 @@ public class DefaultInterpreterSequenceTest {
         Assert.assertEquals("c", interp.commandNameAt("a && b || c ; d", 2));
         Assert.assertEquals(";", interp.operatorAt("a && b || c ; d", 3));
         Assert.assertEquals("d", interp.commandNameAt("a && b || c ; d", 3));
+    }
+
+    @Test
+    public void testAppendRedirectIsRejected() throws Exception {
+        TestableRedirecting interp = new TestableRedirecting();
+        StubShell shell = newStub();
+        try {
+            interp.runLine(shell, "echo 'HashProbe5' >> /tmp/mini.txt");
+            Assert.fail("Expected unsupported append redirection");
+        } catch (ShellSyntaxException ex) {
+            Assert.assertEquals("unsupported '>>' redirection: use '>' instead", ex.getMessage());
+        }
+        Assert.assertEquals(0, shell.executed.size());
+    }
+
+    @Test
+    public void testRunRecoversPromptAfterAppendRedirect() throws Exception {
+        Cassowary.initEnv();
+
+        InputStream savedIn = System.in;
+        PrintStream savedOut = System.out;
+        PrintStream savedErr = System.err;
+        ByteArrayOutputStream out = new ByteArrayOutputStream();
+        ByteArrayOutputStream err = new ByteArrayOutputStream();
+        PrintStream testOut = new PrintStream(out);
+        PrintStream testErr = new PrintStream(err);
+
+        try {
+            System.setIn(new ByteArrayInputStream("echo >>\naccepted\n".getBytes()));
+            System.setOut(testOut);
+            System.setErr(testErr);
+
+            StopAfterCommandShell shell = new StopAfterCommandShell();
+            String prompt = new RedirectingInterpreter().getPrompt(shell, false);
+            shell.run();
+
+            Assert.assertEquals(1, shell.diagnoseCount);
+            Assert.assertEquals(1, shell.executed.size());
+            Assert.assertEquals("accepted", shell.executed.get(0));
+            Assert.assertEquals(prompt + prompt, out.toString());
+        } finally {
+            testOut.flush();
+            testErr.flush();
+            System.setIn(savedIn);
+            System.setOut(savedOut);
+            System.setErr(savedErr);
+        }
     }
 
     @Test
