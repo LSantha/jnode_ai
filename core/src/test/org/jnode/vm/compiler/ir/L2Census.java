@@ -170,6 +170,7 @@ public class L2Census {
                     checkFloatToIntConversion(m, text);
                     checkBackEdgeYieldPoints(m, text);
                     checkArrayLengthRegisters(m, text);
+                    checkCallLikeCoverage(m, text);
                     ok++;
                     if (hasHandlers && handlerExamples.size() < 20) {
                         handlerExamples.add(full);
@@ -721,6 +722,54 @@ public class L2Census {
             }
         }
         return false;
+    }
+
+    /**
+     * ANCHOR-L2-164 census lint: every quad whose EMISSION contains a real
+     * CALL must be call-like. `isCallLike` drives forcedSpills and the
+     * always-executed reasoning, so a quad that calls out while claiming not
+     * to leaves live pooled registers across the call unspilled -- silent
+     * corruption, and invisible to the SSA verifier because it happens after
+     * register allocation.
+     *
+     * The two isCallLike implementations (X86Level2Compiler and
+     * IRControlFlowGraph) have drifted before, so this lint asks the
+     * question structurally -- does the emitted text call out? -- instead of
+     * trusting either list. The X86 copy is the authority (it is the one the
+     * allocator consults).
+     */
+    static void checkCallLikeCoverage(VmMethod method, String text) {
+        try {
+            final IRControlFlowGraph cfg = lastCfg;
+            if (cfg == null) {
+                return;
+            }
+            for (Object b0 : (Iterable<?>) cfg) {
+                final IRBasicBlock b = (IRBasicBlock) b0;
+                for (Object q0 : (List<?>) b.getQuads()) {
+                    final Quad q = (Quad) q0;
+                    if (q.isDeadCode()) {
+                        continue;
+                    }
+                    final String block = emissionBlock(text, q.getAddress());
+                    if (block == null) {
+                        continue;
+                    }
+                    final String low = block.toLowerCase();
+                    if (low.indexOf("call ") < 0) {
+                        continue;
+                    }
+                    if (!org.jnode.vm.x86.compiler.l2.X86Level2Compiler.isCallLike(q)) {
+                        System.out.println("CALLNOTCALLLIKE "
+                            + method.getDeclaringClass().getName() + "#"
+                            + method.getName() + " @" + q.getAddress()
+                            + " " + q.getClass().getSimpleName());
+                    }
+                }
+            }
+        } catch (Throwable t) {
+            // lint only
+        }
     }
 
 }

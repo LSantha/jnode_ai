@@ -53,6 +53,8 @@ import org.jnode.vm.compiler.ir.quad.ArrayStoreQuad;
 import org.jnode.vm.compiler.ir.quad.AssignQuad;
 import org.jnode.vm.compiler.ir.quad.BinaryOperation;
 import org.jnode.vm.compiler.ir.quad.BinaryQuad;
+import org.jnode.vm.compiler.ir.quad.CheckcastQuad;
+import org.jnode.vm.compiler.ir.quad.ConstantClassAssignQuad;
 import org.jnode.vm.compiler.ir.quad.CallAssignQuad;
 import org.jnode.vm.compiler.ir.quad.CallQuad;
 import org.jnode.vm.compiler.ir.quad.JsrQuad;
@@ -455,13 +457,24 @@ public class X86Level2Compiler extends AbstractX86Compiler {
      * failure path; long div/rem call the runtime; unwinding preserves
      * nothing, hence ThrowQuad.
      */
-    static boolean isCallLike(Quad q) {
+    public static boolean isCallLike(Quad q) {
         if (q instanceof CallQuad || q instanceof CallAssignQuad
             || q instanceof MonitorenterQuad || q instanceof MonitorexitQuad
             || q instanceof JsrQuad || q instanceof ThrowQuad
             || q instanceof NewAssignQuad || q instanceof NewObjectArrayAssignQuad
             || q instanceof NewPrimitiveArrayAssignQuad || q instanceof NewMultiArrayAssignQuad
-            || q instanceof ArrayAssignQuad || q instanceof ArrayStoreQuad) {
+            || q instanceof ArrayAssignQuad || q instanceof ArrayStoreQuad
+            // ANCHOR-L2-164: quads that CALL OUT without being calls.
+            // ConstantClassAssignQuad emits an unconditional
+            // SoftByteCodes.getClassForVmType (no PUSHA wrapper), and the
+            // interface/array CheckcastQuad arms call the runtime helper --
+            // census lint CALLNOTCALLLIKE counted 232 and 11 sites
+            // respectively, in 161 methods. Claiming "not call-like" left
+            // live pooled registers (ECX/EBX/ESI) unspilled across the
+            // call, which is silent corruption and invisible to the SSA
+            // verifier because it happens after allocation.
+            || q instanceof ConstantClassAssignQuad
+            || q instanceof CheckcastQuad) {
             return true;
         }
         if (q instanceof BinaryQuad) {

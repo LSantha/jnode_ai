@@ -41,6 +41,8 @@ import org.jnode.vm.compiler.ir.quad.BinaryQuad;
 import org.jnode.vm.compiler.ir.quad.BranchQuad;
 import org.jnode.vm.compiler.ir.quad.CallAssignQuad;
 import org.jnode.vm.compiler.ir.quad.CallQuad;
+import org.jnode.vm.compiler.ir.quad.CheckcastQuad;
+import org.jnode.vm.compiler.ir.quad.ConstantClassAssignQuad;
 import org.jnode.vm.compiler.ir.quad.JsrQuad;
 import org.jnode.vm.compiler.ir.quad.LookupswitchQuad;
 import org.jnode.vm.compiler.ir.quad.MonitorenterQuad;
@@ -2026,6 +2028,14 @@ public class IRControlFlowGraph<T> implements Iterable<IRBasicBlock<T>> {
             || q instanceof NewPrimitiveArrayAssignQuad
             || q instanceof NewMultiArrayAssignQuad
             || q instanceof ArrayAssignQuad || q instanceof ArrayStoreQuad
+            // ANCHOR-L2-164: keep the two isCallLike copies in step --
+            // the backend calls out for a class literal (getClassForVmType)
+            // and for the interface/array checkcast helper, and this mirror
+            // drives the always-executed reasoning that must agree with the
+            // allocator's view. Census lint CALLNOTCALLLIKE is the
+            // structural check that keeps them from drifting again.
+            || q instanceof ConstantClassAssignQuad
+            || q instanceof CheckcastQuad
             // ANCHOR-L2-147: LDIV/LREM trap like the X86 mirror says
             // (plus IDIV/IREM: the backend emits trapping IDIV -- the
             // mirror's omission there is documented drift, not a model).
