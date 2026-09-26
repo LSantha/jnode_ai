@@ -124,6 +124,39 @@ test('orchestrator.js test suite', async (t) => {
     assert.ok(calls.createComment[0].body.includes('Verdict: request-changes'));
   });
 
+  await t.test('DEV with stale short-circuit label but an existing PR goes to REVIEW', async () => {
+    const { core, github, context, calls, updateIssueDetails, setMasterBody, setTaskData } = createMocks('workflow_run');
+
+    setMasterBody(`<!-- ORCHESTRATOR_STATE:\n{ "status": "IN_PROGRESS", "current_task": { "issue": 2, "pr": null, "phase": "DEV", "turn": 0, "max_turns": 3, "retries": 0 }, "queue": [3], "completed": [], "failed": [], "order": [2, 3] }\n-->`);
+    // agent/needs-info is a short-circuit label, but the agent did open a PR.
+    setTaskData({ labels: [{name: 'agent/needs-info'}], state: 'open' });
+    github.rest.pulls.list = async () => ({ data: [{ number: 99, head: { ref: 'opencode/issue2-fix' } }] });
+
+    await runOrchestrator({ github, context, core });
+
+    assert.strictEqual(calls.createComment.length, 1, 'Should trigger review phase');
+    assert.strictEqual(calls.createComment[0].issue_number, 99, 'Triggers on PR #99');
+    assert.ok(calls.createComment[0].body.includes('/oc review'));
+    const master = updateIssueDetails.find(u => u.issue_number === 1);
+    assert.ok(master && master.body.includes('"phase": "REVIEW"'), 'Phase advanced to REVIEW');
+    assert.ok(master && !master.body.includes('"completed": [\n    2'), 'Task #2 is not marked completed');
+  });
+
+  await t.test('DEV with short-circuit label and no PR completes the task', async () => {
+    const { core, github, context, calls, updateIssueDetails, setMasterBody, setTaskData } = createMocks('workflow_run');
+
+    setMasterBody(`<!-- ORCHESTRATOR_STATE:\n{ "status": "IN_PROGRESS", "current_task": { "issue": 2, "pr": null, "phase": "DEV", "turn": 0, "max_turns": 3, "retries": 0 }, "queue": [3], "completed": [], "failed": [], "order": [2, 3] }\n-->`);
+    setTaskData({ labels: [{name: 'agent/needs-info'}], state: 'open' });
+    github.rest.pulls.list = async () => ({ data: [] });
+
+    await runOrchestrator({ github, context, core });
+
+    assert.strictEqual(calls.createComment.length, 1, 'Only the next queued task is triggered');
+    assert.strictEqual(calls.createComment[0].issue_number, 3, 'Advances to the next task, not a review');
+    assert.ok(!calls.createComment[0].body.includes('/oc review'));
+    assert.ok(updateIssueDetails.some(u => u.issue_number === 1 && u.body.includes('"completed": [\n    2')));
+  });
+
   await t.test('Review phase accepts explicit approve verdict', async () => {
     const { core, github, context, calls, updateIssueDetails, setMasterBody, setTaskData } = createMocks('workflow_run');
 

@@ -25,6 +25,29 @@ module.exports = async ({ github, context, core }) => {
     };
   }
 
+  // PR lookup for DEV completion: shared pulls lookup first, then a
+  // "Created PR #N" issue-comment fallback for when the API has not indexed
+  // the PR yet. Same shape as ticket-runner.js findPRForIssueWithComment.
+  async function findPRForIssueWithComment(issueNumber) {
+    const prNumber = await findPRForIssue(issueNumber);
+    if (prNumber) return prNumber;
+
+    try {
+      const comments = await github.rest.issues.listComments({
+        owner: context.repo.owner, repo: context.repo.repo, issue_number: issueNumber, per_page: 100
+      });
+      const list = (comments && comments.data) ? comments.data : comments;
+      for (let i = list.length - 1; i >= 0; i--) {
+        const body = (list[i] && list[i].body) || '';
+        const match = body.match(/\b(?:Created|Opened) PR #(\d+)\b/i);
+        if (match) return parseInt(match[1], 10);
+      }
+    } catch (err) {
+      core.warning(`findPRForIssueWithComment failed: ${err.message}`);
+    }
+    return null;
+  }
+
 
   // Helper to render a 20-char ASCII progress bar
   function renderBar(percent) {
@@ -463,18 +486,21 @@ module.exports = async ({ github, context, core }) => {
             });
             const labels = (currentIssue.data.labels || []).map(l => l.name);
             if (!phaseFailed) {
-              if (SHORT_CIRCUIT_LABELS.some(l => labels.includes(l))) {
+              // A PR is the authoritative completion signal. Check it BEFORE the
+              // short-circuit labels: a stale agent/needs-info must not hide a PR
+              // the agent already opened. Same ordering as ticket-runner DEV.
+              const foundPr = await findPRForIssueWithComment(task.issue);
+              if (foundPr) {
+                task.pr = foundPr;
+                task.phase = 'REVIEW';
+                task.retries = 0;
+                await triggerTask(task.pr, getReviewPrompt());
+              } else if (SHORT_CIRCUIT_LABELS.some(l => labels.includes(l))) {
                 // Short-circuit completion
                 state.completed.push(task.issue);
                 isDone = true;
               } else if (labels.includes('agent/done')) {
-                const foundPr = await findPRForIssue(task.issue);
-                if (foundPr) {
-                  task.pr = foundPr;
-                  task.phase = 'REVIEW';
-                  task.retries = 0;
-                  await triggerTask(task.pr, getReviewPrompt());
-                } else if (labels.includes('kind/feature') || labels.includes('kind/bug')) {
+                if (labels.includes('kind/feature') || labels.includes('kind/bug')) {
                   core.error(`#${task.issue}: agent/done but no PR. Retrying.`);
                   phaseFailed = true;
                 } else {
