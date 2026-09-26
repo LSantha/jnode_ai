@@ -94,6 +94,46 @@ want() { case " $PHASES " in *" $1 "*) return 0 ;; esac; return 1; }
 # test/exit on its own result.
 run() { _p=$1; shift; say "START $_p"; if "$@" >> "$LOG" 2>&1; then say "PASS  $_p"; else say "FAIL  $_p rc=$?"; fi; }
 g() { _cap=$1; _lbl=$2; shift 2; sh "$TOOLS/gsh.sh" "$_cap" "$STALL" "$LABEL-$_lbl" "$@"; }
+# ANCHOR-L2-170: a live leg may only boot the L1A oracle image. A host-phase
+# `build` writes an L2-bootimage ISO to the SAME path, and that image panics at
+# boot (the deferred AOT defect: null+8 store at proid 0), which is
+# indistinguishable from an L1A boot regression unless the artifact is checked.
+# The builder stamps iso_bytes + a backend source fingerprint; if either moved,
+# the ISO is not the image the source tree describes, so rebuild before booting.
+# Deterministic backend/IR source fingerprint: sorted, git-tracked, per-file
+# digests. A `cat globbed/*.java | md5sum` is NOT usable as a gate -- it shifts
+# with glob order and with any temporary file that appears in those directories
+# (observed 2026-09-27: a transient file made an identical tree hash
+# differently), which is a false "sources changed" on an unchanged tree.
+backend_src_md5() {
+  git ls-files -- core/src/core/org/jnode/vm/x86/compiler/l2 \
+    core/src/core/org/jnode/vm/compiler/ir | sort | while read -r f; do
+    printf '%s %s\n' "$f" "$(md5sum "$f" | cut -d" " -f1)"
+  done | md5sum | cut -d" " -f1
+}
+assert_live_iso() {
+  ISO=all/build/cdroms/jnode-x86-lite.iso
+  STAMP=$ISO.artifact
+  if [ ! -f "$STAMP" ] || [ ! -f "$ISO" ]; then
+    say "ARTIFACT live leg needs a built oracle ISO (no $STAMP)"; return 1
+  fi
+  local want_bytes have_bytes want_md5 have_md5
+  want_bytes=$(sed -n 's/^iso_bytes=//p' "$STAMP")
+  have_bytes=$(stat -c %s "$ISO")
+  want_md5=$(sed -n 's/^src_md5=//p' "$STAMP")
+  have_md5=$(backend_src_md5)
+  if [ "$want_bytes" != "$have_bytes" ]; then
+    say "ARTIFACT REBUILD: ISO is $have_bytes bytes, stamp says $want_bytes (a host build overwrote it)"
+    return 1
+  fi
+  if [ -n "$want_md5" ] && [ "$want_md5" != "$have_md5" ]; then
+    say "ARTIFACT REBUILD: backend sources changed since this ISO (src_md5 $want_md5 -> $have_md5)"
+    return 1
+  fi
+  say "ARTIFACT ok: $have_bytes bytes, backend src_md5 $have_md5, $(sed -n 's/^built=//p' "$STAMP")"
+  return 0
+}
+
 boot() { rm -f /tmp/jnode-ready /tmp/jnode.kdb
   vboxmanage controlvm "$VM" poweroff >/dev/null 2>&1
   sleep 3
@@ -198,6 +238,18 @@ if { want oracle || want mauve; } && { [ ! -f /tmp/l2oracle-ref/OracleDriver.cla
     /home/levente/ext/prg/java/bin/javac -d /tmp/mghost/classes -sourcepath core/src/vmmagic:core/src/classlib:/tmp/mghost/src /tmp/mghost/src/org/jnode/vm/VmAddress.java /tmp/mghost/src/org/jnode/vm/classmgr/VmType.java core/src/vmmagic/org/vmmagic/unboxed/Word.java core/src/vmmagic/org/vmmagic/unboxed/Address.java core/src/vmmagic/org/vmmagic/unboxed/Offset.java core/src/vmmagic/org/vmmagic/unboxed/Extent.java core/src/vmmagic/org/vmmagic/unboxed/UnboxedObject.java core/src/vmmagic/org/vmmagic/unboxed/ObjectReference.java core/src/classlib/org/jnode/annotation/KernelSpace.java core/src/classlib/org/jnode/annotation/Uninterruptible.java core/src/vmmagic/org/vmmagic/pragma/Uninterruptible.java 2>&1 | tail -n 1
     /home/levente/ext/prg/java/bin/javac -cp /tmp/mghost/classes -d /tmp/l2oracle-ref tests/l2oracle/Probes.java tests/l2oracle/OracleDriver.java 2>&1 | tail -n 1
     /home/levente/ext/prg/java/bin/java -cp /tmp/mghost/classes:/tmp/l2oracle-ref OracleDriver /tmp/l2oracle-ref/out-host.txt noforce | tail -n 1'
+fi
+if want oracle || want mauve; then
+  if ! assert_live_iso; then
+    say "ARTIFACT rebuilding oracle ISO (local/mk-ox-iso.sh) before any live leg"
+    if run isobuild bash "${MK_OX_ISO:-$ROOT/local/mk-ox-iso.sh}" \
+       && assert_live_iso; then
+      say "ARTIFACT rebuilt and verified"
+    else
+      say "ARTIFACT FATAL: cannot produce a verified L1A oracle ISO; live legs skipped"
+      exit 2
+    fi
+  fi
 fi
 if want oracle; then
   if boot oracleboot; then
