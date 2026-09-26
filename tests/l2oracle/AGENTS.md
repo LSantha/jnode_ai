@@ -4,6 +4,40 @@ Differential testing for the L2 compiler backend: the same probe methods run
 on the host JDK (reference) and on live JNode with methods force-compiled by
 L2. Any diff beyond known pre-existing divergences is an L2 codegen bug.
 
+## RULE: every fix ships with a regression guard (settled 2026-09-27)
+
+A fix without a guard is not done. The guard must be able to FAIL when the
+fix is reverted, and it must be recorded in the commit message.
+
+Acceptable guards, strongest first:
+
+| Guard | Where | Red proof required |
+|---|---|---|
+| Whole-corpus census lint | `L2Census` (own process, not JUnit) | lint fires on the pre-fix overlay and is 0 after: e.g. `NOYIELDPOINT` 1954 -> 0, `FISTPMISMATCH` 22 -> 0 |
+| SSA / deSSA structural guard | the census now runs `SSAVerifier.verifyPreDessA` + `verifyPostDessA` on every method | a violating method appears in FAILED when the fix is reverted |
+| Synthetic emitter / pipeline test | `L2ModeMatrixTest` (T3), `L2PipelineTest` (T1), `L2HostTest` (T0) | test fails on the pre-fix class overlay (`javap`-verify which class is in the run) |
+| Value-level probe | `Probes.java` + `OracleDriver.CASES` | guest-vs-host diff appears pre-fix; host reference recorded |
+| Label/emit invariant census | e.g. L2-161 `countUnboundInstrLabels` | non-zero before the fix, 0 after |
+
+Not a guard, on its own:
+
+- "it compiled" (a forward-slot deSSA misordering compiles cleanly — that is
+  why the census runs the SSA verifier),
+- a mauve list diff without single-testlet isolation (cross-testlet state
+  produced phantom `Class.*` regressions, and one "fixed" case was a
+  host-JDK semantic difference),
+- a probe added without a recorded pre-fix value,
+- an observation with no reproducer.
+
+Minimum bar for a corpus-wide fix (e.g. a whole class of methods): one
+whole-corpus lint or verifier, not a synthetic test alone. Minimum bar for a
+single-shape fix: one synthetic test plus a probe row when the shape is
+value-visible.
+
+Gate order before committing: `regress.sh host` (T0/T3/T1, all-junit,
+census with `FAILED == 0`) then the live legs, and a boot attempt when the
+fix can plausibly move the boot.
+
 ## Files
 
 | File | Role |

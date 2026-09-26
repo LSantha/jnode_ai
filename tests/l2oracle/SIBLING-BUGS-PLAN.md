@@ -1406,8 +1406,17 @@ review (its section 3 entries for them are stale).
 | Wave C | handler-entry phi source + copy placement (finallyThrowsLong) | LANDED L2-159 (all-junit 250/0 green, census clean, mauve v1 20/20) |
 
 Standing rules: test-guard policy (red-green per fix, javap-verify
-classes, ASCII-clean diffs); census FAILED-identity + OK attribution;
-guest oracle/mauve where marked; cold boot per guest run.
+classes, ASCII-clean diffs); census FAILED==0 + OK attribution; guest
+oracle/mauve where marked; cold boot per guest run.
+
+**Guard rule (settled 2026-09-27): every fix ships with a regression
+guard that can fail when the fix is reverted, named in the commit
+message.** "It compiled" is not a guard -- a deSSA copy placed before
+its own source compiles cleanly, which is why the census now runs the
+SSA verifier over every method. A mauve list diff is not a guard
+without single-testlet isolation. The accepted guard kinds, their
+strength order and the red proof each one needs are in
+`AGENTS.md` ("RULE: every fix ships with a regression guard").
 
 ## L2-160 (probes landed): static-read shapes are CORRECT; the v3/v4 "new fails" are state artifacts
 
