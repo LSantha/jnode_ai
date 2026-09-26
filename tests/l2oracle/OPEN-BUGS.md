@@ -4,9 +4,12 @@ Start here. This is the deduplicated union of every review's findings; the
 per-item detail stays in the source documents named below.
 
 Single deduplicated list across every review: the deep review
-(`../../local/docs/L2-DEEP-REVIEW.md`), the deep review **report**
+(`../../local/docs/L2-DEEP-REVIEW.md` — H1-H7, M1-M5, P6-P19 status, and its
+section-4 structural observations), the deep review **report**
 (`../../local/docs/L2-DEEP-REVIEW-REPORT.md`, Parts 0-10), the sibling-bug
-queue in `SIBLING-BUGS-PLAN.md`, and the 2026-09-26/27 sessions. Status
+queue in `SIBLING-BUGS-PLAN.md` (P0-P19), and the 2026-09-26/27 sessions.
+Items that exist in a review but not in this register are the defect; this
+file is the checklist to keep that true. Status
 vocabulary: **LANDED** (fixed + guarded), **OPEN** (believed real, no fix),
 **CODE-READ** (claimed from reading, no repro), **GUARD GAP** (no test/lint
 covers the shape), **CLOSED-NB** (investigated, not a bug).
@@ -43,6 +46,10 @@ post-deSSA on every method, so structural SSA regressions are corpus-wide.
 | C1 | P2 | `LiveRange.compareTo` is not a valid total order | **OPEN** | none |
 | C2 | P2 | `removeDefUseChains` coalescing unguarded (= plan P10) | **OPEN** | none |
 | C3 | P1 | `handlerEntryTops` snapshot skipped when the exception slot has no SSA stack -> self-referential phi copy (found in my own L2-159) | **OPEN** | corpus SSA verifier would catch it if a corpus shape triggers it |
+| C4 | P2 | deSSA floor ignores phi source tags: when no usable edge is found, the floor copy lands on the def block of `sources.get(0)` regardless of the edge it arrived on (earlier review S4) | **OPEN**, partially mitigated by L2-159's handler-tag routing, floor itself unchanged | corpus SSA verifier catches the value shape, not the edge choice |
+| C5 | P2 | handler-entry idom heuristic: a handler block with no computed idom inherits the idom of the block at its range START, not the closest predecessor (earlier review S4; `IRControlFlowGraph.doComputeDominance`) | **OPEN** | none |
+| C6 | P2 | M4: CAS with a spilled offset operand fails to compile (`loadEffectiveAddress` refuses a STACK offset into EDX, the CAS arm always passes EDX) -- loud, not silent, but it hides in the same census bucket as real bugs | **OPEN** (disabled-capability noise) | none; census FAILED would list it once the class is reachable |
+| C7 | note | the never-popped `ExceptionArgument` on the SSA stack is deliberate (ANCHOR-L2-128); L2-159 additionally re-arms the exception SLOT in the IR generator | by design | corpus SSA verifier |
 
 ## D. IR generator / quad semantics (report Part 4)
 
