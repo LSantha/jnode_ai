@@ -34,6 +34,7 @@ import org.jnode.fs.FSDirectory;
 import org.jnode.fs.FSEntry;
 import org.jnode.fs.FSFile;
 import org.jnode.fs.jfat.ClusterSize;
+import org.jnode.fs.jfat.Fat;
 import org.jnode.fs.jfat.FatFileSystem;
 import org.jnode.fs.jfat.FatFileSystemFormatter;
 import org.jnode.fs.jfat.FatFileSystemType;
@@ -141,6 +142,53 @@ public class FatWriteTest {
         ByteBuffer readBuffer = ByteBuffer.allocate(FILE_SIZE);
         readFile.read(0, readBuffer);
         assertTrue("Data mismatch", Arrays.equals(buffer.array(), readBuffer.array()));
+
+        fs.close();
+    }
+
+    @Test
+    public void testFileFlushPersistsExtendedFile() throws Exception {
+        FatFileSystem fs = formatAndOpenRW();
+        byte[] data = new byte[fs.getClusterSize() * 3];
+        for (int i = 0; i < data.length; i++) {
+            data[i] = (byte) (i & 0xFF);
+        }
+
+        FSFile file = fs.getRootEntry().getDirectory().addFile(FILE_NAME).getFile();
+        file.write(0, ByteBuffer.wrap(data));
+        file.flush();
+
+        fileDevice.close();
+        fs = openReadOnly();
+
+        file = fs.getRootEntry().getDirectory().getEntry(FILE_NAME).getFile();
+        assertEquals("Wrong file length", data.length, file.getLength());
+        ByteBuffer readBuffer = ByteBuffer.allocate(data.length);
+        file.read(0, readBuffer);
+        assertTrue("Data mismatch", Arrays.equals(data, readBuffer.array()));
+
+        fs.close();
+    }
+
+    @Test
+    public void testAllocationWrapsWhenNoFreeClustersAfterHint() throws Exception {
+        FatFileSystem fs = formatAndOpenRW();
+        Fat fat = fs.getFat();
+        int hint = fat.firstCluster() + 8;
+
+        for (int i = hint; i < fat.size(); i++) {
+            fat.set(i, fat.eofChain());
+        }
+        fat.setLastFree(hint);
+
+        byte[] data = new byte[fs.getClusterSize()];
+        FSFile file = fs.getRootEntry().getDirectory().addFile("wrap.bin").getFile();
+        file.write(0, ByteBuffer.wrap(data));
+        file.flush();
+
+        ByteBuffer readBuffer = ByteBuffer.allocate(data.length);
+        file.read(0, readBuffer);
+        assertTrue("Data mismatch", Arrays.equals(data, readBuffer.array()));
 
         fs.close();
     }
