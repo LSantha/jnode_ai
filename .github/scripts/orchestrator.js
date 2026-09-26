@@ -21,7 +21,8 @@ module.exports = async ({ github, context, core }) => {
       phase: 'DEV',
       turn: 0,
       max_turns: 3,
-      retries: 0
+      retries: 0,
+      review_in_progress: false
     };
   }
 
@@ -76,7 +77,8 @@ module.exports = async ({ github, context, core }) => {
       const tNum = getTaskIssueNumber(state.current_task);
       if (isMultiStepTask(state.current_task)) {
         const prInfo = state.current_task.pr ? ` → PR #${state.current_task.pr}` : '';
-        currentTaskInfo = `#${tNum}${prInfo} (Phase: ${state.current_task.phase}, Turn ${state.current_task.turn}/${state.current_task.max_turns}, Attempt ${state.current_task.retries + 1}/3)`;
+        const reviewInfo = state.current_task.review_in_progress ? ', Review in progress' : '';
+        currentTaskInfo = `#${tNum}${prInfo} (Phase: ${state.current_task.phase}, Turn ${state.current_task.turn}/${state.current_task.max_turns}, Attempt ${state.current_task.retries + 1}/3${reviewInfo})`;
       } else {
         currentTaskInfo = `#${tNum} (Attempt ${state.retries + 1}/3)`;
       }
@@ -197,7 +199,8 @@ module.exports = async ({ github, context, core }) => {
 
     const runUrl = `https://github.com/${context.repo.owner}/${context.repo.repo}/actions/runs/${run.id}`;
     if (run.conclusion === 'success') {
-      if (task.phase !== 'REVIEW') return false;
+      if (task.phase !== 'REVIEW' || task.review_in_progress) return false;
+      task.review_in_progress = true;
       state.history.push({ event: 'ci_green_rereview', task: task.issue, timestamp: new Date().toISOString() });
       await triggerTask(task.pr, getReviewPrompt());
       return true;
@@ -409,6 +412,9 @@ module.exports = async ({ github, context, core }) => {
         const msg = isMultiStepTask(state.current_task) && state.current_task.phase === 'FEEDBACK' ? "/oc fix Address review feedback." 
                   : isMultiStepTask(state.current_task) && state.current_task.phase === 'REVIEW' ? getReviewPrompt()
                   : "/oc Please proceed with this task.";
+        if (isMultiStepTask(state.current_task) && state.current_task.phase === 'REVIEW') {
+          state.current_task.review_in_progress = true;
+        }
         await triggerTask(target, msg);
       }
 
@@ -494,6 +500,7 @@ module.exports = async ({ github, context, core }) => {
                 task.pr = foundPr;
                 task.phase = 'REVIEW';
                 task.retries = 0;
+                task.review_in_progress = true;
                 await triggerTask(task.pr, getReviewPrompt());
               } else if (SHORT_CIRCUIT_LABELS.some(l => labels.includes(l))) {
                 // Short-circuit completion
@@ -514,6 +521,7 @@ module.exports = async ({ github, context, core }) => {
             break;
           }
           case 'REVIEW': {
+            task.review_in_progress = false;
             const currentPR = await github.rest.issues.get({
               owner: context.repo.owner, repo: context.repo.repo, issue_number: task.pr
             });
@@ -575,6 +583,7 @@ module.exports = async ({ github, context, core }) => {
               } else {
                 task.phase = 'REVIEW';
                 task.retries = 0;
+                task.review_in_progress = true;
                 await triggerTask(task.pr, getReviewPrompt());
               }
             }
@@ -593,6 +602,7 @@ module.exports = async ({ github, context, core }) => {
           } else {
             const target = task.pr ? task.pr : task.issue;
             const msg = task.phase === 'FEEDBACK' ? "/oc fix Address review feedback." : task.phase === 'REVIEW' ? getReviewPrompt() : "/oc Please proceed with this task.";
+            if (task.phase === 'REVIEW') task.review_in_progress = true;
             await triggerTask(target, msg);
             await updateMasterIssue(masterIssueNumber, state);
             return;

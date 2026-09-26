@@ -435,6 +435,7 @@ module.exports = async ({ github, context, core }) => {
       if (!st || st.phase === "DONE" || st.phase === "FAILED") continue;
       if (conclusion === "success") {
         if (st.phase !== "REVIEW" || st.review_in_progress) continue;
+        st.review_in_progress = true;
         st.history.push({ event: "ci_green_rereview", timestamp: new Date().toISOString() });
         await updateIssueState(found.issueNumber, st);
         await h.triggerTask(prNumber, h.getReviewPrompt());
