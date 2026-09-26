@@ -134,7 +134,20 @@ assert_live_iso() {
   return 0
 }
 
-boot() { rm -f /tmp/jnode-ready /tmp/jnode.kdb
+boot() {
+  # ANCHOR-L2-172: a live run spans many boots, so the artifact check cannot be
+  # a once-per-run prelude -- a build between legs replaces the image under the
+  # runner. Cheap size check before each boot; mismatch means the ISO on disk is
+  # not the verified oracle image, so refuse rather than boot it.
+  local iso_now iso_want
+  iso_now=$(stat -c %s all/build/cdroms/jnode-x86-lite.iso 2>/dev/null)
+  iso_want=$(sed -n 's/^iso_bytes=//p' all/build/cdroms/jnode-x86-lite.iso.artifact 2>/dev/null)
+  if [ -n "$iso_want" ] && [ "$iso_now" != "$iso_want" ]; then
+    say "ARTIFACT FATAL: ISO changed under the run ($iso_now bytes vs stamp $iso_want); refusing to boot. Do not build while a live run is in flight."
+    vboxmanage controlvm "$VM" poweroff >/dev/null 2>&1
+    exit 2
+  fi
+  rm -f /tmp/jnode-ready /tmp/jnode.kdb
   vboxmanage controlvm "$VM" poweroff >/dev/null 2>&1
   sleep 3
   vboxmanage startvm "$VM" --type headless >/dev/null 2>&1
@@ -147,7 +160,17 @@ say "=== regress start label=$LABEL mode=$MODE phases=[$PHASES ] mauve=[$MAUVE_S
 
 # ------------------------------- HOST ----------------------------------
 if want build; then
-  run build sh build.sh -Djnode.compiler=L2 "-Dmy-conf.dir=$PWD/local/l2oracle/conf-x86" cd-x86-lite
+  # ANCHOR-L2-172: this gate exists to compile+link the L2 backend (and prove
+  # it can compile a bootimage), NOT to produce the live ISO. It used to write
+  # all/build/cdroms/jnode-x86-lite.iso -- the SAME path mk-ox-iso.sh masters --
+  # and that clobber has now bitten twice: once before a mauve run, and once
+  # DURING one (a C2 build at 02:19 replaced the image under a running sweep and
+  # the next leg booted the L2-bootimage ISO and died at proid 0). The ISO path
+  # is an overridable property, so link to a scratch file and leave the live
+  # artifact to the oracle builder alone.
+  run build sh build.sh -Djnode.compiler=L2 \
+    -Djnode-x86-lite.iso="$PWD/core/build/l2-compile-gate.iso" \
+    "-Dmy-conf.dir=$PWD/local/l2oracle/conf-x86" cd-x86-lite
 fi
 if want anchors; then
   run anchors sh -c '
