@@ -52,6 +52,7 @@ function createMocks(eventName, {
   let currentPRBody = prBody;
   let currentPRLabels = [...prLabels];
   let currentPRHead = { ref: prHeadRef, sha: "abc123" };
+  let currentPRMerged = true;
 
   let commentsOnPR = [];
   let commentsOnIssue = [];
@@ -155,7 +156,8 @@ function createMocks(eventName, {
               number: pull_number,
               head: currentPRHead,
               body: currentPRBody,
-              merged: true
+              state: currentPRMerged ? "closed" : "open",
+              merged: currentPRMerged
             }
           };
         },
@@ -240,6 +242,7 @@ function createMocks(eventName, {
     setIssueComments: (c) => { commentsOnIssue = c; },
     setPRFiles: (f) => { prFiles = f; },
     setCheckRuns: (r) => { checkRuns = r; },
+    setPRMerged: (m) => { currentPRMerged = m; },
     getIssueBody: () => currentIssueBody
   };
 }
@@ -1159,6 +1162,82 @@ test("ticket-runner.js event handling suite", async (t) => {
     assert.strictEqual(state.phase, "DONE");
     assert.deepStrictEqual(mocks.calls.mergePR, [99]);
     assert.ok(!mocks.calls.createComment.some(c => c.body.includes("failed to auto-merge")));
+  });
+
+  await t.test("REVIEW approve does not claim success when the merge stays unconfirmed", async () => {
+    const initialBody = _replaceOrAppendStatus("Task", {
+      phase: "REVIEW",
+      pr: 99,
+      turn: 0,
+      max_turns: 3,
+      retries: 0,
+      started: new Date().toISOString(),
+      history: []
+    }, 42);
+
+    const mocks = createMocks("workflow_run", {
+      issueBody: initialBody,
+      runDisplayTitle: "Issue #99 - PR",
+      issueLabels: [{ name: "kind/chore" }]
+    });
+    mocks.setCommentsOnPR([{ body: "Verdict: approve" }]);
+    // The merge call itself succeeds; the follow-up read still reports an open PR.
+    mocks.setPRMerged(false);
+
+    await runTicketRunner(mocks);
+
+    const state = _parseState(mocks.getIssueBody());
+    assert.deepStrictEqual(mocks.calls.mergePR, [99], "The merge was attempted");
+    assert.notStrictEqual(state.phase, "DONE", "An unconfirmed merge is not success");
+    assert.ok(!state.history.some(e => e.event === "merged"), "No merged event is recorded");
+    const failure = state.history.find(e => e.event === "merge_failed");
+    assert.ok(failure, "merge_failed is recorded in the history");
+    assert.ok(/merge not confirmed/.test(failure.error), "The unconfirmed merge reason is reported");
+    assert.ok(
+      mocks.calls.createComment.some(c => c.issue_number === 99 && c.body.includes("failed to auto-merge")),
+      "A failure comment is posted on the PR"
+    );
+    assert.ok(!mocks.calls.addLabels.some(l => l.labels.includes("agent/done")), "Issue is not labelled done");
+    assert.ok(
+      !mocks.updateIssueDetails.some(u => u.issue_number === 42 && u.state === "closed"),
+      "Issue is not closed"
+    );
+  });
+
+  await t.test("Human approval does not claim success when the merge stays unconfirmed", async () => {
+    const initialBody = _replaceOrAppendStatus("Task", {
+      phase: "HUMAN_REVIEW",
+      pr: 99,
+      turn: 0,
+      max_turns: 3,
+      retries: 0,
+      started: new Date().toISOString(),
+      history: []
+    }, 42);
+
+    const mocks = createMocks("pull_request_review", {
+      issueBody: initialBody,
+      issueLabels: [{ name: "kind/bug" }]
+    });
+    mocks.setPRMerged(false);
+
+    await runTicketRunner(mocks);
+
+    const state = _parseState(mocks.getIssueBody());
+    assert.deepStrictEqual(mocks.calls.mergePR, [99], "The merge was attempted");
+    assert.notStrictEqual(state.phase, "DONE", "An unconfirmed merge is not success");
+    const failure = state.history.find(e => e.event === "merge_failed");
+    assert.ok(failure, "merge_failed is recorded in the history");
+    assert.ok(/merge not confirmed/.test(failure.error), "The unconfirmed merge reason is reported");
+    assert.ok(
+      mocks.calls.createComment.some(c => c.issue_number === 99 && c.body.includes("failed to auto-merge")),
+      "A failure comment is posted on the PR"
+    );
+    assert.ok(!mocks.calls.addLabels.some(l => l.labels.includes("agent/done")), "Issue is not labelled done");
+    assert.ok(
+      !mocks.updateIssueDetails.some(u => u.issue_number === 42 && u.state === "closed"),
+      "Issue is not closed"
+    );
   });
 
   await t.test("REVIEW approve defers when diff touches ASM", async () => {

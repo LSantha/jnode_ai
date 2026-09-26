@@ -228,6 +228,57 @@ test('orchestrator.js test suite', async (t) => {
     assert.ok(updateIssueDetails.some(u => u.issue_number === 1 && u.body.includes('"completed": [\n    2')));
   });
 
+  await t.test('Review approve with auto-merge does not claim success when the merge stays unconfirmed', async () => {
+    const { core, github, context, calls, updateIssueDetails, setMasterBody, setTaskData } = createMocks('workflow_run');
+
+    setMasterBody(`<!-- ORCHESTRATOR_STATE:\n{ "status": "IN_PROGRESS", "current_task": { "issue": 2, "pr": 99, "phase": "REVIEW", "turn": 0, "max_turns": 3, "retries": 0 }, "queue": [3], "completed": [], "failed": [], "order": [2, 3] }\n-->`);
+    setTaskData({ labels: [{name: 'auto-merge'}], state: 'open' });
+    github.rest.issues.listComments = async () => ({ data: [{ body: 'Verdict: approve' }] });
+    // The merge call resolves with an empty body; the verification read still
+    // reports an unmerged PR.
+    github.rest.pulls.get = async () => ({ data: { head: { ref: 'opencode/issue2-fix', sha: 'abc' }, state: 'open', merged: false } });
+    github.rest.pulls.listFiles = async () => ({ data: [{ filename: 'fs/a.java', additions: 5 }] });
+    github.rest.checks = { listForRef: async () => ({ data: { check_runs: [{ status: 'completed', conclusion: 'success' }] } }) };
+
+    await assert.rejects(
+      runOrchestrator({ github, context, core }),
+      /merge not confirmed/,
+      'An unconfirmed merge surfaces as a failure'
+    );
+
+    assert.deepStrictEqual(calls.mergePR, [99], 'The merge was attempted');
+    assert.ok(
+      !updateIssueDetails.some(u => u.issue_number === 1 && u.body.includes('"completed": [\n    2')),
+      'Task #2 is never marked completed'
+    );
+    assert.ok(
+      !calls.createComment.some(c => c.body.includes('All tasks in the queue have been processed')),
+      'The batch is not reported as finished'
+    );
+    assert.ok(calls.createComment.every(c => c.issue_number !== 3), 'The next task is not started');
+    assert.ok(calls.removeLabel.includes('orchestrator/locked'), 'The lock is released');
+  });
+
+  await t.test('Human approved PR review does not claim success when the merge stays unconfirmed', async () => {
+    const { core, github, context, calls, setMasterBody } = createMocks('pull_request_review');
+
+    setMasterBody(`<!-- ORCHESTRATOR_STATE:\n{ "status": "IN_PROGRESS", "current_task": { "issue": 2, "pr": 99, "phase": "HUMAN_REVIEW", "turn": 0, "max_turns": 3, "retries": 0 }, "queue": [3], "completed": [], "failed": [], "order": [2, 3] }\n-->`);
+    github.rest.pulls.get = async () => ({ data: { head: { ref: 'opencode/issue2-fix', sha: 'abc' }, state: 'open', merged: false } });
+
+    await assert.rejects(
+      runOrchestrator({ github, context, core }),
+      /merge not confirmed/,
+      'An unconfirmed merge surfaces as a failure'
+    );
+
+    assert.deepStrictEqual(calls.mergePR, [99], 'The merge was attempted');
+    assert.ok(calls.createComment.every(c => c.issue_number !== 3), 'The next task is not started');
+    assert.ok(
+      !calls.createComment.some(c => c.body.includes('All tasks in the queue have been processed')),
+      'The batch is not reported as finished'
+    );
+  });
+
   await t.test('Review approve with auto-merge defers when CI red', async () => {
     const { core, github, context, calls, setMasterBody, setTaskData } = createMocks('workflow_run');
 
