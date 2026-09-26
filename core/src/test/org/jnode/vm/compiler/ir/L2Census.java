@@ -84,7 +84,22 @@ public class L2Census {
         urls.add(new File(root + "/distr/build/classes").toURL());
         urls.add(new File(classDir).toURL());
         for (int i = 2; i < args.length; i++) {
-            urls.add(new File(args[i]).toURL());
+            // ANCHOR-L2-160: accept JARs as well as directories. The 169
+            // FAILED entries were all missing-type errors (org.mmtk.*,
+            // org.apache.log4j.*, junit.framework.*) -- every one of those
+            // libraries ships in the repo (core/lib/mmtk/mmtk.jar,
+            // core/lib/log4j-1.2.8.jar, core/lib/junit-4.5.jar), but the
+            // JNode-side loader only ever saw core/build/classes,
+            // distr/build/classes, the scanned dir and local/classlib, so
+            // the app classpath was irrelevant. With the jars on the
+            // loader's URL list: FAILED 169 -> 0, OK 11399 -> 11605,
+            // MAGIC 7 -> 0, HANDLERS 459 -> 524.
+            final File extra = new File(args[i]);
+            if (args[i].endsWith(".jar")) {
+                urls.add(new URL("jar:" + extra.toURL() + "!/"));
+            } else {
+                urls.add(extra.toURL());
+            }
         }
         File localClasslib = new File(root + "/local/classlib");
         if (localClasslib.isDirectory()) {
@@ -100,17 +115,23 @@ public class L2Census {
         List<String> classes = new ArrayList<String>();
         collect(new File(classDir), "", classes);
         int ok = 0, skip = 0, magic = 0, handlersH = 0, fail64 = 0;
+        // ANCHOR-L2-160: split SKIP so coverage claims are exact: classes the
+        // loader cannot load vs. methods skipped as abstract/native/no-code.
+        int skipClass = 0;
         Map<String, Integer> other = new HashMap<String, Integer>();
         List<String> otherExamples = new ArrayList<String>();
         List<String> handlerExamples = new ArrayList<String>();
         List<String> magicExamples = new ArrayList<String>();
         List<String> failed = new ArrayList<String>();
+        // ANCHOR-L2-160: failure -> cause, for driving FAILED to zero.
+        List<String> failedReasons = new ArrayList<String>();
         int done = 0;
         for (String cn : classes) {
             VmType type;
             try {
                 type = loader.loadClass(cn, true);
             } catch (Throwable t) {
+                skipClass++;
                 skip++;
                 continue;
             }
@@ -156,6 +177,7 @@ public class L2Census {
                     }
                 } catch (Throwable t) {
                     failed.add(full);
+                    failedReasons.add(full + " :: " + t);
                     String msg = String.valueOf(t.getMessage());
                     String low = msg.toLowerCase();
                     if (low.indexOf("magic") >= 0) {
@@ -179,11 +201,31 @@ public class L2Census {
             }
         }
         out.println("classes=" + classes.size());
-        out.println("OK=" + ok + " SKIP=" + skip + " MAGIC=" + magic
+        out.println("OK=" + ok + " SKIP=" + skip + " SKIP_CLASSES=" + skipClass
+            + " SKIP_METHODS=" + (skip - skipClass) + " MAGIC=" + magic
             + " HANDLERS=" + handlersH + " FAIL_64=" + fail64);
         out.println("--- FAILED (" + failed.size() + ") ---");
         for (String s : failed) {
             out.println(s);
+        }
+        // ANCHOR-L2-160: one line per failure WITH its cause, so the
+        // FAILED set can be driven to zero instead of being an opaque
+        // baseline. Separate section, so the FAILED list above stays
+        // byte-comparable with tests/l2oracle/baselines/census-failed.txt.
+        out.println("--- FAILED REASONS (" + failedReasons.size() + ") ---");
+        for (String s : failedReasons) {
+            out.println(s);
+        }
+        out.println("--- FAILED REASON SUMMARY ---");
+        Map<String, Integer> reasonCount = new HashMap<String, Integer>();
+        for (String s : failedReasons) {
+            int p = s.indexOf(" :: ");
+            String reason = p < 0 ? s : s.substring(p + 4);
+            Integer c = reasonCount.get(reason);
+            reasonCount.put(reason, (c == null) ? 1 : c + 1);
+        }
+        for (Map.Entry<String, Integer> e : reasonCount.entrySet()) {
+            out.println("[" + e.getValue() + "x] " + e.getKey());
         }
         out.println("--- OTHER (" + other.size() + " distinct) ---");
         for (Map.Entry<String, Integer> e : other.entrySet()) {
