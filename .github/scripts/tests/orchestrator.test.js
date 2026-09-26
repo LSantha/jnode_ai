@@ -277,7 +277,7 @@ test('orchestrator.js test suite', async (t) => {
   });
 
   await t.test('Java CI success re-reviews a deferred REVIEW PR', async () => {
-    const { core, github, context, calls, setMasterBody } = createMocks('workflow_run');
+    const { core, github, context, calls, updateIssueDetails, setMasterBody } = createMocks('workflow_run');
 
     setMasterBody(`<!-- ORCHESTRATOR_STATE:\n{ "status": "IN_PROGRESS", "current_task": { "issue": 2, "pr": 99, "phase": "REVIEW", "turn": 0, "max_turns": 3, "retries": 0, "review_in_progress": false }, "queue": [3], "completed": [], "failed": [], "order": [2, 3] }\n-->`);
     context.payload.workflow_run.name = 'Java CI';
@@ -289,6 +289,8 @@ test('orchestrator.js test suite', async (t) => {
     await runOrchestrator({ github, context, core });
 
     assert.ok(calls.createComment.some(c => c.issue_number === 99 && c.body.includes('/oc review')), 'Deferred review is re-run on green CI');
+    assert.ok(updateIssueDetails.some(u => u.issue_number === 1 && u.body.includes('"review_in_progress": true')), 'Flag is armed for the re-review itself');
+    assert.ok(updateIssueDetails.some(u => u.issue_number === 1 && u.body.includes('ci_green_rereview')), 'Re-review event is recorded');
   });
 
   await t.test('Review completion clears review_in_progress', async () => {

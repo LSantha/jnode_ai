@@ -200,6 +200,7 @@ module.exports = async ({ github, context, core }) => {
     const runUrl = `https://github.com/${context.repo.owner}/${context.repo.repo}/actions/runs/${run.id}`;
     if (run.conclusion === 'success') {
       if (task.phase !== 'REVIEW' || task.review_in_progress) return false;
+      task.review_in_progress = true;
       state.history.push({ event: 'ci_green_rereview', task: task.issue, timestamp: new Date().toISOString() });
       await triggerTask(task.pr, getReviewPrompt());
       return true;

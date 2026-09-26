@@ -1203,6 +1203,8 @@ test("ticket-runner.js event handling suite", async (t) => {
     await runTicketRunner(mocks);
 
     assert.ok(mocks.calls.createComment.some(c => c.issue_number === 99 && c.body.includes("/oc review")));
+    const state = _parseState(mocks.getIssueBody());
+    assert.strictEqual(state.review_in_progress, true, "Re-review arms the in-flight flag");
   });
 
   await t.test("Java CI success does not re-review while a review is in progress", async () => {
