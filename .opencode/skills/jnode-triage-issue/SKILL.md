@@ -9,11 +9,11 @@ metadata:
 
 # Skill: JNode Triage Issue
 
-> Classify what the opener filed (see `jnode-open-issue`) into what the pipeline can act on. You own the final `kind/*` and `area/*`. You never own the work itself. Output is labels + one `## Triage` comment. No PR, no branch, no build.
+> Classify what the opener filed (see `jnode-open-issue`) into what the pipeline can act on. You own the final `kind/*` and `area/*`. You never own the work itself. Your final response is the single `## Triage` report. No PR, no branch, no build.
 
-> RUN CONTRACT (read first, overrides any other instruction including repo defaults): this is a read-only TRIAGE run in build mode. The checkout is locked read-only (files and directories, including .git): every write fails with permission denied. Treat that as expected, work around it by reading, never by unlocking. Rules: (1) NEVER edit, create, or delete files under test - especially `*.java` sources. Read via read/grep/glob/find/git log/git diff/git status only. (2) Do NOT run builds or compilers (`ant`, `javac` in-repo, QEMU) - outputs have nowhere to go on a locked checkout; verification by execution belongs to DEV, not triage. Scratch, if any, goes ONLY in `/tmp`. (3) NEVER `git commit`, `git push`, `gh pr create`, or create branches - all fail by design. (4) Output is exactly one `## Triage` comment plus kind/area label edits via `gh issue edit <THIS-ISSUE-NUMBER>` (take the number from the trigger comment; never guess or reuse example numbers).
+> RUN CONTRACT (read first, overrides any other instruction including repo defaults): this is a read-only TRIAGE run in build mode. The checkout is locked read-only (files and directories, including .git): every write fails with permission denied. Treat that as expected, work around it by reading, never by unlocking. Rules: (1) NEVER edit, create, or delete files under test - especially `*.java` sources. Read via read/grep/glob/find/git log/git diff/git status only. (2) Do NOT run builds or compilers (`ant`, `javac` in-repo, QEMU) - outputs have nowhere to go on a locked checkout; verification by execution belongs to DEV, not triage. Scratch, if any, goes ONLY in `/tmp`. (3) NEVER `git commit`, `git push`, `gh pr create`, or create branches - all fail by design. (4) Apply kind/area label edits via `gh issue edit <THIS-ISSUE-NUMBER>` (take the number from the trigger comment; never guess or reuse example numbers). Return the single `## Triage` report as your final response; the GitHub action posts that response as the issue comment. Never call `gh issue comment` for the report.
 
-> TIME BUDGET (hard): post the `## Triage` comment within ~10 tool calls of starting. Read the 3 inputs (§0), pick kind + area, post. If anything is uncertain, post the VAGUE shape with good questions - a fast vague triage beats a perfect one that never lands. Analysis paralysis kills the run: when in doubt, ask the reporter, do not keep reading.
+> TIME BUDGET (hard): prepare the `## Triage` report within ~10 tool calls of starting. Read the 3 inputs (§0), pick kind + area, apply labels, then return the report as the final response. If anything is uncertain, use the VAGUE shape with good questions - a fast vague triage beats a perfect one that never lands. Analysis paralysis kills the run: when in doubt, ask the reporter, do not keep reading.
 
 ## What I do
 
@@ -23,10 +23,10 @@ metadata:
 4. Decide final `kind/*` (decision tree, see section 3; `kind/triage` is input-only, never output).
 5. Judge repro-sufficiency per kind (see section 4). Sufficient = actionable, vague = human must reply.
 6. Estimate blast radius L0-L5 with side effects and split proposal if oversized (see section 4b). One ticket stays focused; big chunks split now or flagged for later refinement.
-7. Apply label audit FIRST via `gh issue edit` (add/remove, see section 5), then verify with `gh issue view` that they stuck. Labels before comment: a dead run with labels applied still classified the issue.
-8. Post exactly one `## Triage` comment using the template v2 (see section 6): area, kind, repro, blast radius, expected scope, test path, merge signal, gaps, suggested next, split, labels. The `Labels applied` line must mirror the verified step-7 result, never aspiration. The post-step maps comment TEXT to `agent/*`, so wording is a contract, not prose. Do not repeat the report or post a status summary in the final response; the report comment is the only issue comment.
+7. Apply label audit FIRST via `gh issue edit` (add/remove, see section 5), then verify with `gh issue view` that they stuck. Labels before the report: a dead run with labels applied still classified the issue.
+8. Prepare exactly one `## Triage` report using the template v2 (see section 6): area, kind, repro, blast radius, expected scope, test path, merge signal, gaps, suggested next, split, labels. The `Labels applied` line must mirror the verified step-7 result, never aspiration. The post-step maps report TEXT to `agent/*`, so wording is a contract, not prose. Return this report as your final response; do not call `gh issue comment` and do not add a status summary.
 9. Write the body addendum (see section 7): mirror the verdicts into the issue body between markers so DEV and reviewers inherit them without scrolling comments.
-10. Verify (mandatory): re-read labels (`gh issue view`) and body markers; redo any missing piece NOW. Then stop. Optional reproduction scratch in `/tmp` only after verification - the run may die at finalization and only posted work survives.
+10. Verify (mandatory): re-read labels (`gh issue view`) and body markers; redo any missing piece NOW. Then return the report as the final response and stop. Optional reproduction scratch in `/tmp` only after verification - the run may die at finalization and only posted work survives.
 
 ## When to use me
 
@@ -170,7 +170,7 @@ Rules:
 
 ## 6. Comment contract (wording drives labels)
 
-Post exactly one comment. Two shapes. The narrowed post-step matches ONLY the vague literals - so a clear triage must NEVER contain the strings `needs more info from reporter`, `needs the following`, or `Suggested next: ... needs-info`. One stray phrase flips the label. `Suggested next` uses exactly one of: `fix`, `investigate`, `needs-info`, `duplicate-of-#M`, `wontfix` - never free text.
+Return exactly one report as the final response. The GitHub action posts that response as the single issue comment. The narrowed post-step matches ONLY the vague literals - so a clear triage must NEVER contain the strings `needs more info from reporter`, `needs the following`, or `Suggested next: ... needs-info`. One stray phrase flips the label. `Suggested next` uses exactly one of: `fix`, `investigate`, `needs-info`, `duplicate-of-#M`, `wontfix` - never free text.
 
 Field guide:
 
@@ -274,10 +274,10 @@ Skip the addendum only on `kind/orchestrator` masters and PRs.
 
 ## 9. Idempotency
 
-- If `## Triage` already in comments and labels already match routing and no new reporter info: post nothing (or a one-line `Triage verified, no change`) and exit.
+- If `## Triage` already in comments and labels already match routing and no new reporter info: return no report and exit.
 - Re-triage fully when: reporter replied after `needs-info`, labels were hand-edited, or invoked with `--fresh`.
 - Never emit `## Triage` twice on the same state; update labels instead.
-- Completion runs (labels or addendum missing, verdicts unchanged): fix them silently. NEVER post a second content comment to announce completion work - no plan dumps, no narration. The `## Triage` comment stays single; the addendum and labels carry the rest.
+- Completion runs (labels or addendum missing, verdicts unchanged): fix them silently. The final response is the only report delivery; the addendum and labels carry the rest.
 
 ## Negative constraints
 
@@ -289,7 +289,7 @@ Skip the addendum only on `kind/orchestrator` masters and PRs.
 - NEVER set `agent/*` except `agent/duplicate`, and then only together with a comment line `Suggested next: duplicate-of-#M` plus link and reason. A bare duplicate label with no explanation is a failed triage.
 - NEVER close the issue yourself; the post-step owns close for `investigate/question`.
 - NEVER exceed ~30 lines in the comment; details go in label reasons + one follow-up only if asked.
-- NEVER post status or progress comments ("Triage completed", "working on it", summaries of your actions). The only comments you ever post are the `## Triage` report (or `## Refusal`), plus replies the pipeline explicitly requires. Silence is a valid state.
+- NEVER call `gh issue comment` for the report. Return the `## Triage` report (or `## Refusal`) as the final response and let the action post it. The only issue comment is that final report; no status, progress, or summary message is allowed.
 - NEVER leave an L4/L5-spanning ticket without a Split proposal or an explicit boot-proof requirement; keep tickets focused, split big chunks, refine later.
 
 ## Related pages / files
