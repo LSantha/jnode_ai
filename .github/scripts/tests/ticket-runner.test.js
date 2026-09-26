@@ -28,6 +28,7 @@ function createMocks(eventName, {
   prBody = "Closes #42",
   prLabels = [],
   prHeadRef = "opencode/issue42-fix",
+  mergeError = null,
   reviewUser = { login: "LSantha", type: "User" },
   reviewAssociation = "OWNER",
   reviewState = "approved",
@@ -153,12 +154,14 @@ function createMocks(eventName, {
             data: {
               number: pull_number,
               head: currentPRHead,
-              body: currentPRBody
+              body: currentPRBody,
+              merged: true
             }
           };
         },
         merge: async ({ pull_number }) => {
           calls.mergePR.push(pull_number);
+          if (mergeError) throw new Error(mergeError);
         },
         listFiles: async () => {
           return { data: prFiles };
@@ -1091,6 +1094,33 @@ test("ticket-runner.js event handling suite", async (t) => {
     const state = _parseState(mocks.getIssueBody());
     assert.strictEqual(state.phase, "DONE");
     assert.deepStrictEqual(mocks.calls.mergePR, [99]);
+  });
+
+  await t.test("REVIEW approve tolerates an empty merge API response", async () => {
+    const initialBody = _replaceOrAppendStatus("Task", {
+      phase: "REVIEW",
+      pr: 99,
+      turn: 0,
+      max_turns: 3,
+      retries: 0,
+      started: new Date().toISOString(),
+      history: []
+    }, 42);
+
+    const mocks = createMocks("workflow_run", {
+      issueBody: initialBody,
+      runDisplayTitle: "Issue #99 - PR",
+      issueLabels: [{ name: "kind/chore" }],
+      mergeError: "Unexpected end of JSON input"
+    });
+    mocks.setCommentsOnPR([{ body: "Verdict: approve" }]);
+
+    await runTicketRunner(mocks);
+
+    const state = _parseState(mocks.getIssueBody());
+    assert.strictEqual(state.phase, "DONE");
+    assert.deepStrictEqual(mocks.calls.mergePR, [99]);
+    assert.ok(!mocks.calls.createComment.some(c => c.body.includes("failed to auto-merge")));
   });
 
   await t.test("REVIEW approve defers when diff touches ASM", async () => {

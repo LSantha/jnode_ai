@@ -182,9 +182,27 @@ module.exports = function createHelpers({ github, context, core }) {
     var pr = await github.rest.pulls.get({
       owner, repo, pull_number: prNumber
     });
-    await github.rest.pulls.merge({
-      owner, repo, pull_number: prNumber, merge_method: "squash"
+    try {
+      await github.rest.pulls.merge({
+        owner, repo, pull_number: prNumber, merge_method: "squash"
+      });
+    } catch (err) {
+      var message = String((err && err.message) || "");
+      if (err && err.status === 204) {
+        core.info("Merge API returned 204; verifying PR state");
+      } else if (/Unexpected end of JSON input/i.test(message)) {
+        core.info("Merge API returned an empty body; verifying PR state");
+      } else {
+        throw err;
+      }
+    }
+    var merged = await github.rest.pulls.get({
+      owner, repo, pull_number: prNumber
     });
+    if (!merged.data || merged.data.merged !== true) {
+      throw new Error("merge not confirmed; PR state=" +
+        (merged.data && merged.data.state ? merged.data.state : "unknown"));
+    }
     try {
       await github.rest.git.deleteRef({
         owner, repo, ref: "heads/" + pr.data.head.ref
