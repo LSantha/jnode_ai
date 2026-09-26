@@ -1864,7 +1864,16 @@ public class IRControlFlowGraph<T> implements Iterable<IRBasicBlock<T>> {
             // catch(Throwable) returned the phi-merged flag/ctor value
             // instead of the caught NoSuchMethodException.)
             final int excSlot = block.getStackOffset();
-            if (excSlot < renumberArray.length && renumberArray[excSlot] != null) {
+            // ANCHOR-L2-168: the snapshot does NOT depend on the exception
+            // slot having an SSA stack. Report #5/#11: gating the pre-try
+            // snapshot on renumberArray[excSlot] != null means a handler
+            // whose exception slot has no stack yet silently gets NO
+            // snapshot, and every handler-entry phi then falls back to a
+            // source from inside the handler -- the self-referential copy
+            // Wave C was about. Snapshot whenever the block is a handler
+            // entry and the slot index is in range; the exception PUSH below
+            // still needs a stack.
+            if (excSlot >= 0 && excSlot < renumberArray.length) {
                 // ANCHOR-L2-159 (Wave C): snapshot the pre-try tops of
                 // every slot NOW (after popHandlerVersions, before the
                 // exception is pushed and before the handler's own
@@ -1887,6 +1896,8 @@ public class IRControlFlowGraph<T> implements Iterable<IRBasicBlock<T>> {
                     }
                 }
                 handlerEntryTops.put(block, tops);
+            }
+            if (excSlot < renumberArray.length && renumberArray[excSlot] != null) {
                 // Push ONCE and never pop: the exception behaves like the
                 // method arguments (version at the bottom of the slot's SSA
                 // stack, invisible once real versions stack above). A
