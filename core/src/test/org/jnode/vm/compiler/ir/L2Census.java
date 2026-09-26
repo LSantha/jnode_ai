@@ -35,6 +35,7 @@ import org.jnode.vm.classmgr.Signature;
 import org.jnode.vm.classmgr.VmByteCode;
 import org.jnode.vm.classmgr.VmConstMethodRef;
 import org.jnode.vm.classmgr.VmMethod;
+import org.jnode.vm.compiler.ir.quad.ArrayLengthAssignQuad;
 import org.jnode.vm.compiler.ir.quad.InstanceCallAssignQuad;
 import org.jnode.vm.compiler.ir.quad.InstanceCallQuad;
 import org.jnode.vm.compiler.ir.quad.ConditionalBranchQuad;
@@ -168,6 +169,7 @@ public class L2Census {
                     checkCallPushWidths(m, text);
                     checkFloatToIntConversion(m, text);
                     checkBackEdgeYieldPoints(m, text);
+                    checkArrayLengthRegisters(m, text);
                     ok++;
                     if (hasHandlers && handlerExamples.size() < 20) {
                         handlerExamples.add(full);
@@ -614,4 +616,111 @@ public class L2Census {
         }
         return sw.toString();
     }
+    /**
+     * ANCHOR-L2-163 census lint: the arraylength emission must not load a
+     * frame slot into an ALLOCATABLE register. The L2 register pool is
+     * ECX/EBX/ESI (X86RegisterPool:39-42) and the stack/stack arm of
+     * generateCodeFor(ArrayLengthAssignQuad) used
+     * "sr2 = SR1 == EAX ? EBX : EAX" as a scratch with no push/pop, so any
+     * live value the allocator had placed in EBX was destroyed -- a silent
+     * miscompile L1A cannot produce (report 1.3, highest interop risk). The
+     * reference needs no second register: "mov eax,[ebp+d]; mov eax,[eax+LEN]".
+     *
+     * The signature is narrow on purpose: a MOV whose DESTINATION is a
+     * pooled register and whose SOURCE is the frame pointer. No other quad
+     * in an arraylength's own block does that, so the lint cannot fire on
+     * unrelated operands (an earlier, looser "does the block mention a
+     * pooled register" version produced 604 false hits).
+     */
+    static void checkArrayLengthRegisters(VmMethod method, String text) {
+        try {
+            final IRControlFlowGraph cfg = lastCfg;
+            if (cfg == null) {
+                return;
+            }
+            for (Object b0 : (Iterable<?>) cfg) {
+                final IRBasicBlock b = (IRBasicBlock) b0;
+                for (Object q0 : (List<?>) b.getQuads()) {
+                    final Quad q = (Quad) q0;
+                    if (q.isDeadCode() || !(q instanceof ArrayLengthAssignQuad)) {
+                        continue;
+                    }
+                    final String block = emissionBlock(text, q.getAddress());
+                    if (block == null) {
+                        continue;
+                    }
+                    final String bad = frameLoadIntoPooled(block);
+                    if (bad != null) {
+                        System.out.println("ARRAYLENGTHREG "
+                            + method.getDeclaringClass().getName() + "#"
+                            + method.getName() + " @" + q.getAddress()
+                            + " " + bad);
+                    }
+                }
+            }
+        } catch (Throwable t) {
+            // lint only
+        }
+    }
+
+    private static final String[] POOLED = {"ebx", "esi", "ecx"};
+
+    /**
+     * The first "mov &lt;pooled&gt;, ... ebp ..." line in the block, or null.
+     */
+    private static String frameLoadIntoPooled(String block) {
+        final String[] lines = block.split("\n");
+        for (int i = 0; i < lines.length; i++) {
+            final String t = lines[i].trim().toLowerCase();
+            if (!t.startsWith("mov ")) {
+                continue;
+            }
+            final int comma = t.indexOf(',');
+            if (comma < 0) {
+                continue;
+            }
+            final String dst = t.substring(4, comma).trim();
+            final String src = t.substring(comma + 1);
+            for (int r = 0; r < POOLED.length; r++) {
+                if (dst.equals(POOLED[r]) && src.indexOf("ebp") >= 0) {
+                    return lines[i].trim();
+                }
+            }
+        }
+        return null;
+    }
+
+    /**
+     * True if the emission block writes {@code reg} (a mov/lea/etc. with it
+     * as the DESTINATION). A push of the same register immediately before
+     * the block does not count as protection here: the arraylength arms are
+     * expected to need no pooled register at all, so any destination write
+     * is reported and reviewed.
+     */
+    private static boolean writesRegister(String block, String reg) {
+        final String[] lines = block.split("\n");
+        for (int i = 0; i < lines.length; i++) {
+            final String t = lines[i].trim();
+            if (!t.startsWith("mov") && !t.startsWith("lea") && !t.startsWith("xor")
+                && !t.startsWith("add") && !t.startsWith("sub") && !t.startsWith("imul")
+                && !t.startsWith("or") && !t.startsWith("and") && !t.startsWith("shl")
+                && !t.startsWith("shr") && !t.startsWith("sar") && !t.startsWith("set")
+                && !t.startsWith("pop")) {
+                continue;
+            }
+            // destination is the first register operand that is not a
+            // memory reference; require the register to appear before any
+            // "[" (source) position.
+            final int br = t.indexOf('[');
+            final int at = t.indexOf(reg);
+            if (at < 0) {
+                continue;
+            }
+            if (br < 0 || at < br) {
+                return true;
+            }
+        }
+        return false;
+    }
+
 }

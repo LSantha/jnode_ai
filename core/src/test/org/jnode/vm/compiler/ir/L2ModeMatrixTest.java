@@ -34,9 +34,12 @@ import org.jnode.vm.classmgr.VmMethod;
 import org.jnode.vm.classmgr.VmType;
 import org.jnode.vm.compiler.CompiledMethod;
 import org.jnode.vm.compiler.EntryPoints;
+import org.jnode.vm.compiler.ir.StackLocation;
+import org.jnode.vm.compiler.ir.StackVariable;
 import org.jnode.vm.compiler.ir.quad.ArrayAssignQuad;
 import org.jnode.vm.compiler.ir.LongConstant;
 import org.jnode.vm.compiler.ir.quad.BinaryOperation;
+import org.jnode.vm.compiler.ir.quad.ArrayLengthAssignQuad;
 import org.jnode.vm.compiler.ir.quad.BinaryQuad;
 import org.jnode.vm.compiler.ir.quad.JsrQuad;
 import org.jnode.vm.compiler.ir.quad.RetQuad;
@@ -94,6 +97,55 @@ public class L2ModeMatrixTest {
         if (anyMethod == null) {
             fail("corpus method add not found");
         }
+    }
+
+    /**
+     * ANCHOR-L2-163: arraylength with a STACK lhs and a STACK array
+     * reference -- the shape that used to load the frame slot into EBX.
+     * Both slots are STACK addressed here (the harness never runs the
+     * allocator, so every variable keeps its frame location).
+     */
+    private static ArrayLengthAssignQuad stackStackArrayLength(int address) {
+        IRBasicBlock block = new IRBasicBlock(address);
+        Variable[] vars = new Variable[]{
+            new StackVariable(JvmType.INT, 0),
+            new StackVariable(JvmType.REFERENCE, 1),
+            new StackVariable(JvmType.INT, 2)};
+        block.setVariables(vars);
+        ArrayLengthAssignQuad q = new ArrayLengthAssignQuad(address, block, 0, 1);
+        // the allocator assigns locations in the real pipeline; the harness
+        // has to do it by hand so both operands are STACK addressed
+        q.getLHS().setLocation(new StackLocation(-8));
+        q.getRef().setLocation(new StackLocation(-12));
+        return q;
+    }
+
+    /**
+     * ANCHOR-L2-163: the arraylength emission must not write an allocatable
+     * register. The pool is ECX/EBX/ESI, and the old stack/stack arm did
+     * "mov ebx,dword[ebp+..]" as an unprotected scratch -- a silent
+     * miscompile L1A cannot produce. Corpus lint ARRAYLENGTHREG covers the
+     * same shape over all 1,402 classes (105 sites pre-fix); this pins the
+     * single emission without a VM.
+     */
+    @Test
+    public void testArrayLengthDoesNotClobberPooledRegister() throws Exception {
+        EmitterHarness h = new EmitterHarness();
+        ArrayLengthAssignQuad q = stackStackArrayLength(0);
+        h.cg.generateCodeFor(q);
+        String text = h.text();
+        String low = text.toLowerCase();
+        String[] pooled = {"ebx", "esi", "ecx"};
+        for (int i = 0; i < pooled.length; i++) {
+            assertFalse("arraylength must not load a frame slot into "
+                + pooled[i] + ": " + text,
+                low.contains("mov " + pooled[i] + ",dword[ebp")
+                    || low.contains("mov " + pooled[i] + ", ebp"));
+        }
+        // and it must still emit the length load from the array reference
+        assertTrue("arraylength must still read the length word from the "
+            + "array reference: " + text,
+            low.contains("mov eax,dword[eax") || low.contains("mov eax, dword[eax"));
     }
 
     private static class EmitterHarness {

@@ -5306,9 +5306,16 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
                 os.writeMOV(INTSIZE, SR1, (GPR) ((RegisterLocation) ref.getLocation()).getRegister(),
                     arrayLengthOffset);
             } else if (ref.getAddressingMode() == STACK) {
-                GPR sr2 = SR1 == X86Register.EAX ? X86Register.EBX : X86Register.EAX;
-                os.writeMOV(BITS32, sr2, X86Register.EBP, ((StackLocation) ref.getLocation()).getDisplacement());
-                os.writeMOV(INTSIZE, SR1, sr2, arrayLengthOffset);
+                // ANCHOR-L2-163: the array reference is read from its frame
+                // slot, so no second register is needed -- the old code took
+                // "sr2 = SR1 == EAX ? EBX : EAX" and loaded the slot into it
+                // with no push/pop. EBX is allocatable (the pool is
+                // ECX/EBX/ESI), so on the stack/stack shape this destroyed
+                // whatever the allocator had live there: a silent miscompile
+                // L1A cannot produce. EAX is scratch (never allocated), and
+                // "mov eax,[eax+off]" reads before it writes.
+                os.writeMOV(BITS32, SR1, X86Register.EBP, ((StackLocation) ref.getLocation()).getDisplacement());
+                os.writeMOV(INTSIZE, SR1, SR1, arrayLengthOffset);
             } else {
                 throw new IllegalArgumentException();
             }
