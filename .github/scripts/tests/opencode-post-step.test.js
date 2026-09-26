@@ -180,6 +180,18 @@ test('opencode-post-step.js test suite', async (t) => {
     assert.strictEqual(calls.addLabels.length, 0, 'Clear re-triage must not add any agent label');
   });
 
+  await t.test('Clear re-triage removes stale agent/failed', async () => {
+    const { core, github, context, calls, setIssueData, setComments } = createMocks();
+    process.env.PREV_CONCLUSION = 'success';
+    setIssueData({ labels: ['kind/bug', 'agent/failed'], state: 'open' });
+    setComments([
+      { body: '## Triage\n\n- [x] **Repro:** 1. boot\n- [x] **Suggested next:** fix' }
+    ]);
+
+    await runPostStep({ github, context, core });
+    assert.ok(calls.removeLabel.includes('agent/failed'));
+  });
+
   await t.test('Vague triage overrides existing agent/done', async () => {
     const { core, github, context, calls, setIssueData, setComments } = createMocks();
     process.env.PREV_CONCLUSION = 'success';

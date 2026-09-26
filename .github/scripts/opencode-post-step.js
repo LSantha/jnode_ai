@@ -93,7 +93,7 @@ function decideAgentLabel({ existing, conclusion, latestComment, labels, isPR })
     return { label: 'agent/done', reason: 'PR creation comment detected' };
   }
   if (isTriageClearComment(latestComment)) {
-    return { label: null, clearNeedsInfo: true, reason: 'clear triage, no blocking label' };
+    return { label: null, clearNeedsInfo: true, clearFailed: true, reason: 'clear triage, no blocking label' };
   }
   if (conclusion === 'failure' || conclusion === 'cancelled') {
     return { label: 'agent/failed', reason: 'run concluded: ' + conclusion };
@@ -168,7 +168,18 @@ module.exports = async ({ github, context, core }) => {
       } catch (err) {
         core.warning('Failed to clear needs-info: ' + err.message);
       }
-    } else {
+    }
+    if (decision.clearFailed && labels.includes('agent/failed')) {
+      try {
+        await github.rest.issues.removeLabel({
+          owner, repo, issue_number: number, name: 'agent/failed',
+        });
+        core.info('Cleared stale agent/failed after clear triage');
+      } catch (err) {
+        core.warning('Failed to clear failed: ' + err.message);
+      }
+    }
+    if (!decision.clearNeedsInfo && !decision.clearFailed) {
       core.info('Clear triage, no label change');
     }
   } else {
