@@ -88,6 +88,10 @@ HJ=${HJ:-/home/levente/ext/prg/java/bin/java}
 : > "$ST"
 say() { echo "$(date +%H:%M:%S) $*" | tee -a "$ST"; }
 want() { case " $PHASES " in *" $1 "*) return 0 ;; esac; return 1; }
+# ANCHOR-L2-164: a phase's exit status IS its verdict. A check chain whose
+# last command happens to succeed (a trailing grep) once reported PASS over
+# a failing census; each multi-check phase therefore ends with an explicit
+# test/exit on its own result.
 run() { _p=$1; shift; say "START $_p"; if "$@" >> "$LOG" 2>&1; then say "PASS  $_p"; else say "FAIL  $_p rc=$?"; fi; }
 g() { _cap=$1; _lbl=$2; shift 2; sh "$TOOLS/gsh.sh" "$_cap" "$STALL" "$LABEL-$_lbl" "$@"; }
 boot() { rm -f /tmp/jnode-ready /tmp/jnode.kdb
@@ -176,6 +180,12 @@ fi
 # ------------------------------- LIVE ----------------------------------
 if want isobuild; then
   run isobuild bash "${MK_OX_ISO:-$ROOT/local/mk-ox-iso.sh}"
+  # ANCHOR-L2-164 (method, not a bug fix): assert the artifact identity
+  # before any live leg is believed. A host-phase `build` passes
+  # -Djnode.compiler=L2 and overwrites the same ISO path, so a "guest
+  # regression" can really be a guest that booted the L2 image and
+  # panicked. Cheap assertions, recorded in the status line.
+  say "ARTIFACT $(grep -c 'X86-L1A compilers' "$LOG" 2>/dev/null | sed 's/^0$/NO-L1A-MARKER/') $(grep -o 'L2 compilers' "$LOG" | tail -n 1 | sed 's/^/also-saw:/') iso=$(ls -l all/build/cdroms/*.iso 2>/dev/null | awk '{print $5" bytes "$6" "$7" "$8}' | head -n 1)"
 fi
 if { want oracle || want mauve; } && { [ ! -f /tmp/l2oracle-ref/OracleDriver.class ] \
      || [ tests/l2oracle/Probes.java -nt /tmp/l2oracle-ref/out-host.txt ] \

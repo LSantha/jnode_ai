@@ -38,6 +38,32 @@ Gate order before committing: `regress.sh host` (T0/T3/T1, all-junit,
 census with `FAILED == 0`) then the live legs, and a boot attempt when the
 fix can plausibly move the boot.
 
+## Method contract (settled 2026-09-27; L2 is hard enough without methodology bugs)
+
+Every one of these was learned from a wrong result, not from a hard problem:
+
+1. **Verify the artifact, not the intention.** Before believing a guest
+   result, assert which image is on the CD (a host-phase `build` passes
+   `-Djnode.compiler=L2` and overwrites the same ISO path) and which
+   plugin entry is default. `regress.sh` records this as an `ARTIFACT`
+   status line.
+2. **Verify the class, not the source.** `javap` an anchor per fix
+   (`regress.sh anchors`); a stale class once produced a fake "red".
+3. **A check's exit status is its verdict.** No phase may end on an
+   incidental command (a trailing `grep` once turned a failing census
+   into PASS).
+4. **One workload per guest boot.** Superposition produced a phantom
+   regression, a phantom "fix", and a GC loop in one evening.
+5. **Measure the baseline before theorising.** A force-only diff is not a
+   bug until the guest's own unforced value is recorded; that measurement
+   retired the classLiteral/`getModifiers` "bug" as host semantics.
+6. **Nothing lands unvalidated**, including work inherited from another
+   session: full gate set, `FAILED == 0` census, live legs.
+7. **No non-actionable signal in the default loop** (the L2 boot check is
+   opt-in) and no fixed sleeps: probe, then act.
+8. **Revert rather than leave the tree red**; after two failed attempts on
+   a blocker, write down the evidence and move to the next item.
+
 ## Files
 
 | File | Role |
