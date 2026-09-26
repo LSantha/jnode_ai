@@ -1456,8 +1456,19 @@ old-javac synthetic `class$` array) are added to Probes + CASES but
 their guest run is still pending.
 
 TRAPS (paid for today):
-- CLASS-LITERAL / Class.getModifiers DIVERGENCE, REPRODUCED at value
-  level (force vs host, isolated `one` runs, force|1 per method):
+- CLASS-LITERAL / Class.getModifiers DIVERGENCE -- **RESOLVED 2026-09-27:
+  NOT AN L2 BUG.** The rows below were recorded as a force-vs-host
+  divergence and briefly looked like a codegen defect. The guest L1A
+  (unforced) values are IDENTICAL to the L2-forced ones
+  (`classLiteral_i|4` and `|5` = I:1, `classLiteralValue_i|1` = I:1,
+  host I:411 / I:2), so JNode's classlib returns 1 from
+  `Class.getModifiers()` for primitive and array classes under BOTH
+  backends: a JNode-vs-OpenJDK semantic difference, not a compiler
+  defect. The probes stay (they now pin the guest's actual behaviour),
+  and the mauve `Class.*` force-only diffs are most likely the same
+  class of thing -- JNode semantics differing from the host JDK the
+  testlet was written against -- not L2 codegen. Original record:
+
   `classLiteral_i|4` (`Boolean.TYPE.getModifiers()`) and `|5`
   (`int[].class.getModifiers()`) return **I:1** under L2, host says
   **I:411** (PUBLIC|FINAL|ABSTRACT). `classLiteralValue_i|1` returns
