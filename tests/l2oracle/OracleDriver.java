@@ -209,6 +209,22 @@ public class OracleDriver {
         {"nestedClinit_i", "1"},
         {"nestedClinitSuper_i", "0"},
         {"nestedClinitSuper_i", "1"},
+        // ANCHOR-L2-167: FP arithmetic + remainder (report invariant 6 had
+        // no FP coverage at all).
+        {"fArith_f", "3.5", "1.25"},
+        {"fArith_f", "-7.25", "2.5"},
+        {"fArith_f", "0.0", "3.0"},
+        {"dArith_d", "3.5", "1.25"},
+        {"dArith_d", "-7.25", "2.5"},
+        {"fRem_f", "7.5", "2.0"},
+        {"fRem_f", "-7.5", "2.0"},
+        {"dRem_d", "7.5", "2.0"},
+        {"dRem_d", "-7.5", "2.0"},
+        {"fChain_f", "2.5"},
+        {"fChain_f", "-1.75"},
+        {"fConstLeft_f", "2.0"},
+        {"fConstLeft_f", "-0.5"},
+        {"dConstLeft_d", "2.0"},
     };
 
     /**

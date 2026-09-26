@@ -871,4 +871,42 @@ public class Probes {
         long v = PC2.l;
         return (int) v * 10 + (initC2 ? 1 : 0) + (initI ? 2 : 0);
     }
+
+    /**
+     * ANCHOR-L2-167: floating-point arithmetic and remainder. The deep
+     * review's invariant 6 ("any FP arithmetic emission test") had no
+     * coverage at all: no FADD/FSUB/FDIV/FMUL/FREM emission assert and no
+     * oracle probe, which is why the reported FREM-constant-left defect
+     * (report 1.6) could not be confirmed or dismissed. These probes make
+     * the claim testable end to end: host reference vs L2-forced guest.
+     */
+    public static float fArith_f(float a, float b) {
+        return (a % b) + (a / b) * (a - b);
+    }
+
+    public static double dArith_d(double a, double b) {
+        return (a % b) + (a / b) * (a - b);
+    }
+
+    public static float fRem_f(float a, float b) {
+        return a % b;
+    }
+
+    public static double dRem_d(double a, double b) {
+        return a % b;
+    }
+
+    /** Every FP op in one expression, with a constant right operand. */
+    public static float fChain_f(float a) {
+        return ((a * 3.5f) - 1.25f) / 0.5f % 7.0f;
+    }
+
+    /** Constant LEFT operand, the shape report 1.6 names. */
+    public static float fConstLeft_f(float a) {
+        return 7.0f % a + 1.5f / a;
+    }
+
+    public static double dConstLeft_d(double a) {
+        return 7.0 % a + 1.5 / a;
+    }
 }
