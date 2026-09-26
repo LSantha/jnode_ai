@@ -319,6 +319,48 @@ test("ticket-runner.js internal utilities", async (t) => {
     assert.ok(body3.includes("FEEDBACK"));
     assert.ok(!body3.includes("REVIEW"));
   });
+
+  await t.test("_renderStatusSection shows the review_in_progress row", () => {
+    const state = _initState();
+    state.started = "2026-09-26T08:31:53.910Z";
+
+    const idle = _renderStatusSection(state, 42);
+    assert.ok(idle.includes("| **Review in progress** | no |"));
+
+    state.review_in_progress = true;
+    const busy = _renderStatusSection(state, 42);
+    assert.ok(busy.includes("| **Review in progress** | yes |"));
+    assert.ok(!busy.includes("| **Review in progress** | no |"));
+
+    // Existing rows and row order are unchanged.
+    const rows = busy.split("\n").filter((l) => l.startsWith("| **"));
+    assert.deepStrictEqual(rows, [
+      "| **Phase** | DEV |",
+      "| **Turn** | 0/3 |",
+      "| **Retries** | 0/3 |",
+      "| **PR** | - |",
+      "| **Review in progress** | yes |",
+      "| **Started** | 2026-09-26T08:31:53.910Z |"
+    ]);
+
+    // A missing field renders as "no" rather than "undefined".
+    assert.ok(_renderStatusSection({ phase: "DEV" }, 42)
+      .includes("| **Review in progress** | no |"));
+  });
+
+  await t.test("_replaceOrAppendStatus carries review_in_progress into the rendered row", () => {
+    const state = _initState();
+    const body = _replaceOrAppendStatus("Task", state, 42);
+    assert.ok(body.includes("| **Review in progress** | no |"));
+
+    state.phase = "REVIEW";
+    state.pr = 99;
+    state.review_in_progress = true;
+    const body2 = _replaceOrAppendStatus(body, state, 42);
+    assert.ok(body2.includes("| **Review in progress** | yes |"));
+    assert.strictEqual((body2.match(/Review in progress/g) || []).length, 1);
+    assert.strictEqual(_parseState(body2).review_in_progress, true);
+  });
 });
 
 test("orchestrator-helpers utilities", async (t) => {
