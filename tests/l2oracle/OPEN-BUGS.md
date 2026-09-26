@@ -75,6 +75,7 @@ post-deSSA on every method, so structural SSA regressions are corpus-wide.
 | F3 | - | boot signature is layout/timing dependent (0x18E11B -> 0x18E243 -> 0x18E5E3 -> 0x18EC43 -> 0x18EC3B); the same image is not byte-reproducible | recorded | `tests/l2oracle/baselines/boot-signatures.txt` |
 | F4 | - | AOT-path coverage: oracle, mauve and census all describe a VM that **booted with L1A** and force-compiles at runtime; nothing observes AOT-emitted L2 code (invariant 14) | **OPEN** (structural gap) | none |
 | F5 | - | clinit ordering at AOT boot: `doInitialize` never runs on the early AOT path (invariant 15) | **OPEN** | runtime-forced clinit only |
+| F6 | - | builder-side hypothesis, never confirmed nor refuted: `AbstractBootImageBuilder.copyStaticFields` skips every `java.*` class, so java.* static VALUES are never seeded into the image while their AOT `<clinit>`s run on whichever boot thread gets there first; each thread's statics table is a separate image object | **OPEN as a hypothesis** -- the two competing theories (AOT/runtime statics-index mismatch, per-thread isolated statics) are dead by measurement, and the sentinel-store experiments show the store lands, which weakens this one too | none; needs an AOT-path print that the early boot actually executes (the first attempt produced no output because it hooked a path AOT boot bypasses) |
 
 ## G. Plan-doc queue not in the report
 
@@ -93,6 +94,8 @@ post-deSSA on every method, so structural SSA regressions are corpus-wide.
 | G11 | M2 `forcedSpills` omissions incl. class-init | **OPEN**, boot suspect |
 | G12 | M5: comparator, INT stamps, keep-list get/setfield, PhiAssign hashCode | **OPEN**, low |
 | G13 | P7/P8 (phi primaries bypass usability; foldConstants2 shared-lhs re-type) | **CLOSED-NB** unless a repro appears |
+| G14 | P0-1 hardcoded `[rewrite]` debug print, P0-2 ungated `[ssatag] DISAGREE` stderr | **LANDED** (both merge blockers closed early in the queue) | gate: the ssatag stderr census line |
+| G15 | P1-P6, P9 (`propagate` kills with live uses, DF-only kill, `Variable.equals` without `hashCode`, terminator guard/flush order, throwing-twins keep-list, `isCallLike` missing LDIV/LREM, always-executed defs) | **LANDED** (P0-P6 + P9 were the base of this branch) | regression suite + census |
 
 ## H. Coverage gaps with no bug attached (report Part 7)
 
