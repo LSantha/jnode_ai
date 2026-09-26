@@ -1205,6 +1205,134 @@ public class L2PipelineTest {
     }
 
     /**
+     * ANCHOR-L2-166: the same stale-argument-type hazard on a STATIC call.
+     * writeParameters gates the signature widths on
+     * "argc == referencedOps.length - 1", which assumes a receiver, so for a
+     * static call the gate could never fire and every push came from the
+     * operand type (report 1.7) -- the L2-155 bug class one path over. The
+     * census lint WIDTHMISMATCH was extended to static calls in the same
+     * change, but the corpus contains no firing case, so this is the guard.
+     *
+     * Builds a StaticCallAssignQuad for a harvested real static method with a
+     * one-slot primitive argument, types that argument's slot LONG, and
+     * asserts the emission pushes it as ONE slot (plus the preserved ECX),
+     * not as a long pair.
+     */
+    @Test
+    public void testStaleArgTypeOnStaticCallUsesSignatureWidth() throws Exception {
+        final Object[] harvested = findStaticCallWithPrimitiveArg();
+        assertNotNull("no static call with a primitive argument in the corpus",
+            harvested);
+        final VmConstMethodRef ref = (VmConstMethodRef) harvested[0];
+        final VmMethod target = (VmMethod) harvested[1];
+        final int argc = target.getNoArguments();
+        assertTrue("need at least one argument", argc >= 1);
+
+        // receiver-less shape: one slot per argument, argument 0 deliberately
+        // typed LONG although the signature says one primitive slot
+        final Variable[] vars = new Variable[argc + 1];
+        final int[] offs = new int[argc];
+        vars[0] = new TypedVar(Operand.INT);            // lhs (result slot)
+        vars[0].setLocation(new StackLocation(-8));
+        int pushed = 1;
+        for (int i = 0; i < argc; i++) {
+            final Variable v = (i == 0)
+                ? new TypedVar(Operand.LONG) : new TypedVar(Operand.INT);
+            v.setLocation(new StackLocation(-12 - 4 * i));
+            vars[i + 1] = v;
+            offs[i] = i + 1;
+            pushed += (i == 0 && target.getArgumentType(0).getJvmType()
+                != JvmType.LONG && target.getArgumentType(0).getJvmType()
+                != JvmType.DOUBLE) ? 1 : 2;
+        }
+        final IRBasicBlock b = new IRBasicBlock(0);
+        b.setVariables(vars);
+        final org.jnode.vm.compiler.ir.quad.StaticCallAssignQuad q =
+            new org.jnode.vm.compiler.ir.quad.StaticCallAssignQuad(0, b, 0, ref, offs);
+        final StringWriter sw = new StringWriter();
+        final X86TextAssembler os = new X86TextAssembler(sw, cpuId, Mode.CODE32);
+        final EntryPoints ctx = new EntryPoints(loader,
+            VmUtils.getVm().getHeapManager(), 1);
+        final X86CompilerHelper helper = new X86CompilerHelper(os, null, ctx, true);
+        helper.setMethod(target);
+        final CompiledMethod cm = new CompiledMethod(1);
+        final TypeSizeInfo tsi = loader.getArchitecture().getTypeSizeInfo();
+        final X86StackFrame sf = new X86StackFrame(os, helper, target, ctx, cm);
+        final X86CodeGenerator cg = new X86CodeGenerator(target, os,
+            target.getBytecode().getLength(), tsi, sf);
+        cg.generateCodeFor(q);
+        os.flush();
+        final String text = sw.toString();
+        int actual = 0;
+        for (String line : text.split("\\n")) {
+            if (line.trim().toLowerCase().startsWith("push ")) {
+                actual += 1;
+            }
+        }
+        assertEquals("static call must push ECX plus one slot per argument "
+            + "slot per the signature, not per the stale LONG type: " + text,
+            pushed, actual);
+    }
+
+    /**
+     * Harvest a real static-call methodRef with at least one primitive
+     * argument by scanning the corpus class's own methods (a name list was
+     * too fragile: none of the candidates happened to contain such a call).
+     * Bounded so the test stays cheap.
+     */
+    private static Object[] findStaticCallWithPrimitiveArg() throws Exception {
+        final VmType type = loader.loadClass(
+            "org.jnode.vm.compiler.ir.PrimitiveTest", true);
+        final int n = type.getNoDeclaredMethods();
+        for (int i = 0; i < n; i++) {
+            final VmMethod m;
+            try {
+                m = type.getDeclaredMethod(i);
+            } catch (Throwable t) {
+                continue;
+            }
+            if (m.isAbstract() || m.isNative() || m.getBytecode() == null) {
+                continue;
+            }
+            final CompileResult r;
+            try {
+                r = compileMethod(m);
+            } catch (Throwable t) {
+                continue;
+            }
+            for (Object b0 : (Iterable<?>) r.cfg) {
+                final IRBasicBlock b = (IRBasicBlock) b0;
+                for (Object q0 : (List<?>) b.getQuads()) {
+                    final Quad q = (Quad) q0;
+                    if (q.isDeadCode()) {
+                        continue;
+                    }
+                    final VmConstMethodRef mr;
+                    if (q instanceof org.jnode.vm.compiler.ir.quad.StaticCallQuad) {
+                        mr = ((org.jnode.vm.compiler.ir.quad.StaticCallQuad) q).getMethodRef();
+                    } else if (q instanceof org.jnode.vm.compiler.ir.quad.StaticCallAssignQuad) {
+                        mr = ((org.jnode.vm.compiler.ir.quad.StaticCallAssignQuad) q).getMethodRef();
+                    } else {
+                        continue;
+                    }
+                    try {
+                        mr.resolve(loader);
+                        final VmMethod t = mr.getResolvedVmMethod();
+                        if (t.getNoArguments() >= 1 && t.getArgumentType(0).isPrimitive()
+                            && t.getArgumentType(0).getJvmType() != JvmType.LONG
+                            && t.getArgumentType(0).getJvmType() != JvmType.DOUBLE) {
+                            return new Object[]{mr, t};
+                        }
+                    } catch (Throwable ignored) {
+                        // unresolved ref: not usable here
+                    }
+                }
+            }
+        }
+        return null;
+    }
+
+    /**
      * ANCHOR-L2-155: an argument whose stack slot kept a stale LONG type
      * (the slot was recycled from an lcmp's long operands -- the exact
      * situation in `LongTest#test_parseLong`, which NPE'd under force)

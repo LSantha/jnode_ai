@@ -7783,6 +7783,17 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
      * widths make the two computations agree by construction (and fix
      * the mirror case: a real long argument with a stale int type).
      */
+    /**
+     * ANCHOR-L2-166: does this call quad carry a receiver operand? Instance
+     * and interface calls do, static calls do not, and the difference decides
+     * how writeParameters lines its signature widths up with the operand
+     * array.
+     */
+    private static boolean hasReceiver(Quad quad) {
+        return !(quad instanceof StaticCallQuad)
+            && !(quad instanceof StaticCallAssignQuad);
+    }
+
     private void writeParameters(Quad quad, VmConstMethodRef methodRef) {
         Operand<T>[] referencedOps = quad.getReferencedOps();
         VmType<?>[] argTypes = null;
@@ -7791,7 +7802,15 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
                 methodRef.resolve(currentMethod.getDeclaringClass().getLoader());
                 final VmMethod rm = methodRef.getResolvedVmMethod();
                 final int argc = rm.getNoArguments();
-                if (argc == referencedOps.length - 1) {
+                // ANCHOR-L2-166: the gate must account for the receiver. A
+                // static call has none, so op0 is the FIRST ARGUMENT, not a
+                // receiver: with the hardcoded "- 1" the gate could never be
+                // true for a static call and the operand-derived widths were
+                // used -- the L2-155 bug class, on the static path (report
+                // 1.7). The census lint WIDTHMISMATCH could not see it either,
+                // because it only looked at instance quads (invariant 7).
+                final int expected = argc + (hasReceiver(quad) ? 1 : 0);
+                if (referencedOps.length == expected) {
                     argTypes = new VmType<?>[argc];
                     for (int i = 0; i < argc; i++) {
                         argTypes[i] = rm.getArgumentType(i);
@@ -7808,10 +7827,15 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
             boolean wideBySignature = false;
             boolean haveSignature = false;
             if (argTypes != null) {
-                if (i == 0) {
-                    haveSignature = true;
-                } else if (i - 1 < argTypes.length) {
-                    final VmType at = argTypes[i - 1];
+                // ANCHOR-L2-166: argument index skips the receiver only when
+                // the call actually has one; for a static call op0 IS the
+                // first argument, and reading argTypes[-1] (silently skipped
+                // before) is what left the static path on operand types.
+                final int argIndex = i - (hasReceiver(quad) ? 1 : 0);
+                if (argIndex < 0) {
+                    haveSignature = true;            // the receiver itself
+                } else if (argIndex < argTypes.length) {
+                    final VmType at = argTypes[argIndex];
                     haveSignature = true;
                     if (at.isPrimitive()) {
                         final int jt = at.getJvmType();

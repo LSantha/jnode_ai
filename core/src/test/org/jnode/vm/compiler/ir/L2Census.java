@@ -40,6 +40,8 @@ import org.jnode.vm.compiler.ir.quad.InstanceCallAssignQuad;
 import org.jnode.vm.compiler.ir.quad.InstanceCallQuad;
 import org.jnode.vm.compiler.ir.quad.ConditionalBranchQuad;
 import org.jnode.vm.compiler.ir.quad.Quad;
+import org.jnode.vm.compiler.ir.quad.StaticCallAssignQuad;
+import org.jnode.vm.compiler.ir.quad.StaticCallQuad;
 import org.jnode.vm.compiler.ir.quad.UnconditionalBranchQuad;
 import org.jnode.vm.compiler.ir.quad.UnaryOperation;
 import org.jnode.vm.compiler.ir.quad.UnaryQuad;
@@ -495,10 +497,24 @@ public class L2Census {
                         continue;
                     }
                     final VmConstMethodRef mr;
+                    // ANCHOR-L2-166: cover STATIC calls too. The lint used to
+                    // handle instance quads only, so the L2-155 bug class on
+                    // the static path (report 1.7, invariant 7) was invisible:
+                    // a static call has no receiver, so its expected slot count
+                    // is the signature count, not signature+1.
+                    final boolean hasReceiver;
                     if (q instanceof InstanceCallQuad) {
                         mr = ((InstanceCallQuad) q).getMethodRef();
+                        hasReceiver = true;
                     } else if (q instanceof InstanceCallAssignQuad) {
                         mr = ((InstanceCallAssignQuad) q).getMethodRef();
+                        hasReceiver = true;
+                    } else if (q instanceof StaticCallQuad) {
+                        mr = ((StaticCallQuad) q).getMethodRef();
+                        hasReceiver = false;
+                    } else if (q instanceof StaticCallAssignQuad) {
+                        mr = ((StaticCallAssignQuad) q).getMethodRef();
+                        hasReceiver = false;
                     } else {
                         continue;
                     }
@@ -510,7 +526,7 @@ public class L2Census {
                         continue;
                     }
                     final int sigSlots = Signature.getArgSlotCount(tsi,
-                        mr.getSignature()) + 1;
+                        mr.getSignature()) + (hasReceiver ? 1 : 0);
                     int irSlots = 0;
                     final Operand[] ops = q.getReferencedOps();
                     for (int i = 0; i < ops.length; i++) {
