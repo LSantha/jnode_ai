@@ -100,6 +100,44 @@ public class L2ModeMatrixTest {
     }
 
     /**
+     * ANCHOR-L2-165: a shift whose DESTINATION is ECX. x86 takes the count in
+     * CL, so staging the count into ECX overwrote the value the destination
+     * held, the shift operated on the count, and the destination came back
+     * unchanged -- `d = d << n` silently computed nothing (report 1.4, 12
+     * arms). The value must now be parked, the shift run in the scratch
+     * register, and the result moved back.
+     *
+     * The existing matrix only asserted the MNEMONIC, never a value, so this
+     * shape was invisible (report invariant 5). This asserts the structure
+     * for every shift op with dst == ECX, and that the value still reaches
+     * the scratch register.
+     */
+    @Test
+    public void testShiftWithDestinationEcxKeepsTheValue() throws Exception {
+        int[] kinds = {0, 1, 2};
+        BinaryOperation[] ops = {BinaryOperation.ISHL, BinaryOperation.ISHR,
+            BinaryOperation.IUSHR};
+        for (int i = 0; i < kinds.length; i++) {
+            EmitterHarness h = new EmitterHarness();
+            // destination ECX, value from EBX, count from ESI (not ECX)
+            h.cg.generateBinaryOP(X86Register.ECX, X86Register.EBX, ops[i],
+                X86Register.ESI);
+            String text = h.text();
+            String low = text.toLowerCase();
+            assertTrue(ops[i] + " with dst=ECX must park the value before the "
+                + "count is staged: " + text, low.contains("push ecx"));
+            assertTrue(ops[i] + " with dst=ECX must move the value into the "
+                + "scratch register: " + text, low.contains("mov eax,dword[esp")
+                    || low.contains("mov eax, dword[esp"));
+            assertTrue(ops[i] + " with dst=ECX must move the result back: "
+                + text, low.contains("mov ecx,eax")
+                    || low.contains("mov ecx, eax")
+                    || low.contains("mov ecx,dword eax")
+                    || low.contains("mov ecx, dword eax"));
+        }
+    }
+
+    /**
      * ANCHOR-L2-163: arraylength with a STACK lhs and a STACK array
      * reference -- the shape that used to load the frame slot into EBX.
      * Both slots are STACK addressed here (the harness never runs the

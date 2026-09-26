@@ -1218,27 +1218,12 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
 
             case ISHL: // needs CL
                 os.writeMOV_Const((GPR) reg1, iconst2.getValue());
-                if (reg3 != X86Register.ECX) {
-                    os.writePUSH(X86Register.ECX);
-                    os.writeMOV(X86Constants.BITS32, X86Register.ECX, (GPR) reg3);
-                    os.writeSAL_CL((GPR) reg1);
-                    os.writePOP(X86Register.ECX);
-                } else {
-                    os.writeSAL_CL((GPR) reg1);
-                }
+                writeShiftCountInCL((GPR) reg1, (GPR) reg3, 0);
                 break;
 
             case ISHR: // needs CL
                 os.writeMOV_Const((GPR) reg1, iconst2.getValue());
-                if (reg3 != X86Register.ECX) {
-                    os.writePUSH(X86Register.ECX);
-                    os.writeMOV(X86Constants.BITS32, X86Register.ECX, (GPR) reg3);
-                    // ANCHOR-L2-051: arithmetic shift right (was SAL copy-paste).
-                    os.writeSAR_CL((GPR) reg1);
-                    os.writePOP(X86Register.ECX);
-                } else {
-                    os.writeSAR_CL((GPR) reg1);
-                }
+                writeShiftCountInCL((GPR) reg1, (GPR) reg3, 1);
                 break;
 
             case ISUB:
@@ -1248,15 +1233,7 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
 
             case IUSHR:
                 os.writeMOV_Const((GPR) reg1, iconst2.getValue());
-                if (reg3 != X86Register.ECX) {
-                    os.writePUSH(X86Register.ECX);
-                    os.writeMOV(X86Constants.BITS32, X86Register.ECX, (GPR) reg3);
-                    // ANCHOR-L2-051: logical shift right (was SAL copy-paste).
-                    os.writeSHR_CL((GPR) reg1);
-                    os.writePOP(X86Register.ECX);
-                } else {
-                    os.writeSHR_CL((GPR) reg1);
-                }
+                writeShiftCountInCL((GPR) reg1, (GPR) reg3, 2);
                 break;
 
             case IXOR:
@@ -1400,18 +1377,12 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
 
             case ISHL: // not supported
                 os.writeMOV_Const((GPR) reg1, iconst2.getValue());
-                os.writePUSH(X86Register.ECX);
-                os.writeMOV(X86Constants.BITS32, X86Register.ECX, X86Register.EBP, disp3);
-                os.writeSAL_CL((GPR) reg1);
-                os.writePOP(X86Register.ECX);
+                writeShiftCountInCL((GPR) reg1, X86Register.EBP, disp3, 0);
                 break;
 
             case ISHR: // not supported
                 os.writeMOV_Const((GPR) reg1, iconst2.getValue());
-                os.writePUSH(X86Register.ECX);
-                os.writeMOV(X86Constants.BITS32, X86Register.ECX, X86Register.EBP, disp3);
-                os.writeSAR_CL((GPR) reg1);
-                os.writePOP(X86Register.ECX);
+                writeShiftCountInCL((GPR) reg1, X86Register.EBP, disp3, 1);
                 break;
 
             case ISUB:
@@ -1421,10 +1392,7 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
 
             case IUSHR: // not supported
                 os.writeMOV_Const((GPR) reg1, iconst2.getValue());
-                os.writePUSH(X86Register.ECX);
-                os.writeMOV(X86Constants.BITS32, X86Register.ECX, X86Register.EBP, disp3);
-                os.writeSHR_CL((GPR) reg1);
-                os.writePOP(X86Register.ECX);
+                writeShiftCountInCL((GPR) reg1, X86Register.EBP, disp3, 2);
                 break;
 
             case IXOR:
@@ -1773,14 +1741,7 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
                 if (reg1 != reg2) {
                     os.writeMOV(X86Constants.BITS32, (GPR) reg1, (GPR) reg2);
                 }
-                if (reg3 != X86Register.ECX) {
-                    os.writePUSH(X86Register.ECX);
-                    os.writeMOV(X86Constants.BITS32, X86Register.ECX, (GPR) reg3);
-                    os.writeSAL_CL((GPR) reg1);
-                    os.writePOP(X86Register.ECX);
-                } else {
-                    os.writeSAL_CL((GPR) reg1);
-                }
+                writeShiftCountInCL((GPR) reg1, (GPR) reg3, 0);
                 break;
 
             case ISHR: // needs CL
@@ -1788,10 +1749,7 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
                     os.writeMOV(X86Constants.BITS32, (GPR) reg1, (GPR) reg2);
                 }
                 if (reg3 != X86Register.ECX) {
-                    os.writePUSH(X86Register.ECX);
-                    os.writeMOV(X86Constants.BITS32, X86Register.ECX, (GPR) reg3);
-                    os.writeSAR_CL((GPR) reg1);
-                    os.writePOP(X86Register.ECX);
+                    writeShiftCountInCL((GPR) reg1, (GPR) reg3, 1);
                 } else {
                     // ANCHOR-L2-150: ECX-count arm was SAR, not SAL
                     // (copy-paste from ISHL; silent `a >> b` -> `a << b`).
@@ -1810,15 +1768,7 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
                 if (reg1 != reg2) {
                     os.writeMOV(X86Constants.BITS32, (GPR) reg1, (GPR) reg2);
                 }
-                if (reg3 != X86Register.ECX) {
-                    os.writePUSH(X86Register.ECX);
-                    os.writeMOV(X86Constants.BITS32, X86Register.ECX, (GPR) reg3);
-                    os.writeSHR_CL((GPR) reg1);
-                    os.writePOP(X86Register.ECX);
-                } else {
-                    // ANCHOR-L2-150: ECX-count arm was SAL, not SHR.
-                    os.writeSHR_CL((GPR) reg1);
-                }
+                writeShiftCountInCL((GPR) reg1, (GPR) reg3, 2);
                 break;
 
             case IXOR:
@@ -2357,28 +2307,12 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
 
             case ISHL: // needs CL
                 os.writeMOV(X86Constants.BITS32, (GPR) reg1, X86Register.EBP, disp2);
-                if (reg3 != X86Register.ECX) {
-                    os.writePUSH(X86Register.ECX);
-                    os.writeMOV(X86Constants.BITS32, X86Register.ECX, (GPR) reg3);
-                    // ANCHOR-L2-051: shift left (was SHR copy-paste).
-                    os.writeSAL_CL((GPR) reg1);
-                    os.writePOP(X86Register.ECX);
-                } else {
-                    os.writeSAL_CL((GPR) reg1);
-                }
+                writeShiftCountInCL((GPR) reg1, (GPR) reg3, 0);
                 break;
 
             case ISHR: // needs CL
                 os.writeMOV(X86Constants.BITS32, (GPR) reg1, X86Register.EBP, disp2);
-                if (reg3 != X86Register.ECX) {
-                    os.writePUSH(X86Register.ECX);
-                    os.writeMOV(X86Constants.BITS32, X86Register.ECX, (GPR) reg3);
-                    // ANCHOR-L2-051: arithmetic shift right (was SHR copy-paste).
-                    os.writeSAR_CL((GPR) reg1);
-                    os.writePOP(X86Register.ECX);
-                } else {
-                    os.writeSAR_CL((GPR) reg1);
-                }
+                writeShiftCountInCL((GPR) reg1, (GPR) reg3, 1);
                 break;
 
             case ISUB:
@@ -2388,14 +2322,7 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
 
             case IUSHR: // needs CL
                 os.writeMOV(X86Constants.BITS32, (GPR) reg1, X86Register.EBP, disp2);
-                if (reg3 != X86Register.ECX) {
-                    os.writePUSH(X86Register.ECX);
-                    os.writeMOV(X86Constants.BITS32, X86Register.ECX, (GPR) reg3);
-                    os.writeSHR_CL((GPR) reg1);
-                    os.writePOP(X86Register.ECX);
-                } else {
-                    os.writeSHR_CL((GPR) reg1);
-                }
+                writeShiftCountInCL((GPR) reg1, (GPR) reg3, 2);
                 break;
 
             case IXOR:
@@ -6629,6 +6556,80 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
      * is inside, so callers on fall-through paths must preserve caller-saved
      * ECX around this (they do).
      */
+    /**
+     * ANCHOR-L2-165: emit a shift that x86 requires to take its count in CL,
+     * without breaking when the DESTINATION is ECX.
+     *
+     * Every shift arm used this shape:
+     *
+     *   if (count != ECX) { push ecx; mov ecx,count; SHIFT cl,dst; pop ecx; }
+     *
+     * which is right for any dst except ECX itself: there the push saves the
+     * value, `mov ecx,count` makes ECX the count, the shift therefore operates
+     * on the COUNT, and the pop restores the value unchanged -- so
+     * `dst = dst << count` silently computes nothing (report 1.4, 12 arms).
+     *
+     * With dst == ECX the value must leave ECX before ECX becomes the count,
+     * and the shifted value must come back. EAX is scratch (the pool is
+     * ECX/EBX/ESI) and is provably not live here: at this point it can only
+     * be an operand that was already consumed. The value is parked on the
+     * stack and read back through ESP, so the sequence is correct even when
+     * the count itself arrives in EAX.
+     */
+    private void writeShiftCountInCL(GPR dst, GPR count, int kind) {
+        if (count == X86Register.ECX) {
+            emitShiftCL(dst, kind);
+            return;
+        }
+        if (dst != X86Register.ECX) {
+            os.writePUSH(X86Register.ECX);
+            os.writeMOV(BITS32, X86Register.ECX, count);
+            emitShiftCL(dst, kind);
+            os.writePOP(X86Register.ECX);
+            return;
+        }
+        // dst == ECX, count elsewhere
+        os.writePUSH(X86Register.ECX);            // park the value
+        os.writeMOV(BITS32, X86Register.ECX, count);   // CL = count
+        os.writeMOV(BITS32, SR1, X86Register.ESP, 0);  // scratch = value
+        emitShiftCL(SR1, kind);                   // shift the scratch
+        os.writeMOV(BITS32, X86Register.ECX, SR1);      // result -> dst
+        os.writePOP(SR1);                         // restore EAX
+    }
+
+    /**
+     * ANCHOR-L2-165: as {@link #writeShiftCountInCL(GPR, GPR, int)}, with the
+     * count still in its frame slot. Same hazard when the destination is ECX:
+     * staging the count into ECX would overwrite the value, so it is parked on
+     * the stack and the shift runs in the scratch register.
+     */
+    private void writeShiftCountInCL(GPR dst, GPR countBase, int countDisp, int kind) {
+        if (dst != X86Register.ECX) {
+            os.writePUSH(X86Register.ECX);
+            os.writeMOV(BITS32, X86Register.ECX, countBase, countDisp);
+            emitShiftCL(dst, kind);
+            os.writePOP(X86Register.ECX);
+            return;
+        }
+        os.writePUSH(X86Register.ECX);
+        os.writeMOV(BITS32, X86Register.ECX, countBase, countDisp);
+        os.writeMOV(BITS32, SR1, X86Register.ESP, 0);
+        emitShiftCL(SR1, kind);
+        os.writeMOV(BITS32, X86Register.ECX, SR1);
+        os.writePOP(SR1);
+    }
+
+    /** kind: 0 = SHL, 1 = SAR, 2 = SHR (x86 needs CL). */
+    private void emitShiftCL(GPR dst, int kind) {
+        if (kind == 0) {
+            os.writeSAL_CL(dst);
+        } else if (kind == 1) {
+            os.writeSAR_CL(dst);
+        } else {
+            os.writeSHR_CL(dst);
+        }
+    }
+
     private void writeInitializeClass(VmConstFieldRef fieldRef, Label curInstrLabel) {
         final VmType<?> declClass = fieldRef.getResolvedVmField().getDeclaringClass();
         if (!declClass.isAlwaysInitialized()) {
