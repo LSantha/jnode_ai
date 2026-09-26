@@ -135,6 +135,7 @@ public class BjorneInterpreter implements CommandInterpreter {
         BUILTINS.put("alias", AliasBuiltin.FACTORY);
         BUILTINS.put("break", BreakBuiltin.FACTORY);
         BUILTINS.put("continue", ContinueBuiltin.FACTORY);
+        BUILTINS.put("echo", EchoBuiltin.FACTORY);
         BUILTINS.put("exit", ExitBuiltin.FACTORY);
         BUILTINS.put("export", ExportBuiltin.FACTORY);
         BUILTINS.put("read", ReadBuiltin.FACTORY);
