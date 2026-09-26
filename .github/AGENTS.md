@@ -58,7 +58,7 @@ CI infrastructure, agent automation, and label conventions for JNode.
 - **auto-triage** is the receptionist. On every new issue it posts `/oc triage` (owned by the `jnode-triage-issue` skill); on reporter replies to vague triage it re-posts `/oc triage` so sufficiency is re-judged against the full thread.
 - **ticket-runner** auto-starts DEV without manual `/run` once an actionable kind (`bug`, `feature`, `chore`, `wiki`, `test`) plus a CLEAR `## Triage` comment exist (via `issues: labeled` or the `Triage` workflow completion path). Triage-first: labeled-but-untriaged issues request `/oc triage` once, unless a triage request is already present. `no-auto` opts an issue out of all auto paths; manual `/oc` and `/run` still work.
 - **orchestrator** is the foreman. It holds a JSON state in the master issue body, picks the next child task from the queue, and tracks its phase (DEV, REVIEW, HUMAN_REVIEW, FEEDBACK, MERGE).
-- `orchestrator.yml` listens for `workflow_run` from `opencode` and `Java CI` plus `pull_request_review`. It advances the phase, loops back via `/oc fix` or `/oc review`, or merges the PR. On `Java CI` success it re-runs review for a deferred active PR; on failure it posts one `/oc fix` per SHA.
+- `orchestrator.yml` listens for `workflow_run` from `opencode` and `Java CI` plus `pull_request_review`. It advances the phase, loops back via `/oc fix` or `/oc review`, or merges the PR. On `Java CI` success it re-runs review for a deferred active PR (skipped while `current_task.review_in_progress` is `true`); on failure it posts one `/oc fix` per SHA.
 
 For single-step tasks, a child task is "complete" in the orchestrator's eyes when EITHER:
 - the child issue is closed on GitHub, OR
@@ -73,7 +73,7 @@ State lives in the master issue body as a hidden HTML comment:
 ```html
 <!-- ORCHESTRATOR_STATE:
 { "status": "IDLE|IN_PROGRESS|COMPLETED",
-  "current_task": { "issue": 487, "pr": null, "phase": "DEV", "turn": 0, "max_turns": 3, "retries": 0 },
+  "current_task": { "issue": 487, "pr": null, "phase": "DEV", "turn": 0, "max_turns": 3, "retries": 0, "review_in_progress": false },
   "queue": [488, 489],
   "completed": [485, 486],
   "failed": [],
@@ -93,6 +93,7 @@ State lives in the master issue body as a hidden HTML comment:
 | `retries` | Attempt counter for `current_task`; resets on advance |
 | `history` | Append-only event log with ISO timestamps |
 | `order` | Original task order from the markdown checklist; rendered top-to-bottom in the status table |
+| `current_task.review_in_progress` | `true` once a `/oc review` has been scheduled for the active PR; cleared when the review workflow run completes. A green `Java CI` run skips `ci_green_rereview` while it is `true` (same guard as the ticket runner) |
 
 ### Phases
 
