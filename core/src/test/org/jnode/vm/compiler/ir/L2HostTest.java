@@ -240,4 +240,70 @@ public class L2HostTest {
     }
 
 
+
+
+
+    /**
+     * A loop-carried range: one variable with an early first def and a LATER
+     * current assign, so LiveRange's hull start (clamped to firstDef+1 by
+     * L2-085) differs from the variable's raw assign address. That gap is
+     * exactly what the old comparator compared inconsistently.
+     */
+    private static LiveRange loopCarriedRange(int defAddr, int firstDef,
+                                              int lastUse, int index) {
+        IRBasicBlock block = new IRBasicBlock(defAddr);
+        LocalVariable lhs = new LocalVariable(JvmType.INT, index);
+        LocalVariable rhs = new LocalVariable(JvmType.INT, index + 1000);
+        new VariableRefAssignQuad(defAddr, block, lhs, rhs);
+        lhs.noteDef(firstDef);
+        lhs.setLastUseAddress(lastUse);
+        return new LiveRange(lhs);
+    }
+
+    /**
+     * ANCHOR-L2-169: LiveRange.compareTo must be a valid total order.
+     * LinearScanAllocator sorts ranges with it, so the contract is not
+     * optional: sgn(a.compareTo(b)) must be -sgn(b.compareTo(a)), and
+     * compareTo must be 0 against itself (report 3.2).
+     *
+     * The old expression was `this.assignAddress - other.getVariable()
+     * .getAssignAddress()`: THIS range's hull start (clamped to firstDef+1)
+     * minus the OTHER variable's raw assign address. For a single-def
+     * variable the two are equal and the sign survives, so a single-def
+     * sample cannot see the defect -- it has to be loop-carried ranges
+     * (early first def, later current assign) where the clamp bites. With 32+
+     * ranges in one method that broken contract is a live
+     * "Comparison method violates its general contract!" out of
+     * Arrays.sort, and a wrong scan order long before that.
+     */
+    @Test
+    public void testLiveRangeComparatorContract() {
+        final java.util.List<LiveRange> ranges =
+            new java.util.ArrayList<LiveRange>();
+        // straight-line ranges, interleaved with loop-carried ones
+        for (int i = 0; i < 4; i++) {
+            ranges.add(newRange(i * 6, i * 6 + 5, i + 1));
+            ranges.add(loopCarriedRange(20 + i, 2 + i, 40 + i, 40 + i));
+        }
+        for (int i = 0; i < ranges.size(); i++) {
+            final LiveRange a = ranges.get(i);
+            assertEquals("compareTo(self) must be 0", 0, a.compareTo(a));
+            for (int j = 0; j < ranges.size(); j++) {
+                final LiveRange b = ranges.get(j);
+                assertEquals("antisymmetry violated for " + a + " vs " + b
+                    + " (" + a.compareTo(b) + " / " + b.compareTo(a) + ")",
+                    -sign(a.compareTo(b)), sign(b.compareTo(a)));
+            }
+        }
+        // the order itself must follow the hull starts: a range defined
+        // before another sorts first
+        for (int i = 0; i + 1 < 4; i++) {
+            assertTrue("earlier straight-line range must sort first",
+                sign(ranges.get(i * 2).compareTo(ranges.get(i * 2 + 2))) < 0);
+        }
+    }
+
+    private static int sign(int v) {
+        return v < 0 ? -1 : (v > 0 ? 1 : 0);
+    }
 }

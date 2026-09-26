@@ -50,8 +50,19 @@ public class LiveRange<T> implements Comparable<LiveRange<T>> {
         return variable;
     }
 
+    /**
+     * ANCHOR-L2-169: order ranges by their own hull start. The old
+     * expression mixed THIS range's clamped start (`assignAddress`, pinned to
+     * firstDef+1) with the OTHER variable's RAW assign address, so
+     * sgn(a.compareTo(b)) != -sgn(b.compareTo(a)) in general -- not a valid
+     * total order (report 3.2). LinearScanAllocator feeds this to
+     * Arrays.sort, which yields a wrong scan order and, past 32 ranges, can
+     * throw "Comparison method violates its general contract!". Comparing
+     * hull start against hull start is antisymmetric and transitive.
+     */
     public int compareTo(LiveRange<T> other) {
-        return assignAddress - other.getVariable().getAssignAddress();
+        return assignAddress < other.assignAddress ? -1
+            : (assignAddress > other.assignAddress ? 1 : 0);
     }
 
     public String toString() {
