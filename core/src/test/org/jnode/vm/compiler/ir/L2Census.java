@@ -582,7 +582,24 @@ public class L2Census {
         X86CodeGenerator x86cg = new X86CodeGenerator(method, os, code.getLength(), typeSizeInfo, stackFrame);
         X86Level2Compiler.constructAndOptimize(cfg);
         X86Level2Compiler.optimizeOnce(cfg);
+        // ANCHOR-L2-163: run the real SSA verifier over EVERY corpus method,
+        // not just T1's synthetic corpus. A forward-slot read such as
+        // "l5_2 = l5_3; l5_3 = l5_2 + 1" compiles without complaint, so
+        // "it compiled" is not evidence that deSSA produced well-formed
+        // code -- that is exactly the L2-162 class, and the only guard
+        // until now was a 37-test synthetic suite. Violations surface as
+        // FAILED entries, so the census gate (FAILED == 0) covers the
+        // whole SSA class: L2-158/159/161/162 and the deep review's #5
+        // (handler-entry phi on non-self-edge handlers) and #11.
+        final String vpre = SSAVerifier.verifyPreDessA(cfg);
+        if (vpre != null) {
+            throw new IllegalStateException("SSA-PRE: " + vpre);
+        }
         X86Level2Compiler.deSSAAndFixup(cfg);
+        final String vpost = SSAVerifier.verifyPostDessA(cfg);
+        if (vpost != null) {
+            throw new IllegalStateException("SSA-POST: " + vpost);
+        }
         LinearScanAllocator lsa = X86Level2Compiler.allocateRanges(cfg);
         X86Level2Compiler.generateCode(x86cg, cfg, irg, lsa);
         os.flush();
