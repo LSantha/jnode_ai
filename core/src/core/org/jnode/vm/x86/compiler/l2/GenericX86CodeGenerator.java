@@ -358,7 +358,11 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
         }
     }
 
-    private int prev_addr = 0;
+    // ANCHOR-L2-161: must start at -1, not 0. The loop below is (prev..addr],
+    // so with prev_addr == 0 the very first call (address 0) binds nothing and
+    // "_qb_0" is never passed to setObjectRef. Every "goto 0" / "if* 0" then
+    // ships an unpatched rel32 = a jump to LOAD_BASE + 2R + 8 (wild jump).
+    private int prev_addr = -1;
 
     public void checkLabel(int address) {
         for (int i = prev_addr + 1; i <= address; i++) {
@@ -366,6 +370,25 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
             os.setObjectRef(getInstrLabel(i));
         }
         prev_addr = address;
+    }
+
+    /**
+     * Census: every dense label handed out must have been bound by
+     * {@link #checkLabel(int)}. An unbound one means some jmp/jcc still carries
+     * its placeholder rel32 (a wild jump at run time), which the assembler's
+     * Label exemption lets through unnoticed (ANCHOR-L2-161).
+     *
+     * @return the number of referenced-but-undefined {@code _qb_} labels
+     */
+    public int countUnboundInstrLabels() {
+        int unbound = 0;
+        for (int i = 0; i < addressLabels.length; i++) {
+            final Label l = addressLabels[i];
+            if ((l != null) && !os.getObjectRef(l).isResolved()) {
+                unbound++;
+            }
+        }
+        return unbound;
     }
 
     /**

@@ -188,6 +188,16 @@ public class X86Level2Compiler extends AbstractX86Compiler {
             x86cg.os.setObjectRef(helper.getInstrLabel(pc.intValue()));
         }
         x86cg.endMethod();
+        // ANCHOR-L2-161 census: any dense label that was handed to a jmp/jcc
+        // but never bound by checkLabel() ships with a placeholder rel32, and
+        // both the NativeCodeCompiler and boot-image emit loops skip
+        // unresolved Labels by design. Report it loudly instead of booting a
+        // wild jump. Silent in a healthy build.
+        final int unbound = x86cg.countUnboundInstrLabels();
+        if (unbound > 0) {
+            System.err.println("L2 label census: " + unbound + " undefined _qb_ label(s) in "
+                + x86cg.getCurrentMethod().getFullName());
+        }
     }
 
     @Override

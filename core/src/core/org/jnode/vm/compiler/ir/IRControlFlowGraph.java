@@ -1371,6 +1371,17 @@ public class IRControlFlowGraph<T> implements Iterable<IRBasicBlock<T>> {
      * nestedCatchLong. Returns -1 when the block never uses the copy's
      * lhs version, i.e. the append is the correct (and historical)
      * placement.
+     *
+     * <p>ANCHOR-L2-162: when (a) and (b) conflict, i.e. the first in-block
+     * read of the copy's lhs sits before the source's definition, that read
+     * can only want the PRE-copy value -- the copied value does not exist
+     * yet -- so (a) wins. Honoring (b) instead (the old resolution) places
+     * the copy in front of the quad that defines its source and makes it
+     * read a slot that is written one quad later, e.g.
+     * {@code l5_2 = l5_3; l5_3 = l5_2 + 1} in
+     * {@code AbstractDeviceManager#rename}, and 44 further boot-corpus
+     * methods reported by the SSAVerifier census (L2-DEEP-REVIEW-REPORT
+     * Part 9).
      */
     private void flushCopy(IRBasicBlock<T> b, AssignQuad<T> q) {
         final List<Quad<T>> quads = b.getQuads();
@@ -1408,7 +1419,8 @@ public class IRControlFlowGraph<T> implements Iterable<IRBasicBlock<T>> {
                 }
             }
         }
-        b.insertQuadAt(after > firstUse ? firstUse : after, q);
+        // ANCHOR-L2-162: (a) wins the conflict with (b) -- see the javadoc.
+        b.insertQuadAt(after, q);
     }
 
     /**
