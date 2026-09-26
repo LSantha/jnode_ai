@@ -1,0 +1,46 @@
+# v4: static-init interplay + array shapes + reflection/exceptions.
+# Motivated by the L2 boot crash in Integer.stringSize (null static
+# int[] deref): clinit/static-field/array-bounds/exception-table shapes.
+# f1 = static-init interplay (forName/loadClass/getProperty paths);
+# f2 = array shapes (iaload/iastore/newarray bounds-check shapes);
+# f3 = reflection + exceptions (5 runnable; ProcessBuilder.simple excluded -
+# environment-limited, see fx section).
+# Chunks f1/f2/f3 sized <=7 for the 240s + heap-discipline rules.
+# Sibling audit (javap -v CONSTANT_Class, 2026-09-18): Runtime.security needs
+# gnu.testlet.TestSecurityManager (+ $SuccessException inner); EnumSet.
+# ComplementOf needs same-package EnumSet.Colour; reflect.Method.invoke
+# needs reflect.Method.iface + reflect.sub.InvokeHelper; Vector/ArrayList.
+# subList need util.List.subList (already staged for v3). All are top-level
+# helpers (not $* inners) staged explicitly in mk-ox-iso.sh.
+
+# --- f1: static-init interplay ---
+gnu.testlet.java.lang.ClassLoader.initialize
+gnu.testlet.java.lang.ClassLoader.loadClass
+gnu.testlet.java.lang.ClassLoader.findLoadedClass
+gnu.testlet.java.lang.ClassLoader.Resources
+gnu.testlet.java.lang.System.getProperty
+gnu.testlet.java.lang.Runtime.security
+gnu.testlet.java.lang.Thread.contextClassLoader
+
+# --- f2: array shapes ---
+gnu.testlet.java.util.EnumSet.ComplementOf
+gnu.testlet.java.util.IdentityHashMap.simple
+gnu.testlet.java.util.Vector.copyInto
+gnu.testlet.java.util.Vector.subList
+gnu.testlet.java.util.ArrayList.subList
+gnu.testlet.java.lang.String.getBytes
+gnu.testlet.java.lang.String.getBytes13
+
+# --- f3: reflection + exceptions ---
+gnu.testlet.java.lang.reflect.Method.invoke
+gnu.testlet.java.lang.reflect.Method.equals
+gnu.testlet.java.lang.reflect.Field.access
+gnu.testlet.java.lang.reflect.Constructor.newInstance
+gnu.testlet.java.lang.reflect.InvocationTargetException.Chain
+
+# --- fx: environment-limited (NOT runnable on JNode, both compilers) ---
+# ProcessBuilder.simple spawns an OS process; JNode has no spawn backend -
+# the test's Class.forName escapes MauveDriver's per-testlet catch and kills
+# the driver (no DONE) under force AND noforce (verified 2026-09-18). Kept
+# here as documentation, excluded from the f3 chunk.
+# gnu.testlet.java.lang.ProcessBuilder.simple

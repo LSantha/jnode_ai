@@ -68,4 +68,13 @@ public class SSAStack<T> {
         Variable<T> var = stack.remove(stack.size() - 1);
         return var;
     }
+
+    /**
+     * ANCHOR-L2-125: push an existing version back (no new SSA value), used
+     * by the handler-entry local restore to save/restore the stack across
+     * the handler rename.
+     */
+    public void push(Variable<T> var) {
+        stack.add(var);
+    }
 }

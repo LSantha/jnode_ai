@@ -1,0 +1,20 @@
+FAIL gnu.testlet.java.lang.Integer.parseInt #14 [Leading '+' does not throw NumberFormatException]
+mauve|gnu.testlet.java.lang.Integer.parseInt|pass=15|fail=1|checks=16
+mauve|gnu.testlet.java.lang.Integer.decode|pass=21|fail=0|checks=21
+mauve|gnu.testlet.java.lang.Integer.compareTo|pass=29|fail=0|checks=29
+FAIL gnu.testlet.java.lang.Long.LongTest #23 [test_hashCode]
+mauve|gnu.testlet.java.lang.Long.LongTest|pass=59|fail=1|checks=60
+FAIL gnu.testlet.java.lang.Double.parseDouble #8
+mauve|gnu.testlet.java.lang.Double.parseDouble|pass=26|fail=1|checks=27
+mauve|gnu.testlet.java.lang.Float.toHexString|pass=8|fail=0|checks=8
+mauve|gnu.testlet.java.lang.String.compareTo|pass=12|fail=0|checks=12
+mauve|gnu.testlet.java.lang.String.substring|pass=6|fail=0|checks=6
+mauve|gnu.testlet.java.lang.String.split|pass=32|fail=0|checks=32
+mauve|gnu.testlet.java.lang.String.indexOf|pass=22|fail=0|checks=22
+FAIL gnu.testlet.java.lang.StringBuffer.StringBufferTest #1 [test_Basics - 1]
+FAIL gnu.testlet.java.lang.StringBuffer.StringBufferTest #5 [test_Basics - 6]
+FAIL gnu.testlet.java.lang.StringBuffer.StringBufferTest #17 [test_setLength - 3]
+FAIL gnu.testlet.java.lang.StringBuffer.StringBufferTest #18 [test_charAt - 1]
+FAIL gnu.testlet.java.lang.StringBuffer.StringBufferTest #19 [test_getChars - 7]
+FAIL gnu.testlet.java.lang.StringBuffer.StringBufferTest #20 [test_getChars - 9]
+FAIL gnu.testlet.java.lang.StringBuffer.StringBufferTest #21 [test_getChars - 10]

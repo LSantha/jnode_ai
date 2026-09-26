@@ -1,0 +1,33 @@
+# v3: exception-flow shapes behind the EIP 0018E74B boot crash
+# (null read after statics call post-MemoryBlockManager).
+# e1 = fail-fast iterators (CME/UOE thrown inside loops -> catch);
+# e2 = class/static-init interplay (forName/newInstance/clinit order);
+# e3 = misc exception-flow (tree/linked iteration, timer task throw, parse).
+# Chunks e1/e2/e3 sized <=7 for the 240s + heap-discipline rules.
+
+# --- e1: fail-fast iterators ---
+# NOTE: AbstractMap EIterator/ESet/Entry are HELPER classes (no Testlet
+# interface) - staged as siblings of AcuniaAbstractMapTest but NOT runnable
+# standalone (driver InstantiationException). LinkedList.subList needs the
+# cross-package sibling gnu.testlet.java.util.List.subList (mutual refs).
+gnu.testlet.java.util.Iterator.ConcurrentModification
+gnu.testlet.java.util.AbstractMap.AcuniaAbstractMapTest
+gnu.testlet.java.util.concurrent.CopyOnWriteArrayList.TestIterators
+gnu.testlet.java.util.LinkedList.subList
+
+# --- e2: class/static-init interplay ---
+gnu.testlet.java.lang.Class.init
+gnu.testlet.java.lang.Class.newInstance
+gnu.testlet.java.lang.Class.ClassTest
+gnu.testlet.java.lang.Class.reflect
+gnu.testlet.java.lang.Class.reflect2
+gnu.testlet.java.lang.Class.serialization
+
+# --- e3: misc exception-flow ---
+gnu.testlet.java.util.Collections.unmodifiableList
+gnu.testlet.java.util.Collections.unmodifiableMap
+gnu.testlet.java.util.TreeSet.basic
+gnu.testlet.java.util.LinkedHashMap.LinkedHashMapTest
+gnu.testlet.java.util.LinkedHashMap.Regress
+gnu.testlet.java.util.Timer.taskException
+gnu.testlet.java.text.ParseException.Test

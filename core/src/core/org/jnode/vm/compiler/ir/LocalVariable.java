@@ -44,6 +44,11 @@ public class LocalVariable<T> extends Variable<T> {
     }
 
     public Object clone() {
-        return new LocalVariable<T>(this);
+        // ANCHOR-L2-052: preserve the location like MethodArgument.clone does.
+        // Clones previously lost their REGISTER/STACK assignment, breaking any
+        // consumer of a post-allocation clone (e.g. FP compare emission).
+        LocalVariable<T> clone = new LocalVariable<T>(this);
+        clone.setLocation(this.getLocation());
+        return clone;
     }
 }
