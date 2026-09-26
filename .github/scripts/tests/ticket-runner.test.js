@@ -1078,15 +1078,16 @@ test("ticket-runner.js event handling suite", async (t) => {
     assert.strictEqual(_parseState(mocks.getIssueBody()), null);
   });
 
-  await t.test("REVIEW approve + auto-merge defers when CI red", async () => {
+  await t.test("REVIEW approve + auto-merge defers when CI red and clears review_in_progress", async () => {
     const initialBody = _replaceOrAppendStatus("Task", {
       phase: "REVIEW",
       pr: 99,
       turn: 0,
       max_turns: 3,
       retries: 0,
+      review_in_progress: true,
       started: new Date().toISOString(),
-      history: []
+      history: [{ event: "review_scheduled" }]
     }, 42);
 
     const mocks = createMocks("workflow_run", {
@@ -1099,10 +1100,13 @@ test("ticket-runner.js event handling suite", async (t) => {
 
     await runTicketRunner(mocks);
 
+    // The defer branch keeps the same state object, so the cleared flag is observable.
     const state = _parseState(mocks.getIssueBody());
     assert.strictEqual(state.phase, "REVIEW");
     assert.strictEqual(mocks.calls.mergePR.length, 0);
     assert.ok(mocks.calls.createComment.some(c => c.body.includes("deferred")));
+    assert.strictEqual(state.review_in_progress, false, "Flag cleared so a later green CI can re-review");
+    assert.ok(mocks.getIssueBody().includes("| **Review in progress** | no |"), "Status row reports the flag cleared");
   });
 
   await t.test("REVIEW approve + implicit safe kind merges when green", async () => {

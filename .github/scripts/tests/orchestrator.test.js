@@ -293,7 +293,7 @@ test('orchestrator.js test suite', async (t) => {
     assert.ok(updateIssueDetails.some(u => u.issue_number === 1 && u.body.includes('ci_green_rereview')), 'Re-review event is recorded');
   });
 
-  await t.test('Review completion clears review_in_progress', async () => {
+  await t.test('Review completion clears review_in_progress when the merge is deferred', async () => {
     const { core, github, context, calls, updateIssueDetails, setMasterBody, setTaskData } = createMocks('workflow_run');
 
     setMasterBody(`<!-- ORCHESTRATOR_STATE:\n{ "status": "IN_PROGRESS", "current_task": { "issue": 2, "pr": 99, "phase": "REVIEW", "turn": 0, "max_turns": 3, "retries": 0, "review_in_progress": true }, "queue": [3], "completed": [], "failed": [], "order": [2, 3] }\n-->`);
@@ -301,11 +301,17 @@ test('orchestrator.js test suite', async (t) => {
     github.rest.issues.listComments = async () => ({ data: [{ body: 'Verdict: approve' }] });
     github.rest.pulls.get = async () => ({ data: { head: { ref: 'opencode/issue2-fix', sha: 'abc' }, merged: true } });
     github.rest.pulls.listFiles = async () => ({ data: [{ filename: 'fs/a.java', additions: 5 }] });
-    github.rest.checks = { listForRef: async () => ({ data: { check_runs: [{ status: 'completed', conclusion: 'success' }] } }) };
+    github.rest.checks = { listForRef: async () => ({ data: { check_runs: [{ status: 'completed', conclusion: 'failure' }] } }) };
 
     await runOrchestrator({ github, context, core });
 
-    assert.ok(updateIssueDetails.some(u => u.issue_number === 1 && u.body.includes('"review_in_progress": true') === false), 'Flag is cleared once the review workflow completes');
+    // The defer branch keeps the same task object alive, so the flag is observable.
+    const persisted = updateIssueDetails.filter(u => u.issue_number === 1).map(u => u.body).join('\n');
+    assert.ok(calls.createComment.some(c => c.issue_number === 99 && c.body.includes('deferred')), 'Merge is deferred rather than performed');
+    assert.strictEqual(calls.mergePR.length, 0, 'No merge on a red CI');
+    assert.ok(persisted.includes('"phase": "REVIEW"'), 'Task stays in REVIEW (merge deferred)');
+    assert.ok(persisted.includes('"review_in_progress": false'), 'Flag is cleared so a later green CI can re-review');
+    assert.ok(persisted.includes('"review_in_progress": true') === false, 'Flag is not left armed');
   });
 
   await t.test('FEEDBACK completion re-enters REVIEW with review_in_progress set', async () => {
