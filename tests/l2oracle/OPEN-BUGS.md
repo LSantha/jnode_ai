@@ -24,18 +24,18 @@ post-deSSA on every method, so structural SSA regressions are corpus-wide.
 |---|---|---|---|---|
 | A1 | P0 | `_qb_0` never bound -> every branch to bci 0 ships an unpatched rel32 (wild jump) | **LANDED** L2-161 | unbound-label census over all classes, 0 expected. **GUARD GAP**: no test emits a branch to address 0 (report invariant 2) |
 | A2 | P0 | `flushCopy` places a deSSA edge copy before its own source's definition | **LANDED** L2-162 | corpus SSA verifier (was: T1 synthetic only) |
-| A3 | P1 | `arraylength` clobbers EBX, an allocated register, with no push/pop | **OPEN** (CODE-READ, highest interop risk: L1A cannot produce it) | none; no `arraylength` value probe |
-| A4 | P1 | shift arms destroy the destination when it is ECX (12 arms) | **OPEN** (same shape as landed H1/L2-150 SAL slip - confirm whether identical) | **GUARD GAP**: matrix pins the mnemonic, no probe asserts a shift *value* (invariant 5) |
-| A5 | P1 | `isCallLike` omits quads that really emit a `CALL` (`ConstantClassAssignQuad`, barriers) -> live ranges not force-spilled | **OPEN** | none |
-| A6 | P2 | `FREM` with a constant left operand emits `FSUB` on an empty x87 stack | **OPEN** | **GUARD GAP**: no FP emission test at all (invariant 6: no FADD/FSUB/FDIV/FMUL/FREM assert) |
-| A7 | P2 | `writeParameters` signature gate never fires for `invokestatic` -> the L2-155 class on the static path | **OPEN** | **GUARD GAP**: `checkCallPushWidths` skips non-instance quads, so `WIDTHMISMATCH` cannot fire for statics (invariant 7) |
+| A3 | P1 | `arraylength` clobbers EBX, an allocated register, with no push/pop | **LANDED** L2-163 | census lint `ARRAYLENGTHREG` (105 corpus sites -> 0) + T3 test, red on the pre-fix overlay |
+| A4 | P1 | shift arms destroy the destination when it is ECX (12 arms) | **LANDED** L2-165 | T3 test for all three shift ops with dst=ECX, red on the overlay; also closes invariant 5 for this shape |
+| A5 | P1 | `isCallLike` omits quads that really emit a `CALL` (`ConstantClassAssignQuad`, barriers) -> live ranges not force-spilled | **LANDED** L2-164 | census lint `CALLNOTCALLLIKE`, 243 sites in 161 methods -> 0; both predicate copies extended |
+| A6 | P2 | `FREM` with a constant left operand emits `FSUB` on an empty x87 stack | **OPEN, no firing case found**: all six FREM arms use FPREM with the operands in the right order, and the new FP oracle probes (L2-167, 14 rows) have no guest verdict yet | partially addressed: FP arithmetic/remainder probes now exist (invariant 6), live run pending |
+| A7 | P2 | `writeParameters` signature gate never fires for `invokestatic` (the `- 1` assumes a receiver) | **LANDED** L2-166 | T1 test with a stale-typed static argument, red on the overlay; `WIDTHMISMATCH` extended to static calls (invariant 7) |
 | A8 | P3 | constant-null `getfield` never writes lhs, `putfield` emits a load (latent under the null-trap model) | **OPEN** | none |
 
 ## B. IR construction (report Part 2)
 
 | # | Sev | Defect | Status | Guard today |
 |---|---|---|---|---|
-| B1 | P1 | handler-entry phi never written on the exceptional dispatch for **non-self-edge** handlers (ordinary try/catch) | **OPEN** (L2-159 covers the self-edge/tagged shape only) | verifier carves this shape out (invariant 3); no try/catch probe |
+| B1 | P1 | handler-entry phi never written on the exceptional dispatch for **non-self-edge** handlers (ordinary try/catch) | **OPEN, and still uninstrumented** (L2-159 covers the self-edge shape) | verifier carves it out (invariant 3). A structural census lint was attempted and REMOVED: it could not identify handler blocks reliably (the flag is not set on the blocks that hold the phis, and post-fixup startPCs do not match the exception table), so it examined 0 phis -- a blind instrument is worse than none. The way in is a value-level probe: an ordinary try/catch whose handler reads a try-modified local, run through the oracle. The existing try/catch probes pass, which is weak evidence the common shapes are fine. |
 | B2 | P1 | synthetic critical-edge blocks appended at layout end -> inverted live intervals -> register aliasing at the join (the `allocObject` #PF CR2=8) | **OPEN** (naive fix tried and reverted) | `interferesWith` never checked against execution order (invariant 4) |
 | B3 | P2/P3 | smaller construction items (report 2.4) | **OPEN**, unitemised | none |
 
@@ -45,7 +45,7 @@ post-deSSA on every method, so structural SSA regressions are corpus-wide.
 |---|---|---|---|---|
 | C1 | P2 | `LiveRange.compareTo` is not a valid total order | **OPEN** | none |
 | C2 | P2 | `removeDefUseChains` coalescing unguarded (= plan P10) | **OPEN** | none |
-| C3 | P1 | `handlerEntryTops` snapshot skipped when the exception slot has no SSA stack -> self-referential phi copy (found in my own L2-159) | **OPEN** | corpus SSA verifier would catch it if a corpus shape triggers it |
+| C3 | P1 | `handlerEntryTops` snapshot skipped when the exception slot has no SSA stack -> self-referential phi copy (found in my own L2-159) | **LANDED** L2-168 | corpus SSA verifier over every compilable method (a missed snapshot surfaces as a post-deSSA violation) |
 | C4 | P2 | deSSA floor ignores phi source tags: when no usable edge is found, the floor copy lands on the def block of `sources.get(0)` regardless of the edge it arrived on (earlier review S4) | **OPEN**, partially mitigated by L2-159's handler-tag routing, floor itself unchanged | corpus SSA verifier catches the value shape, not the edge choice |
 | C5 | P2 | handler-entry idom heuristic: a handler block with no computed idom inherits the idom of the block at its range START, not the closest predecessor (earlier review S4; `IRControlFlowGraph.doComputeDominance`) | **OPEN** | none |
 | C6 | P2 | M4: CAS with a spilled offset operand fails to compile (`loadEffectiveAddress` refuses a STACK offset into EDX, the CAS arm always passes EDX) -- loud, not silent, but it hides in the same census bucket as real bugs | **OPEN** (disabled-capability noise) | none; census FAILED would list it once the class is reachable |
