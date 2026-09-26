@@ -65,31 +65,6 @@ module.exports = function createHelpers({ github, context, core }) {
     return null;
   }
 
-  /** Check whether an issue or its PR requires human review (true unless 'auto-merge' label is present). */
-  async function needsHumanReview(issueNumber, prNumber) {
-    var issue = await github.rest.issues.get({
-      owner, repo, issue_number: issueNumber
-    });
-    var labels = (issue.data.labels || []).map(function (l) {
-      return (typeof l === "string") ? l : l.name;
-    });
-    if (labels.includes("auto-merge")) return false;
-
-    if (prNumber) {
-      try {
-        var pr = await github.rest.issues.get({
-          owner, repo, issue_number: prNumber
-        });
-        var prLabels = (pr.data.labels || []).map(function (l) {
-          return (typeof l === "string") ? l : l.name;
-        });
-        if (prLabels.includes("auto-merge")) return false;
-      } catch (_) {}
-    }
-
-    return true;
-  }
-
   /** Kinds that may auto-merge without an explicit 'auto-merge' label. */
   var SAFE_AUTO_MERGE_KINDS = ["kind/chore", "kind/wiki", "kind/test"];
 
@@ -248,7 +223,6 @@ module.exports = function createHelpers({ github, context, core }) {
     findPRForIssue: findPRForIssue,
     getReviewPrompt: getReviewPrompt,
     getAgentReviewVerdict: getAgentReviewVerdict,
-    needsHumanReview: needsHumanReview,
     isAutoMergeEligible: isAutoMergeEligible,
     isDiffSafe: isDiffSafe,
     isCIGreen: isCIGreen,
