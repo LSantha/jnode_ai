@@ -1014,7 +1014,7 @@ test("ticket-runner.js event handling suite", async (t) => {
     assert.strictEqual(mocks.calls.createComment.length, 0);
   });
 
-  await t.test("issues:labeled ignores trigger quoting triage", async () => {
+  await t.test("issues:labeled does not duplicate a triage request", async () => {
     const mocks = createMocks("issues", {
       issueBody: "Bug description",
       issueLabels: [{ name: "kind/chore" }]
@@ -1025,9 +1025,7 @@ test("ticket-runner.js event handling suite", async (t) => {
     await runTicketRunner(mocks);
 
     assert.strictEqual(_parseState(mocks.getIssueBody()), null);
-    assert.strictEqual(mocks.calls.createComment.length, 1);
-    assert.ok(mocks.calls.createComment[0].body.includes("/oc triage"));
-    assert.ok(!mocks.calls.createComment[0].body.includes("Please proceed"));
+    assert.strictEqual(mocks.calls.createComment.length, 0);
   });
 
   await t.test("issues:labeled ignores non-actionable kind", async () => {

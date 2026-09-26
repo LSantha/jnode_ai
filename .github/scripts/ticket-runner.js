@@ -121,6 +121,7 @@ module.exports = async ({ github, context, core }) => {
   // Triggers routinely quote report strings (e.g. "## Triage", "Verdict: ..."),
   // so every report scan must skip them or it matches its own trigger.
   const TRIGGER_RE = /(^|\s)\/(oc|run|orchestrate)(\s|$)/;
+  const TRIAGE_REQUEST_RE = /(^|\s)\/oc\s+triage(?:\s|$)/i;
 
   // ---- Determine issue number depending on event type ----
 
@@ -307,15 +308,17 @@ module.exports = async ({ github, context, core }) => {
     var list = (res && res.data) ? res.data : res;
     var count = 0;
     var clear = false;
+    var requested = false;
     for (var i = 0; i < list.length; i++) {
       var b = (list[i] && list[i].body) || "";
+      if (TRIAGE_REQUEST_RE.test(b)) requested = true;
       if (TRIGGER_RE.test(b)) continue;
       if (TRIAGE_RE.test(b)) {
         count++;
         clear = !VAGUE_RE.test(b) && !REFUSAL_RE.test(b);
       }
     }
-    return { present: count > 0, clear: clear, count: count };
+    return { present: count > 0, clear: clear, count: count, requested: requested };
   }
 
   // Create fresh runner state and trigger DEV. Caller ran autoStartGuards first.
@@ -349,6 +352,10 @@ module.exports = async ({ github, context, core }) => {
     }
     var t = await triageStatus(issueNumber);
     if (!t.present) {
+      if (t.requested) {
+        core.info("Ticket runner: #" + issueNumber + " already has a triage request; waiting for its report.");
+        return;
+      }
       core.info("Ticket runner: #" + issueNumber + " labeled " + label + " but untriaged; requesting triage first.");
       await h.triggerTask(issueNumber, "/oc triage issue #" + issueNumber + "\n\nTriage run ONLY. Load the jnode-triage-issue skill and obey it. Output is exactly one ## Triage comment plus kind/area label edits. FORBIDDEN in this run: git checkout -b, git push, gh pr create, any branch, any PR.");
       return;
