@@ -324,6 +324,7 @@ without it the CR-strip fails silently and diffs vanish (false PASS).
 stale-ISO artifact (Sep-9 repros predate the ISO-hygiene fix) or an
 incidental fix in 097-103. Regression-guarded by `CASES` now.
 - **Deferred**: virtual/interface dispatch ECX frames (SP-math shapes), jsr runtime probe (needs hand-built bytecode), `FREM`/`DREM` non-SSS shapes, 64-bit (CG-5).
+- **`regress.sh` phase bodies are single-quoted** (`run census sh -c ' ... '"$LABEL"' ... '`): an apostrophe anywhere in a comment or echo inside a phase ends the string and the script dies at parse time with a confusing `Syntax error: ")" unexpected (expecting "fi")` pointing at the next `)`. Reword (`allocator's` -> `the picture the allocator builds`), never re-quote. Check with `sh -n tests/l2oracle/regress.sh` before a gate run.
 
 ## Adding probes
 

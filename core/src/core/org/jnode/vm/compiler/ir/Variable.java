@@ -130,6 +130,29 @@ public abstract class Variable<T> extends Operand<T> implements Cloneable {
     }
 
     /**
+     * ANCHOR-L2-177 (NEW-1b): record that the value must already exist at
+     * this address, even though its defining quads may sit at higher
+     * addresses. A loop-carried phi is de-SSA'd into copies in the latch
+     * blocks, which are laid out AFTER the blocks that read it, so the
+     * linear "first def" can come after the uses: {@code start} in
+     * AcuniaPropertiesTest#test_store was defined at 163/168 but read at
+     * 141/151, so its range became {@code 164-169} and the allocator gave
+     * its register (EBX) to the inner-loop temporaries as well -- the guest
+     * then called {@code new String(ba, <ba.length>, ...)}.
+     *
+     * <p>Callers pass {@code blockStart - 1}, because
+     * {@link LiveRange} starts the range at {@code firstDef + 1}. Keeps the
+     * minimum, so a normal straight-line variable is untouched.
+     *
+     * @param address
+     */
+    public void noteLiveFrom(int address) {
+        if (address < firstDefAddress) {
+            firstDefAddress = address;
+        }
+    }
+
+    /**
      * @return the lowest recorded definition address, or Integer.MAX_VALUE
      *         when no definition was recorded (e.g. method arguments).
      */

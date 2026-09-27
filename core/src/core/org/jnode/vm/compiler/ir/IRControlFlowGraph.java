@@ -132,7 +132,168 @@ public class IRControlFlowGraph<T> implements Iterable<IRBasicBlock<T>> {
                 }
             }
         }
+        extendRangesAcrossBackEdges(liveVariables);
         return liveVariables;
+    }
+
+    /**
+     * ANCHOR-L2-177 (NEW-1b): a linear "highest address that references this
+     * variable" is not a live range.
+     *
+     * <p>{@link Quad#computeLiveness} records the last address at which a
+     * variable is <em>referenced</em>, which is enough for straight-line
+     * code, but a value read in a loop header is read again after the back
+     * edge: the loop <em>body</em> sits at higher addresses than the header's
+     * references, is on a def-to-use path, and must therefore stay inside the
+     * range. Otherwise the allocator hands the same register to a body
+     * temporary and destroys the value before the next test.
+     *
+     * <p>Witness ({@code java.util.Properties.loadConvert}): {@code srcEnd =
+     * startOff + len} was computed once before the loop and tested every
+     * iteration, yet its range stopped at the header -- {@code 8-11 (esi)}
+     * while the body spanned 13..54. The hex-digit path then used ESI
+     * as scratch ({@code sal esi,4}), so after the last digit the bound read
+     * {@code (0x00e << 4) + '9'} = 281. Guest: a 10-character input threw
+     * {@code ArrayIndexOutOfBoundsException: 10}, and under
+     * {@code Properties.load} the loop ran to index 280 and returned a
+     * 272-character value (5 converted chars + 267 overrun).
+     *
+     * <p>Fix: backward liveness over the CFG gives exactly the def-to-use
+     * path -- every block from which a use is reachable without re-defining
+     * the variable -- and lastUseAddress is raised (never lowered) to the
+     * highest address of any such block. The other end needs the same
+     * treatment: a loop-carried phi is de-SSA'd into copies in the latch
+     * blocks, which lay out after the blocks that read it, so the linear
+     * "first def" can start the range past its own uses; every block the
+     * variable is live into pulls the start back to its top
+     * ({@link Variable#noteLiveFrom}). Straight-line methods are
+     * unaffected: a value defined before it is read is never live-IN to the
+     * block that defines it, so their start never moves. Values that now
+     * span a call also become visible to the ANCHOR-L2-107 forced spill,
+     * which is the point.
+     */
+    private void extendRangesAcrossBackEdges(List<Variable<?>> liveVariables) {
+        final int nVars = liveVariables.size();
+        if (nVars == 0) {
+            return;
+        }
+        final Map<Variable<?>, Integer> indexOf = new IdentityHashMap<Variable<?>, Integer>();
+        for (int i = 0; i < nVars; i++) {
+            indexOf.put(liveVariables.get(i), Integer.valueOf(i));
+        }
+        final ArrayList<IRBasicBlock<T>> blocks = new ArrayList<IRBasicBlock<T>>();
+        final Map<IRBasicBlock<T>, Integer> blockIndex =
+            new IdentityHashMap<IRBasicBlock<T>, Integer>();
+        for (IRBasicBlock<T> b : this) {
+            blockIndex.put(b, Integer.valueOf(blocks.size()));
+            blocks.add(b);
+        }
+        final int nB = blocks.size();
+        if (nB == 0) {
+            return;
+        }
+        // Per block: read-before-written variables, defined variables, and
+        // the highest live quad address (addresses are dense and assigned in
+        // layout order, so this is the block's extent).
+        final boolean[][] use = new boolean[nB][nVars];
+        final boolean[][] def = new boolean[nB][nVars];
+        final int[] blockEnd = new int[nB];
+        final int[] blockStart = new int[nB];
+        for (int i = 0; i < nB; i++) {
+            final boolean[] definedHere = new boolean[nVars];
+            int end = -1;
+            int start = Integer.MAX_VALUE;
+            for (Quad<T> q : blocks.get(i).getQuads()) {
+                if (q.isDeadCode()) {
+                    continue;
+                }
+                if (q.getAddress() > end) {
+                    end = q.getAddress();
+                }
+                if (q.getAddress() < start) {
+                    start = q.getAddress();
+                }
+                final Operand<T>[] refs = q.getReferencedOps();
+                if (refs != null) {
+                    for (int r = 0; r < refs.length; r++) {
+                        if (!(refs[r] instanceof Variable)) {
+                            continue;
+                        }
+                        final Integer idx = indexOf.get(refs[r]);
+                        if (idx != null && !definedHere[idx.intValue()]) {
+                            use[i][idx.intValue()] = true;
+                        }
+                    }
+                }
+                if (q instanceof AssignQuad) {
+                    final Integer idx = indexOf.get(((AssignQuad<T>) q).getLHS());
+                    if (idx != null) {
+                        def[i][idx.intValue()] = true;
+                        definedHere[idx.intValue()] = true;
+                    }
+                }
+            }
+            blockEnd[i] = end;
+            blockStart[i] = (end < 0) ? Integer.MAX_VALUE : start;
+        }
+        final boolean[][] liveIn = new boolean[nB][nVars];
+        final boolean[][] liveOut = new boolean[nB][nVars];
+        boolean changed = true;
+        while (changed) {
+            changed = false;
+            // Reverse layout order so straight-line successors are already
+            // final; the loop re-runs until back edges settle.
+            for (int i = nB - 1; i >= 0; i--) {
+                final List<IRBasicBlock<T>> succ = blocks.get(i).getSuccessors();
+                for (int s = 0; s < succ.size(); s++) {
+                    final Integer si = blockIndex.get(succ.get(s));
+                    if (si == null) {
+                        continue;
+                    }
+                    final boolean[] in = liveIn[si.intValue()];
+                    final boolean[] out = liveOut[i];
+                    for (int v = 0; v < nVars; v++) {
+                        if (in[v] && !out[v]) {
+                            out[v] = true;
+                            changed = true;
+                        }
+                    }
+                }
+                final boolean[] out = liveOut[i];
+                final boolean[] in = liveIn[i];
+                for (int v = 0; v < nVars; v++) {
+                    final boolean li = use[i][v] || (out[v] && !def[i][v]);
+                    if (li && !in[v]) {
+                        in[v] = true;
+                        changed = true;
+                    }
+                }
+            }
+        }
+        for (int i = 0; i < nB; i++) {
+            if (blockEnd[i] < 0) {
+                continue;
+            }
+            final boolean[] in = liveIn[i];
+            final boolean[] out = liveOut[i];
+            for (int v = 0; v < nVars; v++) {
+                final Variable<?> var = liveVariables.get(v);
+                if (in[v]) {
+                    // ANCHOR-L2-177: the value has to exist from the top of
+                    // this block on. A loop-carried phi is de-SSA'd into
+                    // copies in the latch blocks, which lay out AFTER the
+                    // readers, so a purely linear firstDef can start the
+                    // range past its own uses (test_store: start defined at
+                    // 163/168, read at 141/151 -> range 164-169 and its
+                    // register went to the inner-loop temporaries too).
+                    // LiveRange starts at firstDef + 1, hence the -1.
+                    var.noteLiveFrom(blockStart[i] - 1);
+                }
+                if (out[v] && blockEnd[i] > var.getLastUseAddress()) {
+                    var.setLastUseAddress(blockEnd[i]);
+                }
+            }
+        }
     }
 
     public void removeUnusedVars() {

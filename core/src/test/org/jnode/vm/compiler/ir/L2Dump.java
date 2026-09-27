@@ -169,6 +169,38 @@ public class L2Dump {
             }
             return;
         }
+        if (args[args.length - 1].equals("--homes")) {
+            // Frame homes as the emitter will really see them: this is the
+            // only view that runs setSpilledVariables, which is where a
+            // spill slot is actually pinned to a displacement. --ranges runs
+            // before it, so every spilled variable there still reads its
+            // fresh StackLocation (displacement 0) and aliasing is invisible.
+            x86cg.setSpilledVariables(lsa.getSpilledVariables());
+            Object[] hr = X86Level2Compiler.getLiveRanges(cfg.computeLiveVariables());
+            final java.util.HashMap seen = new java.util.HashMap();
+            for (int i = 0; i < hr.length; i++) {
+                final org.jnode.vm.compiler.ir.LiveRange lr =
+                    (org.jnode.vm.compiler.ir.LiveRange) hr[i];
+                final org.jnode.vm.compiler.ir.Variable v = lr.getVariable();
+                final org.jnode.vm.compiler.ir.Location loc = v.getLocation();
+                if (!(loc instanceof org.jnode.vm.compiler.ir.StackLocation)) {
+                    System.out.println(v + "  " + v.getClass().getSimpleName() + "  " + loc
+                        + (loc == null ? "   <-- NULL LOCATION" : ""));
+                    continue;
+                }
+                // Stack homes only: two variables on one ebp slot is a real
+                // alias; register reuse across non-overlapping ranges is not.
+                final String d = "ebp"
+                    + ((org.jnode.vm.compiler.ir.StackLocation) loc).getDisplacement();
+                final String prev = (String) seen.get(d);
+                System.out.println(v + "  " + v.getClass().getSimpleName() + "  " + d
+                    + (prev == null ? "" : "   <-- ALIAS of " + prev));
+                if (prev == null) {
+                    seen.put(d, v.toString());
+                }
+            }
+            return;
+        }
         if (args[args.length - 1].equals("--calls")) {
             // Per call quad: every referenced operand with its type and
             // assigned location. Used to audit writeParameters pushes

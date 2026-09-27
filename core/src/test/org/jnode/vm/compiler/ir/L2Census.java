@@ -297,6 +297,7 @@ public class L2Census {
                     checkBackEdgeYieldPoints(m, text);
                     checkArrayLengthRegisters(m, text);
                     checkCallLikeCoverage(m, text);
+                    checkRangeCoverage(m);
                     ok++;
                     if (hasHandlers && handlerExamples.size() < 20) {
                         handlerExamples.add(full);
@@ -906,6 +907,67 @@ public class L2Census {
             return null;
         }
         return new LiveRange(v);
+    }
+
+    /**
+     * ANCHOR-L2-178 census lint: RANGEGAP -- every use of a variable must
+     * fall inside that variable's final live range.
+     *
+     * Quad.computeLiveness only ever RAISES lastUseAddress from the uses it
+     * sees, so the high side is covered by construction; the low side is
+     * not. A loop-carried phi is de-SSA'd into copies in the latch blocks,
+     * which lay out AFTER the blocks that read it, so the linear "first
+     * def" starts the range past its own uses: AcuniaPropertiesTest#test_store
+     * defines start (l5_4) at 163/168 and reads it at 141/151, giving
+     * range [164,169] while the reader sits at 137-152. Nothing else saw
+     * that -- the IR was right, the frame reserved enough slots, and the
+     * allocator only ever COMPARES ranges, so a hole at the start of one
+     * range looks exactly like a value that is simply not live yet. EBX
+     * went to the inner-loop temporaries as well and the guest called
+     * {@code new String(ba, <ba.length>, ...)}.
+     *
+     * The check is against the RESULT (the final range), not against the
+     * rule that produced it, so it keeps its teeth if range construction
+     * changes again.
+     */
+    static void checkRangeCoverage(VmMethod method) {
+        final IRControlFlowGraph cfg = lastCfg;
+        if (cfg == null) {
+            return;
+        }
+        final java.util.IdentityHashMap<Variable, LiveRange> ranges =
+            new java.util.IdentityHashMap<Variable, LiveRange>();
+        for (Object b0 : (Iterable<?>) cfg) {
+            final IRBasicBlock b = (IRBasicBlock) b0;
+            for (Object q0 : (List<?>) b.getQuads()) {
+                final Quad q = (Quad) q0;
+                if (q.isDeadCode()) {
+                    continue;
+                }
+                final Operand[] refs = q.getReferencedOps();
+                if (refs == null) {
+                    continue;
+                }
+                for (int i = 0; i < refs.length; i++) {
+                    if (!(refs[i] instanceof Variable) || (refs[i] instanceof UndefinedVariable)) {
+                        continue;
+                    }
+                    final Variable v = (Variable) refs[i];
+                    LiveRange r = ranges.get(v);
+                    if (r == null) {
+                        r = new LiveRange(v);
+                        ranges.put(v, r);
+                    }
+                    final int at = q.getAddress();
+                    if (at < r.getAssignAddress() || at > r.getLastUseAddress()) {
+                        System.out.println("RANGEGAP " + method.getDeclaringClass() + "."
+                            + method.getName() + " var=" + v.getIndex() + " use=" + at
+                            + " range=[" + r.getAssignAddress() + "," + r.getLastUseAddress() + "]");
+                        return;
+                    }
+                }
+            }
+        }
     }
 
 

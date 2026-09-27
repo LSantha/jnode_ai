@@ -107,24 +107,55 @@ method `java.util.Properties.loadConvert`.
   `regress.sh --label new1-fix2 host` (alljunit 254/0, census `OK=11608 FAILED=0`,
   lints=0) and the live oracle (`host_only=3 guest_only=3` = only the 3 retired
   divergences).
-- **Next action:** NEW-1b — `java.util.Properties` under force still fails (see §5.1a).
+- **Next action:** NEW-1b landed in §5.1a; queue continues at NEW-3 (§5.3).
 
-### 5.1a NEW-1b (P0) — residual `java.util.Properties` force defect
+### 5.1a NEW-1b (P0) — residual `java.util.Properties` force defect — **FIXED (guarded, red proof)**
 
-Same area, different defect, and the mauve v2 headline witness is **not yet fixed**.
-With NEW-1's fixes in the image: `PropsForce noforce` -> OK, `PropsForce forceprops`
--> `MISMATCH uni: got <h\u00e9llocontinued ...> want <h\u00e9llo>` (no exception any
-more — the old `StringIndexOutOfBoundsException: 847332096` is gone), and a single
-fresh boot with `PropsForce forceone java.util.Properties loadConvert` reproduces it,
-so that method is still implicated; `PropsForce forcereader` (LineReader only) -> OK.
-key1/key2/empty/esc all convert correctly — only the `\u` branch is wrong, and the
-returned String's length exceeds the converted length (tail = stale `convtBuf`
-content). `AcuniaPropertiesTest` (mauve v2, 81 checks) still `runEX String index out
-of range: 707729360`.
+Two halves of one defect class: live ranges built from a purely LINEAR walk
+of addresses while the CFG says otherwise.
 
-**Next action:** `--ranges` / `--calls` / asm for `loadConvert`'s B75–B399 region
-(`l9_3` = xx, `l10_3` = i, `l7_2` = dst) and the `String.<init>(a4_3, 0, l7_2)` push.
-`--ir` is already correct there, so look at allocation/emission, not de-SSA.
+1. **Range END** (`loadConvert`'s `\u` branch): `Quad.computeLiveness` raises
+   `lastUseAddress` at each use it sees, but a value that must survive a *cold*
+   failure-path `call` (a bounds check's failure block, laid out after the
+   reader) never had that call inside its range, so ANCHOR-L2-107's forced
+   spill did not fire and the digit scratch (`sal esi,4`) reused the register
+   holding the converted length -> `MISMATCH uni` with a stale `convtBuf` tail.
+   Measured: `--ranges s11_14: 8-11 -> 8-84`, `--homes ebp-48`, asm reloads the
+   bound from `[ebp-48]`.
+2. **Range START** (the mauve headline): a loop-carried phi is de-SSA'd into
+   copies in the LATCH blocks, which lay out AFTER the blocks that read it, so
+   `Variable.getFirstDefAddress()` is a high address. `AcuniaPropertiesTest#test_store`
+   defines `start` (`l5_4`) at 163/168 and reads it at 137/141/151 -> range
+   `[164,169]`, a hole at the start. Nothing else could see it: the IR was
+   right, the frame reserved enough slots, and the allocator only COMPARES
+   ranges, so a hole looks exactly like "not live yet" -- EBX went to the
+   inner-loop temporaries as well (`s10_67` 139, `s10_71` 145, `s9_68` 147)
+   and the guest called `new String(ba, <ba.length>, ...)` ->
+   `StringIndexOutOfBoundsException: 892382384` at check 54.
+
+**Fix:** `IRControlFlowGraph.extendRangesAcrossBackEdges()` handles both ends
+of the same dataflow -- live-OUT of a block raises `lastUseAddress` (ANCHOR-L2-177),
+live-IN pulls the start back to that block's top through the new
+`Variable.noteLiveFrom(blockStart - 1)` (keeps the minimum, like `noteDef`).
+Straight-line methods are untouched.
+
+**Guard:** census lint `RANGEGAP` (ANCHOR-L2-178, `L2Census.checkRangeCoverage`):
+every use must lie inside its variable's final range; wired into the census
+gate as its OWN verdict (`rangegap=0`, not just an informational count).
+Red proof, `noteLiveFrom` disabled:
+`RANGEGAP ...AcuniaPropertiesTest.test_store var=5 use=137 range=[164,169]` and
+`...test_save var=5 use=148 range=[175,180]` -- a second, latent victim the
+crash had hidden; enabled, `rangegap=0`.
+
+**Evidence:** `regress.sh --label new1b7 host isobuild oracle mauve 2` green
+(build, anchors, t0 19, t3 19, t1 38, alljunit 254/0, census
+`OK=11610 FAILED=0 lints=0 rangegap=0`, isobuild), live oracle rows=193 =
+only the 3 retired divergences, **mauve v2 force-only DIFF empty**
+(base=52 forced=52). Guest: `AcuniaPropertiesTest` `DONE checks=81 failed=0`
+(was `THREW after 54`), `PropsForce forceprops` `forced 24 of 24 ... OK`,
+`ConvProbe` CLEAN/DIRTY/ASCII/ESC all correct.
+
+**Next action:** NEW-3 (`TextMeasurer#<clinit>`), then NEW-2 -- §5.3 / §5.2.
 
 ### 5.2 NEW-2 (P1) — `throw` in jsr/finally reads a non-dominated exception variable
 

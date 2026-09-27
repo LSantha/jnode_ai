@@ -190,19 +190,27 @@ if want census; then
     '"$HJ"' -Djnode.root=. -cp '"$CP"' org.jnode.vm.compiler.ir.L2Census core/build/classes /tmp/census-'"$LABEL"'.txt \
       core/lib/mmtk/mmtk.jar core/lib/log4j-1.2.8.jar core/lib/junit-4.5.jar core/lib/jmock-1.0.1.jar \
       > /tmp/census-'"$LABEL"'.stdout 2> /tmp/census-'"$LABEL"'.stderr
-    echo "lints=$(grep -cE "^(NOYIELDPOINT|WIDTHMISMATCH|FISTPMISMATCH) " /tmp/census-'"$LABEL"'.stdout)"
+    echo "lints=$(grep -cE "^(NOYIELDPOINT|WIDTHMISMATCH|FISTPMISMATCH|RANGEGAP) " /tmp/census-'"$LABEL"'.stdout)"
     echo "labelcensus=$(grep -c "L2 label census" /tmp/census-'"$LABEL"'.stderr)"
+    # ANCHOR-L2-178: a use outside its own live range is a silent
+    # miscompile that no other gate sees (the IR and the frame are both
+    # fine; only the picture the allocator builds is wrong), so it gets
+    # its own verdict instead of riding the informational lints= count.
+    rg=$(grep -c "^RANGEGAP " /tmp/census-'"$LABEL"'.stdout)
+    echo "rangegap=$rg"
     n=$(awk "/^--- FAILED \(/{f=1;next} /^--- /{f=0} f" /tmp/census-'"$LABEL"'.txt | wc -l)
     echo "FAILED=$n"
     awk "/^--- FAILED \(/{f=1;next} /^--- /{f=0} f" /tmp/census-'"$LABEL"'.txt | sort > /tmp/census-'"$LABEL"'.failed
     # ANCHOR-L2-160: the 169-entry FAILED baseline is retired -- every one
     # of those methods compiles now that the loader sees mmtk/log4j/junit.
-    # The gate is FAILED == 0, and the last statement is the verdict so
-    # `run` cannot mask a regression behind a successful grep.
-    if [ ! -s '"$BASE"'/census-failed.txt ] && [ "$n" -eq 0 ]; then
-      echo "census gate: FAILED==0 as required"
+    # The gate is FAILED == 0 and RANGEGAP == 0, and the last statement is
+    # the verdict so `run` cannot mask a regression behind a successful grep.
+    if [ ! -s '"$BASE"'/census-failed.txt ] && [ "$n" -eq 0 ] && [ "$rg" -eq 0 ]; then
+      echo "census gate: FAILED==0 and RANGEGAP==0 as required"
     else
-      echo "REGRESSION: $n FAILED entries; first ones:"; head -n 10 /tmp/census-'"$LABEL"'.failed
+      echo "REGRESSION: $n FAILED entries, $rg RANGEGAP entries; first ones:"
+      head -n 10 /tmp/census-'"$LABEL"'.failed
+      grep -E "^RANGEGAP " /tmp/census-'"$LABEL"'.stdout | head -n 10
       grep -E "^OK=" /tmp/census-'"$LABEL"'.txt
       exit 1
     fi
