@@ -35,6 +35,9 @@ import org.jnode.vm.classmgr.Signature;
 import org.jnode.vm.classmgr.VmByteCode;
 import org.jnode.vm.classmgr.VmConstMethodRef;
 import org.jnode.vm.classmgr.VmMethod;
+import org.jnode.vm.compiler.ir.Operand;
+import org.jnode.vm.compiler.ir.UndefinedVariable;
+import org.jnode.vm.compiler.ir.quad.AssignQuad;
 import org.jnode.vm.compiler.ir.quad.ArrayLengthAssignQuad;
 import org.jnode.vm.compiler.ir.quad.InstanceCallAssignQuad;
 import org.jnode.vm.compiler.ir.quad.InstanceCallQuad;
@@ -209,6 +212,7 @@ public class L2Census {
         out.println("OK=" + ok + " SKIP=" + skip + " SKIP_CLASSES=" + skipClass
             + " SKIP_METHODS=" + (skip - skipClass) + " MAGIC=" + magic
             + " HANDLERS=" + handlersH + " FAIL_64=" + fail64);
+        out.println("INDEXALIAS=" + indexAlias);
         out.println("--- FAILED (" + failed.size() + ") ---");
         for (String s : failed) {
             out.println(s);
@@ -583,6 +587,93 @@ public class L2Census {
     }
 
     private static IRControlFlowGraph lastCfg;
+
+    /**
+     * ANCHOR-L2-171 census lint: INDEXALIAS -- after de-SSA, two DISTINCT
+     * Variable objects that share getIndex() and are simultaneously live.
+     *
+     * Storage is handed out per index (X86StackFrame / LinearScanAllocator
+     * key on getIndex()), and de-SSA only lowers phis -- it never splits a
+     * local that is still live across its own redefinition. So when an older
+     * SSA version survives past a redefinition, both versions land in one
+     * frame slot and the older read observes the NEW value.
+     *
+     * Found live: java.util.Properties.loadConvert, the method behind the
+     * first-ever mauve v2 failure (AcuniaPropertiesTest passes unforced,
+     * throws under force). Bytecode is `aload in; iload off; iinc off,1;
+     * caload` -- the index is pushed BEFORE the iinc, so the read must see
+     * the old off. L2 emits the increment and then reads the SAME slot for
+     * the index (qb_13 `add dword[ebp-20],1` then qb_14 `mov ecx,[ebp-20]`),
+     * so every key/value loses its first character ("key1" -> "\0ey1").
+     * The SSA IR is correct at both --pre and --ir (`a2_3 = a2_2 + 1` then
+     * `s11_18 = a1_1[a2_2]`), which is why no existing structural gate saw
+     * it: the IR still names two versions of index 2, and nothing until
+     * allocation collapses them.
+     */
+    private static int indexAlias;
+
+    private static void checkIndexAlias(IRControlFlowGraph c) {
+        // index -> the distinct Variable objects seen for it
+        final java.util.Map<Integer, java.util.List<Variable>> byIndex =
+            new java.util.HashMap<Integer, java.util.List<Variable>>();
+        for (Object b0 : (Iterable<?>) c) {
+            final IRBasicBlock b = (IRBasicBlock) b0;
+            for (Object q0 : (List<?>) b.getQuads()) {
+                final Quad q = (Quad) q0;
+                if (q instanceof AssignQuad) {
+                    note(((AssignQuad) q).getLHS(), byIndex);
+                }
+                final Operand[] refs = q.getReferencedOps();
+                if (refs != null) {
+                    for (int i = 0; i < refs.length; i++) {
+                        if (refs[i] instanceof Variable && !(refs[i] instanceof UndefinedVariable)) {
+                            note((Variable) refs[i], byIndex);
+                        }
+                    }
+                }
+            }
+        }
+        for (java.util.Iterator<Integer> it = byIndex.keySet().iterator(); it.hasNext();) {
+            final java.util.List<Variable> vs = byIndex.get(it.next());
+            if (vs.size() < 2) {
+                continue;
+            }
+            for (int i = 0; i < vs.size(); i++) {
+                for (int j = i + 1; j < vs.size(); j++) {
+                    final LiveRange ri = liveRangeOf(vs.get(i));
+                    final LiveRange rj = liveRangeOf(vs.get(j));
+                    if (ri != null && rj != null && ri.interferesWith(rj)) {
+                        indexAlias++;
+                        return;
+                    }
+                }
+            }
+        }
+    }
+
+    private static void note(Variable v, java.util.Map<Integer, java.util.List<Variable>> byIndex) {
+        final Integer idx = Integer.valueOf(v.getIndex());
+        java.util.List<Variable> vs = byIndex.get(idx);
+        if (vs == null) {
+            vs = new java.util.ArrayList<Variable>();
+            byIndex.put(idx, vs);
+        }
+        for (int i = 0; i < vs.size(); i++) {
+            if (vs.get(i) == v) {
+                return;
+            }
+        }
+        vs.add(v);
+    }
+
+    /** A LiveRange for an arbitrary variable, or null if it has no assign quad. */
+    private static LiveRange liveRangeOf(Variable v) {
+        if (v.getAssignQuad() == null) {
+            return null;
+        }
+        return new LiveRange(v);
+    }
+
 
     static String compileToText(VmMethod method) throws Exception {
         StringWriter sw = new StringWriter();

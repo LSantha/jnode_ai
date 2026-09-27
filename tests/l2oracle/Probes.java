@@ -121,6 +121,60 @@ public class Probes {
         return w.length;
     }
 
+    /**
+     * ANCHOR-L2-171: 'a[i++]' READ. javac emits `aload a; iload i; iinc
+     * i,1; iaload` -- the index operand is pushed BEFORE the iinc, so the
+     * load must use the OLD i. Found live via
+     * java.util.Properties.loadConvert (the mauve v2 AcuniaPropertiesTest
+     * failure): L2 emits the increment and then reads the SAME frame slot for
+     * the index, so the load observes i+1. With a={10,20,30,40}, i=1 the
+     * answer is 20+30=50; the miscompile returns 30+40=70.
+     */
+    /**
+     * ANCHOR-L2-171 loop variant: the index is PHI-defined and the load uses
+     * the pre-increment version, which is the shape
+     * java.util.Properties.loadConvert actually has (its --pre dump shows
+     * `39: a2_2 = phi(a2_1,a2_5,a2_4,a2_3)` then `47: a2_3 = a2_2 + 1` then
+     * `50: s11_18 = a1_1[a2_2]`). Straight-line `a[i++]` does NOT miscompile,
+     * so the loop is part of the trigger.
+     */
+    public static int postIncrLoop_aii(int[] a, int n) {
+        int i = 0;
+        int s = 0;
+        while (i < n) {
+            s += a[i++];
+        }
+        return s;
+    }
+
+    /** Store twin of {@link #postIncrLoop_aii}. */
+    public static int postIncrLoopStore_aii(int[] a, int n) {
+        int i = 0;
+        int v = 0;
+        while (i < n) {
+            a[i++] = ++v;
+        }
+        return a[n - 2] * 100 + a[n - 1];
+    }
+
+    public static int postIncrRead_aii(int[] a, int i) {
+        int s = a[i++];
+        s += a[i++];
+        return s;
+    }
+
+    /**
+     * ANCHOR-L2-171: 'a[i++] = v' STORE twin. The stores must land on the
+     * pre-increment indices. Correct: writes a[1]=7, a[2]=8, reads back
+     * 7*100+8 = 708. Miscompiled: the writes land on a[2], a[3], so the
+     * read-back sees 0*100+7 = 7.
+     */
+    public static int postIncrStore_aiii(int[] a, int i, int v) {
+        a[i++] = v;
+        a[i++] = v + 1;
+        return a[i - 2] * 100 + a[i - 1];
+    }
+
     public static int sumA_aji(int[] a) {
         int s = 0;
         for (int i = 0; i < a.length; i++) {
