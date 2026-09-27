@@ -190,16 +190,7 @@ if want census; then
     '"$HJ"' -Djnode.root=. -cp '"$CP"' org.jnode.vm.compiler.ir.L2Census core/build/classes /tmp/census-'"$LABEL"'.txt \
       core/lib/mmtk/mmtk.jar core/lib/log4j-1.2.8.jar core/lib/junit-4.5.jar core/lib/jmock-1.0.1.jar \
       > /tmp/census-'"$LABEL"'.stdout 2> /tmp/census-'"$LABEL"'.stderr
-    # ANCHOR-L2-171: PHINOTATHEAD joins the reported lints. A phi placed
-    # after a non-phi in its block is invisible to the de-SSA leading-phi
-    # scan, so its sources are never materialised and the variable is left
-    # unwritten (2 of 59,122 classlib methods; see OPEN-BUGS NEW-2).
-    # Reported, not yet gated at 0, because those 2 are still open.
-    # NB: no apostrophes in this comment -- it lives inside a single-quoted
-    # sh -c block, where one would terminate the quote.
     echo "lints=$(grep -cE "^(NOYIELDPOINT|WIDTHMISMATCH|FISTPMISMATCH) " /tmp/census-'"$LABEL"'.stdout)"
-    phi_nah=$(sed -n 's/^PHINOTATHEAD=//p' "/tmp/census-$LABEL.txt")
-    echo "phi_not_at_head=$phi_nah"
     echo "labelcensus=$(grep -c "L2 label census" /tmp/census-'"$LABEL"'.stderr)"
     n=$(awk "/^--- FAILED \(/{f=1;next} /^--- /{f=0} f" /tmp/census-'"$LABEL"'.txt | wc -l)
     echo "FAILED=$n"
