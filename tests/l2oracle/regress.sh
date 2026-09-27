@@ -248,6 +248,20 @@ if want isobuild; then
   # -Djnode.compiler=L2 and overwrites the same ISO path, so a "guest
   # regression" can really be a guest that booted the L2 image and
   # panicked. Cheap assertions, recorded in the status line.
+  # ANCHOR-L2-172: the staged probes must be IN the image. A plain
+  # `build.sh cd-x86-lite` re-masters this path from the build's own
+  # cdrom-lite dir, which has no ox/, and the guest then reports
+  # "no protocol" / "syntax error" for every oracle and one-testlet run --
+  # indistinguishable from a broken probe. isoinfo prints ISO9660 names
+  # (UPPERCASE /OX); the guest sees Rock Ridge case, so match case-insensitively.
+  if command -v isoinfo >/dev/null 2>&1; then
+    if isoinfo -f -i all/build/cdroms/jnode-x86-lite.iso 2>/dev/null | grep -qiE '^/ox(/|$)|/ox/'; then
+      say "ARTIFACT staged-ox: present"
+    else
+      say "ARTIFACT FATAL: staged ox/ missing from the ISO; guest probes would be invisible"
+      exit 2
+    fi
+  fi
   say "ARTIFACT $(grep -c 'X86-L1A compilers' "$LOG" 2>/dev/null | sed 's/^0$/NO-L1A-MARKER/') $(grep -o 'L2 compilers' "$LOG" | tail -n 1 | sed 's/^/also-saw:/') iso=$(ls -l all/build/cdroms/*.iso 2>/dev/null | awk '{print $5" bytes "$6" "$7" "$8}' | head -n 1)"
 fi
 if { want oracle || want mauve; } && { [ ! -f /tmp/l2oracle-ref/OracleDriver.class ] \
