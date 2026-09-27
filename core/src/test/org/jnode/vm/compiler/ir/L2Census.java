@@ -203,8 +203,16 @@ public class L2Census {
                 // ANCHOR-L2-175: match on a package boundary, not a raw
                 // prefix. "java" also matches "javax.xml.bind.JAXB", which
                 // silently double-counted a class across two chunks.
+                // The boundary check only applies when the filter does NOT
+                // already end at a package boundary: for "java." the next
+                // character is the first letter of the next segment, so
+                // demanding another '.' there rejected EVERY class (caught by
+                // running the chunk script and reading "kept 0 of 11495").
+                final boolean endsAtBoundary =
+                    filter.endsWith(".") || filter.endsWith("/");
                 if (classes.get(ci).startsWith(filter)
-                    && (classes.get(ci).length() == filter.length()
+                    && (endsAtBoundary
+                        || classes.get(ci).length() == filter.length()
                         || classes.get(ci).charAt(filter.length()) == '.')) {
                     kept.add(classes.get(ci));
                 }
