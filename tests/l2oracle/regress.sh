@@ -284,7 +284,16 @@ if want oracle; then
     fetch oout /jnode/tmp/ox/out-l2.txt /tmp/oracle-$LABEL.txt >/dev/null
     vboxmanage controlvm "$VM" poweroff >/dev/null 2>&1
     say "LIVE  oracle rows=$(grep -c '|' /tmp/oracle-$LABEL.txt 2>/dev/null) head=$(head -n 1 /tmp/oracle-$LABEL.txt 2>/dev/null)"
-    say "ORACLE DIFF: $(bash tests/l2oracle/compare.sh /tmp/l2oracle-ref/out-host.txt /tmp/oracle-$LABEL.txt 2>&1 | tail -n 4 | tr '\n' ' ' | cut -c1-300)"
+    # ANCHOR-L2-171: reporting only `tail -n 4` of compare.sh hid a real
+    # failure -- three rows present in the host reference were MISSING from the
+    # guest, diff flagged them, and the truncation cut them off so the status
+    # line read clean. Count and show what is missing/extra, never just a tail.
+    bash tests/l2oracle/compare.sh /tmp/l2oracle-ref/out-host.txt \
+      /tmp/oracle-$LABEL.txt > /tmp/oracle-cmp-$LABEL.txt 2>&1
+    cmp_rc=$?
+    host_only=$(grep -c "^< " /tmp/oracle-cmp-$LABEL.txt)
+    guest_only=$(grep -c "^> " /tmp/oracle-cmp-$LABEL.txt)
+    say "ORACLE DIFF rc=$cmp_rc host_only=$host_only guest_only=$guest_only first: $(grep -E "^[<>] |ORACLE PASS" /tmp/oracle-cmp-$LABEL.txt | head -n 4 | tr '\n' ' ' | cut -c1-240)"
   else
     say "LIVE  oracle: BOOT FAILED"
   fi
