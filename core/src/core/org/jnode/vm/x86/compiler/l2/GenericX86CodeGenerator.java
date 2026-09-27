@@ -4758,6 +4758,21 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
                     os.writeADD((GPR) SR1,
                         ((IntConstant<T>) idx).getValue() * 4 + dataOff);
                 } else {
+                    // The LEA below uses EDX as the index and SR1 as the base,
+                    // so SR1 == EDX would compute idx*4 + idx + dataOff -- a
+                    // silently wrong address, and unlike the C6 case
+                    // (loadEffectiveAddress) nothing would complain. Measured:
+                    // 0 occurrences in 67836 wide-census methods and 0 in 14
+                    // hand-built pressure variants, because the allocator puts
+                    // this quad's word in EAX. Keep the check anyway: it costs
+                    // no emitted instruction and turns a future allocation
+                    // change into a loud compile failure instead of a silent
+                    // miscompile. See OPEN-BUGS.md for the measurement.
+                    if ((GPR) SR1 == X86Register.EDX) {
+                        throw new IllegalArgumentException(
+                            "Segmented-statics address needs a base register other"
+                                + " than the EDX index register");
+                    }
                     moveWordToReg(X86Register.EDX, idx);
                     os.writeLEA((GPR) SR1, (GPR) SR1, X86Register.EDX, 4, dataOff);
                 }
