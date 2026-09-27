@@ -189,6 +189,30 @@ public class L2Census {
 
         List<String> classes = new ArrayList<String>();
         collect(new File(classDir), "", classes);
+        // ANCHOR-L2-175: optional prefix filter, so a sweep can be split into
+        // chunks. Reason: 17 methods fail with
+        // ArrayIndexOutOfBoundsException(131072) ONLY in a full 11,495-class
+        // sweep -- the whole CORBA tree (535 classes) is clean in isolation --
+        // so the trigger is cumulative state in the emulated VM, not any one
+        // method. Chunking both isolates it and is the likely fix, since each
+        // chunk stays under whatever the bound is.
+        final String filter = System.getenv("JNODE_CENSUS_PREFIX");
+        if (filter != null && filter.length() > 0) {
+            final List<String> kept = new ArrayList<String>();
+            for (int ci = 0; ci < classes.size(); ci++) {
+                // ANCHOR-L2-175: match on a package boundary, not a raw
+                // prefix. "java" also matches "javax.xml.bind.JAXB", which
+                // silently double-counted a class across two chunks.
+                if (classes.get(ci).startsWith(filter)
+                    && (classes.get(ci).length() == filter.length()
+                        || classes.get(ci).charAt(filter.length()) == '.')) {
+                    kept.add(classes.get(ci));
+                }
+            }
+            System.out.println("PREFIX_FILTER " + filter + " kept " + kept.size()
+                + " of " + classes.size());
+            classes = kept;
+        }
         int ok = 0, skip = 0, magic = 0, handlersH = 0, fail64 = 0;
         // ANCHOR-L2-160: split SKIP so coverage claims are exact: classes the
         // loader cannot load vs. methods skipped as abstract/native/no-code.
@@ -752,6 +776,16 @@ public class L2Census {
         }
         if (reason.indexOf("Recursive prepare") >= 0) {
             return "recursive class prepare during decode (harness)";
+        }
+        // A NoSuchMethodError naming a JDK-internal constructor is a classlib
+        // version mismatch, not a miscompile: this tree's classlib predates
+        // the java.lang.ClassLoader(Object,int) constructor that
+        // javax.xml.bind.JAXB#_marshal was compiled against. Adding the
+        // matching classlib is the fix; the compiler cannot be at fault for
+        // resolving a method the classlib does not have.
+        if (reason.indexOf("NoSuchMethodError") >= 0
+            && reason.indexOf("java.lang.ClassLoader") >= 0) {
+            return "classlib version mismatch (JDK-internal constructor absent)";
         }
         return null;
     }
