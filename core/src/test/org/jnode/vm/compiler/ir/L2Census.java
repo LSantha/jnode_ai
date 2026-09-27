@@ -42,6 +42,7 @@ import org.jnode.vm.compiler.ir.quad.ArrayLengthAssignQuad;
 import org.jnode.vm.compiler.ir.quad.InstanceCallAssignQuad;
 import org.jnode.vm.compiler.ir.quad.InstanceCallQuad;
 import org.jnode.vm.compiler.ir.quad.ConditionalBranchQuad;
+import org.jnode.vm.compiler.ir.quad.PhiAssignQuad;
 import org.jnode.vm.compiler.ir.quad.Quad;
 import org.jnode.vm.compiler.ir.quad.StaticCallAssignQuad;
 import org.jnode.vm.compiler.ir.quad.StaticCallQuad;
@@ -213,6 +214,7 @@ public class L2Census {
             + " SKIP_METHODS=" + (skip - skipClass) + " MAGIC=" + magic
             + " HANDLERS=" + handlersH + " FAIL_64=" + fail64);
         out.println("INDEXALIAS=" + indexAlias);
+        out.println("PHINOTATHEAD=" + phiNotAtHead);
         out.println("--- FAILED (" + failed.size() + ") ---");
         for (String s : failed) {
             out.println(s);
@@ -589,6 +591,47 @@ public class L2Census {
     private static IRControlFlowGraph lastCfg;
 
     /**
+     * ANCHOR-L2-171 census lint: PHINOTATHEAD -- a PhiAssignQuad that is not
+     * in the leading phi run of its block.
+     *
+     * A valid SSA form puts every phi before every non-phi in a block, and
+     * JNode's de-SSA depends on it: `deconstrucSSA` walks only the leading phi
+     * run and breaks at the first non-phi (ANCHOR-L2-123, so a pruned phi ahead
+     * of a live one cannot end the scan). A phi placed after a non-phi is
+     * therefore invisible: its sources are never materialised as predecessor
+     * copies and the variable is left unwritten, which the SSA-POST verifier
+     * then reports. Found in 2 of 59,122 classlib methods, both jsr/finally
+     * throws: `541: throw l12_3` followed by `542: l12_3 = phi(u12_0,u12_0,
+     * l12_2)` (gnu.testlet.java.nio.channels.FileChannel.lock#test) and the
+     * same at 1381/1382 in gnu.testlet.java.io.File.security#test.
+     *
+     * Liveness-agnostic and stage-agnostic: it only asks whether a phi follows
+     * a non-phi in the same block, so it runs on the SSA form and cannot be
+     * fooled by address ordering (the odd B-2147483645 block names are
+     * cosmetic -- a block's name is "B" + startPC).
+     */
+    private static int phiNotAtHead;
+
+    private static void checkPhiAtHead(IRControlFlowGraph c) {
+        for (Object b0 : (Iterable<?>) c) {
+            final IRBasicBlock b = (IRBasicBlock) b0;
+            boolean sawNonPhi = false;
+            for (Object q0 : (List<?>) b.getQuads()) {
+                final Quad q = (Quad) q0;
+                if (q instanceof PhiAssignQuad) {
+                    if (sawNonPhi && !q.isDeadCode()) {
+                        phiNotAtHead++;
+                        return;
+                    }
+                } else if (!q.isDeadCode()) {
+                    sawNonPhi = true;
+                }
+            }
+        }
+    }
+
+
+    /**
      * ANCHOR-L2-171 census lint: INDEXALIAS -- after de-SSA, two DISTINCT
      * Variable objects that share getIndex() and are simultaneously live.
      *
@@ -701,6 +744,7 @@ public class L2Census {
         // FAILED entries, so the census gate (FAILED == 0) covers the
         // whole SSA class: L2-158/159/161/162 and the deep review's #5
         // (handler-entry phi on non-self-edge handlers) and #11.
+        checkPhiAtHead(cfg);
         final String vpre = SSAVerifier.verifyPreDessA(cfg);
         if (vpre != null) {
             throw new IllegalStateException("SSA-PRE: " + vpre);
