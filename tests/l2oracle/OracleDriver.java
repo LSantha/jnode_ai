@@ -233,6 +233,7 @@ public class OracleDriver {
         {"fConstLeft_f", "2.0"},
         {"fConstLeft_f", "-0.5"},
         {"dConstLeft_d", "2.0"},
+        {"staticFloatBits"},
     };
 
     /**

@@ -1,9 +1,9 @@
 # Census failures: how to reproduce each one
 
-Measured 2026-09-27. The wide corpus currently reports **FAILED=3**
-(`tests/l2oracle/census-wide.sh` sums the per-chunk results; the core
-corpus is `FAILED=0`). Each one below has a verified narrow repro that
-runs in seconds and needs no chunk.
+Measured 2026-09-27. The wide corpus now reports **FAILED=2** — it was 3 until
+NEW-3 landed, re-measured with `census-wide.sh` on 2026-09-27 (`census-wide.sh` sums
+the per-chunk results; the core corpus is `FAILED=0`). Each one below has a verified
+narrow repro that runs in seconds and needs no chunk.
 
 ## The one command shape
 
@@ -31,7 +31,11 @@ class with a dot-named file, e.g.
 `gnu/testlet/java/io/File/security.class` is the class
 `gnu.testlet.java.io.File.security` (NOT `...io.File`).
 
-## 1. NEW-3 — `java.awt.font.TextMeasurer#<clinit>`
+## 1. NEW-3 — `java.awt.font.TextMeasurer#<clinit>` — **FIXED (L2-179); recipe kept as the regression recipe**
+
+The recipe below is the regression recipe: with the fix reverted it reports `FAILED=1`
+again (a 32-bit FLOAT constant `putstatic` fell through the `IntConstant`-only arms and
+threw IAE at `GenericX86CodeGenerator:6889`).
 
 Fails in codegen with `IllegalArgumentException`; captured stack
 `GenericX86CodeGenerator.generateCodeFor(6889)` <- `StaticRefStoreQuad

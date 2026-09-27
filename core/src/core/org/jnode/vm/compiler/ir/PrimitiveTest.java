@@ -1093,6 +1093,20 @@ public class PrimitiveTest {
     }
 
     /**
+     * ANCHOR-L2-179 (NEW-3): 32-bit FLOAT constant static store. The
+     * narrow `putstatic` arms tested only `instanceof IntConstant`, so the
+     * `FloatConstant` from `ldc 2.1f` fell through to
+     * `throw new IllegalArgumentException()` and the whole method failed to
+     * compile -- census `java.awt.font.TextMeasurer#<clinit>` FAILED=1
+     * (`ldc 2.1f; putstatic F; iconst_0; putstatic Z; return`).
+     */
+    private static float floatConstStatic = 2.1f;
+
+    public static float getFloatConstStatic() {
+        return floatConstStatic;
+    }
+
+    /**
      * ANCHOR-L2-151: divide by a constant zero hidden behind a local.
      * Pre-fix copy propagation substituted the zero and the const/const
      * fold evaluated host division: L2 compilation died with

@@ -6859,9 +6859,14 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
                         os.writeMOV(BITS32, SR1, X86Register.EBP, disp);
                         stackFrame.getHelper().writePutStaticsEntry(curInstrLabel, SR1, sf);
                     } else if (quad.getOperand().getAddressingMode() == CONSTANT
-                        && quad.getOperand() instanceof IntConstant) {
-                        // ANCHOR-L2-094: folded int/null constant via SR1.
-                        os.writeMOV_Const(SR1, ((IntConstant) quad.getOperand()).getValue());
+                        && (quad.getOperand() instanceof IntConstant
+                            || quad.getOperand() instanceof FloatConstant)) {
+                        // ANCHOR-L2-094: folded int/null constant via SR1;
+                        // ANCHOR-L2-179 (NEW-3): a 32-bit putstatic also
+                        // carries FloatConstant -- java.awt.font.TextMeasurer
+                        // <clinit> does "ldc 2.1f; putstatic float" and the
+                        // IntConstant-only test threw IAE at 6889.
+                        os.writeMOV_Const(SR1, constBits32(quad.getOperand()));
                         stackFrame.getHelper().writePutStaticsEntry(curInstrLabel, SR1, sf);
                     } else {
                         throw new IllegalArgumentException();
@@ -6880,9 +6885,11 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
                         stackFrame.getHelper().writePutStaticsEntry(curInstrLabel, SR1, sf,
                             X86Register.EDX);
                     } else if (quad.getOperand().getAddressingMode() == CONSTANT
-                        && quad.getOperand() instanceof IntConstant) {
-                        // ANCHOR-L2-094: folded int/null constant via SR1.
-                        os.writeMOV_Const(SR1, ((IntConstant) quad.getOperand()).getValue());
+                        && (quad.getOperand() instanceof IntConstant
+                            || quad.getOperand() instanceof FloatConstant)) {
+                        // ANCHOR-L2-094 / ANCHOR-L2-179 (NEW-3): int, null and
+                        // float immediates all store as a raw 32-bit move.
+                        os.writeMOV_Const(SR1, constBits32(quad.getOperand()));
                         stackFrame.getHelper().writePutStaticsEntry(curInstrLabel, SR1, sf,
                             X86Register.EDX);
                     } else {

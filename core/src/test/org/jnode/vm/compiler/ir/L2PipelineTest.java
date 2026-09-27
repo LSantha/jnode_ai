@@ -1193,6 +1193,46 @@ public class L2PipelineTest {
             stored);
     }
 
+    /**
+     * ANCHOR-L2-179 (NEW-3): a 32-bit FLOAT constant `putstatic`.
+     * The narrow arms of `generateCodeFor(StaticRefStoreQuad)` accepted only
+     * `instanceof IntConstant`, so the `FloatConstant` of `ldc 2.1f` fell
+     * through to `throw new IllegalArgumentException()` at
+     * GenericX86CodeGenerator:6889 and the method did not compile at all
+     * (census: `java.awt.font.TextMeasurer#<clinit>` FAILED=1). ANCHOR-L2-094
+     * had added the int arm and ANCHOR-L2-095 the wide one; the 32-bit float
+     * case was simply never covered, although `constBits32` (added for
+     * putfield/array stores, "HashMap#<clinit> CCEs here") already did the
+     * bit conversion.
+     *
+     * <p>Pins the correct immediate (raw bits of 2.1f) and, like the wide
+     * sibling, the store that must follow it -- materializing the value and
+     * dropping it is exactly the ANCHOR-L2-149 shape.
+     */
+    @Test
+    public void testFloatConstPutStaticStores() throws Exception {
+        String text = compileToText(findMethod("<clinit>"));
+        assertTrue("float-const putstatic arm never ran: " + text,
+            text.contains("0x40066666"));
+        String[] lines = text.split("\n");
+        int mat = -1;
+        for (int i = 0; i < lines.length; i++) {
+            if (lines[i].contains("0x40066666")) {
+                mat = i;
+                break;
+            }
+        }
+        assertTrue("no float-const materialization line found", mat >= 0);
+        boolean stored = false;
+        for (int i = mat + 1; i < Math.min(lines.length, mat + 8); i++) {
+            if (lines[i].matches(".*mov\\s+\\S*dword\\[[^]]+\\],eax.*")) {
+                stored = true;
+                break;
+            }
+        }
+        assertTrue("float-const putstatic never stored the value: " + text, stored);
+    }
+
     /** Minimal concrete Variable for synthetic-quad emission tests. */
     private static final class TypedVar extends StackVariable {
         TypedVar(int type) {

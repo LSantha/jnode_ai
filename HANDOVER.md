@@ -107,7 +107,7 @@ method `java.util.Properties.loadConvert`.
   `regress.sh --label new1-fix2 host` (alljunit 254/0, census `OK=11608 FAILED=0`,
   lints=0) and the live oracle (`host_only=3 guest_only=3` = only the 3 retired
   divergences).
-- **Next action:** NEW-1b landed in §5.1a; queue continues at NEW-3 (§5.3).
+- **Next action:** NEW-1b landed in §5.1a and NEW-3 in §5.3; the queue continues at NEW-2 (§5.2).
 
 ### 5.1a NEW-1b (P0) — residual `java.util.Properties` force defect — **FIXED (guarded, red proof)**
 
@@ -155,7 +155,7 @@ only the 3 retired divergences, **mauve v2 force-only DIFF empty**
 (was `THREW after 54`), `PropsForce forceprops` `forced 24 of 24 ... OK`,
 `ConvProbe` CLEAN/DIRTY/ASCII/ESC all correct.
 
-**Next action:** NEW-3 (`TextMeasurer#<clinit>`), then NEW-2 -- §5.3 / §5.2.
+**Next action:** NEW-3 landed in §5.3; the queue continues at NEW-2 (§5.2).
 
 ### 5.2 NEW-2 (P1) — `throw` in jsr/finally reads a non-dominated exception variable
 
@@ -170,16 +170,34 @@ paths reachable? Narrow repros are in `CENSUS-FAILURES.md` (both `FAILED=1`, sec
 Note `java.awt.geom.AffineTransform#setToIdentity` shows the IR generator has no
 `visit_dup2_x1` — the jsr probe machinery may already exist under `tests/l2oracle/jsr/`.
 
-### 5.3 NEW-3 (P1) — `java.awt.font.TextMeasurer#<clinit>` fails in codegen
+### 5.3 NEW-3 (P1) — `putstatic float <constant>` did not compile — **FIXED (guarded, red proof)**
 
-`IllegalArgumentException` with stack
-`GenericX86CodeGenerator.generateCodeFor(6889)` ← `StaticRefStoreQuad.generateCode(69)`.
-A static-field store inside a static initialiser — i.e. plausibly the `$$ic`
-bootstrap-barrier family (F1), reachable from ordinary code rather than only the
-bootimage. Narrow repro in `CENSUS-FAILURES.md` (seconds).
+Measured, and *not* the `$$ic`/F1 barrier family the original note suspected. `javap` says
+`private static float EST_LINES` and `<clinit>` is `ldc 2.1f; putstatic F; iconst_0;
+putstatic Z; return`, so `fieldRef.isWide()` is **false** and the NARROW arms of
+`generateCodeFor(StaticRefStoreQuad)` ran — those tested only `instanceof IntConstant`, while
+`ldc <float>` yields a `FloatConstant`, so the value fell through to
+`throw new IllegalArgumentException()` at `GenericX86CodeGenerator:6889` and the method emitted
+nothing at all. The corpus already knew the bit conversion: `constBits32` exists for putfield and
+array stores ("HashMap#<clinit> CCEs here"); only the `putstatic` arms were left out (ANCHOR-L2-094
+added the int one, L2-095 the wide pair).
 
-**Next action:** dump the IR/codegen and see whether it reduces to a known shape:
-`L2Dump java.awt.font.TextMeasurer <clinit> --ir` (note: `<clinit>` needs quoting).
+**Fix:** both narrow CONSTANT arms accept `FloatConstant` and emit `constBits32`, i.e. a raw
+32-bit move of `Float.floatToRawIntBits` (emission: `mov eax,0x40066666` then
+`mov dword[edx+152],eax`).
+
+**Guards:** T1 `testFloatConstPutStaticStores` (new `static float floatConstStatic = 2.1f` in
+`PrimitiveTest`'s `<clinit>`, beside L2-149's `wideConstStatic`; pins the immediate *and* the
+following store) plus a value probe `staticFloatBits` + `CASES` row (read-back, so a
+materialize-without-store regression fails too). Red proof with the fix reverted: T1
+`Tests run: 39, Failures: 2`; census over `Probes` `FAILED=2` (`Probes#<clinit>`,
+`Probes#staticFloatBits`); the classlib narrow repro back to `FAILED=1`.
+
+**Evidence:** `regress.sh --label new3a host isobuild oracle mauve 2` green (t1 39, alljunit 255/0,
+census `OK=11611 FAILED=0 lints=0 rangegap=0`), live oracle rows=194 = only the 3 retired
+divergences (the new row matches the host), mauve v2 force-only DIFF empty; `census-wide.sh`
+FAILED 3 → 2.
+
 
 ### 5.4 Unisolated behavioural signal
 

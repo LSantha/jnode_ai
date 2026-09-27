@@ -963,4 +963,20 @@ public class Probes {
     public static double dConstLeft_d(double a) {
         return 7.0 % a + 1.5 / a;
     }
+
+    private static float staticFloat = 2.1f;
+
+    /**
+     * ANCHOR-L2-179 (NEW-3): a 32-bit FLOAT constant `putstatic`, then read
+     * back. Pre-fix the narrow statics arm tested only
+     * `instanceof IntConstant`, so forcing this method threw
+     * IllegalArgumentException in codegen (census witness:
+     * java.awt.font.TextMeasurer#<clinit>). The read-back also catches a
+     * materialize-without-store regression (the ANCHOR-L2-149 shape), which
+     * would leave the field at its zero default.
+     */
+    public static int staticFloatBits() {
+        staticFloat = 2.1f;
+        return Float.floatToRawIntBits(staticFloat);
+    }
 }
