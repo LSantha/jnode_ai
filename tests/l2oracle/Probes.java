@@ -200,6 +200,28 @@ public class Probes {
         ((NField) null).f = v;
     }
 
+    /**
+     * ANCHOR-L2-182: C6 reproducer. `Address.attempt(int, int, Offset)` is a
+     * MAGIC method (BaseMagicHelper ATTEMPTINT_OFS) that JNode rewrites into a
+     * CAS quad with FOUR operands, the last being the offset. The CAS emission
+     * calls loadEffectiveAddress(EDX, ...) and that helper's STACK branch needs
+     * a displacement scratch which it also takes in EDX, so it throws
+     * "Offset temp collides with dst" -- a legal call that cannot be compiled.
+     *
+     * The extra live locals exist to push `ofs` out of a register so its
+     * addressing mode really is STACK at the call: the shape has to be
+     * provoked, because nothing in the corpus makes it (measured: 13 CAS quads
+     * on the core corpus, none carrying an offset; 0 in the wide corpus).
+     */
+    public static int casOfs_iio(org.vmmagic.unboxed.Address a, int old,
+                                 int neu, org.vmmagic.unboxed.Offset ofs) {
+        int p0 = old + 1, p1 = neu + 2, p2 = p0 * 3, p3 = p1 + p0;
+        int p4 = p2 ^ p3, p5 = p4 + old, p6 = p5 * 2, p7 = p6 - p3;
+        int r = a.attempt(old, neu, ofs) ? 1 : 0;
+        // keep the pressure live across the call so the allocator must spill
+        return r + p0 + p1 + p2 + p3 + p4 + p5 + p6 + p7;
+    }
+
     public static int sumA_aji(int[] a) {
         int s = 0;
         for (int i = 0; i < a.length; i++) {

@@ -4676,6 +4676,24 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
      * in EDX across this call.
      */
     private void loadEffectiveAddress(GPR dst, Operand<T> addr, Operand<T> ofs) {
+        // EDX is the historical scratch and is correct for the array-store
+        // callers, whose destination is SR1.
+        loadEffectiveAddress(dst, addr, ofs, X86Register.EDX);
+    }
+
+    /**
+     * ANCHOR-L2-182: {@code tmp} is a register the caller guarantees is free,
+     * used to materialise a STACK offset before the LEA. It used to be hardcoded
+     * to EDX with a "collides with dst" refusal, which made the CAS arm -- whose
+     * destination IS EDX -- unable to compile a legal four-operand magic CAS
+     * (`Address.attempt(int,int,Offset)`, BaseMagicHelper ATTEMPTINT_OFS) at all:
+     * it threw "Offset temp collides with dst". Reproducer:
+     * Probes#casOfs_iio, whose register pressure puts the Offset in a frame
+     * slot. The CAS arm pushes ECX before computing the address and pops it
+     * after, so ECX is exactly the free register to pass.
+     */
+    private void loadEffectiveAddress(GPR dst, Operand<T> addr, Operand<T> ofs,
+                                      GPR tmp) {
         moveWordToReg(dst, addr);
         if (ofs == null) {
             return;
@@ -4685,11 +4703,11 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
             os.writeLEA(dst, dst, or_, 1, 0);
         } else if (ofs.getAddressingMode() == STACK) {
             int d = ((StackLocation<T>) ((Variable<T>) ofs).getLocation()).getDisplacement();
-            if (dst == X86Register.EDX) {
+            if (dst == tmp) {
                 throw new IllegalArgumentException("Offset temp collides with dst");
             }
-            os.writeMOV(X86Constants.BITS32, X86Register.EDX, X86Register.EBP, d);
-            os.writeLEA(dst, dst, X86Register.EDX, 1, 0);
+            os.writeMOV(X86Constants.BITS32, tmp, X86Register.EBP, d);
+            os.writeLEA(dst, dst, tmp, 1, 0);
         } else if (ofs.getAddressingMode() == CONSTANT) {
             if (!(ofs instanceof IntConstant)) {
                 throw new IllegalArgumentException("Non-int mem offset: " + ofs);
@@ -4835,7 +4853,10 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
                 os.writePUSH(X86Register.ECX);
                 pushWord(newW);
                 moveWordToReg(X86Register.EAX, oldW);
-                loadEffectiveAddress(X86Register.EDX, addr, ofs);
+                // ANCHOR-L2-182: ECX was pushed at the top of this arm and is
+                // popped just below, so it is free here and is the scratch the
+                // STACK-offset case needs (EDX is this arm's destination).
+                loadEffectiveAddress(X86Register.EDX, addr, ofs, X86Register.ECX);
                 os.writePOP(X86Register.ECX);
                 os.writeCMPXCHG_EAX(X86Register.EDX, 0, X86Register.ECX, true);
                 os.writeMOV_Const(X86Register.EDX, 0);

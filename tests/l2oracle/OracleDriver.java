@@ -112,6 +112,12 @@ public class OracleDriver {
         {"syncThrow", "5"},
         {"syncThrow", "0"},
         {"istoreVar_aiii", "0,0,0", "1", "7"},
+        // ANCHOR-L2-182: no CASES row for casOfs_iio on purpose -- the driver
+        // cannot build an org.vmmagic.unboxed.Address/Offset argument, so a
+        // value row would only ever report DRIVER-EX on both sides. C6 is a
+        // REFUSAL TO COMPILE, not a wrong value, so its guard is the
+        // probe-census FAILED==0 gate (pre-fix the method throws
+        // "Offset temp collides with dst"), not a value comparison.
         // ANCHOR-L2-181: constant-null field access (both sides throw NPE --
         // no-divergence check; the CONSTREFFIELD census lint is the proof)
         {"nullFieldRead"},
