@@ -315,6 +315,12 @@ without it the CR-strip fails silently and diffs vanish (false PASS).
 - Everything else in the L2 diff is an L2 bug; file it with method + inputs + expected vs actual bits.
 
 ## Gotchas (paid for in full)
+- **Do not gate a build on `grep -c "error:"`.** Ant prints `1 error` (no colon),
+  so that check reports 0 on a FAILED build -- and the next census run then executes
+  a STALE `L2Census.class`, quietly measuring the previous code. Hit on 2026-09-27:
+  a check that never fired looked like a check that found nothing. Gate on the exit
+  status, or grep for `BUILD SUCCESSFUL` / `Compile of .* failed`, and when a
+  measurement is surprising, confirm the class is the one you just built.
 
 - **Pipe wedge**: rapid `reset` cycles wedge the UART2 pipe server (conn-reset on every attach). Recover with full `poweroff` + `startvm`, never reset.
 - **UART1 pipe must be drained continuously** or the VM blocks on logging. File mode for normal runs; `kdb_mux.py` when KDB is needed: `nohup python3 kdb_mux.py &`, then `echo "W" > /tmp/kdb_cmd.fifo`, read `/tmp/kdb_resp.log`. Canonical copy in the `jnode-kdb-serial` skill (this one mirrors it); kill it by PID captured at launch (`... & echo $!`), never by `pkill -f` with a pattern that also appears bare in your own command (file paths, class names) — that kills your shell.
