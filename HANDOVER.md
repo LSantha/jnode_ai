@@ -15,14 +15,25 @@ measured; nothing is aspirational. Where something is unproven it says so.
 
 ## 2. Current state
 
-- Branch `L2-SpaceBunny`, **tree clean**, tracking `origin/L2-SpaceBunny`.
-- **The branch is currently in sync with the remote.** I was instructed never to push
-  without being asked and did not; the push happened outside this session. Verify with
-  `git ls-remote origin L2-SpaceBunny` before assuming anything about what is published.
-- Host gates green at the last run: `build`, `anchors`, **T0 18/18, T3 19/19, T1 38/38,
-  all-junit 253/253**, census `OK=11607 SKIP=1511 HANDLERS=524 FAILED=0`, all five
-  lints at 0.
-- Census, wide corpus (must be chunked — see §7): **67,836 methods verified, FAILED=2**.
+- Branch `L2-SpaceBunny`, tracking `origin/L2-SpaceBunny` and **in sync with it** at the
+  last check (`git rev-list --count origin/L2-SpaceBunny..HEAD` → 0). I was instructed
+  never to push without being asked and did not; pushes happened outside this session.
+  Verify with `git rev-list --count origin/L2-SpaceBunny..HEAD` rather than assuming.
+- Uncommitted at the time of writing: `tests/l2oracle/baselines/boot-signatures.txt`
+  (the recorded L2 boot crash signatures, §5.6).
+- Host gates green at the last run: `build`, `anchors`, **T0 19/19, T3 19/19, T1 38/38,
+  all-junit green**, census `OK=11613 SKIP=1511 HANDLERS=524 FAILED=0 RANGEGAP=0`,
+  probe census `CONSTREFFIELD=0 FAILED=0`, all lints at 0.
+- Census, wide corpus (must be chunked — see §7): **67,838 methods verified, FAILED=0 —
+  clean for the first time.** It stood at `FAILED=2` until NEW-2 landed (§5.2).
+- Live oracle: 196 rows, only the 3 retired divergences. Mauve **v1–v4 CLEAN**; v5's only
+  signal is the known benign `DoubleTest` (fails in the baseline, passes under L2).
+- **On-disk ISO is currently an L2-bootimage image** (`cd-x86-lite` was last run with
+  `-Djnode.compiler=L2`). Any oracle/mauve run must `isobuild` first — the default
+  `live`/`all` flows do, but a bare `oracle`/`mauve` does not.
+- Landed since the previous handoff update (`a1a7e41c3`): **L2-181** (A8), **L2-182**
+  (C6), **L2-184** (A9, superseding the guard-only L2-183), **L2-185** (NEW-2), plus a
+  register-drift correction. All are in the authoritative queue with their red proofs.
 
 ## 3. Regression methodology — where it lives
 
@@ -51,6 +62,22 @@ re-derive a method here; read these three sections:
 `HANDOVER.md` deliberately does not restate the method — it only records the state of
 this particular branch and the environment traps (§6, §9).
 
+**Guards and probes added since the previous update** (all in the committed tree):
+- **`CONSTREFFIELD` census lint** — an *emission* check: a getfield/putfield through a
+  CONSTANT ref must write its destination / contain a store. Required because A8's quad
+  is well formed and only the emission is wrong. `regress.sh` now also censuses the
+  **compiled probe classes** and requires `CONSTREFFIELD==0 AND FAILED==0` there, so this
+  lint can never again read 0 merely because its shape is absent.
+- `Probes#nullFieldRead` / `#nullFieldWrite` — keep A8's shape reachable
+  (`((Holder) null).f` and `…f = v`; javac emits `aconst_null; get/putfield` with no null
+  check). Both rows throw NPE host *and* guest; the NPE is **not** the evidence for the
+  fix, the lint is.
+- `Probes#casOfs_iio` — the C6 reproducer: one
+  `org.vmmagic.unboxed.Address.attempt(int, int, Offset)` call (`ATTEMPTINT_OFS`) with 8
+  live locals summed after it, forcing the `Offset` into a frame slot. **No `CASES` row by
+  design** — the oracle driver cannot construct an `Address`/`Offset` argument, and C6 is
+  a *refusal to compile*, so its guard is the probe-census `FAILED==0`.
+
 ## 4. The user's standing directives
 
 1. **Work autonomously.** Do not ask for permission on routine actions; proceed and
@@ -65,6 +92,16 @@ this particular branch and the environment traps (§6, §9).
 4. **Live regression testing is never skipped** (only bootimage is). It is the most
    convincing evidence because it compares *values*, host JDK vs JNode under L2 force.
 5. Never commit secrets; never force-push; never push unless asked.
+6. **Every bug I identify gets fixed. A census is not evidence and never discharges
+   anything** (added 2026-09-27, after A8, C6 and A9 were each left "measured latent" on
+   census evidence). "0 occurrences across 67,838 methods" says only that a shape is
+   *rare in today's corpus* — never that the code is right, and never anything about code
+   that does not exist yet. So **"measured latent", "guarded", "0 occurrences", "no
+   production call sites" and "closed on measurement" are NOT resting states.** An
+   identified defect is either fixed, or the naming is withdrawn by *reading* the code —
+   never by counting hits. The tell: if a fix is available and cheap, measuring
+   unreachability is what you do *instead of* fixing. This rule is recorded in
+   `OPEN-BUGS.md` and `tests/l2oracle/AGENTS.md` too; §5.5 lists the items it reopens.
 
 ## 5. The queue, with the next concrete action for each
 
@@ -157,18 +194,45 @@ only the 3 retired divergences, **mauve v2 force-only DIFF empty**
 
 **Next action:** NEW-3 landed in §5.3; the queue continues at NEW-2 (§5.2).
 
-### 5.2 NEW-2 (P1) — `throw` in jsr/finally reads a non-dominated exception variable
+### 5.2 NEW-2 (P1) — `throw` in jsr/finally reads a non-dominated exception variable — **FIXED (L2-185, red proof)**
 
-Two methods of 59,122: `gnu.testlet.java.nio.channels.FileChannel.lock#test` and
-`gnu.testlet.java.io.File.security#test`. The throw block contains *only* the throw,
-and the phi that defines the variable is the first quad of the **next** block, with
-`UndefinedVariable` sources on the entering paths. `dominates()` walks the idom chain,
-so this is not an address-ordering artefact. Open question: are the undefined-source
-paths reachable? Narrow repros are in `CENSUS-FAILURES.md` (both `FAILED=1`, seconds).
+The phi that defines the variable is the first quad of the **next** block, with
+`UndefinedVariable` sources on the entering paths. `dominates()` walks the idom chain, so
+this was not an address-ordering artefact.
 
-**Next action:** either a reachability argument, or a hand-built jsr/finally probe.
-Note `java.awt.geom.AffineTransform#setToIdentity` shows the IR generator has no
-`visit_dup2_x1` — the jsr probe machinery may already exist under `tests/l2oracle/jsr/`.
+**Mechanism (measured, not theorised):** when a phi source is an `UndefinedVariable`,
+`deconstructOnePhi` built the edge copy and then marked it `setDeadCode(true)`, on the
+stated theory that it was "a real SSA def for verification but must never be read by the
+code generator". Both halves were wrong: **a dead quad is invisible to the SSA verifier
+*and* to liveness**, so it was not a definition at all and the join's incoming edge was
+left undefined. A temporary probe pinned the firing sub-case — phi `l12_3` in join
+**B542**, two `UndefinedVariable` sources tagged with the synthetic critical-edge blocks
+**B-2147483645** and **B-2147483644**, so two of that phi's three incoming edges carried
+no live def.
+
+**Three lowerings were measured, two wrong:**
+1. live copy of the `UndefinedVariable` → complaint moves to its own operand
+   (`read of u12_0 at 176: l12_3 = u12_0 in B-2147483645 is not written on every path`);
+2. self-copy `x = x` → a real definition, tolerated by the verifier, but **elided as a
+   no-op** and failure (1) returns;
+3. **define the phi's result to the type default on that edge** — `ConstantRefAssignQuad`
+   with `Constant.getInstance(0)`, because a null reference in this IR is an
+   `IntConstant(0)` (as `IRGenerator.NULL_CONSTANT` shows; a `ReferenceConstant` reaches
+   the emitter as `Non-int constant def: null`). This is the JVM rule for an
+   uninitialized local, it survives to the verifier, and liveness gets a real def. The
+   ctor re-types the shared lhs, so the phi's type is restored after (ANCHOR-L2-137).
+
+**Red proof:** both corpus methods `FAILED=1 → 0`; **wide census `OK=67836 FAILED=2` →
+`OK=67838 FAILED=0`**, clean for the first time (gnu 18340 → 18342). Host gate 7 PASS,
+live oracle 196 rows / 3 known divergences, mauve v1–v4 CLEAN, v5 only the benign
+`DoubleTest`. Narrow repros are kept as regression recipes in `CENSUS-FAILURES.md` and
+both go red again with the fix reverted.
+
+**Known limit, recorded not hidden:** non-reference bottoms keep the self-copy. This IR
+has no constant-assign quad for primitives, and the index-based `BinaryQuad` ctor
+*clones* its lhs (`AssignQuad.java:48`), which would break the shared-lhs invariant
+L2-137 depends on. No such instance is known; with the census clean, one appearing would
+surface as a census `FAILED`, not silently.
 
 ### 5.3 NEW-3 (P1) — `putstatic float <constant>` did not compile — **FIXED (guarded, red proof)**
 
@@ -206,21 +270,98 @@ base fail=1 -> force fail=0` — a testlet that *fails* unforced and *passes* fo
 opposite direction. Needs single-testlet isolation before it is believed
 (`mauve_diff.sh` cross-testlet state has produced phantom results before).
 
-### 5.5 Unmeasured queue — measure before fixing
+### 5.5 Remaining queue — under the new §4.6 rule, *fix*, don't measure-and-park
 
-`P11–P19, H6, M2, M5` plus `C4, C5, C6, D1, D2, A8`. **None has been measured.** The
-C2 precedent: instrumenting it showed 4,352 coalescing sites with all three hazards at
-**0** — i.e. latent — and the fix was correctly reverted rather than shipped. Measure
-each the same way before touching it.
+`C1`, `C2`, `C4`, `C5`, `D1`, `D2`, `B1`, `B2`, `B3`, `P11–P19`, `H6`, `M2`, `M5`.
 
-### 5.6 Bootimage — LAST
+**Reopened by §4.6 (were parked on census evidence, which is not evidence):**
+- **C2** `removeDefUseChains` coalescing aliases the def's LHS onto the copy's LHS
+  (report P10: *"aliasing, no clone"*), guarded only by L2-171's read-between check.
+  A fix was written once and **reverted** because instrumenting it showed 4,352
+  coalescing sites with all three hazards at 0. Under §4.6 that is not a resting place.
+  **This is the most direct instance of the rule still outstanding — do it next.**
+- **A6** `FREM` is closed as **CLOSED-NB on 14 probe rows matching the host**. That
+  justification is measurement, not structure. Either re-derive it by reading the
+  emission (all six arms provably correct) or fix it.
+- **C1** and **NEW-1a** are **register drift**: C1 reads OPEN but is fixed (L2-169,
+  `LiveRange` total order); NEW-1a is a dead row superseded by NEW-1's landed fix. Same
+  class of lie as A8's row once was. Cheap; do it early, the queue is the authority.
 
-`F1` `Integer.stringSize` null `sizeTable` read — an NPE *inside the array
-bounds check*, after a class-init barrier that was emitted correctly
-(`$$cbtest`/`$$cbfailed` are `checkBounds`, not a barrier; mechanism corrected
-2026-09-27 — see `OPEN-BUGS.md` F1 for the evidence and for the AOT-reachable
-probe point), `B2/F2` `allocObject` (result 16), `F4` AOT coverage, `F5/F6`.
-Do not start until §5.1–§5.5 are done.
+**No longer in this list:** C6 (→ L2-182), A8 (→ L2-181), A9 (→ L2-184), NEW-2
+(→ §5.2). **B3** and **D2** are unitemised clusters and must be itemised before they can
+be fixed — that is a prerequisite, not a dodge.
+
+### 5.6 Bootimage — now the front of the queue, and F1's description is **wrong**
+
+`sh tests/l2oracle/regress.sh --label <l> boot --boots N` builds an **L2-compiled
+bootimage** (`rm -rf all/build/x86/cdrom-lite/ox` + touch the L2 sources) and boots it.
+The compiler queue has no reproducing defect left, so per §4.2 this is next.
+
+**Measured this session (deterministic, 5/5 boots):**
+- L2 bootimage **builds and boots**, then panics at **EIP `0x10B807`**, reporting
+  `Real panic: int_die_halt!` and vector `int: 00000031`.
+- The **signature moved**: 3 older boots recorded `0x18EC3B`; all of this session's are
+  `0x10B807`. The recent compiler fixes did not clear the boot failure — they moved it.
+- Faulting instruction is **`call [eax+0x24]` at `0xb80e`**; the receiver
+  (`mov eax,0x00617D40`) is a bootimage object whose address **differs every boot**
+  (seen `0x00694298`, `0x00663168`, `0x00617D40`), and the block ends in a back-edge
+  `jmp 0xb1d2`, so it sits in a **loop**. The preceding routine ends
+  `mov dword [ebp+0x38],0x0010B807; ret` — it materialises `0x10B807` as a call target.
+- **It is *not* inside any compiled Java method.** Image offset `0xb807` is below the
+  smallest compiled-method stream end (`0x1d0f8`) and inside the image's first blob
+  (exactly `0xd000` bytes). It is the image's **entry/clInit prelude**; the builder's
+  text listing shows that region as
+  `_$$Initial_call_to_clInitCaller: call _$$clInitCaller; mov eax,<org.jnode.boot.Main.vmMain()I>; call [eax+36]`.
+- **So F1's symptom text is stale.** It records `Integer.stringSize` / null `sizeTable`;
+  in fact the log's last line is `Initialize BootLog` (the last output of the class-init
+  phase) and `Integer` never appears. A valid L1A boot prints `Detected 1 processor`
+  (`VmImpl.java:288`) immediately after that line, so the failure window is
+  `VmSystem.initialize()` between `BootLogImpl.initialize()` and processor detection.
+- Retracted: an earlier reading of mine ("runaway recursion, ~150 MB of frames") was
+  **wrong**. `_$$initialStack[0]` is `1102984` = `0x10D488`, exactly the dump's ESP, and
+  the initial thread SP is that +1024 — a shallow stack, a handful of frames.
+
+**Mapping tool — the exact incantation, with two traps.** The facility is
+`NativeCodeCompiler.DUMP_METHOD_MAP` (ANCHOR-L2-129) = the JVM system property
+`jnode.dump.methodmap`, printing one `[methodmap] cls.method @<ref> stream=0x…` per
+compiled method (18,046 lines):
+
+```sh
+rm -rf all/build/x86/cdrom-lite/ox && touch core/src/core/org/jnode/vm/x86/compiler/l2/*.java \
+  core/src/core/org/jnode/vm/compiler/ir/*.java core/src/core/org/jnode/vm/compiler/ir/quad/*.java \
+  core/src/core/org/jnode/vm/classmgr/VmType.java
+ANT_OPTS=-Djnode.dump.methodmap=true JAVA_TOOL_OPTIONS=-Djnode.dump.methodmap=true \
+  sh build.sh -verbose -Djnode.compiler=L2 "-Dmy-conf.dir=$PWD/local/l2oracle/conf-x86" cd-x86-lite
+```
+
+- **Trap 1:** `sh build.sh -Dfoo=bar` sets an **Ant** property, not a JVM system property
+  (`build.sh` is `java -jar ant-launcher.jar`), so `-Djnode.dump.methodmap=true` there is
+  silently ignored. It must go through `ANT_OPTS=` / `JAVA_TOOL_OPTIONS=`.
+- **Trap 2:** it needs **`-verbose`**, or the bootimage step's logging is filtered and you
+  get zero lines.
+- **Known limitation:** the map still **cannot answer "which method contains this EIP"**.
+  Its `@` field is a mangled `VmAddress` *reference*, and `stream=` cannot be differenced
+  into method ranges because the gaps hold constants pools, class metadata and `$$init_`
+  helper bodies. Differencing it attributed a nonsense **119 KB** range to
+  `NativeSystemProperties.doSetProperties` — that is how you can tell it is wrong.
+  Adding a numeric address does not help: `ObjectResolver.addressOf32` is **unresolved
+  at `compileBootstrap` time** (prints `0xffffffff`; a compiler-side patch was tried and
+  reverted). The correct home for this map is **emission time in `ObjectEmitter`** — the
+  builder's `bootimage.debug` already carries 614,916 **resolved** `$offset` markers, just
+  without method names beside them. That is the concrete next piece of work.
+- Also useful: `local/kdb_eip.sh <kdb-log> <class> <method>` is the existing per-method
+  attribution tool (GH #652) — it regenerates boot-image-identical L2 codegen via
+  `BinDump <cls> <mth> <out> resolve` and matches the fault bytes. `BulkMatch.java` is the
+  bulk form, with the *previous* crash's patterns baked in.
+- Ruled out by measurement: sweeping the crash signature through the real L2 pipeline for
+  **6,753 `org.jnode.vm.*` + 8,103 `java.lang.*`/`java.util.*` methods produced zero
+  matches**, which independently confirms "not a compiled method".
+  (`local/l2boot-tools/EipMatch.java` is that sweep, adapted from `BulkMatch`; gitignored.)
+
+**Next action:** name the routine that owns the `jmp 0xb1d2` back-edge — via the
+emission-time method map above, or by disassembling the prelude — then decide whether F1
+is a bad method slot in the `vmMain()I` entry object or a clInit re-entry loop. Also still
+open: `B2/F2` `allocObject` (result 16), `F4` AOT coverage, `F5/F6`.
 
 ## 6. Environment facts that will otherwise cost you hours
 
@@ -248,21 +389,36 @@ Do not start until §5.1–§5.5 are done.
   narrow repro must stage the class at its exact package path, and must pass the extra
   roots (`local/classlib`, `/tmp/jars/mauve`, `/tmp/opencode/cl`) or the method is
   skipped instead of compiled.
+- **`OPEN-BUGS.md` must not drift from the commits.** It read "MEASURED LATENT" for A8
+  *after* A8's fix had landed, and still reads OPEN for C1 (fixed in L2-169). A queue that
+  lies about what is fixed is precisely how C6 survived a full day of work. Re-check status
+  fields when you update it.
+- **A guest class in `Probes.java` must be resolvable from the guest classpath.**
+  `org.jnode.vm.VmMagic` is a *core* class the guest cannot resolve, so probes using it
+  fail the `regress.sh` probe-census gate. That gate refusing the build was the constraint
+  working — keep shape-carrying probes guest-resolvable and put core-class probes elsewhere.
+- `sh build.sh -D…` sets **Ant** properties only (see §5.6 trap 1); anything read with
+  `Boolean.getBoolean(...)` / `System.getProperty(...)` needs `ANT_OPTS=` or
+  `JAVA_TOOL_OPTIONS=`.
 
 ## 7. The wide census must be chunked
 
 A single sweep over all 11,495 classlib classes reports `OK=59,085 FAILED=22` because a
 **cumulative `0x20000` bound** (`ArrayIndexOutOfBoundsException: 131072`) silently
 aborts methods and truncates a third of the corpus. Chunked by package prefix the same
-tree verifies `OK=67,836` (+15%) with `FAILED=2`.
+tree verifies **more** methods (it was `OK=67,836` while two defects were open; it is
+`OK=67,838 FAILED=0` now that NEW-2 is fixed). Note the earlier figure of **93,313** was
+double-counting `javax.*` and was wrong; `67,838` is the correct chunked coverage.
 
 ```sh
 tests/l2oracle/census-wide.sh                 # default disjoint prefix set
 tests/l2oracle/census-wide.sh gnu. java.      # or an explicit subset
 ```
 
-The core corpus (`core/build/classes`, 11,607 methods) is the default gate and needs no
-chunking. **Do not "simplify" the wide census back to one sweep.**
+The core corpus (`core/build/classes`, 11,613 methods) is the default gate and needs no
+chunking. **Do not "simplify" the wide census back to one sweep.** The chunks now run
+concurrently (`JOBS`, default `nproc`; the box has 12 cores) — poll for completion, do not
+insert fixed long sleeps.
 
 ## 8. Commands
 
@@ -275,6 +431,14 @@ sh tests/l2oracle/regress.sh --label <label> oracle
 
 # mauve: default v1; --full for v1..5; digits select levels
 sh tests/l2oracle/regress.sh --label <label> --full mauve 2 3 4 5
+
+# L2 bootimage build + cold boot, records the panic signature (opt-in, ~1 min)
+sh tests/l2oracle/regress.sh --label <label> boot --boots 3
+# signatures accumulate in tests/l2oracle/baselines/boot-signatures.txt
+# the bootimage method map (needs ANT_OPTS/JAVA_TOOL_OPTIONS *and* -verbose) — see §5.6
+
+# per-method crash attribution against a KDB log (GH #652)
+sh local/kdb_eip.sh <kdb-log> <class> <method> [sigfilter]
 
 # one testlet in isolation (fresh boot per mode)
 bash tests/l2oracle/one-testlet.sh <testlet-fqcn> <noforce|force>
@@ -307,6 +471,25 @@ sh -c '/home/levente/ext/prg/java/bin/java -Djnode.root=$PWD \
 - **Reproducing the `0x20000` cluster in narrow slices** (single class → 3 ORB classes →
   whole CORBA tree): all clean, because the trigger is cumulative. Capture a stack from
   a real run instead.
+- **"The corpus count is 0, so the codegen is right"** — the mistake that hid **A8, C6 and
+  A9** for a day. Cost on A8: the emission genuinely discarded a getfield value and dropped
+  a putfield store; the reproducer was two lines of Java. Cost on C6: a legal four-operand
+  magic CAS simply could not compile. A9 was "fixed" with a tripwire *throw* before being
+  properly fixed. See §4.6.
+- **Byte-pattern sweeping the corpus to attribute the boot crash** instead of using the
+  method map: 6,753 + 8,103 methods compiled through the real L2 pipeline, zero matches.
+  It did prove a *negative* (not a compiled method), but the method map answers it
+  directly — use the map.
+- **Differencing the `[methodmap]` `stream=` offsets** to bracket an EIP. It attributed a
+  **119 KB** range to `NativeSystemProperties.doSetProperties`; the gaps between methods
+  hold constants pools, class metadata and `$$init_` bodies, so it is not a linear map.
+  If a number looks absurd, the method is wrong, not the number.
+- **Byte-counting the bootimage text listing** to convert image offsets to labels. The
+  listing's `db` lines come from the *object* dumper, not the code listing, so the
+  arithmetic silently misaligns. The listing's labels are reliable; its offsets are not.
+- **Adding a numeric address to `[methodmap]` in `NativeCodeCompiler`**: printed
+  `0xffffffff`, because `ObjectResolver.addressOf32` is unresolved at `compileBootstrap`
+  time. Reverted. The map belongs in `ObjectEmitter` (§5.6).
 
 ## 10. Reading the register honestly
 
