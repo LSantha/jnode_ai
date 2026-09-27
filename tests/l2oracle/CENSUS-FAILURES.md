@@ -53,7 +53,12 @@ cp local/classlib/java/awt/font/TextMeasurer*.class /tmp/rp/tm/java/awt/font/
 # => FAILED=1  java.awt.font.TextMeasurer#<clinit> :: java.lang.IllegalArgumentException
 ```
 
-## 2. NEW-2 — `gnu.testlet.java.nio.channels.FileChannel.lock#test`
+## 2. NEW-2 — `gnu.testlet.java.nio.channels.FileChannel.lock#test` — **FIXED (L2-185); recipe kept as the regression recipe**
+
+The recipe below is now the regression recipe: with the fix reverted it reports `FAILED=1`
+again (`SSA-POST: read of l12_3 ... is not written on every path`).
+
+
 
 `SSA-POST: read of l12_3 at 128: throw l12_3 in B539 is not written on
 every path; defs: [179: l12_3 = l12_2 ...]`.
@@ -65,7 +70,9 @@ cp /tmp/jars/mauve/gnu/testlet/java/nio/channels/FileChannel/lock.class \
 # => FAILED=1  gnu.testlet.java.nio.channels.FileChannel.lock#test :: SSA-POST ...
 ```
 
-## 3. NEW-2 — `gnu.testlet.java.io.File.security#test`
+## 3. NEW-2 — `gnu.testlet.java.io.File.security#test` — **FIXED (L2-185)**
+
+
 
 `SSA-POST: read of l25_3 at 691: throw l25_3 in B1379 is not written on
 every path; defs: [718: l25_3 = l25_2 ...]`. Same shape as (2): the

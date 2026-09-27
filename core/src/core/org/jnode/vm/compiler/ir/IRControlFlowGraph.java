@@ -36,6 +36,7 @@ import org.jnode.vm.compiler.ir.quad.ArrayAssignQuad;
 import org.jnode.vm.compiler.ir.quad.ArrayLengthAssignQuad;
 import org.jnode.vm.compiler.ir.quad.ArrayStoreQuad;
 import org.jnode.vm.compiler.ir.quad.AssignQuad;
+import org.jnode.vm.compiler.ir.quad.ConstantRefAssignQuad;
 import org.jnode.vm.compiler.ir.quad.BinaryOperation;
 import org.jnode.vm.compiler.ir.quad.BinaryQuad;
 import org.jnode.vm.compiler.ir.quad.BranchQuad;
@@ -1148,6 +1149,58 @@ public class IRControlFlowGraph<T> implements Iterable<IRBasicBlock<T>> {
      * keeps downstream phi sources tied to their join block instead of to an
      * arbitrary edge copy.
      */
+    /**
+     * ANCHOR-L2-185 (NEW-2): builds the definition that a phi needs on an edge
+     * whose source is an {@link UndefinedVariable}.
+     * <p/>
+     * Three attempts, all measured on gnu.testlet.java.nio.channels.FileChannel.lock
+     * (phi l12_3 in join B542, two UndefinedVariable sources tagged with the
+     * synthetic critical-edge blocks B-2147483645 and B-2147483644):
+     * <ol>
+     * <li>The original code built the copy and then marked it dead. A dead quad is
+     * invisible to the SSA verifier AND to liveness, so it was not a def at all and
+     * the post-deSSA verifier rejected the method: {@code read of l12_3 at 129:
+     * throw l12_3 in B539 is not written on every path}.</li>
+     * <li>Leaving it live but copying the UndefinedVariable moves the complaint to
+     * its own operand: {@code read of u12_0 at 176: l12_3 = u12_0 in B-2147483645 is
+     * not written on every path}. Nothing ever writes an UndefinedVariable.</li>
+     * <li>A self-copy {@code x = x} is a genuine definition and is tolerated by the
+     * verifier, but it does not survive to the verifier -- it is elided as a
+     * no-op, and the original failure comes back.</li>
+     * </ol>
+     * What is left is the honest lowering: the JVM gives an uninitialized local the
+     * type's default value, so define the phi's result to that default on this edge.
+     * For a reference that is {@code null}, which is what
+     * {@link ConstantRefAssignQuad} already emits everywhere else in the compiler
+     * ({@code aconst_null; astore}). Non-reference bottoms have no
+     * constant-assign quad in this IR -- the index-based {@code BinaryQuad} ctor
+     * clones its lhs, which would break the shared-lhs invariant ANCHOR-L2-137
+     * depends on -- so they keep the self-copy.
+     *
+     * @param block the tagged edge that needs the definition
+     * @param lhs   the phi's result variable
+     * @param original the phi quad, for the address to attribute the new quad to
+     * @return a live defining quad for {@code lhs} on {@code block}
+     */
+    private AssignQuad<T> defineBottom(IRBasicBlock<T> block, Variable<T> lhs,
+                                       AssignQuad<T> original) {
+        if (lhs.getType() == Operand.REFERENCE) {
+            final int lhsType = lhs.getType();
+            // A null reference is an IntConstant(0) in this IR, not a
+            // ReferenceConstant: IRGenerator.NULL_CONSTANT is Constant.getInstance(0)
+            // and the emitter's constant-assign arms are IntConstant-only (a
+            // ReferenceConstant reaches them as "Non-int constant def: null").
+            AssignQuad<T> def = new ConstantRefAssignQuad<T>(original.getAddress(),
+                block, lhs, Constant.<T>getInstance(0));
+            // ConstantRefAssignQuad's ctor re-types the lhs from the constant; every
+            // edge copy for one phi shares the SAME lhs object, so put the phi's own
+            // type back (ANCHOR-L2-137).
+            lhs.setType(lhsType);
+            return def;
+        }
+        return newPhiMove(block, lhs, lhs, original);
+    }
+
     private VariableRefAssignQuad<T> newPhiMove(IRBasicBlock<T> block,
         Variable<T> lhs, Variable<T> rhs, AssignQuad<T> originalAssignQuad) {
         // ANCHOR-L2-137: preserve the phi result's own slot type. Every edge
@@ -1293,14 +1346,28 @@ public class IRControlFlowGraph<T> implements Iterable<IRBasicBlock<T>> {
             Operand<T> o = phiSources.get(si);
             final IRBasicBlock<T> tag = paq.getPhiOperand().getSourcePred(si);
             if (o instanceof UndefinedVariable) {
-                // Keep the bottom value as a dead, no-op definition on the
-                // tagged edge. It is a real SSA def for verification, but it
-                // must never be read by the code generator.
+                // ANCHOR-L2-185 (NEW-2): this copy used to be marked dead, on the
+                // stated theory that it was "a real SSA def for verification but
+                // must never be read by the code generator". Both halves were
+                // wrong. A dead quad is invisible to the SSA verifier AND to
+                // liveness, so it was not a def for verification at all: a phi
+                // with an UndefinedVariable source left its join's incoming edge
+                // without a definition, and the post-deSSA verifier rejected the
+                // method. Measured: gnu.testlet.java.nio.channels.FileChannel.lock
+                // phi l12_3 in join B542 has two UndefinedVariable sources, tagged
+                // with the synthetic critical-edge blocks B-2147483645 and
+                // B-2147483644, so two of its three incoming edges carried no live
+                // def and `throw l12_3` in B539 was unwritten on those paths (same
+                // shape in gnu.testlet.java.io.File.security, l25_3 / B1379).
+                // The source is UndefinedVariable precisely because the value is
+                // undefined along that path, so writing it is the faithful
+                // lowering -- and a live write is also what lets the register
+                // allocator give the phi's lhs a home instead of leaving the read
+                // pointing at a slot nothing ever wrote.
                 if (tag != null && preds.contains(tag)) {
                     AssignQuad<T> bottomMove =
-                        newPhiMove(tag, lhs, (Variable<T>) o, originalAssignQuad);
+                        defineBottom(tag, lhs, originalAssignQuad);
                     bottomMove.doPass2();
-                    bottomMove.setDeadCode(true);
                     List<AssignQuad<T>> list = priBucket.get(tag);
                     if (list == null) {
                         list = new ArrayList<AssignQuad<T>>();
