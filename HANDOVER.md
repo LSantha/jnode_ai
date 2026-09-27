@@ -22,7 +22,7 @@ measured; nothing is aspirational. Where something is unproven it says so.
 - Host gates green at the last run: `build`, `anchors`, **T0 18/18, T3 19/19, T1 38/38,
   all-junit 253/253**, census `OK=11607 SKIP=1511 HANDLERS=524 FAILED=0`, all five
   lints at 0.
-- Census, wide corpus (must be chunked — see §7): **93,313 methods verified, FAILED=3**.
+- Census, wide corpus (must be chunked — see §7): **67,836 methods verified, FAILED=2**.
 
 ## 3. Regression methodology — where it lives
 
@@ -254,7 +254,7 @@ Do not start until §5.1–§5.5 are done.
 A single sweep over all 11,495 classlib classes reports `OK=59,085 FAILED=22` because a
 **cumulative `0x20000` bound** (`ArrayIndexOutOfBoundsException: 131072`) silently
 aborts methods and truncates a third of the corpus. Chunked by package prefix the same
-tree verifies `OK=93,313` (+58%) with `FAILED=3`.
+tree verifies `OK=67,836` (+15%) with `FAILED=2`.
 
 ```sh
 tests/l2oracle/census-wide.sh                 # default disjoint prefix set

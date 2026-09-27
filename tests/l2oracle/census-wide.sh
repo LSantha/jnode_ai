@@ -5,7 +5,13 @@
 # OK=59,085 and 17 methods failing ArrayIndexOutOfBoundsException(131072).
 # That is not 17 bad methods -- it is a cumulative bound in the emulated VM
 # that silently truncates a third of the corpus. Chunked by package prefix the
-# same tree verifies OK=93,313 (+58%) with FAILED=6.
+# same tree verifies OK=67,836 (+15%) with FAILED=2.
+#
+# CORRECTION (2026-09-27): an earlier version of this header claimed 93,313
+# (+58%). That figure double-counted: the chunk filter matched on a raw prefix,
+# so the "java" chunk also matched javax.* and those methods were summed twice.
+# It was also measured before the package-boundary fix. 67,836 is the real
+# number of distinct methods (org. 3389 + java. 20629 + javax. 25478 + gnu. 18340).
 #
 # Prefixes are matched on a package boundary, so "java." does not also match
 # "javax.*". Override the chunk set with: census-wide.sh <prefix> ...
@@ -19,12 +25,25 @@ EXTRA=${CENSUS_EXTRA_ROOTS:-"/tmp/jars/mauve /tmp/opencode/cl"}
 DIR=${CENSUS_DIR:-local/classlib}
 OUT=${CENSUS_OUT:-/tmp/census-chunk}
 PREFIXES=${*:-"org. java. javax. sun. gnu. com. netscape."}
+# Run the chunks CONCURRENTLY: the box has 12 cores and each chunk is a
+# single-threaded JVM, so the sequential version wasted ~5x the wall clock for
+# no benefit. JOBS caps the parallelism if the machine is busier than usual.
+JOBS=${JOBS:-$( (nproc 2>/dev/null || echo 4) )}
+pids=""
 total_ok=0; total_failed=0
 for p in $PREFIXES; do
   safe=$(printf '%s' "$p" | tr -c 'A-Za-z0-9' '_')
-  JNODE_CENSUS_PREFIX="$p" "$JAVAC" -Djnode.root=. -cp "$CP" \
-    org.jnode.vm.compiler.ir.L2Census "$DIR" "$OUT-$safe.txt" $JARS $EXTRA \
-    > "$OUT-$safe.stdout" 2>/dev/null
+  while [ "$(jobs -p 2>/dev/null | wc -l)" -ge "$JOBS" ]; do sleep 2; done
+  (
+    JNODE_CENSUS_PREFIX="$p" "$JAVAC" -Djnode.root=. -cp "$CP" \
+      org.jnode.vm.compiler.ir.L2Census "$DIR" "$OUT-$safe.txt" $JARS $EXTRA \
+      > "$OUT-$safe.stdout" 2>/dev/null
+  ) &
+  pids="$pids $!"
+done
+for pid in $pids; do wait "$pid" 2>/dev/null; done
+for p in $PREFIXES; do
+  safe=$(printf '%s' "$p" | tr -c 'A-Za-z0-9' '_')
   ok=$(sed -n 's/^OK=\([0-9]*\).*/\1/p' "$OUT-$safe.txt")
   fl=$(sed -n 's/^--- FAILED (\([0-9]*\)).*/\1/p' "$OUT-$safe.txt")
   en=$(sed -n 's/^SKIP_ENV=\([0-9]*\).*/\1/p' "$OUT-$safe.txt")

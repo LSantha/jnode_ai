@@ -103,7 +103,7 @@ a wrong conclusion.
 - The **wide** classlib corpus **must be run in chunks**
   (`tests/l2oracle/census-wide.sh`). A single sweep reports `OK=59,085 FAILED=22`
   because a cumulative `0x20000` bound (`ArrayIndexOutOfBoundsException: 131072`) aborts
-  methods and silently truncates a third of the corpus; chunked it is `OK=93,313`,
+  methods and silently truncates part of the corpus; chunked it is `OK=67,836`,
   `FAILED=3`. Prefixes match on a package boundary and must be disjoint.
 - A **missing dependency is a skip, not a failure** (`SKIP_MISSING_DEP`), and neither is
   a **harness limitation** (`SKIP_ENV`: unresolvable native method, IR scope gap,

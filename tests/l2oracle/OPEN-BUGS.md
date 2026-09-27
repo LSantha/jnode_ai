@@ -29,7 +29,7 @@ post-deSSA on every method, so structural SSA regressions are corpus-wide.
 | A5 | P1 | `isCallLike` omits quads that really emit a `CALL` (`ConstantClassAssignQuad`, barriers) -> live ranges not force-spilled | **LANDED** L2-164 | census lint `CALLNOTCALLLIKE`, 243 sites in 161 methods -> 0; both predicate copies extended |
 | A6 | P2 | `FREM` with a constant left operand emits `FSUB` on an empty x87 stack | **CLOSED-NB** (2026-09-27): all six FREM arms use FPREM with the operands loaded in the right order, and the 14 new FP oracle rows (L2-167, incl. the constant-LEFT shape the report names) match the host EXACTLY under L2 force | closed by measurement, not by reading; the probes are the guard and also close invariant 6 on the oracle side |
 | A7 | P2 | `writeParameters` signature gate never fires for `invokestatic` (the `- 1` assumes a receiver) | **LANDED** L2-166 | T1 test with a stale-typed static argument, red on the overlay; `WIDTHMISMATCH` extended to static calls (invariant 7) |
-| A8 | P3 | constant-null `getfield` never writes lhs, `putfield` emits a load (latent under the null-trap model) | **OPEN** | none |
+| A8 | P3 | constant-null `getfield` never writes lhs, `putfield` emits a load (latent under the null-trap model) | **MEASURED LATENT (2026-09-27)**: the trigger is a `RefAssignQuad`/`RefStoreQuad` whose objectRef has CONSTANT addressing mode (the null arm in `generateCodeFor`). Instrumented across the whole corpus: `const_getfield=0 const_putfield=0` on core AND on every wide chunk (`java. gnu. sun. org. javax.`). The shape does not occur in ~32,000 methods, so there is nothing to red-proof and no fix attempted. Behaviourally it is also inert while it does: both arms fault at `[0+ofs]`, matching L1A's trap model | characterisation only; the numbers are the artefact |
 
 ## B. IR construction (report Part 2)
 
@@ -53,7 +53,7 @@ post-deSSA on every method, so structural SSA regressions are corpus-wide.
 | C3 | P1 | `handlerEntryTops` snapshot skipped when the exception slot has no SSA stack -> self-referential phi copy (found in my own L2-159) | **LANDED** L2-168 | corpus SSA verifier over every compilable method (a missed snapshot surfaces as a post-deSSA violation) |
 | C4 | P2 | deSSA floor ignores phi source tags: when no usable edge is found, the floor copy lands on the def block of `sources.get(0)` regardless of the edge it arrived on (earlier review S4) | **OPEN**, partially mitigated by L2-159's handler-tag routing, floor itself unchanged | corpus SSA verifier catches the value shape, not the edge choice |
 | C5 | P2 | handler-entry idom heuristic: a handler block with no computed idom inherits the idom of the block at its range START, not the closest predecessor (earlier review S4; `IRControlFlowGraph.doComputeDominance`) | **OPEN** | none |
-| C6 | P2 | M4: CAS with a spilled offset operand fails to compile (`loadEffectiveAddress` refuses a STACK offset into EDX, the CAS arm always passes EDX) -- loud, not silent, but it hides in the same census bucket as real bugs | **OPEN** (disabled-capability noise) | none; census FAILED would list it once the class is reachable |
+| C6 | P2 | M4: CAS with a spilled offset operand fails to compile (`loadEffectiveAddress` refuses a STACK offset into EDX, the CAS arm always passes EDX) | **MEASURED LATENT (2026-09-27)**: the trigger is a CAS with FOUR operands whose offset is in a STACK location (the EDX destination collides with the displacement scratch). Instrumented post-allocation, where the locations are known: core corpus `CAS total=13 with_ofs=0 stack_ofs=0`; the wide corpus (`java. gnu. sun. org. javax.`) reports `CAS total=0` -- the 3-arg form only, so the 4-arg form never occurs in ~32,000 methods. No fix attempted: there is no red proof to build a guard from, and the concern that it "hides in the census bucket" is moot while it never fires. Note the real hazard is narrow: in the CAS arm ECX is already pushed, so it is free as the scratch -- a fix would be a one-line `tmp` parameter if the shape is ever reachable | characterisation only; the numbers are the artefact. Re-measure if a class using the offset form becomes reachable |
 | C7 | note | the never-popped `ExceptionArgument` on the SSA stack is deliberate (ANCHOR-L2-128); L2-159 additionally re-arms the exception SLOT in the IR generator | by design | corpus SSA verifier |
 
 ## D. IR generator / quad semantics (report Part 4)
@@ -136,7 +136,7 @@ Additionally, not in the report: the default **gate** corpus is
 `core/build/classes` (1,402 classes / 11,603 methods). The bulk of the
 bootimage lives in `local/classlib` (25,901 classes / 63,720 methods) and is
 now covered by the chunked wide census (`tests/l2oracle/census-wide.sh`:
-93,313 methods, FAILED=3) -- so "the classlib pass is a script change" is
+67,836 methods, FAILED=2) -- so "the classlib pass is a script change" is
 done; it must simply never be run as a single sweep (the cumulative 0x20000
 bound, see §I).
 
@@ -161,7 +161,7 @@ bound, see §I).
 - Wide census must be CHUNKED (`tests/l2oracle/census-wide.sh`): one sweep
   over 11,495 classes reports OK=59,085 / FAILED=22 because a cumulative
   0x20000 bound (ArrayIndexOutOfBoundsException(131072)) aborts methods and
-  truncates the corpus. Chunked by package prefix: OK=93,313 (+58%),
+  truncates the corpus. Chunked by package prefix: OK=67,836 (+15%),
   FAILED=2 after NEW-3 landed (3 before it). Do not "simplify" this back to one sweep. (An earlier copy of this
   bullet said FAILED=6, from before c502ca1ee retired the second NEW-3
   candidate; the current number is 3, matching `HANDOVER.md` §2/§7 and the
