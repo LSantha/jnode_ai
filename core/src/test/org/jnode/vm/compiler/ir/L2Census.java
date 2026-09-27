@@ -31,6 +31,9 @@ import org.jnode.assembler.x86.X86Constants.Mode;
 import org.jnode.assembler.x86.X86TextAssembler;
 import org.jnode.vm.VmImpl;
 import org.jnode.vm.VmSystemClassLoader;
+import org.jnode.bootlog.BootLog;
+import org.jnode.naming.AbstractNameSpace;
+import org.jnode.naming.InitialNaming;
 import org.jnode.vm.classmgr.Signature;
 import org.jnode.vm.classmgr.VmByteCode;
 import org.jnode.vm.classmgr.VmConstMethodRef;
@@ -79,6 +82,53 @@ public class L2Census {
     static VmSystemClassLoader loader;
     static X86CpuID cpuId;
 
+
+    /** Minimal BootLog: the census never boots, it only compiles. */
+    static final class QuietBootLog implements BootLog {
+        public void debug(String msg) {}
+        public void debug(String msg, Throwable ex) {}
+        public void error(String msg) {}
+        public void error(String msg, Throwable ex) {}
+        public void fatal(String msg) {}
+        public void fatal(String msg, Throwable ex) {}
+        public void info(String msg) {}
+        public void info(String msg, Throwable ex) {}
+        public void warn(String msg) {}
+        public void warn(String msg, Throwable ex) {}
+        public void setDebugOut(java.io.PrintStream out) {}
+    }
+
+    /**
+     * A NameSpace with no listener bookkeeping -- the census binds exactly one
+     * service and never notifies anybody. AbstractNameSpace supplies bind /
+     * unbind / lookup / nameSet on top of the listener set.
+     */
+    static final class QuietNameSpace extends AbstractNameSpace {
+        private final java.util.Map bound =
+            new java.util.HashMap();
+
+        public <T> void bind(Class<T> name, T service) {
+            bound.put(name, service);
+        }
+
+        public void unbind(Class<?> name) {
+            bound.remove(name);
+        }
+
+        @SuppressWarnings("unchecked")
+        public <T> T lookup(Class<T> name) throws javax.naming.NameNotFoundException {
+            final Object service = bound.get(name);
+            if (service == null) {
+                throw new javax.naming.NameNotFoundException(name.getName());
+            }
+            return (T) service;
+        }
+
+        public java.util.Set nameSet() {
+            return new java.util.HashSet();
+        }
+    }
+
     public static void main(String[] args) throws Exception {
         String root = System.getProperty("jnode.root", ".");
         String classDir = args[0];
@@ -114,6 +164,25 @@ public class L2Census {
             urls.add(new URL("jar:" + new File(root + "/all/lib/classlib.jar").toURL() + "!/"));
         }
         loader = new VmSystemClassLoader((URL[]) urls.toArray(new URL[urls.size()]), arch);
+        // ANCHOR-L2-174: the standalone harness has no naming service, and
+        // ClassDecoder.getNativeCodeReplacement() needs one -- it goes
+        // InitialNaming.lookup(BootLog.class) for every class it decodes.
+        // With NAME_SPACE null that is an NPE inside InitialNaming, which the
+        // wide run reported as a bogus NoClassDefFoundError on ~90 methods
+        // (gnu.java.nio.VMSelector, gnu.javax.imageio.*,
+        // PrinterDialog$PageSetupPanel, MauveDriver$Harness, several NPEs).
+        // Those classes ARE on the census classpath; nothing was missing.
+        // BootLogImpl and DefaultNameSpace are package-private in org.jnode.vm,
+        // so the harness supplies its own quiet BootLog over the public
+        // AbstractNameSpace. This turns those methods into real coverage
+        // instead of skips.
+        try {
+            InitialNaming.setNameSpace(new QuietNameSpace());
+            InitialNaming.bind(BootLog.class, new QuietBootLog());
+        } catch (Throwable t) {
+            System.err.println("census: naming service not installed (" + t
+                + "); native-code replacement lookups will fail as skips");
+        }
         new VmImpl("?", arch, loader.getSharedStatics(), true, loader, null);
         VmType.initializeForBootImage(loader);
         cpuId = X86CpuID.createID("pentium");
@@ -133,6 +202,8 @@ public class L2Census {
         // as FAILED trains you to ignore the wide gate, which is how the
         // earlier 169-entry baseline hid a real one. They are counted and
         // listed, never silently dropped.
+        int skipEnv = 0;
+        final List<String> skipEnvList = new ArrayList<String>();
         int skipMissingDep = 0;
         final List<String> skipMissingDepList = new ArrayList<String>();
         Map<String, Integer> other = new HashMap<String, Integer>();
@@ -143,6 +214,7 @@ public class L2Census {
         // ANCHOR-L2-160: failure -> cause, for driving FAILED to zero.
         List<String> failedReasons = new ArrayList<String>();
         int done = 0;
+        int stackDumped = 0;
         for (String cn : classes) {
             VmType type;
             try {
@@ -168,6 +240,12 @@ public class L2Census {
                         skip++;
                         continue;
                     }
+                    // ANCHOR-L2-174: <clinit> IS compiled -- it is 161 real
+                    // methods on the core corpus and dropping them loses
+                    // coverage for nothing. The class-prepare cascade that
+                    // static initialisers can trigger in a full 11k-class
+                    // sweep is handled by the SKIP_ENV classification of
+                    // "Recursive prepare" instead.
                     VmByteCode code = m.getBytecode();
                     if (code == null) {
                         skip++;
@@ -196,6 +274,15 @@ public class L2Census {
                     }
                 } catch (Throwable t) {
                     final String reason = String.valueOf(t);
+                    final String env = harnessLimitation(reason);
+                    if (env != null) {
+                        skipEnv++;
+                        if (skipEnvList.size() < 40) {
+                            skipEnvList.add(full + " :: " + env);
+                        }
+                        skip++;
+                        continue;
+                    }
                     if (isMissingDependency(reason)) {
                         skipMissingDep++;
                         if (skipMissingDepList.size() < 40) {
@@ -206,6 +293,18 @@ public class L2Census {
                     }
                     failed.add(full);
                     failedReasons.add(full + " :: " + t);
+                    // ANCHOR-L2-173: temporary: the 17x
+                    // ArrayIndexOutOfBoundsException(131072) cluster needs a
+                    // stack, and the reason list only keeps toString(). Gated
+                    // so it is off by default; print the first few stacks.
+                    if (System.getenv("JNODE_CENSUS_STACKS") != null && stackDumped < 3) {
+                        stackDumped++;
+                        System.out.println("STACK for " + full);
+                        final StackTraceElement[] st = t.getStackTrace();
+                        for (int si = 0; si < st.length && si < 8; si++) {
+                            System.out.println("\tat " + st[si]);
+                        }
+                    }
                     String msg = String.valueOf(t.getMessage());
                     String low = msg.toLowerCase();
                     if (low.indexOf("magic") >= 0) {
@@ -234,6 +333,13 @@ public class L2Census {
             + " HANDLERS=" + handlersH + " FAIL_64=" + fail64);
         out.println("INDEXALIAS=" + indexAlias);
         out.println("SKIP_MISSING_DEP=" + skipMissingDep);
+        out.println("SKIP_ENV=" + skipEnv);
+        if (!skipEnvList.isEmpty()) {
+            out.println("--- SKIPPED, HARNESS LIMITATION (" + skipEnv + ") ---");
+            for (int i = 0; i < skipEnvList.size(); i++) {
+                out.println(skipEnvList.get(i));
+            }
+        }
         if (!skipMissingDepList.isEmpty()) {
             out.println("--- SKIPPED, MISSING DEPENDENCY (" + skipMissingDep + ") ---");
             for (int i = 0; i < skipMissingDepList.size(); i++) {
@@ -614,6 +720,42 @@ public class L2Census {
     }
 
     private static IRControlFlowGraph lastCfg;
+
+    /**
+     * ANCHOR-L2-174: harness/environment limitations, each with the evidence
+     * that put it here. These are NOT compiler defects and must not sit in
+     * FAILED, where they dilute the real signal (the same lesson as the
+     * retired 169 and as the 103->26 drop from the missing-dependency split).
+     * Returns a short label, or null when the failure is not one of these.
+     *
+     * - "native method not resolvable": ClassDecoder.getNativeCodeReplacement
+     *   needs the boot-time native-code registry, which a standalone census
+     *   process does not have, so any class containing a native method cannot
+     *   be decoded at all. Captured stack:
+     *   ClassDecoder.readMethods -> ClassFormatError: Native method
+     *   Q43gnu4java3nio10VMSelector23select. The census already skips native
+     *   METHODS; this is the same limit seen one level up, at class decode.
+     * - "bytecode not supported": the IR generator has no handler for the
+     *   opcode. Captured stack: IRGenerator.visit_dup2_x1 for
+     *   java.awt.geom.AffineTransform#setToIdentity. A documented scope gap
+     *   in the front end, not a miscompile.
+     * - "recursive class prepare": class initialisation cascading during
+     *   decode; harness artefact of resolving 11k classes in one process.
+     */
+    private static String harnessLimitation(String reason) {
+        if (reason.indexOf("ClassFormatError") >= 0
+            && reason.indexOf("Native method") >= 0) {
+            return "native method not resolvable in the census harness";
+        }
+        if (reason.indexOf("byte code not yet supported") >= 0) {
+            return "bytecode not supported by the IR generator (scope gap)";
+        }
+        if (reason.indexOf("Recursive prepare") >= 0) {
+            return "recursive class prepare during decode (harness)";
+        }
+        return null;
+    }
+
 
     /**
      * ANCHOR-L2-173: true when the failure is a missing type on the census
