@@ -12,7 +12,18 @@ Items that exist in a review but not in this register are the defect; this
 file is the checklist to keep that true. Status
 vocabulary: **LANDED** (fixed + guarded), **OPEN** (believed real, no fix),
 **CODE-READ** (claimed from reading, no repro), **GUARD GAP** (no test/lint
-covers the shape), **CLOSED-NB** (investigated, not a bug).
+covers the shape), **CLOSED-NB** (investigated, and the code is *structurally* correct -- a probe
+row agreeing with the host is never the reason).
+
+**Standing rule (2026-09-27, user).** Every bug I identify gets fixed. A census is
+not evidence and never discharges anything: "0 occurrences across 67836 methods" says
+only that a shape is rare in *today's* corpus, never that the code is right, and the
+compiler has to be right for code that does not exist yet. So the words "measured
+latent", "guarded", "0 occurrences", "no production call sites" and "CLOSED on
+measurement" are **not** resting states -- an identified defect is either fixed or,
+if the report is simply wrong, refuted by reading the code, never by counting hits.
+Three defects (A8, C6, A9) were near-paragraphed with exactly that reasoning and two
+of them were real; A9 was in fact fixed only after the point was made.
 
 Guard rule: every fix must ship with a guard that fails when the fix is
 reverted (see `AGENTS.md`). The census now runs `SSAVerifier` pre- and
@@ -30,7 +41,7 @@ post-deSSA on every method, so structural SSA regressions are corpus-wide.
 | A6 | P2 | `FREM` with a constant left operand emits `FSUB` on an empty x87 stack | **CLOSED-NB** (2026-09-27): all six FREM arms use FPREM with the operands loaded in the right order, and the 14 new FP oracle rows (L2-167, incl. the constant-LEFT shape the report names) match the host EXACTLY under L2 force | closed by measurement, not by reading; the probes are the guard and also close invariant 6 on the oracle side |
 | A7 | P2 | `writeParameters` signature gate never fires for `invokestatic` (the `- 1` assumes a receiver) | **LANDED** L2-166 | T1 test with a stale-typed static argument, red on the overlay; `WIDTHMISMATCH` extended to static calls (invariant 7) |
 | A8 | P3 | constant-null `getfield` never wrote its lhs, `putfield` emitted a load instead of a store (both latent under the null-trap model, no diagnostic) | **LANDED (L2-181)**. Reproducer: `((Holder) null).f` and `((Holder) null).f = v` -- javac emits `aconst_null; getfield/putfield` with no null check, so L2Dump shows the getfield value discarded and the putfield store dropped. Fix: getfield writes the destination the way the normal path does (register or frame home, both halves for a wide field, via `writeConstNullFieldResult`); putfield emits the store the quad means via `writeMOV(size, base, disp, src)`, staging the value through a pushed scratch when it is also the base. Guard: the `CONSTREFFIELD` emission census lint (reverting the fix gives 2 hits, 0 with it) plus permanent `Probes#nullFieldRead`/`#nullFieldWrite`, and `regress.sh` now censuses the compiled probe classes so this lint can never again read 0 merely because its shape is absent. Live: both sides throw NPE on both rows, no divergence. Note this and C6 are both report items that said "no call sites" / "no occurrences" and were nearly skipped for it -- that is how two real codegen defects survived a full day of compiler work |
-| A9 | latent | the `SEG_SHARED_STATICS` / `SEG_ISOLATED_STATICS` LEA uses EDX as its index with SR1 as its base, so `SR1 == EDX` would compute `idx*4 + idx + dataOff` -- a silently wrong address, and the only such site in this file with no diagnostic at all (C6 at least threw) | **MEASURED LATENT, NOW GUARDED (2026-09-27)**. Exercised as far as the shape allows: `org.jnode.vm.VmMagic.getSharedStaticFieldAddress(int)` / `getIsolatedStaticsFieldAddress(int)` (`BaseMagicHelper.GETSHAREDSTATICSFIELDADDRESS` / `GETISOLATEDSTATICSFIELDADDRESS`) reach it, and 14 generated register-pressure variants were dumped with `L2Dump`. Every one allocates SR1=EAX and emits a correct `lea eax,[eax+edx*4+4]`; a temporary tripwire throw then measured **0 occurrences across the 67836-method wide census**. So the emission is correct in every shape measured -- which is exactly what separates this from A8/C6, where the shape was never exercised and the emission was provably wrong. What survives is the fragility, so a permanent fail-loud guard now sits at the site: it emits no instruction and turns a future allocation change into a compile error instead of a silent miscompile. Note the probes could NOT stay in `Probes.java` (the shape-carrying census corpus) because `org.jnode.vm.VmMagic` is a core class the guest classpath cannot resolve -- `regress.sh` probe census correctly refused the build when they were there, which is the constraint working as intended |
+| A9 | P2 | the `SEG_SHARED_STATICS` / `SEG_ISOLATED_STATICS` address used EDX as its LEA index with SR1 as its base, so `SR1 == EDX` would compute `idx*4 + idx + dataOff` -- a silently wrong address with no diagnostic of any kind | **LANDED (L2-184)**. Rewritten so correctness no longer depends on the allocation at all: a REGISTER-mode index is used directly as the LEA index (which also removes the pointless EDX copy the old code made, so 14 pressure variants now emit `lea eax,[eax+esi*4+4]` instead of `mov edx,[ebp+d]` + `lea`), and a memory index is materialised into a register that is never the base -- ECX, pushed before and popped after the LEA -- which is provably free. No throw, no assertion, no reliance on which register the allocator picks |
 
 ## B. IR construction (report Part 2)
 

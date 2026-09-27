@@ -4757,24 +4757,34 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
                     }
                     os.writeADD((GPR) SR1,
                         ((IntConstant<T>) idx).getValue() * 4 + dataOff);
+                } else if (idx.getAddressingMode() == REGISTER) {
+                    // ANCHOR-L2-183: the index already lives in a register, so use
+                    // it directly -- no move, and EDX is left alone. The old code
+                    // needlessly copied it into EDX here and then used EDX as the
+                    // LEA index, which is what made SR1 == EDX silently compute
+                    // idx*4 + idx + dataOff instead of idx*4 + dataOff.
+                    GPR or_ = (GPR) ((RegisterLocation<T>) ((Variable<T>) idx)
+                        .getLocation()).getRegister();
+                    os.writeLEA((GPR) SR1, (GPR) SR1, or_, 4, dataOff);
                 } else {
-                    // The LEA below uses EDX as the index and SR1 as the base,
-                    // so SR1 == EDX would compute idx*4 + idx + dataOff -- a
-                    // silently wrong address, and unlike the C6 case
-                    // (loadEffectiveAddress) nothing would complain. Measured:
-                    // 0 occurrences in 67836 wide-census methods and 0 in 14
-                    // hand-built pressure variants, because the allocator puts
-                    // this quad's word in EAX. Keep the check anyway: it costs
-                    // no emitted instruction and turns a future allocation
-                    // change into a loud compile failure instead of a silent
-                    // miscompile. See OPEN-BUGS.md for the measurement.
-                    if ((GPR) SR1 == X86Register.EDX) {
-                        throw new IllegalArgumentException(
-                            "Segmented-statics address needs a base register other"
-                                + " than the EDX index register");
+                    // The index is in memory, so it needs a register. Pick one
+                    // that is not the LEA base: if SR1 were EDX, EDX as both
+                    // base and index yields a silently wrong address. ECX is
+                    // pushed first so that it is provably free, and popped right
+                    // after the LEA -- the LEA result is in SR1 and the store
+                    // below touches only SR1 and the destination, so the restore
+                    // cannot disturb it. This costs two instructions in the
+                    // SR1 == EDX case only, which no measured allocation produces.
+                    GPR idxReg = ((GPR) SR1 == X86Register.EDX) ? X86Register.ECX
+                        : X86Register.EDX;
+                    if (idxReg == X86Register.ECX) {
+                        os.writePUSH(X86Register.ECX);
                     }
-                    moveWordToReg(X86Register.EDX, idx);
-                    os.writeLEA((GPR) SR1, (GPR) SR1, X86Register.EDX, 4, dataOff);
+                    moveWordToReg(idxReg, idx);
+                    os.writeLEA((GPR) SR1, (GPR) SR1, idxReg, 4, dataOff);
+                    if (idxReg == X86Register.ECX) {
+                        os.writePOP(X86Register.ECX);
+                    }
                 }
                 storeRegToLhs((GPR) SR1, lhs);
                 break;

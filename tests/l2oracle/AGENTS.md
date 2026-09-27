@@ -345,3 +345,22 @@ re-emitter, since binary pushes mangle class files). Guest flow:
 push `JsrGen.java` + `jsr/JsrForce2.java`, `javac`, `java JsrGen`,
 `java JsrForce2` → `force|1` (L2 compiled `run`) + `loopdone|42`
 (1000 subroutine calls). Status: green (103).
+
+## Standing rule: every identified bug is fixed
+
+Set by the user on 2026-09-27, after A8, C6 and A9 were each left "measured latent"
+on census evidence:
+
+* **Every bug I identify gets fixed.** There is no "latent" resting state and no
+  "guarded" resting state. If I have named a defect, it is fixed or the naming is
+  withdrawn by reading the code -- not by counting occurrences.
+* **A census is not evidence.** `0 occurrences across 67836 methods` establishes
+  only that a shape is rare in today's corpus. It says nothing about correctness,
+  and nothing about code that does not exist yet. A census may prioritise work; it
+  may never close it.
+* **Absence of call sites is not absence of a bug.** "No production caller" and "not
+  in the corpus" both describe rarity. Two of the three defects above were real.
+* **"Correct" must be shown structurally** -- by reading the emission path and
+  arguing it cannot go wrong, or by fixing it so the bad case cannot be expressed.
+  A probe row that matches the host shows the shape works today, nothing more.
+* If the fix is available and cheap, measure afterwards, never before.
