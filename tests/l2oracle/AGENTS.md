@@ -64,6 +64,56 @@ Every one of these was learned from a wrong result, not from a hard problem:
 8. **Revert rather than leave the tree red**; after two failed attempts on
    a blocker, write down the evidence and move to the next item.
 
+## Regression methodology (the short version; the two sections above are normative)
+
+Order of work for any suspected defect. Each step exists because skipping one produced
+a wrong conclusion.
+
+1. **Reproduce before theorising.** Get it to fail on demand, in the cheapest harness
+   that shows it. Record the exact command — see `CENSUS-FAILURES.md` for the shape.
+   A reproduction you cannot re-run is not a reproduction.
+2. **Measure before fixing.** Instrument the corpus and count occurrences. C2 looked
+   like a live coalescing bug; it had 4,352 coalescing sites and **0** occurrences of
+   all three hazards, i.e. latent, so the fix was reverted. A6 looked like a live FREM
+   bug and 14 probe rows matched the host bit-for-bit, so it was closed as
+   not-reproducible. Both saved work that would have been wasted.
+3. **Choose the guard from the table above**, strongest first. For a value-visible bug
+   that means a probe row in `Probes.java` + `OracleDriver.CASES` with the host
+   reference recorded; the red proof is the guest-vs-host diff *before* the fix.
+4. **Validate cheapest-first:** probe rows (seconds) → `regress.sh … host` (T0/T3/T1,
+   all-junit, core census) → `regress.sh … oracle` → mauve. A fix that only reaches the
+   mauve stage because the probe was skipped is unvalidated.
+5. **If it is a structural claim, prove the instrument fires on the known case before
+   you keep it.** Three hand-rolled lints were written and all three removed: one
+   examined 0 phis, one fired on 5 known-good methods, one fired on 0 including the two
+   methods it was written for. A blind or noisy lint is worse than none, because it
+   reads like a clean bill of health. The SSA verifier and the value probes are the
+   guards that actually work.
+6. **Revert rather than ship a fix you cannot prove.** Two NEW-1 fix attempts were
+   reverted with their failure modes written down, so the next attempt starts from
+   evidence instead of repeating them.
+7. **After two failed attempts on a blocker**, write down the evidence and move to the
+   next item. That rule already existed; it is what kept the discarded lints from
+   becoming three shipped lints.
+
+### Census gate rules
+
+- The **core** corpus (`core/build/classes`) is the default gate: 11,607 methods,
+  `FAILED==0` is the pass condition.
+- The **wide** classlib corpus **must be run in chunks**
+  (`tests/l2oracle/census-wide.sh`). A single sweep reports `OK=59,085 FAILED=22`
+  because a cumulative `0x20000` bound (`ArrayIndexOutOfBoundsException: 131072`) aborts
+  methods and silently truncates a third of the corpus; chunked it is `OK=93,313`,
+  `FAILED=3`. Prefixes match on a package boundary and must be disjoint.
+- A **missing dependency is a skip, not a failure** (`SKIP_MISSING_DEP`), and neither is
+  a **harness limitation** (`SKIP_ENV`: unresolvable native method, IR scope gap,
+  recursive class prepare, classlib version mismatch). Both are listed per method. A
+  wall of environmental noise in `FAILED` is how the earlier 169-entry baseline hid a
+  real defect.
+- The census harness installs a naming service; without it
+  `ClassDecoder.getNativeCodeReplacement` NPEs and ~90 methods are misreported as
+  missing classes.
+
 ## Files
 
 | File | Role |
