@@ -68,7 +68,7 @@ this particular branch and the environment traps (§6, §9).
 
 ## 5. The queue, with the next concrete action for each
 
-### 5.1 NEW-1 (P0) — `a[i++]` reads the incremented index — **NOT FIXED, but fully diagnosed**
+### 5.1 NEW-1 (P0) — `a[i++]` reads the incremented index — **FIXED (guarded); residual moved to NEW-1b**
 
 The highest-value open item. Found via the first-ever mauve v2 sweep
 (`AcuniaPropertiesTest` passes unforced, throws under force), bisected to the single
@@ -91,12 +91,40 @@ method `java.util.Properties.loadConvert`.
   `assignQuad`; returning a `LocalVariable` instead builds but collapses the corpus
   (`OK` 11607→1556) with `SSA-PRE: use without def … reads l0_1`, because the def quad
   attaches to the *original* argument object.
-- **Next action:** the fix belongs in **SSA construction** — the version that receives
-  the def must be the version that is read, and *every* emitted version needs a home
-  while the incoming argument keeps its frame slot (handler entries and deopt read the
-  frame). Start from `SSAStack.getNewVariable()` (`core/src/core/org/jnode/vm/compiler/ir/SSAStack.java:54`)
-  and `IRControlFlowGraph.renameVariables`. Validate with the probes first (fastest
-  signal), then the full gate set, then a live oracle run.
+- **Two fixes landed (2026-09-27), each with red proof:**
+  1. `LinearScanAllocator.allocate()` **ANCHOR-L2-171** — a *defined* `MethodArgument`
+     version gets its own spill home; only the incoming value (`getAssignQuad()==null`)
+     keeps the JVM slot. `setSpilledVariables` de-aliases the spilled list and
+     `endMethod` reserves those slots, so the frame still holds the incoming value.
+  2. `IRControlFlowGraph.flushCopy` **ANCHOR-L2-176** — an *edge* copy (destination
+     block != the phi's block) is placed at `max(source-def end, last in-block read of
+     the phi result + 1)`, clamped before the terminator. The old ANCHOR-L2-159
+     "first use" bound is only correct when the copy is flushed into the phi's own
+     block (handler-entry / source-in-block witnesses keep it). Plus a
+     `removeDefUseChains` guard: refuse copy coalescing when a live quad between the
+     def and the copy reads the copy's LHS.
+- **Guards:** the 7 `postIncr*` rows in `OracleDriver.CASES` (red before, green now),
+  `regress.sh --label new1-fix2 host` (alljunit 254/0, census `OK=11608 FAILED=0`,
+  lints=0) and the live oracle (`host_only=3 guest_only=3` = only the 3 retired
+  divergences).
+- **Next action:** NEW-1b — `java.util.Properties` under force still fails (see §5.1a).
+
+### 5.1a NEW-1b (P0) — residual `java.util.Properties` force defect
+
+Same area, different defect, and the mauve v2 headline witness is **not yet fixed**.
+With NEW-1's fixes in the image: `PropsForce noforce` -> OK, `PropsForce forceprops`
+-> `MISMATCH uni: got <h\u00e9llocontinued ...> want <h\u00e9llo>` (no exception any
+more — the old `StringIndexOutOfBoundsException: 847332096` is gone), and a single
+fresh boot with `PropsForce forceone java.util.Properties loadConvert` reproduces it,
+so that method is still implicated; `PropsForce forcereader` (LineReader only) -> OK.
+key1/key2/empty/esc all convert correctly — only the `\u` branch is wrong, and the
+returned String's length exceeds the converted length (tail = stale `convtBuf`
+content). `AcuniaPropertiesTest` (mauve v2, 81 checks) still `runEX String index out
+of range: 707729360`.
+
+**Next action:** `--ranges` / `--calls` / asm for `loadConvert`'s B75–B399 region
+(`l9_3` = xx, `l10_3` = i, `l7_2` = dst) and the `String.<init>(a4_3, 0, l7_2)` push.
+`--ir` is already correct there, so look at allocation/emission, not de-SSA.
 
 ### 5.2 NEW-2 (P1) — `throw` in jsr/finally reads a non-dominated exception variable
 
@@ -138,9 +166,12 @@ each the same way before touching it.
 
 ### 5.6 Bootimage — LAST
 
-`F1` `$$ic` barrier (likely the same defect as NEW-3), `B2/F2` `allocObject`,
-`F4` AOT coverage, `F5/F6`. Known crash: `Integer.stringSize` null `sizeTable` read,
-`allocObject` result 16. Do not start until §5.1–§5.5 are done.
+`F1` `Integer.stringSize` null `sizeTable` read — an NPE *inside the array
+bounds check*, after a class-init barrier that was emitted correctly
+(`$$cbtest`/`$$cbfailed` are `checkBounds`, not a barrier; mechanism corrected
+2026-09-27 — see `OPEN-BUGS.md` F1 for the evidence and for the AOT-reachable
+probe point), `B2/F2` `allocObject` (result 16), `F4` AOT coverage, `F5/F6`.
+Do not start until §5.1–§5.5 are done.
 
 ## 6. Environment facts that will otherwise cost you hours
 

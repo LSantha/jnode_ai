@@ -222,7 +222,22 @@ public class IRControlFlowGraph<T> implements Iterable<IRBasicBlock<T>> {
                             if (q instanceof VariableRefAssignQuad) {
                                 VariableRefAssignQuad vq = (VariableRefAssignQuad) q;
                                 if (vq.getRHS().equals(var) &&
-                                    vq.getBasicBlock().equals(var.getAssignQuad().getBasicBlock())) {
+                                    vq.getBasicBlock().equals(var.getAssignQuad().getBasicBlock()) &&
+                                    // ANCHOR-L2-171 (NEW-1): this is copy
+                                    // coalescing -- it renames the def's
+                                    // target to the copy's LHS and deletes
+                                    // the copy. That is only sound if nothing
+                                    // between the def and the copy still
+                                    // wants the OLD value of that LHS.
+                                    // postIncrLoop_aii: `l2_3 = l2_2 + 1`,
+                                    // then `a[l2_2]`, then the back-edge copy
+                                    // `l2_2 = l2_3`. Collapsing them gave
+                                    // `l2_2 = l2_2 + 1` and the load read the
+                                    // increment (guest: host 0x3c vs 0x5a,
+                                    // and AIOOBE "index 5" on a length-5
+                                    // array), i.e. `a[i++]` observed i+1.
+                                    !referencedBetween(var.getAssignQuad(), vq,
+                                        (Variable<T>) vq.getLHS())) {
                                     vq.setDeadCode(true);
                                     var.getAssignQuad().setLHS(vq.getLHS());
 
@@ -233,6 +248,59 @@ public class IRControlFlowGraph<T> implements Iterable<IRBasicBlock<T>> {
                 }
             }
         }
+    }
+
+    /**
+     * ANCHOR-L2-171 (NEW-1): does any live quad strictly between {@code def}
+     * and {@code copy} in their shared block read or write {@code lhs}?
+     * <p/>
+     * Used to gate the copy coalescing in {@link #removeDefUseChains()}:
+     * that pass rewrites {@code lhs = copyRHS}'s def to target {@code lhs}
+     * directly and kills the copy, which is valid only when the value the
+     * copy was about to overwrite is not read in between. The def quad
+     * itself is skipped on purpose -- its own read of {@code lhs} (as an
+     * operand) is evaluated before its write, so {@code x = x + 1} still
+     * observes the old value. A missing copy, or a copy that sits BEFORE
+     * the def, returns true (refuse): that shape is not the one this pass
+     * was written for, and refusing costs one move, never correctness.
+     *
+     * @param def  the defining quad that would be retargeted
+     * @param copy the {@code VariableRefAssignQuad} that would be deleted
+     * @param lhs  the copy's LHS, i.e. the variable being coalesced into
+     * @return true when the coalescing must not happen
+     */
+    private boolean referencedBetween(Quad<T> def, Quad<T> copy, Variable<T> lhs) {
+        final List<Quad<T>> quads = def.getBasicBlock().getQuads();
+        boolean afterDef = false;
+        for (int i = 0; i < quads.size(); i += 1) {
+            final Quad<T> q = quads.get(i);
+            if (q == def) {
+                afterDef = true;
+                continue;
+            }
+            if (!afterDef) {
+                continue;
+            }
+            if (q == copy) {
+                return false;
+            }
+            if (q.isDeadCode()) {
+                continue;
+            }
+            final Operand<T>[] refs = q.getReferencedOps();
+            if (refs != null) {
+                for (int r = 0; r < refs.length; r += 1) {
+                    if ((refs[r] instanceof Variable) && lhs.equals(refs[r])) {
+                        return true;
+                    }
+                }
+            }
+            final Operand<T> defined = q.getDefinedOp();
+            if ((defined instanceof Variable) && lhs.equals(defined)) {
+                return true;
+            }
+        }
+        return true;
     }
 
     private Map<Variable, Integer> getVariableUsage() {
@@ -1316,7 +1384,7 @@ public class IRControlFlowGraph<T> implements Iterable<IRBasicBlock<T>> {
             if (amb != null) {
                 for (AssignQuad<T> q : amb) {
                     if (noteCopy(seen, q)) {
-                        flushCopy(b, q);
+                        flushCopy(b, join, q);
                     } else {
                         q.setDeadCode(true);
                     }
@@ -1326,7 +1394,7 @@ public class IRControlFlowGraph<T> implements Iterable<IRBasicBlock<T>> {
             if (pri != null) {
                 for (AssignQuad<T> q : pri) {
                     if (noteCopy(seen, q)) {
-                        flushCopy(b, q);
+                        flushCopy(b, join, q);
                     } else {
                         q.setDeadCode(true);
                     }
@@ -1384,19 +1452,43 @@ public class IRControlFlowGraph<T> implements Iterable<IRBasicBlock<T>> {
      * {@code AbstractDeviceManager#rename}, and 44 further boot-corpus
      * methods reported by the SSAVerifier census (L2-DEEP-REVIEW-REPORT
      * Part 9).
+     *
+     * <p>ANCHOR-L2-176 (NEW-1): bound (b) -- "before every use" -- only
+     * holds when the copy is flushed into the phi's OWN block, where it
+     * materializes the result for the reads below it. A copy flushed into a
+     * predecessor is an EDGE copy: every in-block read of the phi result
+     * there reads the previous visit's value (the join dominates such a
+     * block, otherwise the read would not be a legal SSA use), so the copy
+     * has to follow the LAST such read instead. Bound (a) still applies.
+     * Witness: {@code Probes#postIncrLoop_aii}'s latch computed
+     * {@code l2_3 = l2_2 + 1} then read {@code a[l2_2]} for {@code a[i++]};
+     * the back-edge copy {@code l2_2 = l2_3} flushed at the FIRST use of
+     * {@code l2_2} (quad 4, between the increment and the load) handed the
+     * load the incremented index, so a 5-element array threw AIOOBE
+     * "index 5" and {@code 10,20,30,40,1} summed as 0x5a instead of 0x3c.
+     * Handler-entry copies ({@code finallyThrowsLong}) and source-in-block
+     * copies ({@code nestedCatchLong}, {@code AbstractDeviceManager#rename})
+     * flush into the join itself, so they keep the L2-159/L2-162 rule.
      */
-    private void flushCopy(IRBasicBlock<T> b, AssignQuad<T> q) {
+    private void flushCopy(IRBasicBlock<T> b, IRBasicBlock<T> join, AssignQuad<T> q) {
         final List<Quad<T>> quads = b.getQuads();
         final Variable<T> lhs = q.getLHS();
+        final boolean edgeCopy = (b != join);
         int firstUse = -1;
+        int lastUse = -1;
         for (int i = 0; i < quads.size(); i += 1) {
             final Quad<T> u = quads.get(i);
             if (u == q || u.isDeadCode()) {
                 continue;
             }
             if (readsVersion(u, lhs)) {
-                firstUse = i;
-                break;
+                if (firstUse < 0) {
+                    firstUse = i;
+                }
+                lastUse = i;
+                if (!edgeCopy) {
+                    break;
+                }
             }
         }
         if (firstUse < 0) {
@@ -1418,6 +1510,20 @@ public class IRControlFlowGraph<T> implements Iterable<IRBasicBlock<T>> {
                         }
                         break;
                     }
+                }
+            }
+        }
+        if (edgeCopy) {
+            // ANCHOR-L2-176: never in front of an in-block read, and never
+            // past the terminator (a copy there would not execute on the
+            // edge; a branch reading lhs pins it just before the branch).
+            after = Math.max(after, lastUse + 1);
+            for (int i = 0; i < quads.size(); i += 1) {
+                if (IRBasicBlock.isTerminator(quads.get(i))) {
+                    if (after > i) {
+                        after = i;
+                    }
+                    break;
                 }
             }
         }

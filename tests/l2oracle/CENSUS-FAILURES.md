@@ -35,8 +35,12 @@ class with a dot-named file, e.g.
 
 Fails in codegen with `IllegalArgumentException`; captured stack
 `GenericX86CodeGenerator.generateCodeFor(6889)` <- `StaticRefStoreQuad
-.generateCode(69)`. A static-field store inside a static initialiser, i.e.
-the `$$ic` bootstrap-barrier family (F1).
+.generateCode(69)`. A static-field store inside a static initialiser, i.e. it
+goes through `writeInitializeClass` and its `$$ic` label
+(`GenericX86CodeGenerator.java:6633-6643`). Related *area* to boot blocker F1,
+but not established as the same defect: F1 is a **runtime** null `sizeTable`
+read after the barrier (see `OPEN-BUGS.md` F1); this one is a compile-time
+failure.
 
 ```sh
 mkdir -p /tmp/rp/tm/java/awt/font

@@ -203,7 +203,7 @@ public class IRBasicBlock<T> {
      * so a copy after it executes normally, and hoisting it before the
      * call would change subroutine-observable frame state.
      */
-    private static boolean isTerminator(Quad<?> q) {
+    static boolean isTerminator(Quad<?> q) {
         return q instanceof BranchQuad
             || q instanceof TableswitchQuad
             || q instanceof LookupswitchQuad

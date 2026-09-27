@@ -68,6 +68,29 @@ public class LinearScanAllocator<T> {
         for (int i = 0; i < n; i += 1) {
             LiveRange<T> lr = liveRanges[i];
             Variable<T> var = lr.getVariable();
+            if (var instanceof MethodArgument) {
+                // ANCHOR-L2-171 (NEW-1): an argument slot's versions must
+                // NOT all share the caller's frame slot. Only the version
+                // that was never defined -- `getAssignQuad() == null`, the
+                // idiom IRControlFlowGraph uses for the incoming value --
+                // keeps that slot: it IS the value the caller passed. A
+                // DEFINED version (a clone that received a def, e.g. the
+                // iinc of `a[i++]`) would otherwise be written straight
+                // over an older version that is still live, so give it its
+                // own spill home. setSpilledVariables de-aliases the spilled
+                // list and endMethod reserves those slots, so the frame
+                // still holds the incoming value where entry code reads it.
+                // Registers stay off limits for arguments (see below), and
+                // a stack home survives calls and handler entry by
+                // construction -- which is also why forcedSpills may keep
+                // skipping argument ranges.
+                if (var.getAssignQuad() == null) {
+                    continue;
+                }
+                lr.setLocation(new StackLocation<T>());
+                this.spilledVariableList.add(var);
+                continue;
+            }
             if (!(var instanceof MethodArgument)) {
                 // don't allocate method arguments to registers
                 expireOldRange(lr);
