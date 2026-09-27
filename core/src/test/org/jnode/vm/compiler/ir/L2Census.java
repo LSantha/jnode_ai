@@ -45,6 +45,8 @@ import org.jnode.vm.compiler.ir.quad.ArrayLengthAssignQuad;
 import org.jnode.vm.compiler.ir.quad.InstanceCallAssignQuad;
 import org.jnode.vm.compiler.ir.quad.InstanceCallQuad;
 import org.jnode.vm.compiler.ir.quad.ConditionalBranchQuad;
+import org.jnode.vm.compiler.ir.quad.RefAssignQuad;
+import org.jnode.vm.compiler.ir.quad.RefStoreQuad;
 import org.jnode.vm.compiler.ir.quad.Quad;
 import org.jnode.vm.compiler.ir.quad.StaticCallAssignQuad;
 import org.jnode.vm.compiler.ir.quad.StaticCallQuad;
@@ -296,6 +298,7 @@ public class L2Census {
                     checkFloatToIntConversion(m, text);
                     checkBackEdgeYieldPoints(m, text);
                     checkArrayLengthRegisters(m, text);
+                    checkConstRefField(m, text);
                     checkCallLikeCoverage(m, text);
                     checkRangeCoverage(m);
                     ok++;
@@ -366,6 +369,7 @@ public class L2Census {
             + " HANDLERS=" + handlersH + " FAIL_64=" + fail64);
         out.println("INDEXALIAS=" + indexAlias);
         out.println("SKIP_MISSING_DEP=" + skipMissingDep);
+        out.println("CONSTREFFIELD getfield=" + constRefGet + " putfield=" + constRefPut);
         out.println("SKIP_ENV=" + skipEnv);
         if (!skipEnvList.isEmpty()) {
             out.println("--- SKIPPED, HARNESS LIMITATION (" + skipEnv + ") ---");
@@ -753,6 +757,142 @@ public class L2Census {
     }
 
     private static IRControlFlowGraph lastCfg;
+
+    /**
+     * ANCHOR-L2-181 census lint: CONSTREFFIELD -- a getfield/putfield through
+     * a CONSTANT (null) objectRef must still IMPLEMENT its quad.
+     *
+     * Reproducer (committed as tests/l2oracle/NullFieldRepro.java, and
+     * `readNull`/`writeNull` in the classlib-shaped probe):
+     *   public static int readNull()  { return ((Holder) null).f; }
+     *   public static void writeNull(int v) { ((Holder) null).f = v; }
+     * javac emits `aconst_null; getfield f:I` and `aconst_null; putfield f:I`
+     * for those, which is the only way to reach the arms. L2Dump of the
+     * emitted code before the fix:
+     *
+     *   readNull   qb_1: mov eax,0x00000000
+     *                     mov eax,dword[eax]      <- value DISCARDED
+     *              qb_2: mov eax,dword esi       <- returns a slot never written
+     *   writeNull  qb_1: mov eax,0x00000000
+     *                     mov eax,dword[eax]      <- a LOAD, for a putfield
+     *              qb_2: jmp footer
+     *
+     * So the getfield never writes its destination (undefined value out) and
+     * the putfield drops the store entirely. Neither is observable at runtime
+     * today ONLY because the load at address 0 faults first under the null-trap
+     * model -- which is exactly why corpus counting could not find it: the
+     * shape is absent from the class dirs AND, where constructed, masked.
+     * "Not in the corpus" is not "not a bug".
+     *
+     * The check is on the EMISSION (like the ARRAYLENGTHREG lint), because
+     * the defect is in codegen: the IR quad looks perfectly well-formed.
+     */
+    private static int constRefGet;
+    private static int constRefPut;
+
+    static void checkConstRefField(VmMethod method, String text) {
+        try {
+            final IRControlFlowGraph cfg = lastCfg;
+            if (cfg == null) {
+                return;
+            }
+            for (Object b0 : (Iterable<?>) cfg) {
+                final IRBasicBlock b = (IRBasicBlock) b0;
+                for (Object q0 : (List<?>) b.getQuads()) {
+                    final Quad q = (Quad) q0;
+                    if (q.isDeadCode()) {
+                        continue;
+                    }
+                    final boolean isGet = q instanceof RefAssignQuad;
+                    final boolean isPut = q instanceof RefStoreQuad;
+                    if (!isGet && !isPut) {
+                        continue;
+                    }
+                    final Operand ref = isGet ? ((RefAssignQuad) q).getRef()
+                        : ((RefStoreQuad) q).getRef();
+                    if (ref == null
+                        || ref.getAddressingMode() != AddressingMode.CONSTANT) {
+                        continue;
+                    }
+                    final String block = emissionBlock(text, q.getAddress());
+                    if (block == null) {
+                        continue;
+                    }
+                    if (isGet && !writesDestination(block,
+                        ((RefAssignQuad) q).getLHS())) {
+                        constRefGet++;
+                        System.out.println("CONSTREFFIELD getfield "
+                            + method.getDeclaringClass().getName() + "#"
+                            + method.getName() + " @" + q.getAddress()
+                            + " destination never written");
+                    }
+                    if (isPut && !storesToMemory(block)) {
+                        constRefPut++;
+                        System.out.println("CONSTREFFIELD putfield "
+                            + method.getDeclaringClass().getName() + "#"
+                            + method.getName() + " @" + q.getAddress()
+                            + " no store emitted");
+                    }
+                }
+            }
+        } catch (Throwable t) {
+            // lint only
+        }
+    }
+
+    /** The LHS home token as it appears in a "mov &lt;dst&gt;,&lt;src&gt;" line. */
+    private static String homeToken(Variable v) {
+        if (v == null || v.getLocation() == null) {
+            return null;
+        }
+        final Location loc = v.getLocation();
+        if (loc instanceof StackLocation) {
+            return "[ebp" + ((StackLocation) loc).getDisplacement() + "]";
+        }
+        if (loc instanceof RegisterLocation) {
+            return ((RegisterLocation) loc).getRegister().toString()
+                .toLowerCase();
+        }
+        return null;
+    }
+
+    private static boolean writesDestination(String block, Variable lhs) {
+        final String token = homeToken(lhs);
+        if (token == null) {
+            return true;   // cannot tell; do not manufacture a finding
+        }
+        final String[] lines = block.split("\n");
+        for (int i = 0; i < lines.length; i++) {
+            final String t = lines[i].trim();
+            if (!t.startsWith("mov ")) {
+                continue;
+            }
+            final int comma = t.indexOf(',');
+            if (comma < 0) {
+                continue;
+            }
+            if (t.substring(4, comma).trim().contains(token)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private static boolean storesToMemory(String block) {
+        final String[] lines = block.split("\n");
+        for (int i = 0; i < lines.length; i++) {
+            final String t = lines[i].trim();
+            if (!t.startsWith("mov ")) {
+                continue;
+            }
+            final int comma = t.indexOf(',');
+            if (comma > 0 && t.substring(4, comma).indexOf('[') >= 0) {
+                return true;
+            }
+        }
+        return false;
+    }
+
 
     /**
      * ANCHOR-L2-174: harness/environment limitations, each with the evidence

@@ -205,7 +205,60 @@ if want census; then
     # of those methods compiles now that the loader sees mmtk/log4j/junit.
     # The gate is FAILED == 0 and RANGEGAP == 0, and the last statement is
     # the verdict so `run` cannot mask a regression behind a successful grep.
-    if [ ! -s '"$BASE"'/census-failed.txt ] && [ "$n" -eq 0 ] && [ "$rg" -eq 0 ]; then
+    # ANCHOR-L2-181: the corpus census contains no class that reads a field
+    # through a null constant, so CONSTREFFIELD would read 0 forever and mean
+    # nothing. Feed it from the probe classes, which DO contain the shape
+    # (Probes#nullFieldRead/nullFieldWrite), and require the lint and the
+    # compile to be clean. A lint whose defect is unreachable is the failure
+    # mode this session kept rediscovering.
+    # NB: HJ is `java`, not `javac` -- compiling needs javac. The magic stubs
+    # (/tmp/mghost/classes) are built by the hostref phase, which a host-only
+    # run does not execute, so build them here if they are missing.
+    if [ ! -d /tmp/mghost/classes ]; then
+      mkdir -p /tmp/mghost/classes
+      /home/levente/ext/prg/java/bin/javac -d /tmp/mghost/classes \
+        -sourcepath core/src/vmmagic:core/src/classlib:/tmp/mghost/src \
+        core/src/vmmagic/org/vmmagic/unboxed/Word.java \
+        core/src/vmmagic/org/vmmagic/unboxed/Address.java \
+        core/src/vmmagic/org/vmmagic/unboxed/Offset.java \
+        core/src/vmmagic/org/vmmagic/unboxed/Extent.java \
+        core/src/vmmagic/org/vmmagic/unboxed/UnboxedObject.java \
+        core/src/vmmagic/org/vmmagic/unboxed/ObjectReference.java \
+        core/src/classlib/org/jnode/annotation/KernelSpace.java \
+        core/src/classlib/org/jnode/annotation/Uninterruptible.java \
+        core/src/vmmagic/org/vmmagic/pragma/Uninterruptible.java \
+        > /dev/null 2>&1
+    fi
+    rm -rf /tmp/probeclasses && mkdir -p /tmp/probeclasses
+    /home/levente/ext/prg/java/bin/javac -nowarn -d /tmp/probeclasses \
+      -cp /tmp/mghost/classes \
+      -sourcepath core/src/vmmagic:core/src/classlib:/tmp/mghost/src \
+      tests/l2oracle/Probes.java core/src/classlib/org/jnode/annotation/*.java \
+      > /dev/null 2>&1
+    pc_missing=0
+    if [ ! -f /tmp/probeclasses/Probes.class ]; then
+      pc_missing=1
+    else
+      "$HJ" -Djnode.root=. -cp '"$CP"' org.jnode.vm.compiler.ir.L2Census \
+        /tmp/probeclasses /tmp/census-probes-'"$LABEL"'.txt \
+        core/lib/mmtk/mmtk.jar core/lib/log4j-1.2.8.jar \
+        core/lib/junit-4.5.jar core/lib/jmock-1.0.1.jar \
+        > /tmp/census-probes-'"$LABEL"'.stdout 2>/dev/null
+      cr=$(grep -c "^CONSTREFFIELD " /tmp/census-probes-'"$LABEL"'.stdout)
+      cf=$(awk "/^--- FAILED \(/{f=1;next} /^--- /{f=0} f" "/tmp/census-probes-$LABEL.txt" | wc -l)
+      echo "probe_census constreffield=$cr failed=${cf:-none}"
+      if [ "$cr" -ne 0 ] || [ "${cf:-1}" -ne 0 ]; then
+        pc_missing=1
+        grep "^CONSTREFFIELD " /tmp/census-probes-'"$LABEL"'.stdout | head -n 5
+      fi
+    fi
+    if [ "$pc_missing" -ne 0 ]; then
+      echo "PROBE CENSUS FAILED: the constant-null field lint must be 0 on a corpus that CONTAINS the shape"
+      false
+    else
+      echo "probe census gate: CONSTREFFIELD==0 and FAILED==0 on the shape-carrying corpus"
+    fi
+    if [ ! -s '"$BASE"'/census-failed.txt ] && [ "$n" -eq 0 ] && [ "$rg" -eq 0 ] && [ "$pc_missing" -eq 0 ]; then
       echo "census gate: FAILED==0 and RANGEGAP==0 as required"
     else
       echo "REGRESSION: $n FAILED entries, $rg RANGEGAP entries; first ones:"

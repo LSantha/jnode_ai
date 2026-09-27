@@ -112,6 +112,10 @@ public class OracleDriver {
         {"syncThrow", "5"},
         {"syncThrow", "0"},
         {"istoreVar_aiii", "0,0,0", "1", "7"},
+        // ANCHOR-L2-181: constant-null field access (both sides throw NPE --
+        // no-divergence check; the CONSTREFFIELD census lint is the proof)
+        {"nullFieldRead"},
+        {"nullFieldWrite", "7"},
         // ANCHOR-L2-171: pushed-operand-live-across-iinc (Properties.loadConvert)
         {"postIncrRead_aii", "10,20,30,40", "1"},
         {"postIncrLoop_aii", "10,20,30,40", "3"},

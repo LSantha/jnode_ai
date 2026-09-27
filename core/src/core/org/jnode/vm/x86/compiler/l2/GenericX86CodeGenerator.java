@@ -6949,6 +6949,32 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
 
     }
 
+    /**
+     * ANCHOR-L2-181: write a just-loaded constant-null field value into the
+     * quad's destination. A getfield destination may live in a register or a
+     * frame slot, and both must be written so the quad's contract ("the LHS is
+     * defined") holds even on a path where the null-trap load does not fault.
+     * {@code slotOffset} is 0 for the low half and 4 for the high half of a
+     * wide field.
+     */
+    private void writeConstNullFieldResult(GPR src, Variable dest, int slotOffset) {
+        if (dest.getAddressingMode() == REGISTER) {
+            if (slotOffset == 0) {
+                final GPR destr =
+                    (GPR) ((RegisterLocation) dest.getLocation()).getRegister();
+                os.writeMOV(BITS32, destr, src);
+            }
+            return;   // a single register cannot hold the high half
+        } else if (dest.getAddressingMode() == STACK) {
+            final int destd =
+                ((StackLocation) dest.getLocation()).getDisplacement() + slotOffset;
+            os.writeMOV(BITS32, X86Register.EBP, destd, src);
+        } else {
+            throw new IllegalArgumentException("Const-null field to "
+                + dest.getAddressingMode());
+        }
+    }
+
     @Override
     public void generateCodeFor(RefAssignQuad<T> quad) {
         checkLabel(quad.getAddress()); // ANCHOR-L2-00C: position this quad's label
@@ -6975,6 +7001,23 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
             }
             os.writeMOV_Const(SR1, ((IntConstant) refOp).getValue());
             os.writeMOV(BITS32, SR1, SR1, fieldOffset);
+            // ANCHOR-L2-181: the load above faults, but the quad's
+            // DESTINATION must still be written. It was not: the loaded value
+            // was discarded and the method returned whatever happened to be in
+            // the result slot -- an undefined value on any path where the trap
+            // does not fire. Reproducer: `return ((Holder) null).f;`, which
+            // javac compiles to `aconst_null; getfield f:I`; L2Dump of the old
+            // emission was `mov eax,0; mov eax,[eax]` followed by
+            // `mov eax,dword esi` -- reading a slot this method never wrote.
+            // Write the destination the same way the normal path below does.
+            if (fieldRef.isWide()) {
+                final GPR sr2 = SR1 == X86Register.EAX ? X86Register.EBX : X86Register.EAX;
+                os.writePUSH(sr2);
+                os.writeMOV(BITS32, sr2, SR1, fieldOffset + 4);
+                writeConstNullFieldResult(sr2, dest, 4);
+                os.writePOP(sr2);
+            }
+            writeConstNullFieldResult(SR1, dest, 0);
             return;
         }
         Variable ref = (Variable) quad.getRef();
@@ -7257,8 +7300,50 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
             if (!(ref instanceof IntConstant)) {
                 throw new IllegalArgumentException("Non-null constant ref: " + ref);
             }
+            // ANCHOR-L2-181: this arm used to LOAD from the null address and
+            // return, so a putfield stored nothing at all and the value
+            // operand was silently dropped. Reproducer:
+            // `((Holder) null).f = v;`, which javac compiles to
+            // `aconst_null; putfield f:I`; L2Dump of the old emission was
+            // `mov eax,0; mov eax,[eax]` then a jump to the footer. Emit the
+            // store the quad actually means. It still faults at [0+offset]
+            // under the null-trap model, so behaviour is unchanged where the
+            // trap fires -- but the quad is now correct where it would not.
             os.writeMOV_Const(SR1, ((IntConstant) ref).getValue());
-            os.writeMOV(BITS32, SR1, SR1, offset);
+            // SR1 now holds the null base; the store forms below are the same
+            // ones the normal path uses, with SR1 preloaded instead of a
+            // ref register. Note writeMOV(size, base, disp, src) is a STORE.
+            final int vsize = wide ? X86Constants.BITS64 : X86Constants.BITS32;
+            if (val.getAddressingMode() == CONSTANT) {
+                os.writeMOV_Const(constBits32(val), SR1, offset,
+                    constBits32(val));
+            } else if (val.getAddressingMode() == REGISTER) {
+                final GPR valr = (GPR) ((RegisterLocation)
+                    ((Variable) val).getLocation()).getRegister();
+                if (valr == SR1) {
+                    // the value IS the base: stage it through a pushed scratch
+                    final GPR sr2 = SR1 == X86Register.EAX
+                        ? X86Register.EBX : X86Register.EAX;
+                    os.writePUSH(sr2);
+                    os.writeMOV(vsize, sr2, SR1);
+                    os.writeMOV(vsize, SR1, offset, sr2);
+                    os.writePOP(sr2);
+                } else {
+                    os.writeMOV(vsize, SR1, offset, valr);
+                }
+            } else if (val.getAddressingMode() == STACK) {
+                final int vald = ((StackLocation)
+                    ((Variable) val).getLocation()).getDisplacement();
+                final GPR sr2 = SR1 == X86Register.EAX
+                    ? X86Register.EBX : X86Register.EAX;
+                os.writePUSH(sr2);
+                os.writeMOV(BITS32, sr2, X86Register.EBP, vald);
+                os.writeMOV(vsize, SR1, offset, sr2);
+                os.writePOP(sr2);
+            } else {
+                throw new IllegalArgumentException("Const-null putfield of "
+                    + val.getAddressingMode());
+            }
             return;
         }
 

@@ -175,6 +175,31 @@ public class Probes {
         return a[i - 2] * 100 + a[i - 1];
     }
 
+    /** ANCHOR-L2-181: holder for the constant-null field probes. */
+    public static class NField {
+        public int f;
+    }
+
+    /**
+     * ANCHOR-L2-181: getfield through a CONSTANT null receiver. javac emits
+     * `aconst_null; getfield f:I` for this -- the only way to reach L2's
+     * constant-ref arm, which used to load the field, DISCARD it and leave the
+     * destination unwritten (so the method returned an undefined slot). Kept
+     * here so the shape stays REACHABLE: the corpus census never contained it,
+     * which is exactly why the defect survived. Both host and guest throw
+     * NullPointerException, so the row is a no-divergence check, not a value
+     * check; the structural proof is the CONSTREFFIELD lint.
+     */
+    public static int nullFieldRead() {
+        return ((NField) null).f;
+    }
+
+    /** ANCHOR-L2-181: putfield twin -- the old arm emitted a LOAD and dropped
+     * the store entirely. */
+    public static void nullFieldWrite(int v) {
+        ((NField) null).f = v;
+    }
+
     public static int sumA_aji(int[] a) {
         int s = 0;
         for (int i = 0; i < a.length; i++) {
