@@ -56,7 +56,11 @@ public class PropsForce {
         System.out.println("forced " + n + " of " + ms.length + " methods of " + cls);
     }
 
+    /** null when equal, otherwise a description. */
     static String bad(String what, Object got, Object want) {
+        if (got == null ? want == null : got.equals(want)) {
+            return null;
+        }
         return "MISMATCH " + what + ": got <" + got + "> want <" + want + ">";
     }
 
@@ -97,7 +101,7 @@ public class PropsForce {
         if ((r = bad("esc", p.getProperty("esc"), "a:b=c")) != null) {
             return r;
         }
-        if ((r = bad("uni", p.getProperty("uni"), "h\xe9llo")) != null) {
+        if ((r = bad("uni", p.getProperty("uni"), "h\u00e9llo")) != null) {
             return r;
         }
         if ((r = bad("spaced key", p.getProperty("spaced key"), "has space")) != null) {
@@ -130,6 +134,104 @@ public class PropsForce {
         return "OK";
     }
 
+
+    /**
+     * Dump the L2 disassembly of one method of any class. Reuses the same
+     * loader.disassemble path OracleDriver uses, but takes the class as an
+     * argument so a classlib method (not just a Probes method) can be read.
+     * Usage: java PropsForce disasm <fqcn> <method> <outfile>
+     */
+    static void disasm(String cls, String method, String outPath) throws Exception {
+        Class<?> vmTypeClz = Class.forName("org.jnode.vm.classmgr.VmType");
+        Class<?> vmMethodClz = Class.forName("org.jnode.vm.classmgr.VmMethod");
+        // NB: the parameter type is java.lang.Class, not the target class --
+        // getting that wrong is a NoSuchMethodException on fromClass.
+        Object type = vmTypeClz.getMethod("fromClass", Class.class).invoke(null,
+            Class.forName(cls));
+        int n = ((Integer) vmTypeClz.getMethod("getNoDeclaredMethods").invoke(type)).intValue();
+        Object target = null;
+        Method getNameM = null;
+        for (int i = 0; i < n && target == null; i++) {
+            Object m = vmTypeClz.getMethod("getDeclaredMethod", int.class).invoke(type,
+                Integer.valueOf(i));
+            if (getNameM == null) {
+                getNameM = m.getClass().getMethod("getName");
+                getNameM.setAccessible(true);
+            }
+            if (method.equals(getNameM.invoke(m))) {
+                target = m;
+            }
+        }
+        if (target == null) {
+            System.out.println("disasm: no such method " + cls + "." + method);
+            return;
+        }
+        Object loader = vmTypeClz.getMethod("getLoader").invoke(type);
+        java.io.PrintWriter out = new java.io.PrintWriter(new java.io.FileWriter(outPath), true);
+        try {
+            loader.getClass().getMethod("disassemble", vmMethodClz, int.class, boolean.class,
+                java.io.Writer.class).invoke(loader, target, Integer.valueOf(0), Boolean.TRUE,
+                out);
+        } finally {
+            out.close();
+        }
+        System.out.println("disasm written " + outPath);
+    }
+
+
+    /** Print every declared method name, so subsets can be chosen for bisect. */
+    static void listMethods(String cls) throws Exception {
+        Method[] ms = Class.forName(cls).getDeclaredMethods();
+        StringBuilder sb = new StringBuilder();
+        for (int i = 0; i < ms.length; i++) {
+            if (i > 0) {
+                sb.append(',');
+            }
+            sb.append(ms[i].getName());
+        }
+        System.out.println("METHODS|" + cls + "|" + ms.length + "|" + sb);
+    }
+
+
+    /**
+     * What does a miscompiled loadConvert actually DO to the map? Prints the
+     * raw state so "nothing stored" can be told apart from "stored a
+     * non-String" and from "stored, but getProperty cannot read it".
+     * Usage: java PropsForce diag [fqcn method]
+     */
+    static void diag(String cls, String method) throws Exception {
+        if (cls != null) {
+            System.out.println("forced " + force(cls, method) + " " + cls + "." + method);
+        }
+        String src = "key1=value1\nkey2=two\nesc=a\\:b\nempty=\n";
+        Properties p = new Properties();
+        try {
+            p.load(new ByteArrayInputStream(src.getBytes("ISO-8859-1")));
+        } catch (Throwable t) {
+            System.out.println("DIAG|load threw " + t.getClass().getName() + ": " + t.getMessage());
+            return;
+        }
+        System.out.println("DIAG|size=" + p.size() + " class=" + p.getClass().getName());
+        java.util.Iterator<?> it = p.keySet().iterator();
+        while (it.hasNext()) {
+            Object k = it.next();
+            Object v = p.get(k);
+            System.out.println("DIAG|entry key=" + k + " (" + k.getClass().getName() + ")"
+                + " value=" + v + " (" + (v == null ? "null" : v.getClass().getName()) + ")");
+        }
+        Object raw = p.get("key1");
+        System.out.println("DIAG|get(key1)=" + raw + " isString="
+            + (raw instanceof String));
+        System.out.println("DIAG|getProperty(key1)=" + p.getProperty("key1"));
+        if (p.size() == 0) {
+            System.out.println("DIAG|VERDICT nothing was stored");
+        } else if (raw != null && !(raw instanceof String)) {
+            System.out.println("DIAG|VERDICT stored a non-String value");
+        } else {
+            System.out.println("DIAG|VERDICT stored but getProperty cannot read it");
+        }
+    }
+
     public static void main(String[] args) {
         String mode = args.length > 0 ? args[0] : "noforce";
         try {
@@ -140,6 +242,25 @@ public class PropsForce {
             } else if (mode.equals("forceone") && args.length > 2) {
                 System.out.println("forced " + force(args[1], args[2]) + " " + args[1] + "."
                     + args[2]);
+            } else if (mode.equals("disasm") && args.length > 2) {
+                disasm(args[1], args[2], args[3]);
+            } else if (mode.equals("diag")) {
+                diag(args.length > 1 ? args[1] : null, args.length > 2 ? args[2] : null);
+                return;
+            } else if (mode.equals("list") && args.length > 1) {
+                listMethods(args[1]);
+                return;
+            } else if (mode.equals("forcenames") && args.length > 2) {
+                String[] names = args[2].split(",");
+                int ok = 0;
+                for (int i = 0; i < names.length; i++) {
+                    int got = force(args[1], names[i]);
+                    System.out.println("  " + names[i] + "=" + got);
+                    if (got > 0) {
+                        ok++;
+                    }
+                }
+                System.out.println("forced " + ok + " of " + names.length);
             }
             System.out.println("RESULT|" + mode + "|" + selfCheck());
         } catch (Throwable t) {

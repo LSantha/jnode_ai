@@ -35,7 +35,7 @@ post-deSSA on every method, so structural SSA regressions are corpus-wide.
 
 | # | Sev | Defect | Status | Guard today |
 |---|---|---|---|---|
-| NEW-1 | P1 | `AcuniaPropertiesTest` passes unforced (54 checks), throws under force: `StringIndexOutOfBoundsException: String index out of range: 847332096` -- 0x32814300 is a JNode heap ADDRESS reaching an int index, so a pointer is flowing into a string index parameter. Found by the first-ever mauve v2 sweep; reproduced 2/2 in isolation. Narrow census: all 2,918 `java/util` methods compile + SSA-verify clean, so this is a value-level miscompile in classlib `java.util.Properties` (GNU Classpath, inside classlib.jar), invisible to structural gates | **reproducible value-level failure**, no guard yet. `tests/l2oracle/PropsForce.java` is a self-checking bisect driver (noforce / forceprops / forcereader / forceone) staged on the ISO; bisect blocked by a stale `serial_mux.py` from worktree `jnode_ai_2` sharing the VM and command FIFO | 
+| NEW-1 | P0 | **`a[i++]` reads the incremented index.** `AcuniaPropertiesTest` (mauve v2) passes unforced, throws under force with `StringIndexOutOfBoundsException: index 847332096` (0x32814300 = a JNode heap ADDRESS). Bisected to the single method `java.util.Properties.loadConvert` (forcing is sticky per boot, so each bisect step needs a fresh boot): every parsed key/value loses its FIRST character -- `key1` -> NUL+"ey1", `value1` -> NUL+"alue1". Mechanism: `a[i++]` is `aload a; iload i; iinc i,1; iaload`, index pushed BEFORE the iinc. A live local's home is its INDEX (`getEbpOffset`) and SSA clones copy their original's `Location`, so every version cloned from an ARGUMENT inherits the argument's one fixed frame home (arguments are never register-allocated). When the older version is still live at the redefinition, the definition clobbers it: L2 emits `qb_13: add dword[ebp-20],1` then `qb_14: mov ecx,dword[ebp-20]`. The SSA IR is CORRECT at both `--pre` and `--ir`, which is why no structural gate saw it. de-SSA lowers phis only and `setSpilledVariables` de-aliases only SPILLED variables, so nothing splits an argument slot | **GUARDED (value-level, red proof)**: `postIncrRead_aii` host `I:32`=50 vs guest `I:46`=70; `postIncrStore_aiii` host `I:2c4`=708 vs guest `I:7`=7. Plus `PropsForce` self-check (noforce OK / forced broken) and the live mauve v2 testlet. **NOT FIXED** -- the fix is to stop a clone inheriting an argument's fixed home while the old version is live (needs a de-SSA home split, and the last version must keep the JVM slot for deopt) |
 | B1 | P1 | handler-entry phi never written on the exceptional dispatch for **non-self-edge** handlers (ordinary try/catch) | **OPEN, and still uninstrumented** (L2-159 covers the self-edge shape) | verifier carves it out (invariant 3). A structural census lint was attempted and REMOVED: it could not identify handler blocks reliably (the flag is not set on the blocks that hold the phis, and post-fixup startPCs do not match the exception table), so it examined 0 phis -- a blind instrument is worse than none. The way in is a value-level probe: an ordinary try/catch whose handler reads a try-modified local, run through the oracle. The existing try/catch probes pass, which is weak evidence the common shapes are fine. |
 | B2 | P1 | synthetic critical-edge blocks appended at layout end -> inverted live intervals -> register aliasing at the join (the `allocObject` #PF CR2=8) | **OPEN** (naive fix tried and reverted) | `interferesWith` never checked against execution order (invariant 4) |
 | B3 | P2/P3 | smaller construction items (report 2.4) | **OPEN**, unitemised | none |
@@ -127,6 +127,19 @@ classlib); its tools were throw-away and are not in the tree, but
 - mauve `Class.*` force-only diffs: cross-testlet state; isolated runs are
   identical (noforce 14/1, force `force=9` 14/1).
 - M3 float-const CCE / FREM arm: not reproducible on this branch.
+- NEW-1 root cause (L2-171): argument-slot versions share one frame home;
+  `a[i++]` reads the incremented index. Guard = value probes (red proof
+  50 vs 70). Two structural lints were tried and BOTH removed: INDEXALIAS
+  reported 0 (after de-SSA there is one Variable object per index, so no
+  distinct pair exists), and ARGSPLIT reported 7 -- the 2 reproducers plus
+  5 known-good methods the oracle passes daily (tryFinally, syncThrow,
+  loopLongTryFinally, sync_add, finallyThrowsLong), because its
+  address-interval test ignores block structure. Do not re-add either
+  without fixing the false positives first.
+- Tooling gap found while doing the above: `regress.sh`'s ORACLE DIFF does
+  not report rows present in the host reference but MISSING from the guest.
+  Three loop-probe rows vanished from the guest and the diff still read
+  clean; only the value comparison caught it. A missing row is a failure.
 - A6 FREM-constant-left "FSUB on an empty stack": all six arms use FPREM
   in the right order, and 14 FP oracle rows (add/sub/mul/div/rem, constant
   left and right) match the host bit-for-bit under L2 force. The claim was
