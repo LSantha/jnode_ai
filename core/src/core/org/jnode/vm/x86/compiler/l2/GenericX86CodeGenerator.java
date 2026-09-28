@@ -7000,20 +7000,29 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
      * quad's destination. A getfield destination may live in a register or a
      * frame slot, and both must be written so the quad's contract ("the LHS is
      * defined") holds even on a path where the null-trap load does not fault.
-     * {@code slotOffset} is 0 for the low half and 4 for the high half of a
-     * wide field.
+     * <p/>
+     * {@code delta} is added to the destination's displacement. It is 0 for a
+     * narrow field and for the HIGH half of a wide field, and
+     * {@code -SLOTSIZE} for the LOW half: this frame uses the high-base spill
+     * convention (ANCHOR-L2-075/082 -- "spill halves [d-SLOT]=LSB"), so the
+     * location's displacement is the address of the MSB, not of the value's
+     * first word. ANCHOR-L2-186: the first cut used +4 for the high half,
+     * which put it at {@code [EBP+0]} (the saved frame pointer) and was caught
+     * by {@code X86BinaryAssembler.testDst} during the bootimage AOT compile.
      */
-    private void writeConstNullFieldResult(GPR src, Variable dest, int slotOffset) {
+    private void writeConstNullFieldResult(GPR src, Variable dest, int delta) {
         if (dest.getAddressingMode() == REGISTER) {
-            if (slotOffset == 0) {
-                final GPR destr =
-                    (GPR) ((RegisterLocation) dest.getLocation()).getRegister();
-                os.writeMOV(BITS32, destr, src);
+            if (delta != 0) {
+                // Wide values always spill; the normal path throws here too.
+                throw new IllegalArgumentException("Wide const-null field to "
+                    + dest.getAddressingMode());
             }
-            return;   // a single register cannot hold the high half
+            final GPR destr =
+                (GPR) ((RegisterLocation) dest.getLocation()).getRegister();
+            os.writeMOV(BITS32, destr, src);
         } else if (dest.getAddressingMode() == STACK) {
             final int destd =
-                ((StackLocation) dest.getLocation()).getDisplacement() + slotOffset;
+                ((StackLocation) dest.getLocation()).getDisplacement() + delta;
             os.writeMOV(BITS32, X86Register.EBP, destd, src);
         } else {
             throw new IllegalArgumentException("Const-null field to "
@@ -7046,8 +7055,7 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
                 throw new IllegalArgumentException("Non-null constant ref: " + refOp);
             }
             os.writeMOV_Const(SR1, ((IntConstant) refOp).getValue());
-            os.writeMOV(BITS32, SR1, SR1, fieldOffset);
-            // ANCHOR-L2-181: the load above faults, but the quad's
+            // ANCHOR-L2-181: the load below faults, but the quad's
             // DESTINATION must still be written. It was not: the loaded value
             // was discarded and the method returned whatever happened to be in
             // the result slot -- an undefined value on any path where the trap
@@ -7056,14 +7064,24 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
             // emission was `mov eax,0; mov eax,[eax]` followed by
             // `mov eax,dword esi` -- reading a slot this method never wrote.
             // Write the destination the same way the normal path below does.
+            //
+            // ANCHOR-L2-186: the HIGH half must be read while SR1 still holds
+            // the BASE. The first cut emitted the low load first and then read
+            // `[SR1 + fieldOffset + 4]`, i.e. it indexed off the value just
+            // loaded instead of off null -- `mov eax,[eax+8]; mov ebx,[eax+12]`
+            // for a long at offset 8. Reachable only where the null trap does
+            // not fire, but it is the same defect A8 was: an address computed
+            // from the wrong register, with no diagnostic.
             if (fieldRef.isWide()) {
                 final GPR sr2 = SR1 == X86Register.EAX ? X86Register.EBX : X86Register.EAX;
                 os.writePUSH(sr2);
                 os.writeMOV(BITS32, sr2, SR1, fieldOffset + 4);
-                writeConstNullFieldResult(sr2, dest, 4);
+                writeConstNullFieldResult(sr2, dest, 0);
                 os.writePOP(sr2);
             }
-            writeConstNullFieldResult(SR1, dest, 0);
+            os.writeMOV(BITS32, SR1, SR1, fieldOffset);
+            writeConstNullFieldResult(SR1, dest,
+                fieldRef.isWide() ? -stackFrame.getHelper().SLOTSIZE : 0);
             return;
         }
         Variable ref = (Variable) quad.getRef();
@@ -7361,8 +7379,42 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
             // ref register. Note writeMOV(size, base, disp, src) is a STORE.
             final int vsize = wide ? X86Constants.BITS64 : X86Constants.BITS32;
             if (val.getAddressingMode() == CONSTANT) {
-                os.writeMOV_Const(constBits32(val), SR1, offset,
-                    constBits32(val));
+                // ANCHOR-L2-186: this branch passed constBits32(val) as the
+                // OPERAND SIZE of writeMOV_Const(size, base, disp, imm), i.e.
+                // it stored the value where the size belongs. Measured with
+                // L2Dump on t.NullPutConst, all four shapes failed to compile:
+                //   ((NField) null).f = 5   -> IllegalArgumentException
+                //                               Invalid operand size 5
+                //   ((NField) null).o = null-> IllegalArgumentException
+                //                               Invalid operand size 0
+                //   ((NField) null).g = 7L  -> ClassCastException LongConstant
+                //   ((NField) null).d = 1.5 -> ClassCastException DoubleConstant
+                // i.e. EVERY constant-valued null-base putfield emitted no code
+                // at all, which is worse than the A8 behaviour this arm was
+                // written to fix. The guarded probe took an int PARAMETER, so
+                // it exercised the REGISTER/STACK arms and never this one.
+                // The sizes below mirror the normal path (Z/B -> 8, S/C -> 16,
+                // I/F -> 32, J/D -> two 32-bit halves).
+                if (wide) {
+                    final long bits;
+                    if (val instanceof LongConstant) {
+                        bits = ((LongConstant) val).getValue();
+                    } else if (val instanceof DoubleConstant) {
+                        bits = Double.doubleToRawLongBits(((DoubleConstant) val).getValue());
+                    } else {
+                        throw new IllegalArgumentException(
+                            "Wide const-null putfield of " + val);
+                    }
+                    os.writeMOV_Const(BITS32, SR1, offset, (int) (bits & 0xFFFFFFFFL));
+                    os.writeMOV_Const(BITS32, SR1, offset + 4,
+                        (int) ((bits >>> 32) & 0xFFFFFFFFL));
+                } else {
+                    final char ft = field.getSignature().charAt(0);
+                    final int csize = (ft == 'Z' || ft == 'B') ? X86Constants.BITS8
+                        : (ft == 'S' || ft == 'C') ? X86Constants.BITS16
+                        : X86Constants.BITS32;
+                    os.writeMOV_Const(csize, SR1, offset, constBits32(val));
+                }
             } else if (val.getAddressingMode() == REGISTER) {
                 final GPR valr = (GPR) ((RegisterLocation)
                     ((Variable) val).getLocation()).getRegister();

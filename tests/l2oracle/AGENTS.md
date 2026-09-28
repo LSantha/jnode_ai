@@ -332,6 +332,29 @@ incidental fix in 097-103. Regression-guarded by `CASES` now.
 - **Deferred**: virtual/interface dispatch ECX frames (SP-math shapes), jsr runtime probe (needs hand-built bytecode), `FREM`/`DREM` non-SSS shapes, 64-bit (CG-5).
 - **`regress.sh` phase bodies are single-quoted** (`run census sh -c ' ... '"$LABEL"' ... '`): an apostrophe anywhere in a comment or echo inside a phase ends the string and the script dies at parse time with a confusing `Syntax error: ")" unexpected (expecting "fi")` pointing at the next `)`. Reword (`allocator's` -> `the picture the allocator builds`), never re-quote. Check with `sh -n tests/l2oracle/regress.sh` before a gate run.
 
+- **A check that cannot fail looks exactly like a check that found nothing** (two
+  measured instances, ANCHOR-L2-187). (1) The probe census ran `"$HJ"` inside
+  `sh -c`, where `HJ` and `LABEL` are plain script variables and therefore
+  *unset*, so the census never started, its stderr went to `/dev/null`, the report
+  file was never written, and the awk counting its FAILED section then read a file
+  that did not exist -- which is 0. It printed `constreffield=0 failed=0` on every
+  run, including the runs cited as the A8 and C6 guards. (2) `t0`/`t3`/`t1` ended
+  on `| tail -n 3`, so the status `run` saw was tail's and those three verdicts
+  could never be FAIL: measured, `t1` printed `Tests run: 40, Failures: 1` on a
+  PASS line (the failure was caught only by `alljunit`). So: when a check is
+  green, ask what it reads and from where; **prove it goes red on a known bad
+  tree before trusting it.** A report written to a file must be read from that
+  file, and every variable a `sh -c` body needs must be interpolated from the
+  outer shell (`'"$HJ"'`) or exported.
+- **T1/T3 run `X86TextAssembler`, which does not run `X86BinaryAssembler.testDst`
+  (and no other binary validation).** An emission T1 accepts can still be
+  rejected when the same method is AOT-compiled into the bootimage -- the
+  L2-186 wide-getfield half was caught exactly there
+  (`IllegalArgumentException: Write to [EBP+0]`), and `sh tests/l2oracle/regress.sh
+  … build` AOT-compiles *every* core class, so the `build` phase is a real
+  emission-validity guard and not just a prerequisite. If a fix only touches
+  emission, the `build` verdict matters as much as `t1`.
+
 ## Adding probes
 
 Add a static to `Probes.java` (try/catch/finally supported since 104 — see `tryCatchDiv`, `tryCatchOob`, `tryFinally`; no objects in signatures keeps reflection simple) + a `{name, args...}` row in `OracleDriver.CASES`. Re-run host ref + `run_oracle.sh`.

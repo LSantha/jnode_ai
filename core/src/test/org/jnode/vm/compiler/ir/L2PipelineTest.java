@@ -1233,6 +1233,51 @@ public class L2PipelineTest {
         assertTrue("float-const putstatic never stored the value: " + text, stored);
     }
 
+    /**
+     * ANCHOR-L2-186: a CONSTANT-null receiver with a CONSTANT value, and the
+     * wide halves of both directions.
+     * <p/>
+     * Two independent defects, both measured with L2Dump on
+     * `t.NullPutConst` before the fix:
+     * <ol>
+     * <li>RefStoreQuad's constant-null arm called
+     * {@code writeMOV_Const(constBits32(val), SR1, offset, constBits32(val))},
+     * putting the VALUE where the OPERAND SIZE belongs, so every constant-valued
+     * null-base putfield threw during codegen and emitted nothing: int
+     * (`Invalid operand size 5`), reference (`Invalid operand size 0`),
+     * long/double (`ClassCastException LongConstant/DoubleConstant`).</li>
+     * <li>RefAssignQuad's constant-null arm read the high half AFTER SR1 had
+     * been overwritten by the low load, so `[SR1 + fieldOffset + 4]` indexed
+     * off the value rather than off null.</li>
+     * </ol>
+     */
+    @Test
+    public void testNullConstFieldStores() throws Exception {
+        String text = compileToText(findMethod("nullPutIntConst"));
+        assertTrue("narrow const null-putfield did not store its value: " + text,
+            text.matches("(?s).*mov\\s+dword\\[eax(?:\\+\\d+)?\\],0x00000005.*"));
+
+        String wide = compileToText(findMethod("nullPutWideConst"));
+        assertTrue("wide const null-putfield low half missing: " + wide,
+            wide.matches("(?s).*mov\\s+dword\\[eax(?:\\+\\d+)?\\],0x00000007.*"));
+        assertTrue("wide const null-putfield high half missing: " + wide,
+            wide.matches("(?s).*mov\\s+dword\\[eax(?:\\+\\d+)?\\],0x00000000.*"));
+
+        // The high half must be read while SR1 still holds the BASE, i.e. the
+        // larger of the two displacements comes first. Pre-fix the low load
+        // ran first and the high read indexed off the value it produced.
+        String get = compileToText(findMethod("nullGetWideConst"));
+        java.util.regex.Matcher m = java.util.regex.Pattern
+            .compile("mov\\s+\\w+,dword\\[eax\\+(\\d+)\\]").matcher(get);
+        assertTrue("wide const null-getfield never read off the base: " + get, m.find());
+        int first = Integer.parseInt(m.group(1));
+        assertTrue("wide const null-getfield never read the high half: " + get, m.find());
+        int second = Integer.parseInt(m.group(1));
+        assertTrue("wide const null-getfield read the high half AFTER clobbering "
+            + "the base register (offsets " + first + "/" + second + "): " + get,
+            first == second + 4);
+    }
+
     /** Minimal concrete Variable for synthetic-quad emission tests. */
     private static final class TypedVar extends StackVariable {
         TypedVar(int type) {

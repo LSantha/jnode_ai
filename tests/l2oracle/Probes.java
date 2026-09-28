@@ -178,6 +178,8 @@ public class Probes {
     /** ANCHOR-L2-181: holder for the constant-null field probes. */
     public static class NField {
         public int f;
+        public long g;
+        public Object o;
     }
 
     /**
@@ -195,10 +197,44 @@ public class Probes {
     }
 
     /** ANCHOR-L2-181: putfield twin -- the old arm emitted a LOAD and dropped
-     * the store entirely. */
+     the store entirely. */
     public static void nullFieldWrite(int v) {
         ((NField) null).f = v;
     }
+
+    /**
+     * ANCHOR-L2-186: the CONSTANT-value arm of the constant-null putfield.
+     * `((NField) null).f = 5` makes the value operand a CONSTANT, which the
+     * first L2-181 cut passed to writeMOV_Const where the OPERAND SIZE
+     * belongs, so the method threw `Invalid operand size 5` in codegen and
+     * emitted nothing. The int-parameter probe above cannot reach this arm.
+     * Guard: the probe census compiles every method of this class and
+     * requires FAILED==0, so reverting the fix turns these four methods into
+     * four failures (as C6's reproducer does). No oracle row: both sides
+     * throw NullPointerException, so a value row would not separate them.
+     */
+    public static void nullFieldWriteConst() {
+        ((NField) null).f = 5;
+    }
+
+    /** ANCHOR-L2-186: long constant -- reached ClassCastException on
+     * LongConstant before the fix. */
+    public static void nullFieldWriteWideConst() {
+        ((NField) null).g = 7L;
+    }
+
+    /** ANCHOR-L2-186: reference constant (aconst_null value) -- reached
+     * `Invalid operand size 0` before the fix. */
+    public static void nullFieldWriteRefConst() {
+        ((NField) null).o = null;
+    }
+
+    /** ANCHOR-L2-186: wide GETFIELD -- the high half used to be read after
+     * the base register had been overwritten by the low load. */
+    public static long nullFieldReadWide() {
+        return ((NField) null).g;
+    }
+
 
     /**
      * ANCHOR-L2-182: C6 reproducer. `Address.attempt(int, int, Offset)` is a

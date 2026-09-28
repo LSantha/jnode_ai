@@ -1107,6 +1107,39 @@ public class PrimitiveTest {
     }
 
     /**
+     * ANCHOR-L2-186: a CONSTANT-null receiver with a CONSTANT value. javac
+     * emits `aconst_null; checkcast; iconst_5; putfield`, which reaches the
+     * constant-null arm of RefStoreQuad with a CONSTANT value operand. The
+     * first L2-181 cut passed that value to writeMOV_Const where the OPERAND
+     * SIZE belongs, so every one of these four shapes failed to compile
+     * (`Invalid operand size 5` / `Invalid operand size 0` /
+     * `ClassCastException LongConstant`) and emitted no code at all. The
+     * guarded probe took an int parameter, so it exercised only the
+     * REGISTER/STACK arms of that arm.
+     */
+    public static class NullHolder {
+        public int f;
+        public long g;
+    }
+
+    public static void nullPutIntConst() {
+        ((NullHolder) null).f = 5;
+    }
+
+    public static void nullPutWideConst() {
+        ((NullHolder) null).g = 7L;
+    }
+
+    /**
+     * ANCHOR-L2-186: the wide half of the constant-null GETFIELD used to be
+     * read AFTER SR1 had been overwritten with the low half, i.e. off the
+     * value instead of off null (`mov eax,[eax+8]; mov ebx,[eax+12]`).
+     */
+    public static long nullGetWideConst() {
+        return ((NullHolder) null).g;
+    }
+
+    /**
      * ANCHOR-L2-151: divide by a constant zero hidden behind a local.
      * Pre-fix copy propagation substituted the zero and the const/const
      * fold evaluated host division: L2 compilation died with

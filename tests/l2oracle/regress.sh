@@ -179,9 +179,22 @@ if want anchors; then
     javap -p -c -classpath core/build/classes org.jnode.vm.compiler.ir.IRControlFlowGraph | grep -q insertQuadAt || { echo "ANCHOR insertQuadAt missing"; exit 1; }
     echo anchors-ok'
 fi
-want t0 && run t0 sh -c "$HJ -Djnode.root=. -cp $CP org.junit.runner.JUnitCore org.jnode.vm.compiler.ir.L2HostTest 2>&1 | tail -n 3"
-want t3 && run t3 sh -c "$HJ -Djnode.root=. -cp $CP org.junit.runner.JUnitCore org.jnode.vm.compiler.ir.L2ModeMatrixTest 2>&1 | tail -n 3"
-want t1 && run t1 sh -c "$HJ -Djnode.root=. -cp $CP org.junit.runner.JUnitCore org.jnode.vm.compiler.ir.L2PipelineTest 2>&1 | tail -n 3"
+# ANCHOR-L2-187: these three verdicts used to end on `| tail -n 3`, so the
+# status `run` saw was tail's (always 0) and t0/t3/t1 could never report FAIL.
+# Measured: with the L2-186 fix reverted, `t1` printed `Tests run: 40,
+# Failures: 1` on the PASS line. Capture first, keep java's exit status as the
+# verdict, and print the assertion lines instead of the tail of a stack trace
+# (tail -3 hides exactly the message you need).
+junit_phase() {
+  _out=$1; shift
+  "$HJ" -Djnode.root=. -cp "$CP" org.junit.runner.JUnitCore "$@" > "$_out" 2>&1
+  _rc=$?
+  grep -E "^(OK \(|Tests run:|There w|[0-9]+\) |java\.lang\.|junit\.)" "$_out" | tail -n 20
+  return $_rc
+}
+want t0 && run t0 junit_phase /tmp/l2-t0.out org.jnode.vm.compiler.ir.L2HostTest
+want t3 && run t3 junit_phase /tmp/l2-t3.out org.jnode.vm.compiler.ir.L2ModeMatrixTest
+want t1 && run t1 junit_phase /tmp/l2-t1.out org.jnode.vm.compiler.ir.L2PipelineTest
 want alljunit && run alljunit sh build.sh -f core/build-tests.xml all-junit
 if want census; then
   run census sh -c '
@@ -239,17 +252,33 @@ if want census; then
     if [ ! -f /tmp/probeclasses/Probes.class ]; then
       pc_missing=1
     else
-      "$HJ" -Djnode.root=. -cp '"$CP"' org.jnode.vm.compiler.ir.L2Census \
+      # ANCHOR-L2-187: this block read a variable the child sh never had.
+      # The phase body runs as `sh -c ...`, and HJ and LABEL are plain script
+      # variables (not exported), so `"$HJ"` expanded to nothing, the census
+      # never started, its stderr went to /dev/null, the report file was never
+      # written, and the awk below then counted the lines of a file that did
+      # not exist -- which is 0. Every run therefore printed
+      # `constreffield=0 failed=0` for a check that had not executed. That is
+      # the same failure as the ant `error:` gotcha: a check that cannot fail
+      # looks exactly like a check that found nothing. Both counts are now
+      # taken from files that must exist, and a missing report is a failure.
+      '"$HJ"' -Djnode.root=. -cp '"$CP"' org.jnode.vm.compiler.ir.L2Census \
         /tmp/probeclasses /tmp/census-probes-'"$LABEL"'.txt \
         core/lib/mmtk/mmtk.jar core/lib/log4j-1.2.8.jar \
         core/lib/junit-4.5.jar core/lib/jmock-1.0.1.jar \
-        > /tmp/census-probes-'"$LABEL"'.stdout 2>/dev/null
+        > /tmp/census-probes-'"$LABEL"'.stdout 2> /tmp/census-probes-'"$LABEL"'.stderr
+      if [ ! -s /tmp/census-probes-'"$LABEL"'.txt ]; then
+        echo "probe census wrote no report; last stderr lines:"
+        tail -n 5 /tmp/census-probes-'"$LABEL"'.stderr
+        pc_missing=1
+      fi
       cr=$(grep -c "^CONSTREFFIELD " /tmp/census-probes-'"$LABEL"'.stdout)
-      cf=$(awk "/^--- FAILED \(/{f=1;next} /^--- /{f=0} f" "/tmp/census-probes-$LABEL.txt" | wc -l)
+      cf=$(awk "/^--- FAILED \(/{f=1;next} /^--- /{f=0} f" "/tmp/census-probes-'"$LABEL"'.txt" | wc -l)
       echo "probe_census constreffield=$cr failed=${cf:-none}"
       if [ "$cr" -ne 0 ] || [ "${cf:-1}" -ne 0 ]; then
         pc_missing=1
         grep "^CONSTREFFIELD " /tmp/census-probes-'"$LABEL"'.stdout | head -n 5
+        awk "/^--- FAILED \(/{f=1;next} /^--- /{f=0} f" "/tmp/census-probes-'"$LABEL"'.txt" | head -n 8
       fi
     fi
     if [ "$pc_missing" -ne 0 ]; then

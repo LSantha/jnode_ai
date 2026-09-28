@@ -19,21 +19,46 @@ measured; nothing is aspirational. Where something is unproven it says so.
   last check (`git rev-list --count origin/L2-SpaceBunny..HEAD` → 0). I was instructed
   never to push without being asked and did not; pushes happened outside this session.
   Verify with `git rev-list --count origin/L2-SpaceBunny..HEAD` rather than assuming.
-- Uncommitted at the time of writing: `tests/l2oracle/baselines/boot-signatures.txt`
-  (the recorded L2 boot crash signatures, §5.6).
-- Host gates green at the last run: `build`, `anchors`, **T0 19/19, T3 19/19, T1 38/38,
-  all-junit green**, census `OK=11613 SKIP=1511 HANDLERS=524 FAILED=0 RANGEGAP=0`,
-  probe census `CONSTREFFIELD=0 FAILED=0`, all lints at 0.
+- Host gates green at the last run (`regress.sh --label l2186green host`):
+  `build` (the bootimage AOT compile of every core class), `anchors`,
+  **T0 19/19, T3 19/19, T1 40/40, all-junit 256/0**, census
+  `OK=11618 SKIP=1511 HANDLERS=524 FAILED=0 RANGEGAP=0`, probe census
+  `constreffield=0 failed=0`, all lints at 0. Live (`--label l2186live
+  isobuild oracle mauve 2`): oracle 196 rows = the 3 retired divergences,
+  **mauve v2 force-only DIFF empty** (base=52 forced=52).
+- **Two gate checks could not fail and were fixed (ANCHOR-L2-187).** The probe
+  census called `"$HJ"` inside `sh -c` where `HJ`/`LABEL` are unset, so it never
+  ran and then counted a report file that did not exist -- `constreffield=0
+  failed=0` was printed on *every* run, including the runs cited as the A8 and C6
+  guards. And `t0`/`t3`/`t1` ended on `| tail -n 3`, so their verdicts could never
+  be FAIL (measured: `t1` printed `Tests run: 40, Failures: 1` on a PASS line).
+  Both now fail when they should; the rule is in `tests/l2oracle/AGENTS.md`
+  ("a check that cannot fail looks exactly like a check that found nothing").
+- **T1/T3 use `X86TextAssembler`, which runs no binary validation** -- an emission
+  T1 accepts can still be rejected by `X86BinaryAssembler.testDst` when the same
+  method is AOT-compiled into the bootimage. Treat the `build` verdict as part of
+  the emission guard.
 - Census, wide corpus (must be chunked — see §7): **67,838 methods verified, FAILED=0 —
   clean for the first time.** It stood at `FAILED=2` until NEW-2 landed (§5.2).
 - Live oracle: 196 rows, only the 3 retired divergences. Mauve **v1–v4 CLEAN**; v5's only
   signal is the known benign `DoubleTest` (fails in the baseline, passes under L2).
-- **On-disk ISO is currently an L2-bootimage image** (`cd-x86-lite` was last run with
-  `-Djnode.compiler=L2`). Any oracle/mauve run must `isobuild` first — the default
-  `live`/`all` flows do, but a bare `oracle`/`mauve` does not.
+- **The on-disk ISO is whatever the last phase wrote** — an `isobuild` leaves the
+  L1A oracle image (currently the case, after `--label l2186live`), a host `build`
+  or a `boot` phase leaves an L2-bootimage image that panics. Never infer it from
+  the timestamp: read the `.artifact` stamp / the `ARTIFACT` status line, and run
+  `isobuild` before a bare `oracle`/`mauve`.
 - Landed since the previous handoff update (`a1a7e41c3`): **L2-181** (A8), **L2-182**
-  (C6), **L2-184** (A9, superseding the guard-only L2-183), **L2-185** (NEW-2), plus a
-  register-drift correction. All are in the authoritative queue with their red proofs.
+  (C6), **L2-184** (A9, superseding the guard-only L2-183), **L2-185** (NEW-2),
+  **L2-186** (A10), plus a register-drift correction. All are in the authoritative
+  queue with their red proofs.
+- **A10 / L2-186** was found by *constructing* the shapes the gates did not have:
+  `((H) null).<const field> = <const>` for int/long/double/reference and the wide
+  null-getfield. The A8 fix's CONSTANT arm passed the value as the operand size, so
+  every constant-valued null-base putfield failed to compile; the wide getfield read
+  its high half off the value instead of off null. Guard = 3 new `PrimitiveTest`
+  shapes (T1 `testNullConstFieldStores`) + 4 new `Probes` methods through the
+  repaired probe census. Red proof: T1 40/1 + alljunit 1 error + bootimage `build`
+  FAIL + probe census `failed=3`.
 
 ## 3. Regression methodology — where it lives
 
