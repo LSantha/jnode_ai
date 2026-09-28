@@ -85,6 +85,22 @@ public class IRControlFlowGraph<T> implements Iterable<IRBasicBlock<T>> {
      * popHandlerVersions). The exceptional edge's phi source.
      */
     private java.util.HashMap<IRBasicBlock<T>, Variable<T>[]> handlerEntryTops;
+    /**
+     * ANCHOR-L2-188 (B1): per (predecessor, handler) edge, the slot tops
+     * live at the FIRST throwing quad of that predecessor. This, not the
+     * pre-try top and not the end-of-block top, is the value the handler
+     * must observe: JVM locals are read as of the throw, so an in-try store
+     * that already executed is visible to the handler while one that has
+     * not executed is not. Either extreme is wrong somewhere -- pre-try
+     * loses every in-try store (guest oracle: b1HandlerPhi returns the
+     * pre-try 1 where 7 is required), end-of-block invents values the
+     * throw never reached. Any throw-point top is at least always WRITTEN
+     * on the path that reaches the throw, so it can never read a
+     * prolog-zeroed home (the ANCHOR-L2-125 failure this must not
+     * regress).
+     */
+    private java.util.IdentityHashMap<IRBasicBlock<T>,
+        java.util.HashMap<IRBasicBlock<T>, Variable<T>[]>> throwTops;
     private final IRBasicBlockFinder<T> finder;
     /**
      * Pre-fixup bytecode address per quad (104: exception tables). The
@@ -2466,6 +2482,14 @@ public class IRControlFlowGraph<T> implements Iterable<IRBasicBlock<T>> {
      */
     private void doRenameVariables(IRBasicBlock<T> block) {
         for (Quad<T> q : block.getQuads()) {
+            // ANCHOR-L2-188 (B1): snapshot the slot tops BEFORE the throwing
+            // quad is renamed (a throwing quad defines nothing itself, so
+            // this is the state the handler sees on that edge). First throw
+            // wins; see the field comment for why a throw point and not the
+            // block end.
+            if (!q.isDeadCode() && isCallLike(q)) {
+                snapshotThrowTops(block);
+            }
             // ANCHOR-L2-130: phi sources are FINAL SSA versions (appended by
             // rewritePhiParams per predecessor as each predecessor finishes
             // renaming). Re-applying the stack-top rewrite to them would
@@ -2529,6 +2553,48 @@ public class IRControlFlowGraph<T> implements Iterable<IRBasicBlock<T>> {
      * @param pred the predecessor being renamed (tags each source with the
      *        edge it arrived on, ANCHOR-L2-131)
      */
+    private void snapshotThrowTops(IRBasicBlock<T> block) {
+        final List<IRBasicBlock<T>> succs = block.getSuccessors();
+        if (succs == null || renumberArray == null) {
+            return;
+        }
+        for (IRBasicBlock<T> h : succs) {
+            if (h == null || !h.isStartOfExceptionHandler()) {
+                continue;
+            }
+            java.util.HashMap<IRBasicBlock<T>, Variable<T>[]> perPred =
+                (throwTops == null) ? null : throwTops.get(block);
+            if (perPred != null && perPred.get(h) != null) {
+                continue;   // first throwing quad already recorded
+            }
+            final int n = renumberArray.length;
+            Variable<T>[] tops = new Variable[n];
+            boolean any = false;
+            for (int i = 0; i < n; i += 1) {
+                if (renumberArray[i] != null) {
+                    tops[i] = renumberArray[i].peek();
+                    if (tops[i] != null) {
+                        any = true;
+                    }
+                }
+            }
+            if (!any) {
+                continue;
+            }
+            if (throwTops == null) {
+                throwTops = new java.util.IdentityHashMap<IRBasicBlock<T>,
+                    java.util.HashMap<IRBasicBlock<T>, Variable<T>[]>>();
+            }
+            perPred = throwTops.get(block);
+            if (perPred == null) {
+                perPred = new java.util.HashMap<IRBasicBlock<T>,
+                    Variable<T>[]>();
+                throwTops.put(block, perPred);
+            }
+            perPred.put(h, tops);
+        }
+    }
+
     private void rewritePhiParams(IRBasicBlock<T> succ, IRBasicBlock<T> pred) {
         if (succ == null) {
             return;
@@ -2543,6 +2609,30 @@ public class IRControlFlowGraph<T> implements Iterable<IRBasicBlock<T>> {
             }
             SSAStack<T> st = getStack(aq.getLHS());
             Variable<T> var = st.peek();
+            // ANCHOR-L2-188 (B1): the exceptional edge from a real
+            // predecessor (not the handler's self-edge) takes the version
+            // live at that predecessor's throw, not the end-of-block
+            // version st.peek() gives. End-of-block versions are defined
+            // AFTER the throwing instruction, so their homes are never
+            // written on the dispatch, and -- because the phi then never
+            // references the pre-throw store -- constant propagation folds
+            // and DCE deletes the store the handler is supposed to read
+            // (guest: b1HandlerPhi `x = 7` before the idiv vanished).
+            if (pred != succ && succ.isStartOfExceptionHandler()
+                && throwTops != null) {
+                java.util.HashMap<IRBasicBlock<T>, Variable<T>[]> perPred =
+                    throwTops.get(pred);
+                if (perPred != null) {
+                    Variable<T>[] tops = perPred.get(succ);
+                    if (tops != null) {
+                        final int idx = aq.getLHS().getIndex();
+                        if (idx >= 0 && idx < tops.length
+                            && tops[idx] != null) {
+                            var = tops[idx];
+                        }
+                    }
+                }
+            }
             // ANCHOR-L2-159 (Wave C): a handler-entry phi rewritten from
             // the handler's OWN edge (the exceptional dispatch is modeled
             // as a self-tagged source) would take a version the handler

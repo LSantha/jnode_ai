@@ -17,11 +17,10 @@
  */
 
 /**
- * L2 oracle probes. CONSTRAINT: no try/catch/finally — L2 drops
- * exception-handler tables silently, so only straight-line behavior is
- * exercised; throwing (idiv/lrem by zero, iaastore bounds) is fine but
- * catching is not tested. All methods are stateless statics; forcing
- * compiles the whole class.
+ * L2 oracle probes. All methods are stateless statics; forcing compiles the
+ * whole class. (The old header claimed L2 dropped handler tables and that
+ * catching was therefore untested -- stale: try/catch probes have been in
+ * CASES since L2-147/148 and agree between host and forced-L2.)
  */
 import org.vmmagic.unboxed.Address;
 import org.vmmagic.unboxed.Offset;
@@ -405,6 +404,34 @@ public class Probes {
             return v;
         }
         return v;
+    }
+
+    // B1: an ordinary try/catch whose handler reads a local MODIFIED in the
+    // try block, reached from TWO different exceptional edges, so the handler
+    // entry carries a phi with more than one source. Every existing try/catch
+    // probe reaches its handler from a single block, where a missing write on
+    // the exceptional edge is invisible (the only value there is the one you
+    // would have had anyway) -- which is exactly why B1 stayed open while the
+    // try/catch probes were green. Discriminating power: the two edges carry
+    // DIFFERENT values (7 vs 9), so a handler that keeps sources.get(0) for
+    // both returns 7 where 9 is required.
+    public static int b1HandlerPhi(int a) {
+        int x = 1;
+        try {
+            if (a == 0) {
+                x = 7;
+                int q = 10 / a;            // ArithmeticException
+                x = x + q;
+            } else {
+                x = 9;
+                int[] arr = new int[2];
+                int r = arr[a + 5];        // ArrayIndexOutOfBoundsException
+                x = x + r;
+            }
+        } catch (RuntimeException e) {
+            return x;
+        }
+        return -1;
     }
 
     // ANCHOR-L2-156: float/double -> int/long conversion semantics.

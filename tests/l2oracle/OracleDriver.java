@@ -78,6 +78,8 @@ public class OracleDriver {
         {"handlerAlwaysExec", "1,2,3", "1", "1"},
         {"handlerAlwaysExec", "1,2,3", "7", "1"},
         {"handlerAlwaysExec", "1,2,3", "7", "0"},
+        {"b1HandlerPhi", "0"},
+        {"b1HandlerPhi", "5"},
         {"d2iRounding", "3.7"},
         {"d2iRounding", "-3.7"},
         {"d2iNaN", "NaN"},

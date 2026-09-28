@@ -113,6 +113,37 @@ public class L2Dump {
         // code reads during optimize+allocate. Creating early pins the
         // steady-state instance (see earlier note).
         X86CodeGenerator x86cg = new X86CodeGenerator(method, os, code.getLength(), typeSizeInfo, stackFrame);
+        // ANCHOR-L2-188 (--raw): the view immediately after BytecodeParser,
+        // before SSA construction and optimization. Needed to tell "the IR
+        // never had this store" from "a pass killed it": --ssa runs
+        // constructAndOptimize, which folds and kills.
+        if (args[args.length - 1].equals("--raw")) {
+            for (Object b0 : cfg) {
+                org.jnode.vm.compiler.ir.IRBasicBlock b =
+                    (org.jnode.vm.compiler.ir.IRBasicBlock) b0;
+                System.out.println(b + ", stackOffset=" + b.getStackOffset());
+                for (Object q0 : b.getQuads()) {
+                    System.out.println("  " + q0);
+                }
+            }
+            return;
+        }
+        // ANCHOR-L2-188 (--ssa0): after SSA construction, before
+        // optimize/removeUnusedVars. Tells "the phi already sources the
+        // wrong version" from "a pass killed the store and repointed it".
+        if (args[args.length - 1].equals("--ssa0")) {
+            org.jnode.vm.x86.compiler.l2.MagicHelper.lowerMagicCalls(cfg);
+            cfg.constructSSA();
+            for (Object b0 : cfg) {
+                org.jnode.vm.compiler.ir.IRBasicBlock b =
+                    (org.jnode.vm.compiler.ir.IRBasicBlock) b0;
+                System.out.println(b + ", stackOffset=" + b.getStackOffset());
+                for (Object q0 : b.getQuads()) {
+                    System.out.println("  " + q0);
+                }
+            }
+            return;
+        }
         X86Level2Compiler.constructAndOptimize(cfg);
         if (args[args.length - 1].equals("--ssa")) {
             for (Object b0 : cfg) {

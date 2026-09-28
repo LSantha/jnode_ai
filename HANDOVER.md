@@ -19,13 +19,16 @@ measured; nothing is aspirational. Where something is unproven it says so.
   last check (`git rev-list --count origin/L2-SpaceBunny..HEAD` → 0). I was instructed
   never to push without being asked and did not; pushes happened outside this session.
   Verify with `git rev-list --count origin/L2-SpaceBunny..HEAD` rather than assuming.
-- Host gates green at the last run (`regress.sh --label l2186green host`):
+- Host gates green at the last full run (`regress.sh --label b1fixgreen
+  host isobuild oracle mauve 2`, every phase PASS):
   `build` (the bootimage AOT compile of every core class), `anchors`,
   **T0 19/19, T3 19/19, T1 40/40, all-junit 256/0**, census
   `OK=11618 SKIP=1511 HANDLERS=524 FAILED=0 RANGEGAP=0`, probe census
-  `constreffield=0 failed=0`, all lints at 0. Live (`--label l2186live
-  isobuild oracle mauve 2`): oracle 196 rows = the 3 retired divergences,
-  **mauve v2 force-only DIFF empty** (base=52 forced=52).
+  `constreffield=0 failed=0`, all lints at 0. Live legs of the same run:
+  oracle **198 rows** = the 3 retired divergences, **mauve v2 force-only
+  DIFF empty** (base=52 forced=52). Red proof for B1 is
+  `--label b1red` (fix reverted): guest returns `b1HandlerPhi|0|I:1` /
+  `|5|I:1`, `ORACLE DIFF host_only=5 guest_only=5`.
 - **Two gate checks could not fail and were fixed (ANCHOR-L2-187).** The probe
   census called `"$HJ"` inside `sh -c` where `HJ`/`LABEL` are unset, so it never
   ran and then counted a report file that did not exist -- `constreffield=0
@@ -43,14 +46,17 @@ measured; nothing is aspirational. Where something is unproven it says so.
 - Live oracle: 196 rows, only the 3 retired divergences. Mauve **v1–v4 CLEAN**; v5's only
   signal is the known benign `DoubleTest` (fails in the baseline, passes under L2).
 - **The on-disk ISO is whatever the last phase wrote** — an `isobuild` leaves the
-  L1A oracle image (currently the case, after `--label l2186live`), a host `build`
+  L1A oracle image (currently the case, after `--label b1fixgreen`), a host `build`
   or a `boot` phase leaves an L2-bootimage image that panics. Never infer it from
   the timestamp: read the `.artifact` stamp / the `ARTIFACT` status line, and run
   `isobuild` before a bare `oracle`/`mauve`.
 - Landed since the previous handoff update (`a1a7e41c3`): **L2-181** (A8), **L2-182**
   (C6), **L2-184** (A9, superseding the guard-only L2-183), **L2-185** (NEW-2),
-  **L2-186** (A10), plus a register-drift correction. All are in the authoritative
-  queue with their red proofs.
+  **L2-186** (A10), **L2-189** (B1, this session), plus a register-drift correction.
+  All are in the authoritative queue with their red proofs. Also in this session:
+  **L2-187** (the two regress.sh verdicts that could not fail, described below — it
+  shipped inside the L2-186 commit) and **L2-188** (`L2Dump --raw` / `--ssa0` views,
+  the tooling that located B1; still uncommitted, rides with L2-189).
 - **A10 / L2-186** was found by *constructing* the shapes the gates did not have:
   `((H) null).<const field> = <const>` for int/long/double/reference and the wide
   null-getfield. The A8 fix's CONSTANT arm passed the value as the operand size, so
@@ -59,6 +65,22 @@ measured; nothing is aspirational. Where something is unproven it says so.
   shapes (T1 `testNullConstFieldStores`) + 4 new `Probes` methods through the
   repaired probe census. Red proof: T1 40/1 + alljunit 1 error + bootimage `build`
   FAIL + probe census `failed=3`.
+- **B1 / L2-189 — the queue's oldest IR row, fixed this session, and its title was
+  wrong.** The row said the handler-entry phi is *never written* on the ordinary
+  try/catch dispatch; the truth is the reverse: the phi sources are the **pre-try**
+  versions, so the home is written, just with a value from before the try body ran,
+  and every store made inside the try before the throw is invisible to the handler.
+  Measured chain: raw IR has `x = 7` before the `idiv`; after `constructSSA` the phi
+  already reads the **end-of-block** version; const-prop folds the store, DCE deletes
+  it, and the handler reads the pre-try 1 from `[ebp-16]`. Neither available extreme
+  is correct (pre-try loses the store = this bug; end-of-block names a home the throw
+  never wrote = the ANCHOR-L2-125 crash), so the fix snapshots the slot tops at the
+  predecessor's **first throwing quad** and feeds that to `rewritePhiParams` for
+  `pred != succ` handler edges. Guard = `Probes#b1HandlerPhi` + 2 `CASES` rows
+  (host `I:7` / `I:9`), red with the fix reverted (`I:1` / `I:1`). Full chain and
+  evidence labels are in `OPEN-BUGS` B1. Found with the new `L2Dump --raw` / `--ssa0`
+  views (L2-188), not with any structural lint — the structural lint for this shape
+  was written, could not identify handler blocks, examined 0 phis and was removed.
 
 ## 3. Regression methodology — where it lives
 
@@ -297,7 +319,7 @@ opposite direction. Needs single-testlet isolation before it is believed
 
 ### 5.5 Remaining queue — under the new §4.6 rule, *fix*, don't measure-and-park
 
-`C1`, `C2`, `C4`, `C5`, `D1`, `D2`, `B1`, `B2`, `B3`, `P11–P19`, `H6`, `M2`, `M5`.
+`C1`, `C2`, `C4`, `C5`, `D1`, `D2`, `B2`, `B3`, `P11–P19`, `H6`, `M2`, `M5`.
 
 **Reopened by §4.6 (were parked on census evidence, which is not evidence):**
 - **C2** `removeDefUseChains` coalescing aliases the def's LHS onto the copy's LHS
@@ -313,8 +335,8 @@ opposite direction. Needs single-testlet isolation before it is believed
   class of lie as A8's row once was. Cheap; do it early, the queue is the authority.
 
 **No longer in this list:** C6 (→ L2-182), A8 (→ L2-181), A9 (→ L2-184), NEW-2
-(→ §5.2). **B3** and **D2** are unitemised clusters and must be itemised before they can
-be fixed — that is a prerequisite, not a dodge.
+(→ §5.2), **B1 (→ L2-189, §2)**. **B3** and **D2** are unitemised clusters and must be
+itemised before they can be fixed — that is a prerequisite, not a dodge.
 
 ### 5.6 Bootimage — now the front of the queue, and F1's description is **wrong**
 
@@ -325,26 +347,54 @@ The compiler queue has no reproducing defect left, so per §4.2 this is next.
 **Measured this session (deterministic, 5/5 boots):**
 - L2 bootimage **builds and boots**, then panics at **EIP `0x10B807`**, reporting
   `Real panic: int_die_halt!` and vector `int: 00000031`.
+- **`int: 00000031` is `int_stack_overflow`, and that is the root cause** — this
+  paragraph supersedes everything below it that treats `0x10B807` as the faulting
+  code. `core/src/native/x86/ints.asm:45` (`int_noerror int_stack_overflow,0x31`,
+  "Stack overflow trap") and `:115` (`intport 0x31, int_stack_overflow, 3`); the
+  handler is `core/src/native/x86/vm-ints.asm:484`, which falls through to
+  `doFatal_stack_overflow` and prints `Real panic: int_die_halt!`. **L2 emits this
+  instruction itself in every method prologue**: `X86StackFrame.java:201-206`
+  (`stackEndOffset = entryPoints.getVmProcessorStackEnd()`,
+  `cmp ESP, <stackEnd>`, taken arm) then `os.writeINT(0x31)`. So the panic is by
+  construction **L2's own stack-limit check firing**, not a wild call through a
+  bad object — `Real panic: int_die_halt!` is the symptom, `0x31` is the cause, and
+  the `0x10B807` block the previous reading dissected is only where the reporter's
+  saved state pointed.
+- **The boot-thread stack is ~60 KB and it runs out.** `_$$Setup_initial_thread`
+  (builder-generated, identical under L1A and L2) does `mov edx,_$$initialStack;
+  [ebx+28]=edx; lea edx,[edx+1024]; [ebx+32]=edx; [proc+24]=edx`, so `stackEnd =
+  0x10D488 + 1024 = 0x10D888`, and `_$$initialStack` is
+  `dd 1102984, dd 1167496` = `0x10D488 .. 0x11C3E8` — usable region
+  `0x10D888 .. 0x11C3E8`, **~60 KB** with a 1024-byte red zone below it. The panic
+  dump's `ESP=0010D488` is `_$$initialStack[0]` exactly (likely the fatal handler's
+  own reporting stack, so do not read it as "the faulting SP was here"). L1A boots
+  from the same region with the same setup code, so the difference is L2's frame
+  cost: L2 reserves a frame home for **every SSA version**, where L1A reuses homes,
+  so an L2 frame is much larger and the same call depth exhausts 60 KB.
+- The failure window is unchanged: last guest line `Initialize BootLog`, and a valid
+  L1A boot prints `Detected 1 processor` (`VmImpl.java:288`) right after — i.e.
+  `VmSystem.initialize()` between `BootLogImpl.initialize()` and processor detection.
 - The **signature moved**: 3 older boots recorded `0x18EC3B`; all of this session's are
-  `0x10B807`. The recent compiler fixes did not clear the boot failure — they moved it.
-- Faulting instruction is **`call [eax+0x24]` at `0xb80e`**; the receiver
-  (`mov eax,0x00617D40`) is a bootimage object whose address **differs every boot**
-  (seen `0x00694298`, `0x00663168`, `0x00617D40`), and the block ends in a back-edge
-  `jmp 0xb1d2`, so it sits in a **loop**. The preceding routine ends
-  `mov dword [ebp+0x38],0x0010B807; ret` — it materialises `0x10B807` as a call target.
+  `0x10B807`. Under the stack-overflow reading this is a *depth* signal, not a
+  distinct defect: how deep the boot thread gets before the 60 KB runs out depends on
+  which frames L2 has already grown.
+- (Context, no longer load-bearing) Faulting-site bytes are
+  `c7 45 38 07 b8 10 00` (`mov dword[ebp+0x38],0x0010B807`), `c3` (`ret`),
+  `50 53 b8 <obj> ff 50 24 e9 …` — the previous routine materialises `0x10B807`
+  as a call target and the block ends in `jmp 0xb1d2`, i.e. it sits in a loop. The
+  object address differs every boot.
 - **It is *not* inside any compiled Java method.** Image offset `0xb807` is below the
   smallest compiled-method stream end (`0x1d0f8`) and inside the image's first blob
   (exactly `0xd000` bytes). It is the image's **entry/clInit prelude**; the builder's
   text listing shows that region as
   `_$$Initial_call_to_clInitCaller: call _$$clInitCaller; mov eax,<org.jnode.boot.Main.vmMain()I>; call [eax+36]`.
 - **So F1's symptom text is stale.** It records `Integer.stringSize` / null `sizeTable`;
-  in fact the log's last line is `Initialize BootLog` (the last output of the class-init
-  phase) and `Integer` never appears. A valid L1A boot prints `Detected 1 processor`
-  (`VmImpl.java:288`) immediately after that line, so the failure window is
-  `VmSystem.initialize()` between `BootLogImpl.initialize()` and processor detection.
-- Retracted: an earlier reading of mine ("runaway recursion, ~150 MB of frames") was
-  **wrong**. `_$$initialStack[0]` is `1102984` = `0x10D488`, exactly the dump's ESP, and
-  the initial thread SP is that +1024 — a shallow stack, a handful of frames.
+  in fact the log's last line is `Initialize BootLog` and `Integer` never appears.
+- **The earlier retraction is itself retracted.** "A shallow stack, a handful of
+  frames" cannot be right in either direction: a handful of frames does not put the
+  boot thread at its stack limit, and the trap that fired is the limit check. What
+  `_$$initialStack[0] == 0x10D488` actually proves is the size of the region
+  (`dd 1102984, dd 1167496`), which is ~60 KB — small, and L2 blows through it.
 
 **Mapping tool — the exact incantation, with two traps.** The facility is
 `NativeCodeCompiler.DUMP_METHOD_MAP` (ANCHOR-L2-129) = the JVM system property
@@ -383,10 +433,18 @@ ANT_OPTS=-Djnode.dump.methodmap=true JAVA_TOOL_OPTIONS=-Djnode.dump.methodmap=tr
   matches**, which independently confirms "not a compiled method".
   (`local/l2boot-tools/EipMatch.java` is that sweep, adapted from `BulkMatch`; gitignored.)
 
-**Next action:** name the routine that owns the `jmp 0xb1d2` back-edge — via the
-emission-time method map above, or by disassembling the prelude — then decide whether F1
-is a bad method slot in the `vmMain()I` entry object or a clInit re-entry loop. Also still
-open: `B2/F2` `allocObject` (result 16), `F4` AOT coverage, `F5/F6`.
+**Next action (F1, restated now that the vector is known):** the question is no longer
+"which routine owns `jmp 0xb1d2`" — it is **why L2 exhausts a ~60 KB boot stack**.
+Cheapest discriminating measurement first: make the fatal `int_stack_overflow` path print
+`stackStart`/`stackEnd`/`ESP` for the overflowing thread (they are already in the `VmThread`
+record, offsets `[ebx+28]`/`[ebx+32]` from `_$$Setup_initial_thread`), boot once, and read
+whether the overflow is *frame size* (a normal `VmSystem.initialize()` call chain reaching
+`0x10D888`, i.e. L2 frames far larger than L1A's) or *stackEnd wrong* (a plausible-looking
+`stackEnd` that the check compares against incorrectly). Then either shrink L2 frames
+(reserve homes only for versions actually live at a point, instead of one per SSA version)
+or grow the boot-thread stack; a `boot --boots N` leg that reaches `Detected 1 processor`
+is the pass condition. Also still open: `B2/F2` `allocObject` (result 16), `F4` AOT
+coverage, `F5/F6`.
 
 ## 6. Environment facts that will otherwise cost you hours
 
@@ -402,10 +460,25 @@ open: `B2/F2` `allocObject` (result 16), `F4` AOT coverage, `F5/F6`.
 - `local/mk-ox-iso.sh` is **gitignored** (per-machine). The *enforcement* is committed
   in `tests/l2oracle/regress.sh`; if you change the builder, keep the committed checks
   in step.
-- Another worktree (`jnode_ai_2`) shares this VM and the `/tmp` serial paths. Its
-  `serial_mux.py` was running for ~30h and its tooling power-offs the same VM, which
-  looked exactly like a compiler crash. The user stopped it; if guest instability
-  reappears, check `ps -eo pid,cmd | grep serial_mux` first.
+- **Stale guests squatting on `/tmp/jnode.serial2` produce a live leg that hangs
+  forever while still reporting "guest up"** (cost ~50 min on 2026-09-28). The mux
+  connects to `/tmp/jnode.serial2`, and VirtualBox's `changeuartmode2 server` silently
+  fails if anything else already owns that path. Two **QEMU** processes left over from
+  an earlier session owned it, their own guest had panicked two days earlier
+  (`Real panic: int_die_halt!` in `/tmp/qemu_serial.log`, fd 13 already deleted), and
+  the mux happily talked to them. Symptom, exactly: `LIVE oracle: guest up` (the
+  `boot-wait.sh` probe answered) followed by every command ending in
+  `TIMEOUT link down too long`, `gsh-*.out` growing only with
+  `[Ns still running: …]`, and `/tmp/jnode_serial_resp/*.done` reading
+  `TIMEOUT link down too long` with a 0-byte `.out` — while a good run writes
+  `OK 1` and a multi-KB `.out` in seconds. Diagnose with
+  `ss -xlp | grep jnode.serial2` (owner should be VirtualBox, not `qemu-system-x86`)
+  and `cat /tmp/jnode_serial_mux.status` (`link=down`). Recover by killing the stale
+  PIDs and the mux (`kill <pid>`; `pkill` is blocked) — after that the same run
+  completed in **15 s**. Also: another worktree (`jnode_ai_2`) shares this VM and the
+  `/tmp` serial paths; its tooling power-offs the same VM, which looks exactly like a
+  compiler crash. If guest instability reappears, check
+  `ps -eo pid,cmd | grep serial_mux` first, then `ss -xlp | grep jnode.serial`.
 - This mauve build nests testlets as **directories with dot-named class files**:
   `gnu/testlet/java/io/File/security.class` is the class
   `gnu.testlet.java.io.File.security`, not `…io.File`. Getting this wrong yields a

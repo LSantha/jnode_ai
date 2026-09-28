@@ -355,9 +355,38 @@ incidental fix in 097-103. Regression-guarded by `CASES` now.
   emission-validity guard and not just a prerequisite. If a fix only touches
   emission, the `build` verdict matters as much as `t1`.
 
+- **`guest up` + `TIMEOUT link down too long` = someone else owns
+  `/tmp/jnode.serial2`, not a slow guest** (cost ~50 min on 2026-09-28). The mux
+  (`serial_mux.py`) holds one connection to `/tmp/jnode.serial2`, which VirtualBox
+  serves via `changeuartmode2 server` -- that bind **silently fails** if any other
+  process already owns the path, and then the mux talks to the squatter instead of
+  the VM. Two **QEMU** processes left over from an earlier session owned it; their
+  guest had panicked two days earlier. `boot-wait.sh` still reports ready (its
+  `echo alive` probe goes through the same wrong endpoint), then every batch ends
+  `TIMEOUT link down too long`. Tell-tales: `gsh-*.out` contains only
+  `[Ns still running: …]` lines and never output; `/tmp/jnode_serial_resp/*.done`
+  reads `TIMEOUT link down too long` with a **0-byte** `.out` (a good run writes
+  `OK 1` and kilobytes within seconds); `cat /tmp/jnode_serial_mux.status` says
+  `link=down`; `ss -xlp | grep jnode.serial2` shows `users=(("qemu-system-x86",…))`
+  instead of VirtualBox. Recover with `kill <pid>` on the stale PIDs and the mux
+  (`pkill` is blocked; `pgrep -f` self-matches -- match `qemu-system-x86` by name).
+  Do not debug the guest, the ISO or the probe until `ss` shows the right owner.
+  A timed-out shell command may also leave an orphaned `regress.sh` behind --
+  `ps -eo pid,etime,cmd | grep regress` before rerunning.
+
+- **A value-level probe beat every structural instrument on B1 (L2-189).** A
+  census lint for handler-entry phis was written, could not identify handler
+  blocks (the flag is not on the blocks that hold the phis; post-fixup startPCs do
+  not match the exception table), examined **0 phis**, and was removed -- keeping
+  it would have read as a clean bill of health. What found the bug was
+  `Probes#b1HandlerPhi` (ordinary try/catch, handler reads a try-modified local)
+  run through the oracle, plus the `L2Dump --raw` / `--ssa0` / `--ssa` views, which
+  show *where in the pipeline* an IR value changes meaning (`--raw` correct,
+  `--ssa0` already wrong). For any IR-ordering suspicion, dump the stages first.
+
 ## Adding probes
 
-Add a static to `Probes.java` (try/catch/finally supported since 104 — see `tryCatchDiv`, `tryCatchOob`, `tryFinally`; no objects in signatures keeps reflection simple) + a `{name, args...}` row in `OracleDriver.CASES`. Re-run host ref + `run_oracle.sh`.
+Add a static to `Probes.java` (try/catch/finally supported since 104 — see `tryCatchDiv`, `tryCatchOob`, `tryFinally`, `b1HandlerPhi` (the try/catch local-read shape that found L2-189); no objects in signatures keeps reflection simple) + a `{name, args...}` row in `OracleDriver.CASES`. Re-run host ref + `run_oracle.sh`.
 
 ## jsr/ret subroutines (`jsr/`)
 
