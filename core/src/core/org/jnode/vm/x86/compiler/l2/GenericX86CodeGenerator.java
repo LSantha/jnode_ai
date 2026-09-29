@@ -792,7 +792,7 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
             case I2B: {
                 GPR lhsGpr = (GPR) lhsReg;
                 if (lhsGpr.isSuitableForBits8()) {
-                    os.writeMOVSX(lhsGpr, SR1, rhsDisp, BYTESIZE);
+                    os.writeMOVSX(lhsGpr, X86Register.EBP, rhsDisp, BYTESIZE);
                 } else {
                     os.writeMOVSX(SR1, X86Register.EBP, rhsDisp, BYTESIZE);
                     os.writeMOV(X86Constants.BITS32, lhsGpr, SR1);

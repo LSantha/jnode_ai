@@ -486,6 +486,26 @@ public class L2ModeMatrixTest {
             t4.contains("ebx") && !t4.contains("[esp"));
     }
 
+    /**
+     * ANCHOR-L2-198: the (R,S) arm of I2B -- stack source, register
+     * destination -- passed SR1 (EAX) as the BASE of the memory operand, so
+     * it emitted "movsx ecx, byte [eax-12]" instead of reading the frame slot.
+     * writeMOVSX(dst, base, disp, size) treats its second argument as the
+     * base register, and every sibling arm (I2C, I2S, INEG, and the else
+     * branch of I2B itself) correctly uses EBP. The old guard only asserted
+     * that "movsx" appeared, which the wrong-base form still does, so this
+     * asserts the BASE. The destination here is ECX, which is 8-bit
+     * suitable, so the fixed branch is the one under test.
+     */
+    @Test
+    public void testI2BStackSourceReadsFrameBase() throws Exception {
+        String text = emitUnary(R, S, UnaryOperation.I2B);
+        assertTrue("I2B (R,S) must read its source slot through ebp, got:\n" + text,
+            text.contains("[ebp"));
+        assertFalse("I2B (R,S) must not base the read on SR1, got:\n" + text,
+            text.contains("[eax"));
+    }
+
     @Test
     public void testUnaryConstantRhsStillThrows() throws Exception {        EmitterHarness h = new EmitterHarness();
         UnaryQuad q = dummyUnaryQuad(0);
