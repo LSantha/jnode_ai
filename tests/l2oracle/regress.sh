@@ -94,6 +94,21 @@ want() { case " $PHASES " in *" $1 "*) return 0 ;; esac; return 1; }
 # test/exit on its own result.
 run() { _p=$1; shift; say "START $_p"; if "$@" >> "$LOG" 2>&1; then say "PASS  $_p"; else say "FAIL  $_p rc=$?"; fi; }
 g() { _cap=$1; _lbl=$2; shift 2; sh "$TOOLS/gsh.sh" "$_cap" "$STALL" "$LABEL-$_lbl" "$@"; }
+# ANCHOR-L2-195: the bootimage build logs every compiler baked into the union.
+# A config that NAMES its JIT compiler must get exactly that compiler, no more
+# -- a fourth name here means the L1A fallback was appended to a build that
+# already specified one, which is the policy working backwards. The second
+# argument pins the AOT list ("Compiling using X" line): the fallback may only
+# widen the union, never change what compiles the boot image. The check is a
+# function (not an inline sh -c) so $LOG is read by the outer shell, where the
+# variable actually exists.
+policy_union() {
+  local _u _aot _want_u=$1 _want_aot=$2
+  _u=$(grep -a "Compiler union " "$LOG" | tail -n 1 | sed 's/.*Compiler union //')
+  _aot=$(grep -a "Compiling using " "$LOG" | tail -n 1 | sed 's/.*Compiling using //; s/ compilers$//')
+  echo "union=[${_u}] want=[${_want_u}] aot=[${_aot}] want=[${_want_aot}]"
+  [ "$_u" = "$_want_u" ] && [ "$_aot" = "$_want_aot" ]
+}
 # ANCHOR-L2-170: a live leg may only boot the L1A oracle image. A host-phase
 # `build` writes an L2-bootimage ISO to the SAME path, and that image panics at
 # boot (the deferred AOT defect: null+8 store at proid 0), which is
@@ -168,15 +183,30 @@ if want build; then
   # the next leg booted the L2-bootimage ISO and died at proid 0). The ISO path
   # is an overridable property, so link to a scratch file and leave the live
   # artifact to the oracle builder alone.
-  run build sh build.sh -Djnode.compiler=L2 \
+  run build sh build.sh -Djnode.compiler=L2 -Djnode.jit.compiler=L1A \
     -Djnode-x86-lite.iso="$PWD/core/build/l2-compile-gate.iso" \
     "-Dmy-conf.dir=$PWD/local/l2oracle/conf-x86" cd-x86-lite
+  # ANCHOR-L2-195: that config names its JIT compiler explicitly, so the union
+  # must be the three names and no more, and the AOT list must stay the two --
+  # otherwise the fallback has leaked into the boot image compile.
+  run policy policy_union "X86-Stub X86-L2 X86-L1A" "X86-Stub and X86-L2"
 fi
 if want anchors; then
   run anchors sh -c '
     javap -p -c -classpath core/build/classes org.jnode.vm.x86.compiler.l2.GenericX86CodeGenerator | grep -q iconst_m1 || { echo "ANCHOR prev_addr=-1 missing"; exit 1; }
     javap -p -classpath core/build/classes org.jnode.vm.x86.compiler.l2.GenericX86CodeGenerator | grep -q countUnboundInstrLabels || { echo "ANCHOR countUnboundInstrLabels missing"; exit 1; }
-    javap -p -c -classpath core/build/classes org.jnode.vm.compiler.ir.IRControlFlowGraph | grep -q insertQuadAt || { echo "ANCHOR insertQuadAt missing"; exit 1; }
+    # insertQuadAt is DECLARED on IRBasicBlock; IRControlFlowGraph only calls
+    # it (IRControlFlowGraph.java:1835), so javaping the caller could never
+    # find it and this check was red from the day it was written. Point it at
+    # the class that declares the method, otherwise the whole phase reports
+    # FAIL for a reason that has nothing to do with the tree.
+    javap -p -classpath core/build/classes org.jnode.vm.compiler.ir.IRBasicBlock | grep -q insertQuadAt || { echo "ANCHOR insertQuadAt missing"; exit 1; }
+    javap -p -classpath core/build/classes org.jnode.vm.x86.VmX86Architecture | grep -q withL1AFallback || { echo "ANCHOR-L2-195 withL1AFallback missing"; exit 1; }
+    # ANCHOR-L2-195: jnode.jit.compiler must default to EMPTY. If it defaults
+    # to ${jnode.compiler} again, an explicitly requested L2 JIT and an
+    # unspecified one both arrive as "L2" on the Java side, and VmX86Architecture
+    # can no longer tell whether to add the L1A fallback.
+    grep -qE "<property name=\"jnode\.jit\.compiler\" value=\"\" */>" all/build-x86.xml || { echo "ANCHOR-L2-195 jnode.jit.compiler default is not empty"; exit 1; }
     echo anchors-ok'
 fi
 # ANCHOR-L2-187: these three verdicts used to end on `| tail -n 3`, so the
@@ -192,7 +222,7 @@ junit_phase() {
   grep -E "^(OK \(|Tests run:|There w|[0-9]+\) |java\.lang\.|junit\.)" "$_out" | tail -n 20
   return $_rc
 }
-want t0 && run t0 junit_phase /tmp/l2-t0.out org.jnode.vm.compiler.ir.L2HostTest
+want t0 && run t0 junit_phase /tmp/l2-t0.out org.jnode.vm.compiler.ir.L2HostTest org.jnode.vm.x86.CompilerUnionPolicyTest
 want t3 && run t3 junit_phase /tmp/l2-t3.out org.jnode.vm.compiler.ir.L2ModeMatrixTest
 want t1 && run t1 junit_phase /tmp/l2-t1.out org.jnode.vm.compiler.ir.L2PipelineTest
 want alljunit && run alljunit sh build.sh -f core/build-tests.xml all-junit
@@ -249,6 +279,19 @@ if want census; then
       tests/l2oracle/Probes.java core/src/classlib/org/jnode/annotation/*.java \
       > /dev/null 2>&1
     pc_missing=0
+    # ANCHOR-L2-194: add the one shape javac cannot emit -- a handler whose
+    # FIRST instruction is athrow (ProxyGenerator rethrow fast path). The
+    # class is generated at run time instead of committed as a .class so the
+    # guard always tracks what the real generator writes; if the generator
+    # API disappears this must fail loudly, never shrink the corpus quietly.
+    if ! /home/levente/ext/prg/java/bin/javac -nowarn -d /tmp/probeclasses \
+        tests/l2oracle/ProxyFormGen.java > /dev/null 2>&1 ||
+       ! '"$HJ"' -cp /tmp/probeclasses ProxyFormGen /tmp/probeclasses \
+        > /tmp/proxyformgen-'"$LABEL"'.txt 2>&1; then
+      echo "PROBE SHAPE GENERATION FAILED; output:"
+      cat /tmp/proxyformgen-'"$LABEL"'.txt
+      pc_missing=1
+    fi
     if [ ! -f /tmp/probeclasses/Probes.class ]; then
       pc_missing=1
     else
@@ -280,6 +323,20 @@ if want census; then
         grep "^CONSTREFFIELD " /tmp/census-probes-'"$LABEL"'.stdout | head -n 5
         awk "/^--- FAILED \(/{f=1;next} /^--- /{f=0} f" "/tmp/census-probes-'"$LABEL"'.txt" | head -n 8
       fi
+      # A guard whose corpus quietly lost the shape reads exactly like a pass
+      # (ANCHOR-L2-187), so assert the shape is really in the run: the
+      # generated class must exist, the census must have enumerated every
+      # class file on disk, and it must have loaded all of them. The
+      # FAILED==0 above is then a statement about a corpus that is known to
+      # contain the athrow-at-handler-entry method.
+      ns=$(find /tmp/probeclasses -name "*.class" | wc -l)
+      rs=$(sed -n "s/^classes=\([0-9]*\).*/\1/p" "/tmp/census-probes-'"$LABEL"'.txt")
+      sk=$(sed -n "s/.*SKIP_CLASSES=\([0-9]*\).*/\1/p" "/tmp/census-probes-'"$LABEL"'.txt")
+      echo "probe_shape classes_disk=$ns census=$rs skip_classes=$sk"
+      if [ "$ns" -eq 0 ] || [ "$rs" != "$ns" ] || [ "${sk:-1}" -ne 0 ]; then
+        echo "PROBE SHAPE MISSING: the athrow-at-handler corpus must be generated, enumerated and loaded"
+        pc_missing=1
+      fi
     fi
     if [ "$pc_missing" -ne 0 ]; then
       echo "PROBE CENSUS FAILED: the constant-null field lint must be 0 on a corpus that CONTAINS the shape"
@@ -302,7 +359,10 @@ fi
 
 # ------------------------------- BOOT ----------------------------------
 if want boot; then
-  run bootimage sh -c 'cd '"$ROOT"' && rm -rf all/build/x86/cdrom-lite/ox && touch core/src/core/org/jnode/vm/x86/compiler/l2/*.java core/src/core/org/jnode/vm/compiler/ir/*.java core/src/core/org/jnode/vm/compiler/ir/quad/*.java core/src/core/org/jnode/vm/classmgr/VmType.java && sh build.sh -Djnode.compiler=L2 "-Dmy-conf.dir=$PWD/local/l2oracle/conf-x86" cd-x86-lite 2>&1 | grep -E "Compiling using|BUILD"'
+  run bootimage sh -c 'cd '"$ROOT"' && rm -rf all/build/x86/cdrom-lite/ox && touch core/src/core/org/jnode/vm/x86/compiler/l2/*.java core/src/core/org/jnode/vm/compiler/ir/*.java core/src/core/org/jnode/vm/compiler/ir/quad/*.java core/src/core/org/jnode/vm/classmgr/VmType.java && sh build.sh -Djnode.compiler=L2 -Djnode.jit.compiler=L1A "-Dmy-conf.dir=$PWD/local/l2oracle/conf-x86" cd-x86-lite 2>&1 | grep -E "Compiling using|Runtime JIT|Compiler union|BUILD"'
+  # ANCHOR-L2-195: same rule as the build phase -- an explicitly named JIT is
+  # honoured verbatim in the image that is about to be booted.
+  run policy policy_union "X86-Stub X86-L2 X86-L1A" "X86-Stub and X86-L2"
   mkdir -p "$BASE"
   b=1
   while [ "$b" -le "$BOOTS" ]; do
