@@ -13,7 +13,41 @@ measured; nothing is aspirational. Where something is unproven it says so.
 | `AGENTS.md` (root) | Build targets, boot testing, code style. |
 | `local/docs/L2-DEEP-REVIEW-REPORT.md` | The original code-read review (gitignored; if missing, the register cites its section numbers) |
 
+**If you only read three things:** §2 (current state), **§11.6** (two process lessons that
+cost the most time here, one of which silently deleted a fix), and §5.7 (the defect that
+was holding the boot). §11 is the open investigation; §5.8 is its most interesting thread.
+
 ## 2. Current state
+
+- **ANCHOR-L2-193 is the current headline: JNode now BOOTS on the L2 AOT backend.**
+  User-confirmed working shell with `AOT=L2 / JIT=L1A` (see §5.7 for the mechanism, the
+  red proof and the guard). This supersedes every "the L2 bootimage panics" statement in
+  §5.6 — those were measured with the first-block-loop-header defect live.
+- **The tree is COMMITTED, not pushed** (this `docs:` pass is the last of eight).
+  From the bottom of `git log`: dupforms emitter, `fix(L2-193)` entry preheader,
+  `fix(L2-194)` athrow shapes, `chore(boot)` `Identity*`, `diag(boot)` EIP/frame
+  chain, `feat(L2-195)` AOT/JIT selection + fallback policy, `test(l2)` regress
+  guards, this file. The `TEMP-DIAG` instrumentation mentioned below was in the
+  shelf patch only -- it is not in the worktree, so there is nothing to strip, and
+  the `/tmp/ANCHOR-L2-193-preheader.patch` insurance copy is obsolete.
+- Last full gate, `--label pre193 host`: every phase PASS — `build`, `anchors`, t0, t3,
+  t1, all-junit, census `FAILED=0 lints=0 rangegap=0 OK=11626`. Live legs,
+  `--label pre193live isobuild oracle mauve`: all PASS, oracle **203 rows**, mauve
+  `base=20 forced=20` with no force-only regressions, and **all 5 `entryWhile_ia` rows
+  match the host** (see §5.7). The 3 remaining oracle diffs are byte-identical to the
+  long-standing baseline (`div_iii` MIN/-1, `classLiteral_i` id encoding) and are not
+  from this work.
+- **The on-disk ISO is the ORACLE image** (23:43, written by `isobuild`), *not* an
+  L2-bootimage image. `isobuild` and the host `build` phase write the same path. The
+  L2-bootimage images are not preserved anywhere — the booting one was overwritten
+  during the §11 investigation and had to be rebuilt. **Copy any ISO worth keeping to
+  `/tmp` before changing build config.**
+- **Two methodology facts that cost real time, both new this session — read §11.6.**
+  (a) *Every* `regress` bootimage build uses `-Djnode.jit.compiler=L1A`
+  (`regress.sh:171` and `:305`), so **the host gate cannot see any defect that only
+  manifests when the runtime JIT is L2** — it is green *because* such code is inert.
+  (b) `git checkout -- <file>` to strip a diagnostic **discarded the uncommitted
+  preheader** and I reported the tree restored without checking that file.
 
 - Branch `L2-SpaceBunny`, tracking `origin/L2-SpaceBunny` and **in sync with it** at the
   last check (`git rev-list --count origin/L2-SpaceBunny..HEAD` → 0). I was instructed
@@ -340,6 +374,13 @@ itemised before they can be fixed — that is a prerequisite, not a dodge.
 
 ### 5.6 Bootimage — now the front of the queue, and F1's description is **wrong**
 
+> **SUPERSEDED IN PART BY §5.7 — read that first.** Everything below was measured while
+> the first-block-loop-header defect (§5.7) was still live, and that defect is what made
+> the L2 bootimage wedge. With it fixed, **AOT=L2 / JIT=L1A boots to a working shell**.
+> The stack-overflow analysis below is still good and still relevant; the "panics at
+> `0x10B807`" conclusion is not the current state. The residual live question is the
+> **runtime** L2 compiler, which is a different thing entirely — see §11.
+
 `sh tests/l2oracle/regress.sh --label <l> boot --boots N` builds an **L2-compiled
 bootimage** (`rm -rf all/build/x86/cdrom-lite/ox` + touch the L2 sources) and boots it.
 The compiler queue has no reproducing defect left, so per §4.2 this is next.
@@ -446,7 +487,109 @@ or grow the boot-thread stack; a `boot --boots N` leg that reaches `Detected 1 p
 is the pass condition. Also still open: `B2/F2` `allocObject` (result 16), `F4` AOT
 coverage, `F5/F6`.
 
-## 6. Environment facts that will otherwise cost you hours
+### 5.7 ANCHOR-L2-193 — first-block loop header had no phi (FIXED; this is what made the boot)
+
+**This is the defect that held the boot.** It is fixed, guarded, and its guard is
+`Probes#entryWhile_ia` + 5 `CASES` rows. It is written up here rather than in
+`OPEN-BUGS.md` (that ledger still needs the row — see §11.7).
+
+**Mechanism, two defects in one shape.** `VmType.getAllInterfaces(HashSet, VmType)` is
+`while (C != null) { ... C = C.getSuperClass(); }` with `C` a *parameter*. The loop
+condition is bytecode pc 0, so the method's first basic block **is** the loop header,
+and its only CFG predecessor is the back edge — the implicit method-entry edge is not a
+block. Therefore:
+
+1. `computeDominanceFrontier`'s `predList.size() >= 2` test skipped it, so **no phi was
+   placed** for the loop-carried `C`. The header kept reading the incoming *argument*
+   version forever. This is still **valid SSA** — the argument dominates the header — so
+   no verifier and no SSA lint can ever catch it. Its only symptom is a non-terminating
+   loop. Host repro of the emission: header emitted `cmp dword[ebp+16],0x0` (the argument
+   slot, never written by the loop) while `C = C.getSuperClass()` stored into `[ebp-44]`,
+   which nothing read.
+2. **Even with a phi it would still be wrong.** There is no predecessor to carry the
+   phi's entry copy, so the copy could only live in the header itself — and the back edge
+   re-enters *at* the header, so it re-executes every iteration and clobbers the latch's
+   store. That is ANCHOR-L2-124's clobber in its other guise.
+
+**Why `for` loops were spared:** their back edge aims at the *condition*, and
+`IRBasicBlockFinder` starts a new block at every branch target, so the loop header
+already has two predecessors. Only a loop whose condition sits at pc 0 is affected.
+
+**Fix.** `IRControlFlowGraph.insertEntryPreheader()`, called from the constructor
+*before* `computeDominance(bytecode)` — it has to exist before dominance, since it is
+what gives the header its second predecessor. It is a no-op unless the first block
+actually has predecessors. The synthetic block: PC from `nextSyntheticBlockPC++`,
+inserted at `bblocks[0]`, `setIDominator(body)` (stale until `computeDominance` rewrites
+it, but non-null so the body's `getVariables`/`getStackOffset` fallbacks are safe), and
+**no terminator** — it falls through into the body, which is correct because
+`fixupAddresses` numbers blocks in `bblocks` order and codegen walks that same order.
+It inherits the method's variable array because `IRGenerator.startMethod` writes it onto
+`bblocks[0]`, which is now the preheader.
+
+**Emission proof** (this is the part that makes it obviously right):
+
+```
+_qb_0:   push [ebp+12]      <- preheader: a2_2 = a2_1, runs ONCE
+         pop  [ebp-28]
+_qb_1:   mov  esi,[ebp-28]   <- header body (the back-edge target)
+         test esi,esi / je __qb_22
+...
+_qb_20:  push [ebp-48]      <- latch: a2_2 = a2_3
+         pop  [ebp-28]
+_qb_21:  jmp  __qb_1        <- back edge SKIPS _qb_0
+```
+
+**Guard.** `Probes#entryWhile_ia(int v, int[] steps)`: `while (v > 0) { v -= 2;
+steps[0] -= 1; if (steps[0] <= 0) break; } return v;` Host reference
+`entryWhile_ia(7,1000) == -1`; the broken L2 build returns `7`. Two deliberate choices:
+
+- **The trip counter is an array *element*, not a local.** An array element needs no
+  phi, so it counts down correctly in the broken build too and the loop *terminates* —
+  turning a guest hang into a wrong value, which is what a probe row can report.
+- **The operands are parameters.** With `int`/`long` constants the optimizer deletes the
+  whole `dup`/phi sequence as dead code and the probe silently reports "L2 ok". This bit
+  me during the §11.4 work; a constant-fed version of a probe is not a probe.
+
+**javac cannot generate this shape** (measured, §11.5), so the guard for the *dup* family
+had to be a hand-built class generator — the `entryWhile_ia` row itself is reachable by
+javac because it only needs a plain `iinc` loop.
+
+**Red proof.** Scratch overlay `/tmp/pp193/prefix-classes` (same sources, `insertEntryPreheader()`
+gated on `-Djnode.noEntryPreheader=true`): the header then reads the argument slot and
+the latch's store is stranded. Green: 5/5 rows match host on the guest.
+
+### 5.8 The three `dup` form gaps in `IRGenerator` — measured, NOT fixed
+
+Full detail and method in §11.4/§11.5. Summary: `IRGenerator` implements **144 of 144**
+abstract `visit_*` (no bytecode is wholly missing — `visit_sipush` is a concrete `final`
+in `BytecodeVisitor`), so the only `"byte code not yet supported"` throws are **three
+partial-form `else` branches**: `:614` in `visit_dup_x2`, `:696` in `visit_dup2_x1`,
+`:752` in `visit_dup2_x2`. `visit_dup2` needs no change — both its forms are implemented.
+
+Measured against **JNode's own verifier** (which accepts 18/18 layouts; HotSpot accepts
+only 12, refusing to split a category-2 value), **13 of the 18 reachable layouts are
+refused**, including `dup2_x1 ili` — which is the layout the guest actually hit at
+`00:00:03` during plugin startup. Corpus and red proof:
+`tests/l2oracle/dupforms/mkdupforms.py` (8 methods, all verifier-legal on a stock JVM,
+all returning the value the dup leaves on top).
+
+**Not landed.** Three attempts, all reverted; see §9. Start from the `dup2_x2` branch-2
+question below, because it is probably a *latent miscompile* rather than a missing
+feature and it changes what the fix should be.
+
+**`dup2_x2` branch 2 is the most interesting thing in this section.** `javac` emits
+`dup2_x2` for `a[i] = <wide>` — e.g. `PrimitiveTest#dupArrAssign(long[] a, int i, long v)
+{ return a[i] = v; }` compiles to `aload_0; iload_1; lload_2; dup2_x2; lastore; lreturn`.
+At that `dup2_x2` the slot types are `[-1]=LONG [-2]=LONG [-3]=INT [-4]=REFERENCE`
+(`LONG = 6` in `org.jnode.vm.JvmType`), which **satisfies** the pre-existing branch-2
+condition at `IRGenerator.java:820`. Yet adding an `else` branch that these shapes should
+never reach still produced 6 census failures including `dupArrAssign`/`dupArrUse`, with
+`ArrayIndexOutOfBoundsException` on a `VariableRefAssignQuad` write and the stack frame
+naming the new `else`. Either that attribution is wrong, or **branch 2 is off by one**.
+The existing guard is `assertCompiles` — *compilation only* — and `L2PipelineTest` itself
+says correctness beyond completion is verified elsewhere. Unresolved; measure it next.
+
+
 
 - **Never hand-type a path.** Pin the session once with
   `cd "$(git rev-parse --show-toplevel)"`; a typo in a path/permission field raises a
@@ -479,6 +622,33 @@ coverage, `F5/F6`.
   `/tmp` serial paths; its tooling power-offs the same VM, which looks exactly like a
   compiler crash. If guest instability reappears, check
   `ps -eo pid,cmd | grep serial_mux` first, then `ss -xlp | grep jnode.serial`.
+## 6. Environment facts that will otherwise cost you hours
+
+- **`git checkout -- <file>` is destructive to uncommitted work** (§11.6b). It silently
+  discarded the ANCHOR-L2-193 preheader from `IRControlFlowGraph.java` while stripping an
+  unrelated diagnostic, and the loss went unnoticed for hours. Snapshot a file before any
+  `checkout --`, and re-read the whole file when removing a probe.
+- **The 1-second check that the boot fix is present**:
+  `grep -c insertEntryPreheader core/src/core/org/jnode/vm/compiler/ir/IRControlFlowGraph.java`.
+  It returns 0 on a tree that wedges ~150 s into the boot with `int_die_halt!` while
+  **every host gate stays green** (§11.6a).
+- **KDB on this VM: UART1 is a raw file, not a pipe.** `vboxmanage showvminfo JNode` →
+  `UART 1 … raw file '/tmp/jnode.kdb'`, `UART 2 … pipe (server) '/tmp/jnode.serial2'`.
+  The `jnode-kdb-serial` skill's stated mapping (KDB on UART1 via `/tmp/jnode.kdb`) is
+  **inverted for this VM**: KDB is unreachable, and `/tmp/jnode.serial2` is the shell
+  agent. To use KDB, power off, re-point UART1 at a pipe, and drain it continuously — an
+  undrained pipe blocks the guest on every log byte.
+- **The serial log cannot distinguish a good boot from a silent hang.** The shell renders
+  on the VGA textscreen, not UART1, so `/tmp/jnode.kdb` just goes quiet after
+  `JIFSPlugin: Mounted JIFS on jifs`. Worse, the `regress.sh` `boot` phase's readiness
+  break greps for `"bootimage"` — a string that no longer appears anywhere — so that check
+  can never fire, the phase always burns the full 300 s, and it reports "no panic" for
+  both a successful boot and a wedge. **A human at the console is a better instrument
+  than that phase.** Known open item.
+- `sh build.sh -D…` sets **Ant** properties only; anything read with
+  `Boolean.getBoolean(...)` / `System.getProperty(...)` needs `ANT_OPTS=` or
+  `JAVA_TOOL_OPTIONS=`. (This is why the red-proof overlay in §8 sets
+  `-Djnode.noEntryPreheader` on the *java* command, not on `build.sh`.)
 - This mauve build nests testlets as **directories with dot-named class files**:
   `gnu/testlet/java/io/File/security.class` is the class
   `gnu.testlet.java.io.File.security`, not `…io.File`. Getting this wrong yields a
@@ -549,6 +719,37 @@ sh -c '/home/levente/ext/prg/java/bin/java -Djnode.root=$PWD \
   -cp core/build/testclasses:core/build/classes:local/classlib \
   org.jnode.vm.compiler.ir.L2Dump <fqcn> <method> [extraURLs] --ir|--pre|--ranges'
 
+# --- runtime-JIT=L2 (see §11). The L2/L1A config that BOOTS is the default. ---
+# AOT=L2 / JIT=L1A  -> boots to a shell (§5.7)
+sh build.sh -Djnode.compiler=L2 -Djnode.jit.compiler=L1A cd-x86-lite
+# AOT=L2 / JIT=L2   -> plugin startup, then the D1/D2/D3 exception family (§11.2)
+#   add the all-plugins GRUB entry to get "boots far" (needed for §11.2's shape):
+sh build.sh -Djnode.compiler=L2 -Djnode.jit.compiler=L2 \
+  "-Dmy-conf.dir=$PWD/local/l2oracle/conf-x86" cd-x86-lite
+# NB: no "Runtime JIT compiler X86-L1A" line in the build output means AOT == JIT.
+# Measured 2026-09-29 with the L2-195 policy in place (build log "Compiler union"):
+#   L2/L2 -> union "X86-Stub X86-L2", no fallback. Stops 3s into plugin startup:
+#     CompileError on org.apache.log4j.AppenderSkeleton#doAppend, caused by
+#     X86Level2Compiler.allocate NPE (0041494F), escaping into QueueProcessor --
+#     the method stays on its stub and the guest never reaches the shell.
+#   -Djnode.compiler=L2 alone -> union "X86-Stub X86-L2 X86-L1A", boots to a shell,
+#     and the log carries the rescues: "COMPILE FALLBACK: ... rejected by X86-L2
+#     (NullPointerException ...), compiled by X86-L1A" for addHandlers,
+#     refreshFinders, TextScreenConsoleManager$1#serviceBound, BaseCalendar#<clinit>.
+#   So the L2 allocate defect, not the policy, is what blocks a pure-L2 boot.
+# Copy any ISO worth keeping before changing config -- build and isobuild both
+# write all/build/cdroms/jnode-x86-lite.iso, and there is no backup (§2).
+
+# hand-built dup/phi corpus for the L2 frontend gaps (§5.8, §11.5)
+python3 tests/l2oracle/dupforms/mkdupforms.py /tmp/dupf/classes
+# -> DupForms.class, 8 static (IJ) methods, all verifier-legal on a stock JVM.
+#    Dump any one with L2Dump; the pre-fix failure is
+#    "byte code not yet supported" from visit_dup_x2 / visit_dup2_x1 / visit_dup2_x2.
+
+# red proof for ANCHOR-L2-193 (§5.7) without touching the tree: a scratch overlay
+# whose insertEntryPreheader() is gated on a system property, put FIRST on the
+# classpath, and run L2Dump with -Djnode.noEntryPreheader=true.
+
 # bisect driver for java.util.Properties under L2 (self-checking, no host compare)
 #   modes: noforce | forceprops | forcereader | forceone <fqcn> <method> | disasm <fqcn> <method> <out>
 #   staged on the ISO; compile in-guest with:
@@ -557,6 +758,32 @@ sh -c '/home/levente/ext/prg/java/bin/java -Djnode.root=$PWD \
 
 ## 9. Approaches that were tried and failed — do not repeat them
 
+- **Rewriting `IRGenerator`'s `dup_x2`/`dup2`/`dup2_x1`/`dup2_x2` wholesale to a generic
+  slot-accurate helper** (§5.8). It compiled all 54 probed layouts and broke **37** corpus
+  methods: `NativeStrictMath#exp` NPE'd in `removeUnusedVars:377`, and `remPiOver2`
+  overran `max_stack` (block stack depths shifted). The in-place branches those methods
+  depend on are validated by 67,838 methods; **add an `else`, do not replace**.
+- **`dup2` treated as `dup_x2`** (third attempt). On a category-2 top `dup2` duplicates
+  **ONE** value, not two — duplicating the wide value *plus its neighbour* shifts the
+  whole frame. This cost a full gate cycle.
+- **Emitting the dup'd values in the wrong order** (third attempt). `order` entries are
+  indices counted from the **top** and are emitted **bottom-up**, so the sequence is
+  reversed: `dup2` form 1 is `value2, value1, value2, value1` bottom-up, not
+  `value1, value2, ...`. Getting it backwards silently swaps the values. Also: the new
+  `stackOffset` must be counted in **slots**, and a wide value contributes two — deriving
+  it as "consumed width + a constant" is only right when every value is category 1.
+- **A constant-fed probe for a dup/phi shape.** `iconst`/`lconst` operands let the
+  optimizer delete the whole sequence as dead code, so the probe reported "L2 ok" for
+  layouts L2 in fact rejects. **Probe operands must be parameters.**
+- **Probing class-file layouts with `ClassLoader.loadClass`.** It parses; it does not
+  verify. Use `Class.forName(name, true, cl)`.
+- **Stripping a diagnostic with `git checkout -- <file>`** (§11.6b). It discarded an
+  uncommitted fix in a *different* part of that file. Snapshot first, or edit precisely.
+- **Trusting `build PASS` / `census FAILED=0` after a revert** (§11.6a). Both regress
+  bootimage builds pin `-Djnode.jit.compiler=L1A`, so runtime-L2 defects are invisible
+  to the entire host gate.
+- **Overwriting the only ISO while changing build config** (§2). The booting
+  L2-bootimage was destroyed by an unrelated investigation and had to be rebuilt.
 - **Three hand-rolled census lints, all discarded**: the B1 handler-entry-phi lint
   (examined 0 phis — blind), `ARGSPLIT` (fired on 7, of which **5 were known-good
   methods** the oracle passes daily), and `PHINOTATHEAD` (fired on 0, including the two
@@ -597,3 +824,175 @@ mistaken for either: C2 (latent, 4,352 sites, 0 hazards) and A6 (closed as
 not-reproducible after 14 FP probe rows matched the host bit-for-bit). If you add an
 entry, keep that distinction — the register's value is that nothing is claimed without a
 guard.
+
+---
+
+## 11. AOT=L2 / JIT=L2 — the boot-time exception family (investigated this session)
+
+Everything in §11 is measured. Nothing here is fixed. The AOT=L2 / JIT=L1A
+configuration boots (§5.7); the **runtime** L2 compiler does not survive contact with
+the boot path, for three independent reasons, and they compound.
+
+### 11.1 The two configurations and how to build them
+
+```bash
+# boots to a working shell (the milestone)
+sh build.sh -Djnode.compiler=L2 -Djnode.jit.compiler=L1A cd-x86-lite
+
+# the crash family below
+sh build.sh -Djnode.compiler=L2 -Djnode.jit.compiler=L2 cd-x86-lite
+# ...plus the all-plugins GRUB entry, which is what "boots far" actually needs:
+sh build.sh -Djnode.compiler=L2 -Djnode.jit.compiler=L2 \
+    "-Dmy-conf.dir=$PWD/local/l2oracle/conf-x86" cd-x86-lite
+```
+
+`all/build-x86.xml:106-107` — `jnode.compiler` defaults to `default` and
+**`jnode.jit.compiler` defaults to `${jnode.compiler}`**, so `-Djnode.compiler=L2` on its
+own gives you AOT=L2 **and** JIT=L2. You must pass both. `local/regress.sh` (lines 92,
+134) is **stale** and passes only `-Djnode.compiler=L2`, so it silently builds the
+pre-split configuration; `tests/l2oracle/regress.sh` (171, 305) is the current one.
+
+Verify, don't trust the exit code — note the `Runtime JIT` line is **absent** when the
+two are the same compiler, which is itself the tell:
+
+```
+[bootimage] Compiling using X86-Stub and X86-L2 compilers
+[bootimage] Runtime JIT compiler X86-L1A      <- only when AOT != JIT
+```
+
+### 11.2 Boot shape under JIT=L2 (reproducible)
+
+Plugins start, filesystems mount (`Mounted ISO9660 on /devices/sg0`, `Mounted JFAT`),
+`RAMFSPlugin`, `NetDeviceMonitor`, `SerialConsolePlugin`, `JIFSPlugin` — then the shell's
+**first `File.exists()`** dies:
+
+```
+CommandShell.main -> File.exists -> UnixFileSystem.getBooleanAttributes
+  -> VmMethod.recompileMethod -> LoadCompileService.compile -> X86Level2Compiler.doCompile
+Caused by: java.lang.NoClassDefFoundError: java.io.VMIOUtils
+  at IRGenerator.visit_invokestatic(IRGenerator.java:1370)
+```
+
+No shell prompt, but the text screen is scrollable and shows the whole trace. Three
+distinct failures appear, the first two being cascades of the same compile.
+
+### 11.3 D1 / D2 / D3 — the three independent causes
+
+**D1 — L2 codegen: `athrow` of a rethrown caught exception is rejected.**
+`GenericX86CodeGenerator.generateCodeFor(ThrowQuad)` handles only `REGISTER` and
+`STACK`, but `AddressingMode` has **four** values. A rethrown caught exception is an
+`ExceptionArgument`, whose constructor hard-codes `TopStackLocation`, so the operand is
+`TOPS` and falls into a **message-less** `else throw new IllegalArgumentException()`.
+Every `catch (E e) { throw e; }` that L2 compiles hits this. Captured live after adding
+a temporary diagnostic:
+
+```
+ThrowQuad operand: class=org.jnode.vm.compiler.ir.ExceptionArgument str=e2_0 mode=TOPS loc=TS
+```
+
+Host-reproducible sibling: `throw (RuntimeException) null;` gives
+`class=IntConstant str=0 mode=CONSTANT` (`L2Dump Throws t4null`).
+
+**D2 — L2 eagerly resolves constant-pool refs, so a bootimage-absent class breaks
+compilation.** `IRGenerator.visit_invokestatic:1370` loads the target class *at compile
+time*, so merely **compiling** `UnixFileSystem.getBooleanAttributes0` triggers a load of
+`java.io.VMIOUtils` → `ClassNotFoundException`. That class **is** in
+`all/lib/classlib.jar` (md5-identical to `local/classlib`, verified) — it is simply not
+in the guest **bootimage**. Verified: the jar holds 21,600 classes, `local/classlib`
+25,901, and all 21,600 common files are byte-identical.
+
+**D3 — the architectural one, and the reason any gap is fatal.** AOT tolerates a compile
+failure; the runtime does not. `LoadCompileService.Request.waitUntilFinished` does
+`throw new RuntimeException(errorMessage(), exception)` with **no interpreter
+fallback** — so a method L2 cannot compile kills the VM instead of running interpreted.
+`errorMessage()` returns the literal `"Error in compilation: "` with an **empty method
+name**, which is why the exception alone never named the offending method (only the
+separate `ERROR in compilation of <m>` line did). With ~93 gaps reachable, **this is the
+highest-leverage fix in the whole area** and it is what makes JIT=L2 survivable while the
+gaps are filled incrementally. Recommend doing D3 before any individual gap.
+
+### 11.4 Why every gate is blind to D1/D2 — this is the important part
+
+Chunked classlib census: **67,838 methods, FAILED=0**. Core census: `FAILED=0`. Both
+clean, both useless here:
+
+- **The host census loader sees a superset of the guest's classes.** `L2Census` loads
+  from `local/classlib` on the app classpath, so any L2 failure that depends on class
+  *availability* is invisible **by construction**.
+- **The trigger class is generated at runtime.** `$Proxy0` is a
+  `java.lang.reflect.Proxy` subclass created during boot — no on-disk class file, so no
+  corpus can contain it.
+- **Native-replacement bodies** (`java.io.VMFile#exists!`) compile in a re-entrant
+  annotation-resolution context the census never reproduces.
+
+⇒ **`FAILED==0` is not evidence that JIT=L2 is sound.** Per §4.6 this is exactly the
+"census is not evidence" case, in a new disguise: not "the shape is rare" but "the
+instrument cannot see the shape at all".
+
+### 11.5 The `dup` family — what was measured, what the generator is for
+
+`tests/l2oracle/dupforms/mkdupforms.py` emits `DupForms.class`: 8 `static (IJ)` methods
+covering every layout the shipped corpus cares about, each returning the value the dup
+leaves on top. All 8 verify on a stock JVM and return the right values. Three
+measurements shaped it, each of which first went the wrong way:
+
+1. **javac cannot produce the missing forms.** 30 hand-written candidates (mixed
+   int/long array and field assignment, compound and nested assignment): javac emitted
+   `dup_x2` and `dup2_x2` but **never `dup2_x1`**, and only ever the all-category-1 form —
+   the one L2 already implements. All 20 methods that got a dup-family opcode compiled
+   clean, as does the whole 67,838-method classlib census. The gaps are unreachable from
+   javac output, which is why they survived.
+2. **JNode's verifier is more permissive than HotSpot's.** 18 layouts probed one class
+   each. **HotSpot rejects 6** (`dup_x2 il/ll`, `dup2_x1 lli/ili/lii/lll`, `dup2_x2
+   lli/ili/lil`) because it will not split a category-2 value; **JNode accepted all 18**,
+   zero rejects. So **13 of 18 JNode-reachable layouts are refused by `IRGenerator`**,
+   including `dup2_x1 ili` — the guest's actual failure. Consequence: the guest's layout
+   was probably `iil`/`ili`, **not** the JVMS "form 3" the code comments suggest.
+3. **Verification needs linking.** `ClassLoader.loadClass` only *parses*; it does not
+   verify. An early probe of mine reported all 18 layouts "ACCEPTED" because of exactly
+   this. Use `Class.forName(name, true, cl)` or invoke reflectively.
+
+Generator gotchas, all of which produced a wrong measurement first: `invokespecial` is
+**3 bytes** (opcode + u2 index — the JVMS "countbyte 0" of the old verifier is not
+emitted; verified against javac's `2a b7 00 01 b1`); `ACC_SUPER` is a class flag and is
+illegal on `<init>`; test methods must be `public` for `getMethod`; and **`max_stack` is
+only required to be an upper bound** — declaring 16 when the post-dup peak is 19 produced
+an `ArrayIndexOutOfBoundsException` inside JNode that looked like a backend bug.
+
+### 11.6 Two process lessons that cost the most time this session
+
+**(a) The host gate is blind to every runtime-JIT-L2 defect.** Both `regress` bootimage
+builds pass `-Djnode.jit.compiler=L1A` (`regress.sh:171`, `:305`). A defect that only
+manifests when the *runtime* JIT is L2 is therefore **inert under the host gate** — the
+preheader of §5.7 is exactly such a defect. Practical rule: for anything in this area,
+`isobuild` + `oracle` is mandatory and the value probe is the only instrument that sees
+it. I skipped `oracle` after a revert, saw `build PASS / FAILED=0`, and reported the tree
+restored — while the fix I had just deleted was the thing making the boot work.
+
+**(b) `git checkout -- <file>` is a nuke, not an edit.** Stripping a diagnostic from
+`IRControlFlowGraph.java` with `git checkout --` **discarded the uncommitted
+ANCHOR-L2-193 preheader** in that file. I checked `IRGenerator.java` (correctly reported
+identical to HEAD) and did not check `IRControlFlowGraph.java`, so I stated the tree was
+restored. The boot milestone was lost and had to be reconstructed from the conversation.
+The guard for that fix sat in `Probes.java`/`OracleDriver.java` the whole time, unused.
+
+### 11.7 Open, and what to do next
+
+1. **D3 first** (§11.3) — make a runtime compile failure fall back to the interpreter
+   instead of throwing. Converts ~93 gaps from "VM dies" to "one method runs interpreted".
+2. **`dup2_x2` branch 2** (§5.8) — unresolved, and the evidence points at a possible
+   *latent miscompile* on javac's `a[i] = <wide>` path rather than a missing feature.
+   Worth more than the 13 unimplemented layouts.
+3. **The 13 layouts** (§5.8) — implement via `emitDup`, but **additively**: keep the
+   existing branches (they are what 67,838 methods validate) and put the new layouts
+   behind an `else`. §9 lists the three wrong attempts.
+4. **`OPEN-BUGS.md` needs rows** for ANCHOR-L2-193 (fixed, guarded) and the `dup` family
+   (open). I was asked to touch only this file, so they are not written yet.
+5. **Unresolved anomaly:** guest Java stack traces report line numbers that do not match
+   the shipped source — `GenericX86CodeGenerator:6558` where the source throws at 6570,
+   `X86Level2Compiler:149` where `q.generateCode(cg)` is at 182, and `IRGenerator:6533` in
+   a **1701-line** file. Stale artifact ruled out (one class copy on disk, class newer
+   than source, ISO newer than class, classlib md5-identical), and a rebuild reproduced
+   the identical failure, so the *shapes* hold — but the mismatch is unexplained and it
+   undermines any line-number-based reading of a guest trace. Treat guest line numbers
+   as unreliable; trust the frames and the message text.
