@@ -6566,8 +6566,43 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
         } else if (op.getAddressingMode() == STACK) {
             os.writeMOV(BITS32, X86Register.EAX, X86Register.EBP,
                 ((StackLocation) ((Variable) op).getLocation()).getDisplacement());
+        } else if (op.getAddressingMode() == TOPS) {
+            // ANCHOR-L2-194: a handler whose FIRST instruction is athrow.
+            // javac never emits that shape, but ProxyGenerator does: the
+            // "catch (RuntimeException e) { throw e; }" fast path of a
+            // generated proxy is `athrow` AT the handler pc with no astore,
+            // so IRGenerator's pushFreshExceptionArgument leaves the operand
+            // as the raw ExceptionArgument (TopStackLocation, mode TOPS).
+            // The VM has already put the exception on the machine stack at
+            // dispatch (X86StackFrame: lea esp,[ebp-ofs]; push eax), which is
+            // exactly what VariableRefAssignQuad's TOPS arm consumes with a
+            // POP -- and POP is what leaves ESP where the handler prologue
+            // put it, so vm_athrow sees the frame it expects.
+            os.writePOP(X86Register.EAX);
+        } else if (op.getAddressingMode() == CONSTANT) {
+            // aconst_null reaches here as IRGenerator.NULL_CONSTANT, i.e.
+            // IntConstant(0). Materialise it in EAX exactly the way L1A's
+            // BytecodeVisitor#visit_athrow does (ref.loadTo(EAX) for the
+            // constant) so both compilers hand vm_athrow the same value.
+            // findThrowableHandler then reports the null itself; see
+            // tests/l2oracle/OPEN-BUGS.md for that separate pre-existing gap.
+            if (!(op instanceof IntConstant)) {
+                throw new IllegalArgumentException("ThrowQuad operand: class="
+                    + op.getClass().getName() + " str=" + op
+                    + " mode=" + op.getAddressingMode()
+                    + " loc=" + (op instanceof Variable
+                        ? String.valueOf(((Variable<T>) op).getLocation()) : "n/a"));
+            }
+            os.writeMOV_Const(X86Register.EAX, ((IntConstant) op).getValue());
         } else {
-            throw new IllegalArgumentException();
+            // Only REGISTER/STACK/TOPS/CONSTANT are reachable; anything else
+            // is a backend bug, and the operand has to be named (a bare
+            // "IllegalArgumentException" once cost a whole investigation).
+            throw new IllegalArgumentException("ThrowQuad operand: class="
+                + op.getClass().getName() + " str=" + op
+                + " mode=" + op.getAddressingMode()
+                + " loc=" + (op instanceof Variable
+                    ? String.valueOf(((Variable<T>) op).getLocation()) : "n/a"));
         }
 
         // Jump
