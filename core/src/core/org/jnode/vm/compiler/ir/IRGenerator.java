@@ -195,14 +195,15 @@ public class IRGenerator<T> extends BytecodeVisitor {
         handlerEntry = false;
         variables = new Variable[nLocals + maxStack];
         int index = 0;
-        int argCount = method.getNoArguments();
+        // ANCHOR-L2-197: descriptor types, no resolveTypes()/loadClass.
+        final int[] argJvmTypes = descriptorArgumentJvmTypes(method.getSignature());
+        int argCount = argJvmTypes.length;
         if (!method.isStatic()) {
             variables[index] = new MethodArgument<T>(Operand.REFERENCE, index);
             index += 1;
         }
         for (int i = 0; i < argCount; i++) {
-            VmType argType = method.getArgumentType(i);
-            int jvmType = argType.isPrimitive() ? argType.getJvmType() : JvmType.REFERENCE;
+            int jvmType = argJvmTypes[i];
             variables[index] = new MethodArgument<T>(Operand.UNKNOWN, index);
             variables[index].setTypeFromJvmType(jvmType);
             index += 1;
@@ -675,6 +676,18 @@ public class IRGenerator<T> extends BytecodeVisitor {
             //form 2 [..., v3, v2lo, v2hi] -> [..., v2lo, v2hi, v3, v2lo, v2hi]
             // (ANCHOR-L2-078: rewritten; the old sequence dropped a half.)
             int index = stackOffset;
+            // ANCHOR-L2-197: read the source types first. The copies below
+            // overwrite those very slots, and fixType() only fills a slot
+            // whose type is still JvmType.UNKNOWN, so a destination that
+            // already carries a type silently keeps its PRE-dup type. Without
+            // this, index-3 (the first copy's wide base) stayed REFERENCE
+            // from the value it replaced, and the NEXT dup2_x1 saw
+            // [REFERENCE, LONG] on top and matched neither legal layout --
+            // which is how VirtualDirEntry#<init> failed to compile and a
+            // pure-L2 boot lost every filesystem.
+            final int wideType = getVariables()[index - 2].getType();
+            final int highType = getVariables()[index - 1].getType();
+            final int otherType = getVariables()[index - 3].getType();
             stackOffset -= 2;
             currentBlock.add(new VariableRefAssignQuad<T>(address, currentBlock, index, stackOffset));
             fixType();
@@ -688,12 +701,27 @@ public class IRGenerator<T> extends BytecodeVisitor {
             fixType();
             currentBlock.add(new VariableRefAssignQuad<T>(address, currentBlock, index - 3, index));
             fixType();
-            // ANCHOR-L2-078: type the new slots (dup conditions read slot types).
-            getVariables()[index].setType(getVariables()[index - 2].getType());
-            getVariables()[index + 1].setType(getVariables()[index - 1].getType());
+            // ANCHOR-L2-197: type every destination slot (the dup layout
+            // conditions read slot types). fixType() cannot do this for us:
+            // these slots are already typed, so it leaves them alone.
+            getVariables()[index - 3].setType(wideType);
+            getVariables()[index - 2].setType(highType);
+            getVariables()[index - 1].setType(otherType);
+            getVariables()[index].setType(wideType);
+            getVariables()[index + 1].setType(highType);
             stackOffset += 4;
         } else {
-            throw new IllegalArgumentException("byte code not yet supported");
+            // ANCHOR-L2-197: report the whole operand stack. The two legal
+            // dup2_x1 layouts are selected from the slot types, so an
+            // unmatched run means either a slot-type tracking gap or a
+            // layout not modelled yet -- the dump says which.
+            throw new IllegalArgumentException("byte code not yet supported: dup2_x1"
+                + " addr=" + address
+                + " block=[" + currentBlock.getStartPC() + "," + currentBlock.getEndPC() + ")"
+                + " nLocals=" + nLocals + " stackOffset=" + stackOffset
+                + " longSlots=" + typeSizeInfo.getStackSlots(JvmType.LONG)
+                + " refSlots=" + typeSizeInfo.getStackSlots(JvmType.REFERENCE)
+                + " " + slotDump());
         }
     }
 
@@ -1197,7 +1225,9 @@ public class IRGenerator<T> extends BytecodeVisitor {
 
     public void visit_getstatic(VmConstFieldRef fieldRef) {
         fieldRef.resolve(vmClassLoader);
-        int jvmType = fieldRef.getResolvedVmField().getType().getJvmType();
+        // ANCHOR-L2-197: descriptor, not a resolved VmField type (same
+        // loadClass path as the call sites; L1A does SignatureToType here).
+        int jvmType = descriptorJvmType(fieldRef.getSignature());
         variables[stackOffset].setTypeFromJvmType(jvmType);
         currentBlock.add(new StaticRefAssignQuad<T>(address, currentBlock, stackOffset, fieldRef));
         if (getCategory(jvmType) == 2) {
@@ -1209,7 +1239,9 @@ public class IRGenerator<T> extends BytecodeVisitor {
 
     public void visit_putstatic(VmConstFieldRef fieldRef) {
         fieldRef.resolve(vmClassLoader);
-        int jvmType = fieldRef.getResolvedVmField().getType().getJvmType();
+        // ANCHOR-L2-197: descriptor, not a resolved VmField type (same
+        // loadClass path as the call sites; L1A does SignatureToType here).
+        int jvmType = descriptorJvmType(fieldRef.getSignature());
         stackOffset -= getCategory(jvmType);
         currentBlock.add(new StaticRefStoreQuad<T>(address, currentBlock, stackOffset, fieldRef));
     }
@@ -1217,7 +1249,9 @@ public class IRGenerator<T> extends BytecodeVisitor {
     public void visit_getfield(VmConstFieldRef fieldRef) {
         fieldRef.resolve(vmClassLoader);
         stackOffset -= 1;
-        int jvmType = fieldRef.getResolvedVmField().getType().getJvmType();
+        // ANCHOR-L2-197: descriptor, not a resolved VmField type (same
+        // loadClass path as the call sites; L1A does SignatureToType here).
+        int jvmType = descriptorJvmType(fieldRef.getSignature());
         variables[stackOffset].setTypeFromJvmType(jvmType);
         currentBlock.add(new RefAssignQuad<T>(address, currentBlock, stackOffset, fieldRef, stackOffset));
         if (getCategory(jvmType) == 2) {
@@ -1229,7 +1263,9 @@ public class IRGenerator<T> extends BytecodeVisitor {
 
     public void visit_putfield(VmConstFieldRef fieldRef) {
         fieldRef.resolve(vmClassLoader);
-        int jvmType = fieldRef.getResolvedVmField().getType().getJvmType();
+        // ANCHOR-L2-197: descriptor, not a resolved VmField type (same
+        // loadClass path as the call sites; L1A does SignatureToType here).
+        int jvmType = descriptorJvmType(fieldRef.getSignature());
         stackOffset -= getCategory(jvmType);
         int ref = stackOffset - 1;
         currentBlock.add(new RefStoreQuad<T>(address, currentBlock, stackOffset, fieldRef, ref));
@@ -1238,20 +1274,13 @@ public class IRGenerator<T> extends BytecodeVisitor {
 
     public void visit_invokevirtual(VmConstMethodRef methodRef) {
         methodRef.resolve(vmClassLoader);
-        VmMethod vmMethod = methodRef.getResolvedVmMethod();
-        int nrArguments = vmMethod.getNoArguments();
+        // ANCHOR-L2-197: descriptor types, no resolveTypes()/loadClass.
+        final int[] argJvmTypes = descriptorArgumentJvmTypes(methodRef.getSignature());
+        int nrArguments = argJvmTypes.length;
         int[] varOffs = new int[nrArguments + 1];
         for (int i = nrArguments; i-- > 0;) {
-            VmType argType = vmMethod.getArgumentType(i);
-            int stackChange;
-            int jvmType;
-            if (argType.isPrimitive()) {
-                jvmType = argType.getJvmType();
-                stackChange = getCategory(jvmType);
-            } else {
-                stackChange = 1;
-                jvmType = JvmType.REFERENCE;
-            }
+            final int jvmType = argJvmTypes[i];
+            final int stackChange = getCategory(jvmType);
             stackOffset -= stackChange;
             variables[stackOffset].setTypeFromJvmType(jvmType);
             varOffs[i + 1] = stackOffset;
@@ -1303,20 +1332,13 @@ public class IRGenerator<T> extends BytecodeVisitor {
 
     public void visit_invokespecial(VmConstMethodRef methodRef) {
         methodRef.resolve(vmClassLoader);
-        VmMethod vmMethod = methodRef.getResolvedVmMethod();
-        int nrArguments = vmMethod.getNoArguments();
+        // ANCHOR-L2-197: descriptor types, no resolveTypes()/loadClass.
+        final int[] argJvmTypes = descriptorArgumentJvmTypes(methodRef.getSignature());
+        int nrArguments = argJvmTypes.length;
         int[] varOffs = new int[nrArguments + 1];
         for (int i = nrArguments; i-- > 0;) {
-            VmType argType = vmMethod.getArgumentType(i);
-            int stackChange;
-            int jvmType;
-            if (argType.isPrimitive()) {
-                jvmType = argType.getJvmType();
-                stackChange = getCategory(jvmType);
-            } else {
-                stackChange = 1;
-                jvmType = JvmType.REFERENCE;
-            }
+            final int jvmType = argJvmTypes[i];
+            final int stackChange = getCategory(jvmType);
             stackOffset -= stackChange;
             variables[stackOffset].setTypeFromJvmType(jvmType);
             varOffs[i + 1] = stackOffset;
@@ -1368,20 +1390,13 @@ public class IRGenerator<T> extends BytecodeVisitor {
 
     public void visit_invokestatic(VmConstMethodRef methodRef) {
         methodRef.resolve(vmClassLoader);
-        VmMethod vmMethod = methodRef.getResolvedVmMethod();
-        int nrArguments = vmMethod.getNoArguments();
+        // ANCHOR-L2-197: descriptor types, no resolveTypes()/loadClass.
+        final int[] argJvmTypes = descriptorArgumentJvmTypes(methodRef.getSignature());
+        int nrArguments = argJvmTypes.length;
         int[] varOffs = new int[nrArguments];
         for (int i = nrArguments; i-- > 0;) {
-            VmType argType = vmMethod.getArgumentType(i);
-            int stackChange;
-            int jvmType;
-            if (argType.isPrimitive()) {
-                jvmType = argType.getJvmType();
-                stackChange = getCategory(jvmType);
-            } else {
-                stackChange = 1;
-                jvmType = JvmType.REFERENCE;
-            }
+            final int jvmType = argJvmTypes[i];
+            final int stackChange = getCategory(jvmType);
             stackOffset -= stackChange;
             variables[stackOffset].setTypeFromJvmType(jvmType);
             varOffs[i] = stackOffset;
@@ -1423,20 +1438,13 @@ public class IRGenerator<T> extends BytecodeVisitor {
 
     public void visit_invokeinterface(VmConstIMethodRef methodRef, int count) {
         methodRef.resolve(vmClassLoader);
-        VmMethod vmMethod = methodRef.getResolvedVmMethod();
-        int nrArguments = vmMethod.getNoArguments();
+        // ANCHOR-L2-197: descriptor types, no resolveTypes()/loadClass.
+        final int[] argJvmTypes = descriptorArgumentJvmTypes(methodRef.getSignature());
+        int nrArguments = argJvmTypes.length;
         int[] varOffs = new int[nrArguments + 1];
         for (int i = nrArguments; i-- > 0;) {
-            VmType argType = vmMethod.getArgumentType(i);
-            int stackChange;
-            int jvmType;
-            if (argType.isPrimitive()) {
-                jvmType = argType.getJvmType();
-                stackChange = getCategory(jvmType);
-            } else {
-                stackChange = 1;
-                jvmType = JvmType.REFERENCE;
-            }
+            final int jvmType = argJvmTypes[i];
+            final int stackChange = getCategory(jvmType);
             stackOffset -= stackChange;
             variables[stackOffset].setTypeFromJvmType(jvmType);
             varOffs[i + 1] = stackOffset;
@@ -1691,6 +1699,157 @@ public class IRGenerator<T> extends BytecodeVisitor {
     }
 
     //todo review useage; move this method to VmType ?
+    /**
+     * ANCHOR-L2-197: argument JVM types read from the descriptor, never from
+     * a resolved VmType.
+     * <p>
+     * {@code VmMethod.getNoArguments()}/{@code getArgumentType()} run
+     * {@code resolveTypes()}, which parses the signature through
+     * {@code Signature} and that does {@code ClassLoader.loadClass} for every
+     * reference type in it -- looked up in the DECLARING class's loader. An
+     * interface method whose return type lives where that loader cannot see
+     * it ({@code FileSystemService.getFileSystem} returning
+     * {@code org.jnode.fs.FileSystem}, exported by a different plugin that
+     * this one does not require) makes the COMPILE itself throw
+     * {@code ClassNotFoundException}. With only X86-Stub and X86-L2 in the
+     * union {@code compileWithFallback} has no other emitting compiler to try,
+     * so the method can never be compiled -- which is why a JIT=L2 image
+     * booted to a shell but never mounted a filesystem.
+     * <p>
+     * L1A never pays this: it takes the types straight from the descriptor
+     * ({@code X86BytecodeVisitor:383 JvmType.getArgumentTypes},
+     * {@code :1990 JvmType.SignatureToType}). The resolving version was only
+     * ever read for {@code isPrimitive()}/{@code getJvmType()}, both of which
+     * the descriptor carries. {@code resolve()} above each call is kept: all
+     * {@code doResolveMember} needs is the declaring class plus the
+     * descriptor, so it is already at L1A parity and does not load
+     * parameter or return types.
+     *
+     * @param signature a method descriptor
+     * @return one JVM type per declared parameter, in declaration order
+     */
+    private static int[] descriptorArgumentJvmTypes(String signature) {
+        // getArgumentCount is package-private to org.jnode.vm; the public
+        // accessor returns the same count (it just normalizes Z/B/C/S/I to
+        // INT, so its values are discarded below).
+        final int count = JvmType.getArgumentTypes(signature).length;
+        final int[] types = new int[count];
+        int ofs = 1;
+        int n = 0;
+        while (n < count) {
+            final char c = signature.charAt(ofs);
+            if (c == ')') {
+                break;
+            }
+            types[n++] = descriptorJvmType(c);
+            if (c == 'L') {
+                while (signature.charAt(ofs) != ';') {
+                    ofs++;
+                }
+                ofs++;
+            } else if (c == '[') {
+                while (signature.charAt(ofs) == '[') {
+                    ofs++;
+                }
+                if (signature.charAt(ofs) == 'L') {
+                    while (signature.charAt(ofs) != ';') {
+                        ofs++;
+                    }
+                    ofs++;
+                } else {
+                    ofs++;
+                }
+            } else {
+                ofs++;
+            }
+        }
+        return types;
+    }
+
+    /**
+     * ANCHOR-L2-197: the JVM type of one descriptor type, matched to what
+     * {@code VmType.getJvmType()} returns for the resolved primitive
+     * ({@code BooleanClass} holds {@code JvmType.BOOLEAN},
+     * {@code ByteClass} {@code JvmType.BYTE}, ...) so IR typing stays
+     * bit-identical to the resolving version. {@code JvmType.SignatureToType}
+     * cannot be used here: it folds Z/B/C/S/I into {@code JvmType.INT}.
+     *
+     * @param c the first character of a descriptor type
+     * @return the JVM type
+     */
+    private static int descriptorJvmType(char c) {
+        switch (c) {
+            case 'Z':
+                return JvmType.BOOLEAN;
+            case 'B':
+                return JvmType.BYTE;
+            case 'C':
+                return JvmType.CHAR;
+            case 'S':
+                return JvmType.SHORT;
+            case 'I':
+                return JvmType.INT;
+            case 'J':
+                return JvmType.LONG;
+            case 'F':
+                return JvmType.FLOAT;
+            case 'D':
+                return JvmType.DOUBLE;
+            case 'L':
+            case '[':
+                return JvmType.REFERENCE;
+            default:
+                throw new IllegalArgumentException("Unknown type " + c);
+        }
+    }
+
+    /**
+     * ANCHOR-L2-197: a field's JVM type from its own descriptor. Replaces
+     * {@code fieldRef.getResolvedVmField().getType().getJvmType()}, which
+     * resolves the field type through the declaring class's loader
+     * ({@code VmField:150}).
+     *
+     * @param typeSignature the field's type descriptor
+     * @return the JVM type
+     */
+    private static int descriptorJvmType(String typeSignature) {
+        return descriptorJvmType(typeSignature.charAt(0));
+    }
+
+    /**
+     * ANCHOR-L2-197: slot type for diagnostics -- out of range is -1, an
+     * unallocated slot is -2, so a diagnostic message never masks the
+     * original failure with an NPE or an AIOOBE.
+     *
+     * @param index absolute slot index
+     * @return the slot's type, or -1/-2 when there is no slot
+     */
+    private int typeCodeAt(int index) {
+        if ((index < 0) || (index >= variables.length)) {
+            return -1;
+        }
+        final Variable<T> v = variables[index];
+        return (v == null) ? -2 : v.getType();
+    }
+
+    /**
+     * ANCHOR-L2-197: every live operand-stack slot as offset:type, so a
+     * layout failure can be reconstructed from the message alone.
+     *
+     * @return the dump, e.g. {@code [0:9 1:9 2:9 3:6]}
+     */
+    private String slotDump() {
+        final StringBuilder sb = new StringBuilder();
+        sb.append('[');
+        for (int i = nLocals; i < stackOffset; i++) {
+            if (i > nLocals) {
+                sb.append(' ');
+            }
+            sb.append(i - nLocals).append(':').append(typeCodeAt(i));
+        }
+        return sb.append(']').toString();
+    }
+
     private int getCategory(int jvmType) {
         return isCategory2(jvmType) ? 2 : 1;
     }

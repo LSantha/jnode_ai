@@ -1753,6 +1753,21 @@ public class L2PipelineTest {
     }
 
     /**
+     * ANCHOR-L2-197: two dup2_x1 over one object ref (the chained
+     * long-field assignment javac emits for VirtualDirEntry#&lt;init&gt;).
+     * The second one only matches a legal layout when the first typed all
+     * five of its destination slots -- fixType() fills UNKNOWN slots only,
+     * so an untyped destination keeps its PRE-dup type and the next dup2_x1
+     * sees [REFERENCE, LONG] and matches neither form. Reverted, this test
+     * throws IllegalArgumentException from IRGenerator.visit_dup2_x1, which
+     * is what made a pure-L2 boot lose every filesystem.
+     */
+    @Test
+    public void testCompileDup2X1Stamp() throws Exception {
+        assertCompiles("dup2x1Stamp");
+    }
+
+    /**
      * The per-opcode gate is retired: canCompile accepts every loadable
      * method (it only rejects malformed bytecode now). Pins the open gate
      * over previously-gated families.

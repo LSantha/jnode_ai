@@ -742,6 +742,19 @@ public class PrimitiveTest {
         return a[i] = a[i];
     }
 
+    // ANCHOR-L2-197: chained long-field assignment. javac emits two dup2_x1
+    // over a single object ref -- the exact shape of
+    // VirtualDirEntry#<init> (verified with javap). The second dup2_x1 only
+    // matches a legal layout if the first one typed all five of its
+    // destination slots, because fixType() never overwrites a slot type.
+    long stampCreated;
+    long stampModified;
+    long stampAccessed;
+
+    public static void dup2x1Stamp(PrimitiveTest t) {
+        t.stampCreated = t.stampModified = t.stampAccessed = System.currentTimeMillis();
+    }
+
     // Extra array widths (ANCHOR-L2-078)
     public static long larraySum(long[] a) {
         long s = 0L;
