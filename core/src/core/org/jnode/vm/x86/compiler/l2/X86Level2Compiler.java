@@ -236,6 +236,20 @@ public class X86Level2Compiler extends AbstractX86Compiler {
     @Override
     protected CompiledMethod doCompile(VmMethod method, NativeStream os, int level, boolean isBootstrap) {
         final CompiledMethod cm = new CompiledMethod(level);
+        // ANCHOR-L2-196: the codegen pin is ONE static, published by the
+        // X86CodeGenerator ctor (GenericX86CodeGenerator:164) and read by
+        // allocateRanges -> LinearScanAllocator.<init> -> cg.getRegisterPool().
+        // A compile nested inside this one -- LoadCompileService's REENTRANT
+        // path, e.g. resolving a type during IR construction runs its
+        // <clinit>, which compiles -- used to clear that static on the way
+        // out, so the OUTER compile reached allocateRanges with
+        // getInstance() == null and died in LinearScanAllocator.<init> on a
+        // null CodeGenerator: the NPE that made an explicitly-L2-configured
+        // image hang at plugin startup (the shape X86-L1A then rescued).
+        // Save and restore instead of clearing: for the outermost compile
+        // the saved value is null, so ANCHOR-L2-118's boot-image leak
+        // guarantee still holds exactly.
+        final CodeGenerator prevCg = CodeGenerator.getInstance();
         try {
             if (method.isNative()) {
                 Object label = new Label(method.getMangledName());
@@ -283,7 +297,11 @@ public class X86Level2Compiler extends AbstractX86Compiler {
             // set drags the last method's whole IR graph plus the native
             // streams into the boot image via static copying (locked-list
             // crashes and hashCode cycles in emitObjects).
-            CodeGenerator.setCodeGenerator(null);
+            // ANCHOR-L2-196: restore what was there when this compile
+            // STARTED, which is null for the outermost compile (so the leak
+            // guarantee above is unchanged) and the caller's pin for a
+            // nested one (so the caller's allocateRanges still works).
+            CodeGenerator.setCodeGenerator(prevCg);
         }
 
         return cm;
