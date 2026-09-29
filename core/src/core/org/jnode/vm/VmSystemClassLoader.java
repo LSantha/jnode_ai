@@ -682,11 +682,11 @@ public final class VmSystemClassLoader extends VmAbstractClassLoader {
         int index;
         if (enableTestCompilers) {
             index = optLevel;
-            optLevel += arch.getCompilers().length;
+            optLevel += arch.getJitCompilers().length;
             cmps = arch.getTestCompilers();
         } else {
             index = optLevel;
-            cmps = arch.getCompilers();
+            cmps = arch.getJitCompilers();
         }
 
         final NativeCodeCompiler cmp;

@@ -144,6 +144,8 @@ public abstract class AbstractBootImageBuilder extends AbstractPluginsTask {
 
     private String jnodeCompiler;
 
+    private String jnodeJitCompiler;
+
     private File kernelFile;
 
     private Set<String> legalInstanceClasses;
@@ -519,10 +521,14 @@ public abstract class AbstractBootImageBuilder extends AbstractPluginsTask {
             /* Now emit the processor */
             os.getObjectRef(proc);
 
-            /* Let the compilers load its native symbol offsets */
+            /* Let the compilers load its native symbol offsets. Every
+             * compiler that can produce code must be initialized and
+             * emitted, so this walks the AOT+JIT union, not just the AOT
+             * list. */
             final NativeCodeCompiler[] cmps = arch.getCompilers();
-            for (int i = 0; i < cmps.length; i++) {
-                final NativeCodeCompiler cmp = cmps[i];
+            final NativeCodeCompiler[] allCmps = arch.getAllCompilers();
+            for (int i = 0; i < allCmps.length; i++) {
+                final NativeCodeCompiler cmp = allCmps[i];
                 cmp.initialize(clsMgr);
                 os.getObjectRef(cmp);
             }
@@ -536,6 +542,22 @@ public abstract class AbstractBootImageBuilder extends AbstractPluginsTask {
                 }
             }
             log("Compiling using " + cmps[0].getName() + " and " + cmps[cmps.length - 1].getName() + " compilers");
+            final NativeCodeCompiler[] jitCmps = arch.getJitCompilers();
+            if (jitCmps[jitCmps.length - 1] != cmps[cmps.length - 1]) {
+                log("Runtime JIT compiler " + jitCmps[jitCmps.length - 1].getName());
+            }
+            // ANCHOR-L2-195: name every compiler baked into the union. This is
+            // the only build-time evidence of whether the L1A fallback was
+            // carried along -- the two lines above only look at the AOT and
+            // JIT selections, so a fallback is invisible to them.
+            final StringBuilder union = new StringBuilder();
+            for (int i = 0; i < allCmps.length; i++) {
+                if (i > 0) {
+                    union.append(' ');
+                }
+                union.append(allCmps[i].getName());
+            }
+            log("Compiler union " + union);
             // Initialize the IMT compiler.
             arch.getIMTCompiler().initialize(clsMgr);
 
@@ -903,6 +925,13 @@ public abstract class AbstractBootImageBuilder extends AbstractPluginsTask {
      */
     public final String getJnodeCompiler() {
         return jnodeCompiler;
+    }
+
+    /**
+     * @return Returns the jnodeJitCompiler.
+     */
+    public final String getJnodeJitCompiler() {
+        return jnodeJitCompiler;
     }
 
     /**
@@ -1298,6 +1327,13 @@ public abstract class AbstractBootImageBuilder extends AbstractPluginsTask {
     }
 
     /**
+     * @param jnodeJitCompiler The runtime (JIT) compiler to set.
+     */
+    public final void setJnodeJitCompiler(String jnodeJitCompiler) {
+        this.jnodeJitCompiler = jnodeJitCompiler;
+    }
+
+    /**
      * Sets the kernelFile.
      *
      * @param kernelFile The kernelFile to set
@@ -1341,7 +1377,7 @@ public abstract class AbstractBootImageBuilder extends AbstractPluginsTask {
 
     protected void setupCompileHighOptLevelPackages() {
         addCompileHighOptLevel(loadClassList(coreClassListFile));
-        for (NativeCodeCompiler compiler : getArchitecture().getCompilers()) {
+        for (NativeCodeCompiler compiler : getArchitecture().getAllCompilers()) {
             for (String packageName : compiler.getCompilerPackages()) {
                 addCompileHighOptLevel(packageName);
             }

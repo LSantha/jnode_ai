@@ -103,9 +103,21 @@ public abstract class VmX86Architecture extends BaseVmArchitecture {
     // found in it
 
     /**
-     * The compilers
+     * The AOT compilers, sorted by optimization level
      */
     private final NativeCodeCompiler[] compilers;
+
+    /**
+     * The runtime (JIT) compilers, sorted by optimization level. Independent
+     * from the AOT compilers, so any combination can be selected.
+     */
+    private final NativeCodeCompiler[] jitCompilers;
+
+    /**
+     * The union of the AOT and JIT compilers, used for compiler magic ids
+     * and GC map iterators.
+     */
+    private final NativeCodeCompiler[] allCompilers;
 
     /**
      * The compilers under test
@@ -145,39 +157,132 @@ public abstract class VmX86Architecture extends BaseVmArchitecture {
     }
 
     /**
-     * Initialize this instance.
+     * Initialize this instance using the same compiler for AOT and runtime
+     * (JIT) compilation.
      *
      * @param compiler the name of the compiler to use as standard.  If
      *                 the supplied name is {@code null} or doesn't match (case insensitively)
      *                 one of the known names, the default compiler will be used.
      */
     public VmX86Architecture(int referenceSize, String compiler) {
+        this(referenceSize, compiler, compiler);
+    }
+
+    /**
+     * Initialize this instance with independent AOT and runtime (JIT)
+     * compilers, so any combination of them can be selected.
+     *
+     * @param aotCompiler the compiler used to build the boot image, selected
+     *                    via -Djnode.compiler.  If it doesn't match a known
+     *                    name, the default compiler is used.
+     * @param jitCompiler the compiler used for runtime compilation, selected
+     *                    via -Djnode.jit.compiler.  {@code null} and
+     *                    {@code ""} both mean "not specified": the AOT
+     *                    compiler is then used for the runtime as well, and
+     *                    when it is L2 an L1A fallback is added to
+     *                    {@link #getAllCompilers()} (ANCHOR-L2-195).  Any
+     *                    other value names the compiler explicitly and
+     *                    therefore disables that fallback; a value equal to
+     *                    aotCompiler still selects the AOT compiler.
+     */
+    public VmX86Architecture(int referenceSize, String aotCompiler,
+                             String jitCompiler) {
         super(referenceSize, new VmX86StackReader(referenceSize));
-        this.compilers = new NativeCodeCompiler[2];
-        this.compilers[0] = new X86StubCompiler();
-        // Compare insensitively, producing a warning if the user selects
-        // an unknown compiler, and using a default where appropriate.
+        final X86StubCompiler stub = new X86StubCompiler();
+        final NativeCodeCompiler aot = createCompiler(aotCompiler);
+        // ANCHOR-L2-195: the build files pass "" when -Djnode.jit.compiler
+        // was not given on the command line; null and "" both mean
+        // "unspecified". Keeping that distinction is the whole point: it is
+        // what separates "I asked for an L2 JIT" from "the JIT was derived
+        // from the AOT setting".
+        final boolean jitSpecified = (jitCompiler != null)
+            && (jitCompiler.length() > 0);
+        final NativeCodeCompiler jit;
+        if (!jitSpecified || jitCompiler.equalsIgnoreCase(aotCompiler)) {
+            jit = aot;
+        } else {
+            jit = createCompiler(jitCompiler);
+        }
+        this.compilers = new NativeCodeCompiler[] { stub, aot };
+
+        // ANCHOR-L2-195: the L1A safety net is for one case only --
+        // `-Djnode.compiler=L2` on its own, where the runtime JIT is derived
+        // from the AOT setting and nobody named a compiler. Any configuration
+        // that names its JIT gets exactly what it named:
+        //   jit=L2 explicitly -> pure L2, a rejected method stays rejected
+        //   jit=L1A (any AOT) -> L1A, and L1A never falls back to L2
+        //   aot=L1A, jit=L2   -> L2 only, no L1A fallback
+        final boolean l1aFallback = !jitSpecified
+            && (jit instanceof X86Level2Compiler);
+        final NativeCodeCompiler[] union;
+        if (jit == aot) {
+            this.jitCompilers = this.compilers;
+            union = new NativeCodeCompiler[] { stub, aot };
+        } else {
+            this.jitCompilers = new NativeCodeCompiler[] { stub, jit };
+            union = new NativeCodeCompiler[] { stub, aot, jit };
+        }
+        this.allCompilers = l1aFallback ? withL1AFallback(union) : union;
+        this.testCompilers = new NativeCodeCompiler[1];
+        this.testCompilers[0] = new X86Level2Compiler();
+    }
+
+    /**
+     * Add the L1A safety net to the compiler union (ANCHOR-L2-195).
+     *
+     * <p>JNode has no interpreter, so a method the configured compiler
+     * rejects has nowhere to run -- LoadCompileService walks
+     * {@link #getAllCompilers()} and retries the rejected method with each of
+     * them in turn, and L1A is the oldest, most exercised code path in the
+     * tree, which is what makes it worth carrying. It is only added when the
+     * caller has established that the build wants a fallback at all; see the
+     * call site for the rule.
+     *
+     * <p>Note this array is deliberately NOT {@link #getCompilers()}: that one
+     * is the AOT list, whose contents decide which compiler compiles the
+     * boot image, and adding a fallback there would change what gets baked in.
+     *
+     * @param in the AOT and JIT compilers configured for this build
+     * @return {@code in}, plus an L1A instance if it does not already hold one
+     */
+    private static NativeCodeCompiler[] withL1AFallback(
+        NativeCodeCompiler[] in) {
+        for (int i = 0; i < in.length; i++) {
+            if (in[i] instanceof X86Level1ACompiler) {
+                return in;
+            }
+        }
+        final NativeCodeCompiler[] out = new NativeCodeCompiler[in.length + 1];
+        System.arraycopy(in, 0, out, 0, in.length);
+        out[in.length] = new X86Level1ACompiler();
+        return out;
+    }
+
+    /**
+     * Create a compiler instance for the given name.  Compare insensitively,
+     * producing a warning if the user selects an unknown compiler, and using
+     * a default where appropriate.
+     *
+     * @param compiler the compiler name, may be {@code null} or "default"
+     * @return the selected compiler, never {@code null}
+     */
+    private static NativeCodeCompiler createCompiler(String compiler) {
         if (compiler != null && compiler.length() > 0 &&
             !compiler.equalsIgnoreCase("default")) {
             if ("L1B".equalsIgnoreCase(compiler)) {
-                this.compilers[1] = new X86Level1BCompiler();
+                return new X86Level1BCompiler();
             } else if ("L1A".equalsIgnoreCase(compiler)) {
-                this.compilers[1] = new X86Level1ACompiler();
+                return new X86Level1ACompiler();
             } else if ("L2".equalsIgnoreCase(compiler)) {
-                // Experimental L2 boot: high-opt AOT classes and opt-1
-                // runtime compiles go through L2 (32-bit only; the
-                // image build selects this via -Djnode.compiler=L2).
-                this.compilers[1] = new X86Level2Compiler();
-            } else {
-                BootLogInstance.get().warn("JNode native compiler '" + compiler + "' is unknown.");
+                // Experimental L2: -Djnode.compiler=L2 selects L2 for the
+                // high-opt AOT compile, -Djnode.jit.compiler selects the
+                // runtime compiler (32-bit only).
+                return new X86Level2Compiler();
             }
+            BootLogInstance.get().warn("JNode native compiler '" + compiler + "' is unknown.");
         }
-        if (this.compilers[1] == null) {
-            BootLogInstance.get().warn("JNode native compiler defaulting to 'L1A'");
-            this.compilers[1] = new X86Level1ACompiler();
-        }
-        this.testCompilers = new NativeCodeCompiler[1];
-        this.testCompilers[0] = new X86Level2Compiler();
+        BootLogInstance.get().warn("JNode native compiler defaulting to 'L1A'");
+        return new X86Level1ACompiler();
     }
 
     /**
@@ -225,13 +330,33 @@ public abstract class VmX86Architecture extends BaseVmArchitecture {
     }
 
     /**
-     * Gets all compilers for this architecture.
+     * Gets the AOT compilers for this architecture, used to build the boot
+     * image.
      *
-     * @return The compilers, sorted by optimization level, from least
+     * @return The AOT compilers, sorted by optimization level, from least
      *         optimizations to most optimizations.
      */
     public final NativeCodeCompiler[] getCompilers() {
         return compilers;
+    }
+
+    /**
+     * Gets the runtime (JIT) compilers for this architecture.
+     *
+     * @return The JIT compilers, sorted by optimization level, from least
+     *         optimizations to most optimizations.
+     */
+    public final NativeCodeCompiler[] getJitCompilers() {
+        return jitCompilers;
+    }
+
+    /**
+     * Gets the union of the AOT and JIT compilers for this architecture.
+     *
+     * @return All compilers that can produce code for this architecture.
+     */
+    public final NativeCodeCompiler[] getAllCompilers() {
+        return allCompilers;
     }
 
     /**

@@ -128,6 +128,25 @@ public abstract class BaseVmArchitecture extends VmSystemObject implements org.j
     public abstract NativeCodeCompiler[] getCompilers();
 
     /**
+     * Gets the compilers used for runtime (JIT) compilation.
+     * This may differ from the AOT compilers returned by getCompilers(),
+     * so any combination of AOT and JIT compilers can be configured.
+     *
+     * @return The architecture's JIT compilers, sorted by optimization level,
+     *         from least optimizing to most optimizing.
+     */
+    public abstract NativeCodeCompiler[] getJitCompilers();
+
+    /**
+     * Gets the union of the AOT and JIT compilers. Every compiler that can
+     * produce code running on this architecture must appear here, because
+     * VmProcessor derives the compiler magic ids and GC map iterators from it.
+     *
+     * @return The union of getCompilers() and getJitCompilers().
+     */
+    public abstract NativeCodeCompiler[] getAllCompilers();
+
+    /**
      * Gets all test compilers for this architecture.
      * This can be used to test new compilers in a running system.
      *

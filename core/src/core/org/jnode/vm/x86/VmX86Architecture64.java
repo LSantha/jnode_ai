@@ -104,6 +104,19 @@ public final class VmX86Architecture64 extends VmX86Architecture {
         this.typeSizeInfo = new TypeSizeInfo(1, 1, 2, 2, 1);
     }
 
+    /**
+     * Initialize this instance with independent AOT and runtime (JIT)
+     * compilers.
+     *
+     * @param aotCompiler the AOT compiler name
+     * @param jitCompiler the runtime compiler name
+     */
+    public VmX86Architecture64(String aotCompiler, String jitCompiler) {
+        super(SLOT_SIZE, aotCompiler, jitCompiler);
+        this.imtCompiler = new X86IMTCompiler64();
+        this.typeSizeInfo = new TypeSizeInfo(1, 1, 2, 2, 1);
+    }
+
     public final VmProcessor createProcessor(int id, VmSharedStatics sharedStatics, VmIsolatedStatics isolatedStatics,
                                              VmScheduler scheduler) {
         return new VmX86Processor64(id, this, sharedStatics, isolatedStatics, scheduler, null);

@@ -125,6 +125,19 @@ public final class X86StubCompiler extends AbstractX86Compiler {
     }
 
     /**
+     * The stub is not runnable method code: its body only calls
+     * VmMethod.recompileMethod and jumps to whatever that leaves in the
+     * method slot (ANCHOR-L2-194), so it must never be picked as the
+     * fallback for a method another compiler has rejected.
+     *
+     * @return false, always
+     */
+    @Override
+    public boolean emitsRunnableCode() {
+        return false;
+    }
+
+    /**
      * Gets the name of this compiler.
      *
      * @return the compiler name

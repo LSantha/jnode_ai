@@ -239,7 +239,7 @@ public abstract class VmProcessor extends VmSystemObject implements org.jnode.vm
         this.currentThread = createThread(isolatedStatics);
         this.heapData = VmUtils.getVm().getHeapManager().createProcessorHeapData(this);
 
-        final NativeCodeCompiler[] compilers = architecture.getCompilers();
+        final NativeCodeCompiler[] compilers = architecture.getAllCompilers();
         final int compilerCount = compilers.length;
         this.gcMapIterators = new GCMapIterator[compilerCount];
         this.compilerIds = new int[compilerCount];

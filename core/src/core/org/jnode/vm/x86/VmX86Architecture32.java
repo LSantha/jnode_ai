@@ -134,6 +134,19 @@ public final class VmX86Architecture32 extends VmX86Architecture {
     }
 
     /**
+     * Initialize this instance with independent AOT and runtime (JIT)
+     * compilers.
+     *
+     * @param aotCompiler the AOT compiler name
+     * @param jitCompiler the runtime compiler name
+     */
+    public VmX86Architecture32(String aotCompiler, String jitCompiler) {
+        super(SLOT_SIZE, aotCompiler, jitCompiler);
+        this.imtCompiler = new X86IMTCompiler32();
+        this.typeSizeInfo = new TypeSizeInfo(1, 1, 2, 2, 1);
+    }
+
+    /**
      * Create a processor instance for this architecture.
      *
      * @return The processor

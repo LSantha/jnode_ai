@@ -104,6 +104,17 @@
 		<property name="jnode.kernel.dir" value="${jnodedrive.dir}" />
 		<property name="jnode.kernel" value="${jnode.kernel.dir}/jnode${jnode.bits}.gz" />
 		<property name="jnode.compiler" value="default" />
+		<!--
+			ANCHOR-L2-195: deliberately NOT defaulted from jnode.compiler.
+			The two settings have to stay distinguishable on the Java side:
+			an explicitly given -Djnode.jit.compiler=L2 asks for a pure L2
+			runtime with no fallback, while -Djnode.compiler=L2 on its own
+			leaves the JIT unspecified and VmX86Architecture then carries the
+			L1A safety net. Defaulting it here made both cases read "L2", so
+			neither VmX86Architecture nor anything downstream could tell them
+			apart. Empty means "not specified".
+		-->
+		<property name="jnode.jit.compiler" value="" />
 
 		<property name="build.native.dir" value="${my-build.dir}/${jnode.bits}bits/native" />
 		<property name="build.bootimage.dir" value="${my-build.dir}/${jnode.bits}bits/bootimage" />
@@ -114,7 +125,7 @@
         	    </not>
         	</and>
         </condition>
-	    <condition property="vmware.vmx.vmdk.image" 
+	    <condition property="vmware.vmx.vmdk.image"
 	    	value="${jnode.virtual.disk.dir}/${jnode.virtual.disk}" else="">
 	        <and>
 	        	<equals arg1="${jnode.virtualization.platform}" arg2="vmware" casesensitive="false"/>
@@ -172,11 +183,11 @@
 			<class classname="org.jnode.vm.classmgr.TIBLayout" static="on" />
 			<class classname="org.jnode.vm.classmgr.VmArray" static="on" />
 			<class classname="org.jnode.vm.classmgr.VmMethod" />
-			<class classname="org.jnode.vm.classmgr.VmStatics" /> 
-			<class classname="org.jnode.vm.classmgr.VmType" /> 
+			<class classname="org.jnode.vm.classmgr.VmStatics" />
+			<class classname="org.jnode.vm.classmgr.VmType" />
 			<class classname="org.jnode.vm.x86.MSR" />
 			<class classname="org.jnode.vm.x86.VmX86Processor" />
-			<class classname="org.jnode.vm.x86.VmX86StackReader" static="on" /> 
+			<class classname="org.jnode.vm.x86.VmX86StackReader" static="on" />
 			<class classname="org.jnode.vm.x86.VmX86Thread" />
 			<class classname="org.jnode.vm.x86.VmX86Thread" static="on" />
 			<class classname="org.jnode.vm.x86.VmX86Thread64" />
@@ -188,11 +199,11 @@
 			<targetfileset dir="${build.native.dir}/output" />
 		</dependset>
 
-		<asm srcdir="${src.native.dir}/x86" 
-			destdir="${build.native.dir}/output" 
-			outputFormat="elf" 
-			extension="o" 
-			bits="${jnode.bits}" 
+		<asm srcdir="${src.native.dir}/x86"
+			destdir="${build.native.dir}/output"
+			outputFormat="elf"
+			extension="o"
+			bits="${jnode.bits}"
 			listfile="${build.native.dir}/jnodenative.lst"
 			enablejnasm="${jnode.enable.jnasm.effective}"
 			version="${jnode-vm-ver}">
@@ -206,21 +217,22 @@
 	<target name="java-image" depends="asm-native">
 		<taskdef name="bootimage" classname="org.jnode.build.x86.BootImageBuilder" classpathref="cp-x86" />
 
-		<bootimage 
-			destfile="${build.bootimage.dir}/bootimage.bin" 
-			listfile="${build.bootimage.dir}/bootimage.lst" 
+		<bootimage
+			destfile="${build.bootimage.dir}/bootimage.bin"
+			listfile="${build.bootimage.dir}/bootimage.lst"
 			debugfile="${build.bootimage.dir}/bootimage.debug"
 			textfile="${build.bootimage.dir}/bootimage.txt"
 			kernelfile="${build.native.dir}/output/jnode.o"
 			pluginList="${system-plugin-list}"
-			pluginDir="${plugins.dir}" 
+			pluginDir="${plugins.dir}"
 			coreClassListFile="${jnode-core-class-list}"
 			archClassListFile="${jnode-x86-class-list}"
-			targetArch="x86" 
-			memMgrPluginId="${jnode.memmgr.plugin.id}" 
-			cpu="${cpu}" 
-			version="${jnode-vm-ver}" 
-			jnodeCompiler="${jnode.compiler}" 
+			targetArch="x86"
+			memMgrPluginId="${jnode.memmgr.plugin.id}"
+			cpu="${cpu}"
+			version="${jnode-vm-ver}"
+			jnodeCompiler="${jnode.compiler}"
+			jnodeJitCompiler="${jnode.jit.compiler}"
 			bits="${jnode.bits}"
 			enableJNasm="${jnode.enable.jnasm.effective}">
 
@@ -228,8 +240,8 @@
 				<includedir dir="${src.native.dir}/x86" />
 				<includedir dir="${build.native.dir}/src" />
 			</nanokernelsources>
-			
-	    </bootimage>			
+
+	    </bootimage>
 
 		<gzip src="${build.bootimage.dir}/bootimage.bin" zipfile="${jnode.kernel}" />
 	</target>
@@ -336,7 +348,7 @@
 			        </exec>
                 </then>
                 <else>
-                    <taskdef name="jiic-iso" classname="de.tu_darmstadt.informatik.rbg.hatlak.iso9660.ISOTask" classpathref="cp-x86" />                   
+                    <taskdef name="jiic-iso" classname="de.tu_darmstadt.informatik.rbg.hatlak.iso9660.ISOTask" classpathref="cp-x86" />
                     <jiic-iso basedir="@{dir}"
         				destfile="@{destfile}"
 		        		enableRockRidge="true"
@@ -360,7 +372,7 @@
 			menufile="${grub.menu.cdrom.combined}" />
 
 		<taskdef name="vmware" classname="org.jnode.build.VMwareBuilderTask" classpathref="cp-x86" />
-		<vmware 
+		<vmware
 			isoFile="${jnode-x86.iso}"
 			logFile="${logFile}"
 			memSize="${jnode.virtual.memsize}"
@@ -376,7 +388,7 @@
 		<create-cdrom destfile="${jnode-x86-lite.iso}" dir="${my-build.dir}/cdrom-lite" />
 
 		<taskdef name="vmware" classname="org.jnode.build.VMwareBuilderTask" classpathref="cp-x86" />
-		<vmware 
+		<vmware
 			isoFile="${jnode-x86-lite.iso}"
 			logFile="${logFile}"
 			memSize="${jnode.virtual.memsize}"

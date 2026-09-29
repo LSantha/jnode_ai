@@ -385,6 +385,22 @@ public abstract class NativeCodeCompiler extends VmSystemObject {
     public abstract int getMagic();
 
     /**
+     * Does the code this compiler emits enter the method directly?
+     *
+     * ANCHOR-L2-194: every real compiler answers true; the stub compiler
+     * answers false, because its "code" only pushes the arguments of
+     * {@code VmMethod.recompileMethod} and jumps back into the compile path.
+     * That makes the stub useless as a fallback for a method some other
+     * compiler has rejected: re-stubbing would leave the method looping
+     * forever instead of running, so LoadCompileService skips it.
+     *
+     * @return true if the emitted code is runnable method code
+     */
+    public boolean emitsRunnableCode() {
+        return true;
+    }
+
+    /**
      * Gets the name of this compiler.
      *
      * @return the compiler name

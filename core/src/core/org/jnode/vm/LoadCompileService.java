@@ -34,6 +34,7 @@ import org.jnode.vm.classmgr.ClassDecoder;
 import org.jnode.vm.classmgr.VmClassLoader;
 import org.jnode.vm.classmgr.VmMethod;
 import org.jnode.vm.classmgr.VmType;
+import org.jnode.vm.compiler.CompileError;
 import org.jnode.vm.compiler.NativeCodeCompiler;
 
 /**
@@ -53,11 +54,24 @@ public final class LoadCompileService {
 
     private final NativeCodeCompiler[] compilers;
 
+    /**
+     * ANCHOR-L2-194: every compiler that may produce code for this build
+     * (the AOT list, the JIT list, and the L1A fallback VmX86Architecture
+     * guarantees). JNode has no interpreter: a method left on its stub after a
+     * rejected compile re-enters the stub forever, so a compile failure has to
+     * be retried with another compiler rather than swallowed.
+     */
+    private final NativeCodeCompiler[] allCompilers;
+
     private final NativeCodeCompiler[] testCompilers;
 
     private static boolean started = false;
 
     private static final int threadCount = 2; //4
+
+    private static int compileDepth = 0;
+
+    private static int reentrantCount = 0;
 
     /**
      * Default ctor
@@ -66,7 +80,8 @@ public final class LoadCompileService {
         this.resolver = resolver;
         final BaseVmArchitecture arch = VmMagic.currentProcessor()
             .getArchitecture();
-        this.compilers = arch.getCompilers();
+        this.compilers = arch.getJitCompilers();
+        this.allCompilers = arch.getAllCompilers();
         this.testCompilers = arch.getTestCompilers();
     }
 
@@ -85,7 +100,26 @@ public final class LoadCompileService {
 
         if ((!started) || (Thread.currentThread() instanceof LoadCompileThread)) {
             // Compile now
-            service.doCompile(method, optLevel, enableTestCompilers);
+            if ((compileDepth > 0) && (reentrantCount < 8)) {
+                reentrantCount++;
+                final StringBuilder msg = new StringBuilder();
+                msg.append("REENTRANT compile depth=");
+                msg.append(compileDepth);
+                msg.append(" lvl=");
+                msg.append(optLevel);
+                msg.append(" cur=");
+                msg.append(method.getNativeCodeOptLevel());
+                msg.append(" of ");
+                msg.append(method.getFullName());
+                msg.append('\n');
+                Unsafe.debug(msg.toString());
+            }
+            compileDepth++;
+            try {
+                service.doCompile(method, optLevel, enableTestCompilers);
+            } finally {
+                compileDepth--;
+            }
         } else {
             // Put request in queue
             service.enqueAndWait(new CompileRequest(method, optLevel,
@@ -233,8 +267,69 @@ public final class LoadCompileService {
         }
         if (vmMethod.getNativeCodeOptLevel() < optLevel) {
             cmp = cmps[index];
-            cmp.compileRuntime(vmMethod, resolver, optLevel, null);
+            try {
+                cmp.compileRuntime(vmMethod, resolver, optLevel, null);
+            } catch (Throwable primaryFailure) {
+                // ANCHOR-L2-194: JNode has no interpreter, and a method left
+                // on its stub re-enters the stub for ever, so "the compiler
+                // rejected this method" is not something the caller can
+                // survive. Retry with every other compiler that can emit
+                // runnable code (the architecture guarantees L1A is one of
+                // them), and only then fail -- with a message that names the
+                // method, because the bare "Error in compilation: " used to
+                // reach the caller with nothing after the colon.
+                if (enableTestCompilers
+                    || !compileWithFallback(vmMethod, optLevel, cmp,
+                        primaryFailure)) {
+                    throw new CompileError("Error in compilation of "
+                        + vmMethod.getFullName() + " with " + cmp.getName()
+                        + ": " + primaryFailure, primaryFailure);
+                }
+            }
         }
+    }
+
+    /**
+     * ANCHOR-L2-194: retry a compile the primary compiler rejected with every
+     * other compiler of this build that emits runnable code. The method still
+     * holds whatever code it had (compileRuntime only installs a new
+     * CompiledMethod on success), so a failed attempt costs nothing.
+     *
+     * @param vmMethod the method to compile
+     * @param optLevel the level the caller asked for
+     * @param primary the compiler that rejected the method
+     * @param primaryFailure why it rejected the method
+     * @return true if some other compiler compiled the method
+     */
+    private boolean compileWithFallback(VmMethod vmMethod, int optLevel,
+                                        NativeCodeCompiler primary,
+                                        Throwable primaryFailure) {
+        for (int i = 0; i < allCompilers.length; i++) {
+            final NativeCodeCompiler alt = allCompilers[i];
+            if ((alt == primary) || !alt.emitsRunnableCode()) {
+                continue;
+            }
+            try {
+                alt.compileRuntime(vmMethod, resolver, optLevel, null);
+                final StringBuilder msg = new StringBuilder();
+                msg.append("COMPILE FALLBACK: ");
+                msg.append(vmMethod.getFullName());
+                msg.append(" rejected by ");
+                msg.append(primary.getName());
+                msg.append(" (");
+                msg.append(primaryFailure);
+                msg.append("), compiled by ");
+                msg.append(alt.getName());
+                msg.append('\n');
+                Unsafe.debug(msg.toString());
+                return true;
+            } catch (Throwable altFailure) {
+                // Try the next compiler; the final report below carries all
+                // of the evidence that matters (the method and the first
+                // failure).
+            }
+        }
+        return false;
     }
 
     /**
@@ -325,11 +420,15 @@ public final class LoadCompileService {
         }
 
         /**
-         * @see org.jnode.vm.LoadCompileService.Request#errorMessage()
+         * {@inheritDoc}
+         * ANCHOR-L2-194: this text is the TOP line of the exception that
+         * kills the caller, and it used to end in a colon with nothing
+         * after it -- the boot log showed a RuntimeException whose message
+         * was "Error in compilation: " and no method. Name the method.
          */
         @Override
         String errorMessage() {
-            return "Error in compilation: ";
+            return "Error in compilation of " + method.getFullName();
         }
     }
 

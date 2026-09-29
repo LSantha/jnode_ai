@@ -208,10 +208,10 @@ public class BootImageBuilder extends AbstractBootImageBuilder {
         if (arch == null) {
             switch (bits) {
                 case 32:
-                    arch = new VmX86Architecture32(getJnodeCompiler());
+                    arch = new VmX86Architecture32(getJnodeCompiler(), getJnodeJitCompiler());
                     break;
                 case 64:
-                    arch = new VmX86Architecture64(getJnodeCompiler());
+                    arch = new VmX86Architecture64(getJnodeCompiler(), getJnodeJitCompiler());
                     break;
                 default:
                     throw new BuildException("Unknown bits " + bits);
