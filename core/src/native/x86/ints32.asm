@@ -10,9 +10,9 @@
 %define RESUME_INTNO	dword[fs:VmX86Processor_RESUME_INTNO_OFS]
 %define RESUME_ERROR	dword[fs:VmX86Processor_RESUME_ERROR_OFS]
 %define RESUME_HANDLER	dword[fs:VmX86Processor_RESUME_HANDLER_OFS]
-    
-int_die_halted:	dd 0    
-    
+
+int_die_halted:	dd 0
+
 ; -------------------------------------
 ; Stack for inthandler & irqhandler
 ; -------------------------------------
@@ -24,7 +24,7 @@ OLD_CS      equ 60
 OLD_EIP     equ 56
 ERROR       equ 52
 INTNO   	equ 48
-HANDLER     equ 44 
+HANDLER     equ 44
 OLD_EAX     equ 40
 OLD_ECX     equ 36
 OLD_EDX     equ 32
@@ -86,7 +86,7 @@ OLD_GS      equ 0
     pop edx
     pop ecx
     pop eax
-    add esp,12 ; Remove HANDLER & INTNO & ERRORCODE 
+    add esp,12 ; Remove HANDLER & INTNO & ERRORCODE
     iret
 %endmacro
 
@@ -116,7 +116,7 @@ inthandler:
 	jmp irqhandler_resume
 inthandler_ret:
     int_exit
-    
+
 ; -----------------------------------------------
 ; Unhandled interrupt. Die
 ; -----------------------------------------------
@@ -127,7 +127,26 @@ int_die:
 	mov ebx,ebp
 	SPINLOCK_JUMP_IF_LOCKED die_lock, int_die_halt
 	SPINLOCK_ENTER die_lock ; This lock is never released, so other CPU's just hold here
+	; ANCHOR-L2-192: capture the interrupted thread's frame chain while EBP
+	; still points at the interrupt frame, hold it across sys_print_intregs
+	; (which clobbers eax/ebx/ecx) and PRINT_STR, then print it. The chain
+	; is what a deadlock/assert panic has to show: the register dump only
+	; says where the interrupt landed, not what the thread was doing.
+	mov ESI,[ebp+OLD_EBP]
+	mov EBX,[ebp+OLD_ESP]
+	push ebp
+	push ESI
+	push EBX
 	call sys_print_intregs
+	pop EBX
+	pop ESI
+	push ESI
+	push EBX
+	PRINT_STR die_chain_msg
+	pop EBX
+	pop ESI
+	call printEbpChain
+	pop ebp
 	;ret
 int_die_halt:
 	cli
@@ -198,7 +217,7 @@ sys_print_intregs_loop1:
 	inc ebx
 	idm_print_byte ip1, [ebx]
 	loop sys_print_intregs_loop1
-	
+
 	inc ebx
 	idm_print_reg  ipaddr, ebx
 	idm_print_byte ip0,	   [ebx+0]
@@ -388,7 +407,7 @@ int_gpf_halt:
 	cli
 	hlt
 	jmp int_die
-	
+
 ; ---------------------------
 ; Page fault
 ; ---------------------------
@@ -407,7 +426,7 @@ int_pf_npe:
 	;jmp int_die
 	SYSTEM_EXCEPTION VmThread_EX_NULLPOINTER, GET_OLD_EIP
 	ret
-	
+
 int_pf_kernel:
 	jmp int_die
-	
+

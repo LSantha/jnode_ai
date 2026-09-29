@@ -66,6 +66,18 @@ public abstract class VmThread extends VmSystemObject implements org.jnode.vm.fa
      */
     public static final int STACK_OVERFLOW_LIMIT_SLOTS = 256;
 
+    /**
+     * Number of slots in a thread stack. This sizes BOTH the per-thread stack
+     * and the initial (boot) thread stack, because
+     * BootImageBuilder.createInitialStack writes exactly this many words into
+     * the image and _$$Setup_initial_thread derives stackEnd from the same
+     * label. Measured boot-stack geometry from a panic dump:
+     * [_$$initialStack]     = label + STACK_OVERFLOW_LIMIT_SLOTS*slotSize
+     *                         (stackEnd, the trip point)
+     * [_$$initialStack + 4] = label + DEFAULT_STACK_SLOTS*slotSize (top).
+     * Diagnostic note: a 64*1024 build was measured too -- boot still failed
+     * (deeper, in the L2 recompile cycle), so stack size is not the fix.
+     */
     public static final int DEFAULT_STACK_SLOTS = 16 * 1024;
 
     public static final int STACKTRACE_LIMIT = 256;

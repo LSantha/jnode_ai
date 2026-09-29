@@ -11,9 +11,9 @@
 	extern VmProcessor_reschedule
 	extern VmX86Processor_broadcastTimeSliceInterrupt
 	global currentTimeMillisStaticsIdx
-	
+
 currentTimeMillisStaticsIdx	DA 0
-	
+
 ; -----------------------------------------------
 ; Low level Yield Point Handler
 ; This low level interrupt handler is coded
@@ -28,7 +28,7 @@ stub_yieldPointHandler:
 	mov ABP,ASP
 	call yieldPointHandler
 	int_exit
-	
+
 ; -----------------------------------------------
 ; Low level Timeslice Handler
 ; This low level interrupt handler is coded
@@ -43,7 +43,7 @@ stub_timesliceHandler:
 	mov ABP,ASP
 	call timesliceHandler
 	int_exit
-	
+
 ; -----------------------------------------------
 ; Yield Point Handler
 ; -----------------------------------------------
@@ -70,7 +70,7 @@ stub_timesliceHandler:
 	test ASI,ASI
 	jnz %%save			; Arranged this way to optimize branch prediction
 	jmp %%end			; Usually there is no restore.
-%%save:	
+%%save:
 	mov ebx,[ASI+VmArray_LENGTH_OFFSET*SLOT_SIZE]
 	test ebx,ebx
 	jz %%end
@@ -85,8 +85,8 @@ stub_timesliceHandler:
 	; Go to next position
 	lea ASI,[ASI+SLOT_SIZE]
 	dec ebx
-	jnz %%loop		
-%%end:	
+	jnz %%loop
+%%end:
 %endmacro
 
 ; Restore an array of MSR's
@@ -97,7 +97,7 @@ stub_timesliceHandler:
 	test ASI,ASI
 	jnz %%restore		; Arranged this way to optimize branch prediction
 	jmp %%end			; Usually there is no restore.
-%%restore:	
+%%restore:
 	mov ebx,[ASI+VmArray_LENGTH_OFFSET*SLOT_SIZE]
 	test ebx,ebx
 	jz %%end
@@ -111,14 +111,14 @@ stub_timesliceHandler:
 	; Go to next position
 	lea ASI,[ASI+SLOT_SIZE]
 	dec ebx
-	jnz %%loop		
-%%end:	
+	jnz %%loop
+%%end:
 %endmacro
 
 yieldPointHandler_kernelCode:
 	PRINT_STR yp_kernel_msg
 	jmp int_die
-	
+
 yieldPointHandler:
 	cmp GET_OLD_CS,USER_CS
 	jne yieldPointHandler_kernelCode
@@ -127,7 +127,7 @@ yieldPointHandler:
 	and THREADSWITCHINDICATOR,~VmProcessor_TSI_SWITCH_NEEDED
 	mov DEADLOCKCOUNTER, 0
 	; Setup the user stack to add a return address to the current EIP
-	; and change the current EIP to yieldPointHandler_doReschedule, which will 
+	; and change the current EIP to yieldPointHandler_doReschedule, which will
 	; save the registers and call VmScheduler.reschedule
 yieldPointHandler_reschedule:
 	; Save current stackframe (so we can show stacktraces)
@@ -153,12 +153,12 @@ yieldPointHandler_reschedule:
 	SAVEREG VmX86Thread64_R13_OFS, OLD_R13
 	SAVEREG VmX86Thread64_R14_OFS, OLD_R14
 	SAVEREG VmX86Thread64_R15_OFS, OLD_R15
-%endif	
+%endif
 
 	; Save Read/Write MSR's
 yieldPointHandler_SaveMSRs:
 	SAVE_MSR_ARRAY [ADI+VmX86Thread_READWRITEMSRS_OFS]
-	
+
 	; Save FPU / XMM state
 yieldPointHandler_fxSave:
 	; Is the FX used since the last thread switch?
@@ -168,7 +168,7 @@ yieldPointHandler_fxSave:
 	inc FXSAVECOUNTER
 	; Clear FXF_USED flag
 	and dword [ADI+VmX86Thread_FXFLAGS_OFS],~VmX86Thread_FXF_USED
-	; Load fxStatePtr	
+	; Load fxStatePtr
 yieldPointHandler_loadFxStatePtr:
 	mov ABX, [ADI+VmX86Thread_FXSTATEPTR_OFS]
 	test ABX,ABX
@@ -220,19 +220,19 @@ yieldPointHandler_restore:
 	RESTOREREG VmX86Thread64_R13_OFS, OLD_R13
 	RESTOREREG VmX86Thread64_R14_OFS, OLD_R14
 	RESTOREREG VmX86Thread64_R15_OFS, OLD_R15
-%endif	
-	
+%endif
+
 	; Restore FPU / XMM state is delayed until actual use
 	; We do set the CR0.TS flag.
 	mov AAX,cr0
 	or AAX,CR0_TS
 	mov cr0,AAX
-	
+
 	; Restore MSR's
 yieldPointHandler_RestoreMSRs:
 	RESTORE_MSR_ARRAY [ADI+VmX86Thread_READWRITEMSRS_OFS]
 	RESTORE_MSR_ARRAY [ADI+VmX86Thread_WRITEONLYMSRS_OFS]
-	
+
 	; Fix old stack overflows
 yieldPointHandler_fixOldStackOverflow:
 	mov cl,[ADI+VmThread_STACKOVERFLOW_S1_OFS]
@@ -275,13 +275,13 @@ fixFxStatePtr:
 	add ABX,(VmArray_DATA_OFFSET*SLOT_SIZE) + 15
 	and ABX,~0xF;
 	mov [ADI+VmX86Thread_FXSTATEPTR_OFS],ABX
-	ret	
+	ret
 
 yieldPointHandler_fxSaveInit:
 	call fixFxStatePtr
 	jmp yieldPointHandler_loadFxStatePtr
 
-	
+
 ; -----------------------------------------------
 ; Device not available
 ; An FPU / MMX / SSE instruction is executed
@@ -320,21 +320,21 @@ timer_handler:
 	mov ADI,STATICSTABLE
 	mov AAX,[currentTimeMillisStaticsIdx]
 	lea ADI,[ADI+AAX*4+(VmArray_DATA_OFFSET*SLOT_SIZE)]
-%ifdef BITS32	
+%ifdef BITS32
 	add dword [edi+0],1
 	adc dword [edi+4],0
 	test dword [edi+0],0x07
 %else
 	add qword [rdi+0],1
 	test qword [rdi+0],0x07
-%endif	
+%endif
 	jnz timer_ret
 	; Set a thread switch needed indicator
 	or THREADSWITCHINDICATOR, VmProcessor_TSI_SWITCH_NEEDED
 	add DEADLOCKCOUNTER, 1
 	test DEADLOCKCOUNTER, 0x4000
 	jnz timer_deadlock
-	
+
 	; Broadcast timeslice interrupt (if needed)
 	test SENDTIMESLICEINTERRUPT, 1
 	jz timer_ret
@@ -353,14 +353,14 @@ timer_ret:
 	mov al,0x60 ; EOI IRQ0
 	out 0x20,al
 	ret
-	
+
 timer_deadlock:
 	mov AAX,WORD [jnodeFinished]
 	test AAX,AAX
 	jnz timer_ret
 	PRINT_STR deadLock_msg
 	jmp int_die
-	
+
 ; -----------------------------------------------
 ; Handle a timeslice interrupt broadcasted by the boot processor
 ; -----------------------------------------------
@@ -375,7 +375,7 @@ timesliceHandler:
 	mov AAX,LOCALAPICEOI
 	mov dword [AAX],0
 	ret
-	
+
 ; -----------------------------------------------
 ; Handle an IRQ interrupt
 ; -----------------------------------------------
@@ -431,10 +431,10 @@ def_irq_kernel:
 	; is still counted (and now EOI'd for IDE lines) below.
 	call def_irq_count_eoi
 	ret
-	
+
 ; -----------------------------------------------
 ; Throw a system-trapped exception. This method can only be called from an interrupt handler.
-; Input: 
+; Input:
 ; EAX contains exception number.
 ; EBX Address parameter
 ; EBP Old register block
@@ -457,9 +457,9 @@ int_system_exception:
 	SAVEREG VmX86Thread_EXEFLAGS_OFS, OLD_EFLAGS
 	mov ACX,cr2
 	mov [ADI+VmX86Thread_EXCR2_OFS],ACX
-	
+
 	; Setup the user stack to add a return address to the current EIP
-	; and change the current EIP to doSystemException, which will 
+	; and change the current EIP to doSystemException, which will
 	; save the registers and call SoftByteCodes.systemException
 	mov ADI,[ABP+OLD_ESP]
 	lea ADI,[ADI-SLOT_SIZE]
@@ -470,18 +470,42 @@ int_system_exception:
 	mov [ABP+OLD_ESP],ADI
 	mov WORD [ABP+OLD_EIP],doSystemException
 	ret
-	
-doSystemException:	
+
+doSystemException:
 	push AAX ; Exception number
 	push ABX ; Address
 	mov AAX,SoftByteCodes_systemException
 	INVOKE_JAVA_METHOD
 	jmp vm_athrow
-	
+
 ; -----------------------------------------------
 ; Handle a stackoverflow
 ; -----------------------------------------------
 int_stack_overflow:
+	; ANCHOR-L2-190: report the REAL faulting EIP immediately. Further down,
+	; int_stack_first_overflow does `mov WORD [ABP+OLD_EIP],doSystemException`,
+	; and int_system_exception can then take `jz int_die` -- so the register
+	; dump is printed AFTER OLD_EIP has been replaced, and a panic shows EIP
+	; = doSystemException instead of the method whose prologue tripped the
+	; check. On that path the original EIP is never saved either (the push at
+	; OLD_ESP-4 sits below the jz), so this is the only place it is still
+	; intact. Diagnostic only; remove together with ANCHOR-L2-190.
+	PRINT_STR so_eip_msg
+	PRINT_WORD GET_OLD_EIP
+	; ANCHOR-L2-191: dump the frame chain, because "which methods are on the
+	; stack" is the whole question for a stack exhaustion at boot. L2 frame
+	; layout is [ebp]=compiledCodeId, [ebp+4]=saved ebp, [ebp+8]=return
+	; address (X86StackFrame: push ebp / push compiledCodeId / mov ebp,esp),
+	; so walking ebp yields every frame codeId. Map a codeId back to its
+	; method with: grep -n "push 0x0000XXXX" \
+	;   all/build/x86/32bits/bootimage/bootimage.txt   (label above it is the
+	; method). Guards: max 200 frames, ebp strictly increasing, ebp below
+	; 0x08000000, so a corrupt chain stops instead of faulting here.
+	; Diagnostic only; remove together with ANCHOR-L2-190.
+	PRINT_STR so_chain_msg
+	mov ESI,[ABP+OLD_EBP]
+	mov EBX,[ABP+OLD_ESP]
+	call printEbpChain
 	cmp GET_OLD_CS,USER_CS
 	jne doFatal_stack_overflow
 	mov AAX,CURRENTTHREAD
@@ -489,7 +513,7 @@ int_stack_overflow:
 	test cl,cl
 	jz int_stack_first_overflow
 	jmp doFatal_stack_overflow
-		
+
 int_stack_first_overflow:
 	inc byte [AAX+VmThread_STACKOVERFLOW_S1_OFS]
 	; Remove the stackoverflow limit
@@ -500,16 +524,67 @@ int_stack_first_overflow:
 	mov AAX,VmThread_EX_STACKOVERFLOW
 	mov WORD [ABP+OLD_EIP],doSystemException
 	jmp int_system_exception
-	
+
 doFatal_stack_overflow:
 	PRINT_STR fatal_so_msg
 	call vmint_print_stack
 	jmp int_die
 	cli
 	hlt
-	
+
 yp_kernel_msg:	db 'YieldPoint in kernel mode??? Probably a bug',0
 irq_kernel_msg:	db 'IRQ in kernel mode??? Probably a bug',0
 fatal_so_msg:		db 'Fatal stack overflow: ',0
+so_eip_msg:			db 0xd,0xa,'stackEIP: ',0
+so_chain_msg:		db 0xd,0xa,'chain(ebp,codeId):',0
 deadLock_msg:		db 'Very likely deadlock detected: ',0
+die_chain_msg:	db 0xd,0xa,'dieChain(ebp,codeId):',0
+
+; -----------------------------------------------
+; ANCHOR-L2-191/192: print the Java frame chain. Shared by the stack
+; overflow handler and int_die, because "which methods are on the stack"
+; is the question for both a stack exhaustion and a deadlock/assert panic.
+; L2 frame layout is [ebp]=compiledCodeId, [ebp+4]=saved ebp, [ebp+8]=
+; return address (X86StackFrame: push ebp / push compiledCodeId /
+; mov ebp,esp), so walking ebp yields every frame codeId. Map a codeId back
+; to its method with: grep -n "push 0x0000XXXX"
+;   all/build/x86/32bits/bootimage/bootimage.txt   (label above it is the
+; method).
+; IN:  ESI = first EBP, EBX = lower bound (thread stack bottom)
+; OUT: clobbers EAX, ESI, EBX, EDX
+; Guards: max 200 frames, ebp never below the bound, ebp below 0x08000000,
+; so a corrupt chain stops instead of faulting here.
+; Diagnostic only; remove together with ANCHOR-L2-190.
+; -----------------------------------------------
+printEbpChain:
+	push EDX
+	xor EDX,EDX
+epc_loop:
+	cmp EDX,200
+	jae epc_done
+	cmp ESI,EBX
+	jb epc_done
+	cmp ESI,0x08000000
+	ja epc_done
+	push ESI
+	push EBX
+	push EDX
+	PRINT_WORD ESI
+	pop EDX
+	pop EBX
+	pop ESI
+	push ESI
+	push EBX
+	push EDX
+	PRINT_WORD dword [ESI]
+	pop EDX
+	pop EBX
+	pop ESI
+	mov EBX,ESI
+	mov ESI,dword [ESI+4]
+	inc EDX
+	jmp epc_loop
+epc_done:
+	pop EDX
+	ret
 
