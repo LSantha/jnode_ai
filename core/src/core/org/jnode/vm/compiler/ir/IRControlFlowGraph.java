@@ -793,6 +793,13 @@ public class IRControlFlowGraph<T> implements Iterable<IRBasicBlock<T>> {
      * register the emitters reject (oracle: LAND with a long in ESI).
      * Sources agree by verifier construction; on conflict prefer wide
      * (spilling a narrow is safe, registering a wide is fatal).
+     *
+     * <p>The reverse direction was missing: a result that starts out LONG or
+     * DOUBLE because the bytecode slot was recycled from a wide value, while
+     * every incoming source is the same narrow type, is not a merge of wide
+     * values at all. It reserves two machine words for a one-word value, so
+     * the half no source ever writes stays whatever the frame held, and a
+     * reference-typed phi of that shape hands the GC a garbage pointer.
      */
     private void typePhiResults() {
         for (IRBasicBlock<T> b : bblocks) {
@@ -803,10 +810,15 @@ public class IRControlFlowGraph<T> implements Iterable<IRBasicBlock<T>> {
                 PhiAssignQuad<T> paq = (PhiAssignQuad<T>) q;
                 Variable<T> lhs = paq.getLHS();
                 int type = lhs.getType();
+                java.util.List<Operand<T>> sources =
+                    paq.getPhiOperand().getSources();
                 if (type == Operand.LONG || type == Operand.DOUBLE) {
+                    int narrow = unanimousNarrowType(sources);
+                    if (narrow != Operand.UNKNOWN) {
+                        lhs.setType(narrow);
+                    }
                     continue;
                 }
-                java.util.List<Operand<T>> sources = paq.getPhiOperand().getSources();
                 int found = Operand.UNKNOWN;
                 for (int i = 0; i < sources.size(); i++) {
                     Operand<T> s = sources.get(i);
@@ -827,6 +839,34 @@ public class IRControlFlowGraph<T> implements Iterable<IRBasicBlock<T>> {
                 }
             }
         }
+    }
+
+    /**
+     * @return the single narrow type carried by every source of a phi, or
+     * {@link Operand#UNKNOWN} when a source is not a typed variable, when any
+     * source is wide, or when the sources do not all agree
+     */
+    private int unanimousNarrowType(java.util.List<Operand<T>> sources) {
+        int found = Operand.UNKNOWN;
+        for (int i = 0; i < sources.size(); i++) {
+            Operand<T> s = sources.get(i);
+            if (!(s instanceof Variable)) {
+                return Operand.UNKNOWN;
+            }
+            int st = ((Variable<T>) s).getType();
+            if (st == Operand.UNKNOWN) {
+                continue;
+            }
+            if ((st == Operand.LONG) || (st == Operand.DOUBLE)) {
+                return Operand.UNKNOWN;
+            }
+            if (found == Operand.UNKNOWN) {
+                found = st;
+            } else if (found != st) {
+                return Operand.UNKNOWN;
+            }
+        }
+        return found;
     }
 
     /**

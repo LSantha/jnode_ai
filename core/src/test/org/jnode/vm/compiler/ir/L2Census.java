@@ -45,6 +45,7 @@ import org.jnode.vm.compiler.ir.quad.ArrayLengthAssignQuad;
 import org.jnode.vm.compiler.ir.quad.InstanceCallAssignQuad;
 import org.jnode.vm.compiler.ir.quad.InstanceCallQuad;
 import org.jnode.vm.compiler.ir.quad.ConditionalBranchQuad;
+import org.jnode.vm.compiler.ir.quad.PhiAssignQuad;
 import org.jnode.vm.compiler.ir.quad.RefAssignQuad;
 import org.jnode.vm.compiler.ir.quad.RefStoreQuad;
 import org.jnode.vm.compiler.ir.quad.Quad;
@@ -1110,6 +1111,72 @@ public class L2Census {
         }
     }
 
+    /**
+     * ANCHOR-L2-199 census lint: no phi result may still be LONG/DOUBLE once
+     * every one of its incoming sources is the same narrow type. Such a phi is
+     * a slot recycled from a wide value, not a merge of wide values -- it
+     * reserves two machine words that no source ever writes, and when the
+     * narrow type is REFERENCE the untouched half is a pointer the GC follows.
+     * `typePhiResults` narrows it; reverting that hunk turns this lint red on
+     * `GCManager#markHeap` and ~30 corpus methods.
+     */
+    static void checkPhiWidths(VmMethod method, IRControlFlowGraph cfg) {
+        try {
+            if (cfg == null) {
+                return;
+            }
+            for (Object b0 : (Iterable<?>) cfg) {
+                final IRBasicBlock b = (IRBasicBlock) b0;
+                for (Object q0 : (List<?>) b.getQuads()) {
+                    if (!(q0 instanceof PhiAssignQuad)) {
+                        continue;
+                    }
+                    final Quad q = (Quad) q0;
+                    if (q.isDeadCode()) {
+                        continue;
+                    }
+                    final Variable lhs = (Variable) ((PhiAssignQuad) q).getLHS();
+                    final int lt = lhs.getType();
+                    if (lt != Operand.LONG && lt != Operand.DOUBLE) {
+                        continue;
+                    }
+                    final List<Operand> sources =
+                        ((PhiAssignQuad) q).getPhiOperand().getSources();
+                    int narrow = Operand.UNKNOWN;
+                    boolean usable = sources.size() > 0;
+                    for (int i = 0; i < sources.size() && usable; i++) {
+                        final Operand s = sources.get(i);
+                        if (!(s instanceof Variable)) {
+                            usable = false;
+                            break;
+                        }
+                        final int st = ((Variable) s).getType();
+                        if (st == Operand.UNKNOWN) {
+                            continue;
+                        }
+                        if (st == Operand.LONG || st == Operand.DOUBLE) {
+                            usable = false;
+                            break;
+                        }
+                        if (narrow == Operand.UNKNOWN) {
+                            narrow = st;
+                        } else if (narrow != st) {
+                            usable = false;
+                        }
+                    }
+                    if (usable && narrow != Operand.UNKNOWN) {
+                        System.out.println("STALEWIDE "
+                            + method.getDeclaringClass().getName() + "#"
+                            + method.getName() + " wide=" + lt + " narrow=" + narrow);
+                        return;
+                    }
+                }
+            }
+        } catch (Throwable t) {
+            // lint only; never fail the census itself
+        }
+    }
+
 
     static String compileToText(VmMethod method) throws Exception {
         StringWriter sw = new StringWriter();
@@ -1127,6 +1194,11 @@ public class L2Census {
         X86Level2Compiler.initMethodArguments(method, stackFrame, typeSizeInfo, irg);
         X86CodeGenerator x86cg = new X86CodeGenerator(method, os, code.getLength(), typeSizeInfo, stackFrame);
         X86Level2Compiler.constructAndOptimize(cfg);
+        // Run the phi-width lint HERE, not from the caller: deSSAAndFixup
+        // mutates this same CFG object (pruneDeadPhis marks every phi dead),
+        // so a check invoked after compileToText returns examines 0 live phis
+        // and reports a clean result whatever the fix does.
+        checkPhiWidths(method, cfg);
         X86Level2Compiler.optimizeOnce(cfg);
         // ANCHOR-L2-163: run the real SSA verifier over EVERY corpus method,
         // not just T1's synthetic corpus. A forward-slot read such as
