@@ -125,7 +125,64 @@ public class IRControlFlowGraph<T> implements Iterable<IRBasicBlock<T>> {
         this.bblocks = bbf.createBasicBlocks();
         this.finder = bbf;
         startBlock = bblocks[0];
+        insertEntryPreheader();
         computeDominance(bytecode);
+    }
+
+    /**
+     * ANCHOR-L2-193: give a first block that is also a loop header a real
+     * entry predecessor.
+     * <p/>
+     * {@code while (C != null) { ... C = ...; }} whose condition sits in the
+     * method's FIRST block has exactly one CFG predecessor -- the back edge --
+     * because the implicit method-entry edge is not a block. Two consequences:
+     * {@link #computeDominanceFrontier()} skipped it (its {@code size >= 2}
+     * test), so no phi was placed and the header kept reading the incoming
+     * version forever. That is still valid SSA -- the incoming version
+     * dominates the header -- which is why no verifier catches it; it only
+     * shows up as a non-terminating loop. And even with a phi there would be
+     * no predecessor to carry its entry copy, so the copy could only live in
+     * the header itself -- where the back edge re-enters, clobbering the
+     * latch's store on every iteration (ANCHOR-L2-124's clobber, in its other
+     * guise). {@code for} loops are spared: their back edge aims at the
+     * condition, which the finder starts a new block for, so the loop header
+     * already has two predecessors.
+     * <p/>
+     * The synthetic block is the method's real entry: it carries the phis'
+     * entry-edge copies and falls through into the original first block.
+     * Layout follows {@code bblocks} order -- {@code fixupAddresses} numbers
+     * it that way and codegen walks it that way -- so it goes in at index 0.
+     * The back edge keeps targeting the ORIGINAL first block's first quad, so
+     * the entry copies run exactly once. {@code IRGenerator.startMethod}
+     * writes the method's variable array onto {@code bblocks[0]}, which is how
+     * the preheader picks it up.
+     * <p/>
+     * Only needed when the first block really is a join, which is why this is
+     * driven by the predecessor list rather than applied unconditionally: a
+     * method whose first block has no back edge is entered only by the
+     * implicit method-entry edge, and the existing dominance rules already do
+     * the right thing for it.
+     */
+    private void insertEntryPreheader() {
+        final List<IRBasicBlock<T>> preds = startBlock.getPredecessors();
+        if (preds.isEmpty()) {
+            return;
+        }
+        final int pc = nextSyntheticBlockPC++;
+        final IRBasicBlock<T> body = startBlock;
+        final IRBasicBlock<T> pre = new IRBasicBlock<T>(pc, pc, false);
+        pre.setStackOffset(body.getStackOffset());
+        // Stale-but-non-null until computeDominance rewrites it; the body's
+        // getVariables/getStackOffset fallbacks may consult it in the interim.
+        pre.setIDominator(body);
+        pre.getSuccessors().add(body);
+        preds.add(pre);
+        final IRBasicBlock<T>[] expanded =
+            (IRBasicBlock<T>[]) new IRBasicBlock[bblocks.length + 1];
+        expanded[0] = pre;
+        System.arraycopy(bblocks, 0, expanded, 1, bblocks.length);
+        bblocks = expanded;
+        startBlock = pre;
     }
 
     /**
@@ -670,6 +727,9 @@ public class IRControlFlowGraph<T> implements Iterable<IRBasicBlock<T>> {
     private void computeDominanceFrontier() {
         for (IRBasicBlock<T> b : postOrderList) {
             List<IRBasicBlock<T>> predList = b.getPredecessors();
+            // ANCHOR-L2-193: a first block that is also a loop header is
+            // brought to two predecessors by insertEntryPreheader, so the plain
+            // test below already sees it as the join it is.
             if (predList.size() >= 2) {
                 for (IRBasicBlock<T> runner : predList) {
                     // ANCHOR-L2-096: null-safe walk. Blocks with no idom yet
@@ -2263,6 +2323,9 @@ public class IRControlFlowGraph<T> implements Iterable<IRBasicBlock<T>> {
                     new ExceptionArgument(Operand.REFERENCE, excSlot));
             }
         }
+        // ANCHOR-L2-193: the entry edge into a first-block loop header is a
+        // real block now (insertEntryPreheader), so its phi sources are bound
+        // by the successor loop below exactly like every other predecessor's.
         doRenameVariables(block);
         for (IRBasicBlock<T> b : block.getSuccessors()) {
             // ANCHOR-L2-131: pass the predecessor (the block being renamed)

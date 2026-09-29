@@ -132,6 +132,17 @@ public class OracleDriver {
         {"postIncrRead_aii", "10,20,30,40", "0"},
         {"postIncrStore_aiii", "0,0,0,0", "1", "7"},
         {"postIncrStore_aiii", "0,0,0,0", "0", "5"},
+        // ANCHOR-L2-193: loop condition in the method's first block, so the
+        // header's only CFG predecessor is the back edge and no phi was
+        // placed for the loop-carried parameter. Host returns -1 (v runs
+        // 7,5,3,1,-1); broken L2 returns 7. The array-element trip counter
+        // keeps the broken build terminating, so this is a wrong value and
+        // not a guest hang.
+        {"entryWhile_ia", "7", "1000"},
+        {"entryWhile_ia", "-1", "1000"},
+        {"entryWhile_ia", "0", "1000"},
+        {"entryWhile_ia", "8", "1000"},
+        {"entryWhile_ia", "7", "2"},
         {"dld_d", "0,0,0", "1"},
         {"newDlen_d", "3"},
         {"sumA_aji", "1,2,3,4"},

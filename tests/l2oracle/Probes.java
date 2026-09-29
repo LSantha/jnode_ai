@@ -1089,4 +1089,33 @@ public class Probes {
         staticFloat = 2.1f;
         return Float.floatToRawIntBits(staticFloat);
     }
+
+    /**
+     * ANCHOR-L2-193: a loop whose condition sits in the method's FIRST
+     * block. {@code v} is a parameter, so the loop condition is bytecode pc 0
+     * and the back edge aims at pc 0 -- the first block is also the loop
+     * header and its only CFG predecessor is that back edge (the implicit
+     * method-entry edge is not a block). Before the fix no phi was placed for
+     * the loop-carried {@code v} and the header kept reading the incoming
+     * argument version forever, so the guest never left this loop and
+     * returned the initial value; {@code VmType.getAllInterfaces}'s
+     * {@code while (C != null)} is the same shape and hung the boot.
+     * <p/>
+     * The trip counter lives in an array ELEMENT on purpose: an array element
+     * needs no phi, so it counts down correctly in the broken build too and
+     * the loop terminates there instead of hanging the guest. That makes the
+     * bug a wrong value (a red probe row) rather than a hang, so it shows up
+     * in the oracle diff.
+     * <p/>
+     * Host reference: {@code entryWhile_ia(7, [1000]) == -1}
+     * (7,5,3,1,-1 then {@code v <= 0}); broken L2 returns 7.
+     */
+    public static int entryWhile_ia(int v, int[] steps) {
+        while (v > 0) {
+            v -= 2;
+            steps[0] -= 1;
+            if (steps[0] <= 0) break;
+        }
+        return v;
+    }
 }
