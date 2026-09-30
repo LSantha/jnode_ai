@@ -571,17 +571,33 @@ Hunk: clone `vq.getLHS()` before aliasing (P8 clone API). Repro: single-use
 wide-def coalescing followed by a narrow use — assert both lhs types
 post-splice in `--ir`.
 
-Status 2026-09-25: INVESTIGATED, NOT LANDED (test-guard policy). Temp
-instrumentation over the full census (11,376 compiling methods):
-`P10 splices=4150 staleRefs=0 equalsOnly=0` -- the splice fires often, but
-(a) the RHS match is always identity-exact (never an equals-only clone
-pairing), and (b) after the splice NO live quad references the orphaned
-old LHS object by identity. The "two quads share one lhs" claim does not
-materialize: the copy is marked dead before its LHS is adopted, so only
-one live quad ever holds the object. The P8-family re-type vector is
-independently proven dormant (P8's own `fold2Count=0` census probe).
-Instrumentation reverted (diff verified clean). Revisit only with a
-firing identity-stale repro.
+Status 2026-09-30: REFUTED BY READING; the proposed hunk is rejected as
+WRONG, not merely unneeded. The census below (`splices=4150 staleRefs=0`)
+was never a valid closure -- a census may prioritise, never close -- and
+it measured the wrong object: it counted the ORPHANED old lhs, not the one
+the splice actually shares.
+
+1. The sharing is real. `vq.setDeadCode(true)` runs BEFORE
+   `var.getAssignQuad().setLHS(vq.getLHS())` (`IRControlFlowGraph:476-477`),
+   so the live `def` and the dead copy both hold `vq.getLHS()`, and
+   `lhs.setAssignQuad` lands on `def`.
+2. The P8 retype vector cannot fire. All quad construction precedes the
+   splice (`X86Level2Compiler:400-406`); the only non-constructor
+   `getLHS().setType(...)` sites are `IRGenerator`, `constructSSA`
+   (`:787`, `:2637`) and deSSA phi lowering (`:1314`, `:1339`, reachable
+   only through `deconstrucSSA` at `:1140`/`:1161`) -- all pre-splice --
+   plus `MagicHelper:428-441`, which saves the type before building the
+   quad and restores it after (net no-op).
+3. The dead twin is never observed. `getVariableUsage` (`:545`), the
+   coalescing loop (`:456`) and codegen (`X86Level2Compiler:181`) skip dead
+   quads; `fixupAddresses` (`:2176-2190`) touches no LHS; and `findLiveDef`
+   (`:360`) only ever repoints an assignQuad at a live def, which is the
+   pre-existing repair for this hazard (`:337-346`).
+
+Cloning `vq.getLHS()` would disable the coalescing rather than harden it.
+The guard for this splice is ANCHOR-L2-171 `referencedBetween` (`:507-539`,
+reads `:525-532` plus writes `:533-536`), red-proven by the NEW-1 oracle
+rows. Recorded in `OPEN-BUGS.md` row C2.
 
 ## P11: fall-through / ret-resume edges never explicit
 
