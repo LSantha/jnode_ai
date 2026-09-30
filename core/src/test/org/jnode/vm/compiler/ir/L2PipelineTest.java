@@ -733,6 +733,10 @@ public class L2PipelineTest {
      */
     @Test
     public void testNoRegisterSpansCall() throws Exception {
+        // Invariant 8 first: this fixture is built so a value MUST span a
+        // call, which is what makes the audit half able to fail rather than
+        // pass vacuously.
+        assertNoRegisterSpansCall("liveAcrossCall", true);
         assertNoRegisterSpansCall("syncThrow", true);
         assertNoRegisterSpansCall("arrayCatch", false);
         assertNoRegisterSpansCall("tryCatch", false);

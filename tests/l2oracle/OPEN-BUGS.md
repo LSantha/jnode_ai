@@ -82,7 +82,7 @@ post-deSSA on every method, so structural SSA regressions are corpus-wide.
 |---|---|---|---|---|
 | E1 | - | L2 images are **larger** than L1A everywhere: register pool is ECX/EBX/ESI only, plus a mandatory ECX frame. Compactness goal unmet | **OPEN** (structural) | none (perf/size, not correctness) |
 | E2 | - | 64-bit paths stubbed (`writeInitializeClass` throws, interface dispatch commented out) | **OPEN** by design; blocks `cd-x86_64-lite` | none |
-| E3 | - | any reasoning about EBX across a call must use the `forcedSpills` model, not callee-saved (L1A pushes are commented out) | **OPEN** as a documentation risk; **GUARD GAP** (invariant 8) | none |
+| E3 | - | any reasoning about EBX across a call must use the `forcedSpills` model, not callee-saved (L1A pushes are commented out) | **OPEN** as a documentation risk; **GUARD GAP closed 2026-09-30** (invariant 8) | `L2PipelineTest#testNoRegisterSpansCall`, which re-derives the call-like list independently instead of sharing it. Proven red both ways: emptying `forcedSpills` trips the `rule never fired for syncThrow` canary, and a non-empty-but-incomplete set trips the audit itself (`syncThrow: register ... (esi) spans call @5`). `liveAcrossCall` was added as a fixture purpose-built for this invariant -- under the same incomplete set it fails with `register ... (ebx) spans call @3` -- so the check no longer rests on syncThrow's incidental shape alone |
 
 ## F. Boot blockers
 
@@ -147,7 +147,8 @@ rows, including the constant-LEFT shape -- A6 itself still rests on
 measurement rather than on a code reading, so the row is not a resting
 state); 7 static-call push widths **now covered**
 (A7/L2-166: T1 red on the overlay, `WIDTHMISMATCH` extended to static calls);
-8 EBX/ESI across calls **open** (E3); 9 `disp1 == disp2` FP aliasing
+8 EBX/ESI across calls **now covered** (E3's `testNoRegisterSpansCall`, red on
+both an empty and an incomplete `forcedSpills`); 9 `disp1 == disp2` FP aliasing
 **open**; 10 `#DE` semantics **open**; 11 post-deSSA jsr **open** (D1); 12
 wide phi homes across critical-edge copies **open**; 13 `ExceptionArgument`
 as a phi source at non-handler joins **open**; 14 AOT path **open** (F4);

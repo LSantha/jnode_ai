@@ -1261,6 +1261,23 @@ public class PrimitiveTest {
         }
     }
 
+    static int twice(int v) {
+        return v * 2;
+    }
+
+    /**
+     * ANCHOR-L2-invariant-8 fixture: `a` is defined after the first call and
+     * used after the second, so it genuinely spans a call and MUST take a
+     * stack home -- callers preserve nothing (saveRegisters is a no-op in
+     * every x86 frame), so EBX/ESI are not callee-saved here. A fixture with
+     * no cross-call live value would let the audit pass vacuously.
+     */
+    public static int liveAcrossCall(int n) {
+        int a = twice(n + 1);
+        int b = twice(n + 3);
+        return a + b;
+    }
+
     static int bzSeed = 5;
 
     /**
