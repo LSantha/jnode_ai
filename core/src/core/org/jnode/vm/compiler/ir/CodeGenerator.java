@@ -72,14 +72,26 @@ import org.jnode.vm.compiler.ir.quad.VoidReturnQuad;
  * @author Levente S\u00e1ntha
  */
 public abstract class CodeGenerator<T> {
-    private static CodeGenerator cgInstance;
+    // ANCHOR-L2-202: this pin was a bare static, but LoadCompileService.start()
+    // spawns threadCount=2 LoadCompileThreads and processNextRequest() drops the
+    // queue lock BEFORE request.execute(), so two X86Level2Compiler.doCompile
+    // calls genuinely overlap. doCompile() saves the pin on entry and restores
+    // it in a finally (ANCHOR-L2-196), so with a shared static one thread's
+    // restore-to-null landed between the other thread's codegen ctor and its
+    // allocateRanges: getLiveRanges -> LiveRange -> BinaryQuad.getLHSLiveAddress
+    // then called supports3AddrOps() on a null CodeGenerator. That is the NPE
+    // behind the CompileError that aborted the shell plugin's
+    // SyntaxSpecLoader#doLoad recompile -- and so the shell -- on a pure L2/L2
+    // image. Per-thread keeps L2-196's nested save/restore semantics (both
+    // happen on one thread) while stopping concurrent compiles from sharing.
+    private static final ThreadLocal<CodeGenerator> cgInstance = new ThreadLocal<CodeGenerator>();
 
     public static void setCodeGenerator(CodeGenerator cg) {
-        cgInstance = cg;
+        cgInstance.set(cg);
     }
 
     public static <T> CodeGenerator<T> getInstance() {
-        return cgInstance;
+        return cgInstance.get();
     }
 
     public abstract void checkLabel(int address);
