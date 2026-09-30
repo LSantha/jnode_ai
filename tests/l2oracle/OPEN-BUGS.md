@@ -61,7 +61,7 @@ post-deSSA on every method, so structural SSA regressions are corpus-wide.
 
 | # | Sev | Defect | Status | Guard today |
 |---|---|---|---|---|
-| C1 | P2 | `LiveRange.compareTo` is not a valid total order | **OPEN** | none |
+| C1 | P2 | `LiveRange.compareTo` is not a valid total order | **CLOSED -- this row was a stale register entry (verified 2026-09-30).** Already fixed as ANCHOR-L2-169, commit `6616ecd02`: `LiveRange.java:63-66` compares this range's own hull start against the other's, which is antisymmetric and transitive. The old expression mixed THIS range's clamped start with the OTHER variable's RAW assign address, so `sgn(a.compareTo(b)) != -sgn(b.compareTo(a))`; `LinearScanAllocator` feeds this to `Arrays.sort`, which past 32 ranges can throw "Comparison method violates its general contract!". The row was simply never updated | the fix itself, in tree at `LiveRange.java:63-66` (no separate test recorded for it -- census and alljunit cover the allocator path that uses it) |
 | C2 | P2 | `removeDefUseChains` coalescing unguarded (= plan P10) | **OPEN** | none |
 | C3 | P1 | `handlerEntryTops` snapshot skipped when the exception slot has no SSA stack -> self-referential phi copy (found in my own L2-159) | **LANDED** L2-168 | corpus SSA verifier over every compilable method (a missed snapshot surfaces as a post-deSSA violation) |
 | C4 | P2 | deSSA floor ignores phi source tags: when no usable edge is found, the floor copy lands on the def block of `sources.get(0)` regardless of the edge it arrived on (earlier review S4) | **OPEN**, partially mitigated by L2-159's handler-tag routing, floor itself unchanged | corpus SSA verifier catches the value shape, not the edge choice |
