@@ -19,33 +19,54 @@ function isPRContext(context) {
   return !!(context.payload.issue && context.payload.issue.pull_request);
 }
 
-function isInvestigationKind(labels) {
-  return labels.includes('kind/investigate') || labels.includes('kind/question');
-}
-
 function isRefusalComment(body) {
   if (!body) return false;
-  return /refusal|out of scope|## 🤖 Refusal/i.test(body);
+  return /^\s*##\s*(?:🤖\s*)?Refusal\b/im.test(body);
 }
 
 function isNeedsInfoComment(body) {
   if (!body) return false;
-  return /needs more info|## 🤖 Triage|needs the following/i.test(body);
+  return /needs more info from reporter|needs the following|suggested next:\s*needs-info/i.test(body);
+}
+
+function isTriageComment(body) {
+  if (!body) return false;
+  return /## .*Triage/i.test(body);
+}
+
+function isTriageClearComment(body) {
+  return isTriageComment(body) && !isNeedsInfoComment(body) && !isRefusalComment(body);
+}
+
+function isTriggerComment(body) {
+  if (!body) return false;
+  return /(^|\s)\/(oc|run|orchestrate)(\s|$)/.test(body);
+}
+
+function isDuplicateSignal(body) {
+  if (!body) return false;
+  return /duplicate-of-#\d+/i.test(body);
+}
+
+function isPRCreationComment(body) {
+  if (!body) return false;
+  return /\b(?:Created|Opened) PR #\d+\b/i.test(body);
 }
 
 function isInvestigationReport(body) {
   if (!body) return false;
-  return /## 🤖 Investigation Report/i.test(body);
+  return /## .*Investigation Report/i.test(body);
 }
 
 function isAgentHeading(body) {
-  return body && (isRefusalComment(body) || isNeedsInfoComment(body) || isInvestigationReport(body));
+  return body && (isRefusalComment(body) || isNeedsInfoComment(body) || isInvestigationReport(body) ||
+    isTriageComment(body) || isPRCreationComment(body));
 }
 
 function findLatestAgentComment(comments) {
   for (let i = comments.length - 1; i >= 0; i--) {
     const c = comments[i];
-    if (c.body && isAgentHeading(c.body)) {
+    if (c.body && !isTriggerComment(c.body) && isAgentHeading(c.body)) {
       return c.body;
     }
   }
@@ -53,9 +74,9 @@ function findLatestAgentComment(comments) {
 }
 
 function decideAgentLabel({ existing, conclusion, latestComment, labels, isPR }) {
-  if (conclusion === 'failure' || conclusion === 'cancelled') {
-    return { label: 'agent/failed', reason: 'run concluded: ' + conclusion };
-  }
+  // Structured reports are deliberate work products: honor them even when the
+  // run later died (triage runs often fail at action finalization after the
+  // comment already landed). Failure maps to failed only with no report.
   if (isRefusalComment(latestComment)) {
     return { label: 'agent/skip', reason: 'refusal detected in comment' };
   }
@@ -65,20 +86,30 @@ function decideAgentLabel({ existing, conclusion, latestComment, labels, isPR })
   if (isInvestigationReport(latestComment)) {
     return { label: 'agent/investigated', reason: 'investigation report heading detected (verb-override)' };
   }
+  if (isDuplicateSignal(latestComment)) {
+    return { label: 'agent/duplicate', reason: 'duplicate-of link detected in comment' };
+  }
+  if (isPRCreationComment(latestComment)) {
+    return { label: 'agent/done', reason: 'PR creation comment detected' };
+  }
+  if (isTriageClearComment(latestComment)) {
+    return { label: null, clearNeedsInfo: true, clearFailed: true, reason: 'clear triage, no blocking label' };
+  }
+  if (conclusion === 'failure' || conclusion === 'cancelled') {
+    return { label: 'agent/failed', reason: 'run concluded: ' + conclusion };
+  }
   if (existing && existing !== 'agent/failed') {
     return { label: existing, reason: 'existing agent/* label respected' };
   }
   if (isPR) {
     return { label: 'agent/done', reason: 'PR context' };
   }
-  if (isInvestigationKind(labels)) {
-    return { label: 'agent/investigated', reason: 'investigation kind, comment absent' };
-  }
   return { label: 'agent/done', reason: 'default for non-investigation kinds' };
 }
 
 function shouldClose({ isPR, latestComment, labels, agentLabel }) {
   if (isPR) return false;
+  if (agentLabel === 'agent/duplicate') return true;
   if (agentLabel !== 'agent/investigated') return false;
   if (isInvestigationReport(latestComment)) {
     return true;
@@ -127,24 +158,50 @@ module.exports = async ({ github, context, core }) => {
   });
   core.info('Decision: ' + decision.label + ' (' + decision.reason + ')');
 
-  if (existingAgent && existingAgent !== decision.label) {
-    try {
-      await github.rest.issues.removeLabel({
-        owner, repo, issue_number: number, name: existingAgent,
-      });
-      core.info('Removed old label: ' + existingAgent);
-    } catch (err) {
-      core.warning('Failed to remove old label: ' + err.message);
+  if (decision.label === null) {
+    if (decision.clearNeedsInfo && labels.includes('agent/needs-info')) {
+      try {
+        await github.rest.issues.removeLabel({
+          owner, repo, issue_number: number, name: 'agent/needs-info',
+        });
+        core.info('Cleared stale agent/needs-info after clear triage');
+      } catch (err) {
+        core.warning('Failed to clear needs-info: ' + err.message);
+      }
     }
-  }
+    if (decision.clearFailed && labels.includes('agent/failed')) {
+      try {
+        await github.rest.issues.removeLabel({
+          owner, repo, issue_number: number, name: 'agent/failed',
+        });
+        core.info('Cleared stale agent/failed after clear triage');
+      } catch (err) {
+        core.warning('Failed to clear failed: ' + err.message);
+      }
+    }
+    if (!decision.clearNeedsInfo && !decision.clearFailed) {
+      core.info('Clear triage, no label change');
+    }
+  } else {
+    if (existingAgent && existingAgent !== decision.label) {
+      try {
+        await github.rest.issues.removeLabel({
+          owner, repo, issue_number: number, name: existingAgent,
+        });
+        core.info('Removed old label: ' + existingAgent);
+      } catch (err) {
+        core.warning('Failed to remove old label: ' + err.message);
+      }
+    }
 
-  try {
-    await github.rest.issues.addLabels({
-      owner, repo, issue_number: number, labels: [decision.label],
-    });
-    core.info('Applied ' + decision.label);
-  } catch (err) {
-    core.warning('Failed to apply label: ' + err.message);
+    try {
+      await github.rest.issues.addLabels({
+        owner, repo, issue_number: number, labels: [decision.label],
+      });
+      core.info('Applied ' + decision.label);
+    } catch (err) {
+      core.warning('Failed to apply label: ' + err.message);
+    }
   }
 
   try {

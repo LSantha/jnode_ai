@@ -43,6 +43,7 @@ import javax.imageio.ImageIO;
 import javax.swing.DefaultDesktopManager;
 import javax.swing.JButton;
 import javax.swing.JColorChooser;
+import javax.swing.JComponent;
 import javax.swing.JDesktopPane;
 import javax.swing.JFrame;
 import javax.swing.JInternalFrame;
@@ -265,6 +266,29 @@ public class Desktop implements Runnable {
 
     private class DesktopManagerImpl extends DefaultDesktopManager {
         private static final long serialVersionUID = 1L;
+
+        @Override
+        public void dragFrame(JComponent frame, int newX, int newY) {
+            if (frame instanceof JInternalFrame) {
+                ((JInternalFrame) frame).toFront();
+            }
+            setBoundsForFrame(frame, newX, newY, frame.getWidth(), frame.getHeight());
+            desktopPane.repaint();
+            taskBar.repaint();
+            desktopFrame.getAwtRoot().repaint();
+        }
+
+        @Override
+        public void activateFrame(JInternalFrame frame) {
+            super.activateFrame(frame);
+            frame.toFront();
+            frame.getDesktopPane().setSelectedFrame(frame);
+            frame.repaint(0, 0, frame.getWidth(), frame.getHeight());
+            frame.getContentPane().repaint();
+            desktopPane.repaint();
+            taskBar.repaint();
+            desktopFrame.getAwtRoot().repaint();
+        }
 
         /**
          * @see javax.swing.DesktopManager#deiconifyFrame(javax.swing.JInternalFrame)

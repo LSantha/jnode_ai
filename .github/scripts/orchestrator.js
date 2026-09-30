@@ -2,7 +2,7 @@ module.exports = async ({ github, context, core }) => {
   const createHelpers = require('./orchestrator-helpers.js');
   const h = createHelpers({ github, context, core });
   const { triggerTask, findPRForIssue, getReviewPrompt, getAgentReviewVerdict,
-          needsHumanReview, isBotUser, mergePR, COMPLETION_LABELS, SHORT_CIRCUIT_LABELS } = h;
+          isBotUser, mergePR, COMPLETION_LABELS, SHORT_CIRCUIT_LABELS } = h;
 
   // --- Multi-Step Orchestrator Helpers (orchestrator-specific, not shared) ---
   function isMultiStepTask(task) {
@@ -21,8 +21,32 @@ module.exports = async ({ github, context, core }) => {
       phase: 'DEV',
       turn: 0,
       max_turns: 3,
-      retries: 0
+      retries: 0,
+      review_in_progress: false
     };
+  }
+
+  // PR lookup for DEV completion: shared pulls lookup first, then a
+  // "Created PR #N" issue-comment fallback for when the API has not indexed
+  // the PR yet. Same shape as ticket-runner.js findPRForIssueWithComment.
+  async function findPRForIssueWithComment(issueNumber) {
+    const prNumber = await findPRForIssue(issueNumber);
+    if (prNumber) return prNumber;
+
+    try {
+      const comments = await github.rest.issues.listComments({
+        owner: context.repo.owner, repo: context.repo.repo, issue_number: issueNumber, per_page: 100
+      });
+      const list = (comments && comments.data) ? comments.data : comments;
+      for (let i = list.length - 1; i >= 0; i--) {
+        const body = (list[i] && list[i].body) || '';
+        const match = body.match(/\b(?:Created|Opened) PR #(\d+)\b/i);
+        if (match) return parseInt(match[1], 10);
+      }
+    } catch (err) {
+      core.warning(`findPRForIssueWithComment failed: ${err.message}`);
+    }
+    return null;
   }
 
 
@@ -53,7 +77,8 @@ module.exports = async ({ github, context, core }) => {
       const tNum = getTaskIssueNumber(state.current_task);
       if (isMultiStepTask(state.current_task)) {
         const prInfo = state.current_task.pr ? ` → PR #${state.current_task.pr}` : '';
-        currentTaskInfo = `#${tNum}${prInfo} (Phase: ${state.current_task.phase}, Turn ${state.current_task.turn}/${state.current_task.max_turns}, Attempt ${state.current_task.retries + 1}/3)`;
+        const reviewInfo = state.current_task.review_in_progress ? ', Review in progress' : '';
+        currentTaskInfo = `#${tNum}${prInfo} (Phase: ${state.current_task.phase}, Turn ${state.current_task.turn}/${state.current_task.max_turns}, Attempt ${state.current_task.retries + 1}/3${reviewInfo})`;
       } else {
         currentTaskInfo = `#${tNum} (Attempt ${state.retries + 1}/3)`;
       }
@@ -147,6 +172,50 @@ module.exports = async ({ github, context, core }) => {
     } catch (err) {
       core.warning(`Failed to close master issue #${issueNumber}: ${err.message}`);
     }
+  }
+
+  // Java CI completions for the active PR: green re-runs review for deferred
+  // merges, red posts one /oc fix per SHA. Returns true when it posted.
+  async function handleJavaCICompletion(state) {
+    const run = context.payload.workflow_run;
+    if (!run || run.conclusion === 'skipped') return false;
+    if (!isMultiStepTask(state.current_task) || !state.current_task.pr) return false;
+    const task = state.current_task;
+    const sha = run.head_sha || '';
+    let prs = [];
+    try {
+      prs = await h.findPRsForSHA(sha);
+    } catch (err) {
+      core.warning("Java CI handler: findPRsForSHA failed: " + err.message);
+      return false;
+    }
+    if (prs.indexOf(task.pr) < 0) return false;
+
+    const prData = await github.rest.issues.get({
+      owner: context.repo.owner, repo: context.repo.repo, issue_number: task.pr
+    });
+    const prLabels = h.extractLabels(prData.data);
+    if (prLabels.includes('no-auto') || prLabels.includes('agent/in-progress')) return false;
+
+    const runUrl = `https://github.com/${context.repo.owner}/${context.repo.repo}/actions/runs/${run.id}`;
+    if (run.conclusion === 'success') {
+      if (task.phase !== 'REVIEW' || task.review_in_progress) return false;
+      task.review_in_progress = true;
+      state.history.push({ event: 'ci_green_rereview', task: task.issue, timestamp: new Date().toISOString() });
+      await triggerTask(task.pr, getReviewPrompt());
+      return true;
+    }
+    if (task.phase !== 'REVIEW' && task.phase !== 'FEEDBACK') return false;
+    const marker = `<!-- CI-HEAL:${sha.slice(0, 7)} -->`;
+    const comments = await github.rest.issues.listComments({
+      owner: context.repo.owner, repo: context.repo.repo, issue_number: task.pr, per_page: 100
+    });
+    const list = (comments && comments.data) ? comments.data : comments;
+    for (const c of list) {
+      if (((c && c.body) || '').indexOf(marker) >= 0) return false;
+    }
+    await triggerTask(task.pr, `/oc fix CI failed for ${sha.slice(0, 7)}: ${runUrl}\n${marker}\n\nRead the failing check output, fix the code on this branch, and push. Do not open a new PR.`);
+    return true;
   }
 
   // 1. Find the Master Orchestrator Issue
@@ -343,6 +412,9 @@ module.exports = async ({ github, context, core }) => {
         const msg = isMultiStepTask(state.current_task) && state.current_task.phase === 'FEEDBACK' ? "/oc fix Address review feedback." 
                   : isMultiStepTask(state.current_task) && state.current_task.phase === 'REVIEW' ? getReviewPrompt()
                   : "/oc Please proceed with this task.";
+        if (isMultiStepTask(state.current_task) && state.current_task.phase === 'REVIEW') {
+          state.current_task.review_in_progress = true;
+        }
         await triggerTask(target, msg);
       }
 
@@ -351,6 +423,15 @@ module.exports = async ({ github, context, core }) => {
 
     } else if (context.eventName === 'workflow_run') {
       core.info("Workflow run completion trigger detected.");
+
+      const wfName = (context.payload.workflow_run && context.payload.workflow_run.name) || 'opencode';
+      if (wfName === 'Java CI') {
+        const changed = await handleJavaCICompletion(state);
+        if (changed) {
+          await updateMasterIssue(masterIssueNumber, state);
+        }
+        return;
+      }
       
       if (!state.current_task) {
         core.info("No active task in progress. Skipping.");
@@ -411,18 +492,22 @@ module.exports = async ({ github, context, core }) => {
             });
             const labels = (currentIssue.data.labels || []).map(l => l.name);
             if (!phaseFailed) {
-              if (SHORT_CIRCUIT_LABELS.some(l => labels.includes(l))) {
+              // A PR is the authoritative completion signal. Check it BEFORE the
+              // short-circuit labels: a stale agent/needs-info must not hide a PR
+              // the agent already opened. Same ordering as ticket-runner DEV.
+              const foundPr = await findPRForIssueWithComment(task.issue);
+              if (foundPr) {
+                task.pr = foundPr;
+                task.phase = 'REVIEW';
+                task.retries = 0;
+                task.review_in_progress = true;
+                await triggerTask(task.pr, getReviewPrompt());
+              } else if (SHORT_CIRCUIT_LABELS.some(l => labels.includes(l))) {
                 // Short-circuit completion
                 state.completed.push(task.issue);
                 isDone = true;
               } else if (labels.includes('agent/done')) {
-                const foundPr = await findPRForIssue(task.issue);
-                if (foundPr) {
-                  task.pr = foundPr;
-                  task.phase = 'REVIEW';
-                  task.retries = 0;
-                  await triggerTask(task.pr, getReviewPrompt());
-                } else if (labels.includes('kind/feature') || labels.includes('kind/bug')) {
+                if (labels.includes('kind/feature') || labels.includes('kind/bug')) {
                   core.error(`#${task.issue}: agent/done but no PR. Retrying.`);
                   phaseFailed = true;
                 } else {
@@ -436,6 +521,7 @@ module.exports = async ({ github, context, core }) => {
             break;
           }
           case 'REVIEW': {
+            task.review_in_progress = false;
             const currentPR = await github.rest.issues.get({
               owner: context.repo.owner, repo: context.repo.repo, issue_number: task.pr
             });
@@ -447,19 +533,25 @@ module.exports = async ({ github, context, core }) => {
               } else {
                 const verdict = await getAgentReviewVerdict(task.pr);
                 if (verdict === 'approve') {
-                  const needsHuman = await needsHumanReview(task.issue, task.pr);
-                  if (needsHuman) {
+                  const eligible = await h.isAutoMergeEligible(task.issue, task.pr);
+                  if (!eligible) {
                     task.phase = 'HUMAN_REVIEW';
                     task.retries = 0;
                     await github.rest.issues.createComment({
                       owner: context.repo.owner, repo: context.repo.repo, issue_number: task.pr,
                       body: "Agent review passed. Awaiting human approval via native GitHub PR Review UI."
                     });
-                  } else {
+                  } else if (await h.isDiffSafe(task.pr) && await h.isCIGreen(task.pr)) {
                     task.phase = 'MERGE';
                     await mergePR(task.pr);
                     state.completed.push(task.issue);
                     isDone = true;
+                  } else {
+                    task.retries = 0;
+                    await github.rest.issues.createComment({
+                      owner: context.repo.owner, repo: context.repo.repo, issue_number: task.pr,
+                      body: "Agent review passed but auto-merge deferred (diff not safe or CI not green). Will retry when CI completes."
+                    });
                   }
                 } else if (verdict === 'request-changes') {
                   task.turn += 1;
@@ -491,6 +583,7 @@ module.exports = async ({ github, context, core }) => {
               } else {
                 task.phase = 'REVIEW';
                 task.retries = 0;
+                task.review_in_progress = true;
                 await triggerTask(task.pr, getReviewPrompt());
               }
             }
@@ -509,6 +602,7 @@ module.exports = async ({ github, context, core }) => {
           } else {
             const target = task.pr ? task.pr : task.issue;
             const msg = task.phase === 'FEEDBACK' ? "/oc fix Address review feedback." : task.phase === 'REVIEW' ? getReviewPrompt() : "/oc Please proceed with this task.";
+            if (task.phase === 'REVIEW') task.review_in_progress = true;
             await triggerTask(target, msg);
             await updateMasterIssue(masterIssueNumber, state);
             return;

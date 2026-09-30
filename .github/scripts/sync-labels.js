@@ -36,7 +36,9 @@ const KIND = [
   { name: 'kind/chore',       color: '1d76db', description: 'Refactor, typo sweep, dead-code removal; no behavior change.' },
   { name: 'kind/question',    color: '1d76db', description: 'User question; expected output is an investigation comment.' },
   { name: 'kind/triage',      color: '1d76db', description: 'Asks the agent to triage a new issue (labels + checklist).' },
+  { name: 'kind/test',         color: '1d76db', description: 'Asks the agent to add or fix a test.' },
   { name: 'auto-merge',       color: '0e8a16', description: 'Skip human review; orchestrator auto-merges after agent approval.' },
+  { name: 'no-auto',          color: 'd73a4a', description: 'Skip all automation; human drives via /oc and /run only.' },
 ];
 
 const AGENT = [

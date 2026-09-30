@@ -524,6 +524,7 @@ public final strictfp class NativeStrictMath {
         }
 
         do {
+            recompute = false;
             // Distill q[] into iq[] reversingly.
             for (i = 0, j = jz, z = q[jz]; j > 0; i++, j--) {
                 fw = (int) (1 / TWO_24 * z);

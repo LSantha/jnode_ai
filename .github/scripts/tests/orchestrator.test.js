@@ -11,10 +11,11 @@ function createMocks(eventName = 'issue_comment', commentBody = '/orchestrate') 
   };
 
   const calls = { getIssue: [], updateIssue: [], createComment: [], listComments: [], addLabels: [], removeLabel: [], mergePR: [] };
+  const commentsByIssue = {};
   const updateIssueDetails = [];
   let masterIssueBody = `- [ ] #2\n- [ ] #3`;
   let currentTaskData = { labels: [], state: 'open' };
-  let prData = { labels: [], state: 'open', head: { ref: 'opencode/issue2-fix' } };
+  let prData = { labels: [], state: 'open', merged: true, head: { ref: 'opencode/issue2-fix' } };
 
   const github = {
     rest: {
@@ -32,9 +33,11 @@ function createMocks(eventName = 'issue_comment', commentBody = '/orchestrate') 
         },
         createComment: async ({ issue_number, body }) => {
           calls.createComment.push({ issue_number, body });
+          (commentsByIssue[issue_number] = commentsByIssue[issue_number] || []).push({ body });
         },
-        listComments: async () => {
-          return { data: [] };
+        listComments: async ({ issue_number }) => {
+          calls.listComments.push(issue_number);
+          return { data: commentsByIssue[issue_number] || [] };
         },
         addLabels: async ({ labels }) => calls.addLabels.push(...labels),
         removeLabel: async ({ name }) => calls.removeLabel.push(name),
@@ -121,6 +124,39 @@ test('orchestrator.js test suite', async (t) => {
     assert.ok(calls.createComment[0].body.includes('Verdict: request-changes'));
   });
 
+  await t.test('DEV with stale short-circuit label but an existing PR goes to REVIEW', async () => {
+    const { core, github, context, calls, updateIssueDetails, setMasterBody, setTaskData } = createMocks('workflow_run');
+
+    setMasterBody(`<!-- ORCHESTRATOR_STATE:\n{ "status": "IN_PROGRESS", "current_task": { "issue": 2, "pr": null, "phase": "DEV", "turn": 0, "max_turns": 3, "retries": 0 }, "queue": [3], "completed": [], "failed": [], "order": [2, 3] }\n-->`);
+    // agent/needs-info is a short-circuit label, but the agent did open a PR.
+    setTaskData({ labels: [{name: 'agent/needs-info'}], state: 'open' });
+    github.rest.pulls.list = async () => ({ data: [{ number: 99, head: { ref: 'opencode/issue2-fix' } }] });
+
+    await runOrchestrator({ github, context, core });
+
+    assert.strictEqual(calls.createComment.length, 1, 'Should trigger review phase');
+    assert.strictEqual(calls.createComment[0].issue_number, 99, 'Triggers on PR #99');
+    assert.ok(calls.createComment[0].body.includes('/oc review'));
+    const master = updateIssueDetails.find(u => u.issue_number === 1);
+    assert.ok(master && master.body.includes('"phase": "REVIEW"'), 'Phase advanced to REVIEW');
+    assert.ok(master && !master.body.includes('"completed": [\n    2'), 'Task #2 is not marked completed');
+  });
+
+  await t.test('DEV with short-circuit label and no PR completes the task', async () => {
+    const { core, github, context, calls, updateIssueDetails, setMasterBody, setTaskData } = createMocks('workflow_run');
+
+    setMasterBody(`<!-- ORCHESTRATOR_STATE:\n{ "status": "IN_PROGRESS", "current_task": { "issue": 2, "pr": null, "phase": "DEV", "turn": 0, "max_turns": 3, "retries": 0 }, "queue": [3], "completed": [], "failed": [], "order": [2, 3] }\n-->`);
+    setTaskData({ labels: [{name: 'agent/needs-info'}], state: 'open' });
+    github.rest.pulls.list = async () => ({ data: [] });
+
+    await runOrchestrator({ github, context, core });
+
+    assert.strictEqual(calls.createComment.length, 1, 'Only the next queued task is triggered');
+    assert.strictEqual(calls.createComment[0].issue_number, 3, 'Advances to the next task, not a review');
+    assert.ok(!calls.createComment[0].body.includes('/oc review'));
+    assert.ok(updateIssueDetails.some(u => u.issue_number === 1 && u.body.includes('"completed": [\n    2')));
+  });
+
   await t.test('Review phase accepts explicit approve verdict', async () => {
     const { core, github, context, calls, updateIssueDetails, setMasterBody, setTaskData } = createMocks('workflow_run');
 
@@ -173,6 +209,190 @@ test('orchestrator.js test suite', async (t) => {
     // Note: since updateIssue body is JSON stringified inside HTML comment, we can parse it
     // but a simple string inclusion test is robust
     assert.ok(calls.updateIssue.includes(1), 'Master issue was updated');
+  });
+
+  await t.test('Review approve with auto-merge and green CI merges and advances', async () => {
+    const { core, github, context, calls, updateIssueDetails, setMasterBody, setTaskData } = createMocks('workflow_run');
+
+    setMasterBody(`<!-- ORCHESTRATOR_STATE:\n{ "status": "IN_PROGRESS", "current_task": { "issue": 2, "pr": 99, "phase": "REVIEW", "turn": 0, "max_turns": 3, "retries": 0 }, "queue": [3], "completed": [], "failed": [], "order": [2, 3] }\n-->`);
+    setTaskData({ labels: [{name: 'auto-merge'}], state: 'open' });
+    github.rest.issues.listComments = async () => ({ data: [{ body: 'Verdict: approve' }] });
+    github.rest.pulls.get = async () => ({ data: { head: { ref: 'opencode/issue2-fix', sha: 'abc' }, merged: true } });
+    github.rest.pulls.listFiles = async () => ({ data: [{ filename: 'fs/a.java', additions: 5 }] });
+    github.rest.checks = { listForRef: async () => ({ data: { check_runs: [{ status: 'completed', conclusion: 'success' }] } }) };
+
+    await runOrchestrator({ github, context, core });
+
+    assert.deepStrictEqual(calls.mergePR, [99]);
+    assert.ok(calls.createComment.some(c => c.issue_number === 3 && c.body.includes('/oc Please proceed')));
+    assert.ok(updateIssueDetails.some(u => u.issue_number === 1 && u.body.includes('"completed": [\n    2')));
+  });
+
+  await t.test('Review approve with auto-merge does not claim success when the merge stays unconfirmed', async () => {
+    const { core, github, context, calls, updateIssueDetails, setMasterBody, setTaskData } = createMocks('workflow_run');
+
+    setMasterBody(`<!-- ORCHESTRATOR_STATE:\n{ "status": "IN_PROGRESS", "current_task": { "issue": 2, "pr": 99, "phase": "REVIEW", "turn": 0, "max_turns": 3, "retries": 0 }, "queue": [3], "completed": [], "failed": [], "order": [2, 3] }\n-->`);
+    setTaskData({ labels: [{name: 'auto-merge'}], state: 'open' });
+    github.rest.issues.listComments = async () => ({ data: [{ body: 'Verdict: approve' }] });
+    // The merge call resolves with an empty body; the verification read still
+    // reports an unmerged PR.
+    github.rest.pulls.get = async () => ({ data: { head: { ref: 'opencode/issue2-fix', sha: 'abc' }, state: 'open', merged: false } });
+    github.rest.pulls.listFiles = async () => ({ data: [{ filename: 'fs/a.java', additions: 5 }] });
+    github.rest.checks = { listForRef: async () => ({ data: { check_runs: [{ status: 'completed', conclusion: 'success' }] } }) };
+
+    await assert.rejects(
+      runOrchestrator({ github, context, core }),
+      /merge not confirmed/,
+      'An unconfirmed merge surfaces as a failure'
+    );
+
+    assert.deepStrictEqual(calls.mergePR, [99], 'The merge was attempted');
+    assert.ok(
+      !updateIssueDetails.some(u => u.issue_number === 1 && u.body.includes('"completed": [\n    2')),
+      'Task #2 is never marked completed'
+    );
+    assert.ok(
+      !calls.createComment.some(c => c.body.includes('All tasks in the queue have been processed')),
+      'The batch is not reported as finished'
+    );
+    assert.ok(calls.createComment.every(c => c.issue_number !== 3), 'The next task is not started');
+    assert.ok(calls.removeLabel.includes('orchestrator/locked'), 'The lock is released');
+  });
+
+  await t.test('Human approved PR review does not claim success when the merge stays unconfirmed', async () => {
+    const { core, github, context, calls, setMasterBody } = createMocks('pull_request_review');
+
+    setMasterBody(`<!-- ORCHESTRATOR_STATE:\n{ "status": "IN_PROGRESS", "current_task": { "issue": 2, "pr": 99, "phase": "HUMAN_REVIEW", "turn": 0, "max_turns": 3, "retries": 0 }, "queue": [3], "completed": [], "failed": [], "order": [2, 3] }\n-->`);
+    github.rest.pulls.get = async () => ({ data: { head: { ref: 'opencode/issue2-fix', sha: 'abc' }, state: 'open', merged: false } });
+
+    await assert.rejects(
+      runOrchestrator({ github, context, core }),
+      /merge not confirmed/,
+      'An unconfirmed merge surfaces as a failure'
+    );
+
+    assert.deepStrictEqual(calls.mergePR, [99], 'The merge was attempted');
+    assert.ok(calls.createComment.every(c => c.issue_number !== 3), 'The next task is not started');
+    assert.ok(
+      !calls.createComment.some(c => c.body.includes('All tasks in the queue have been processed')),
+      'The batch is not reported as finished'
+    );
+  });
+
+  await t.test('Review approve with auto-merge defers when CI red', async () => {
+    const { core, github, context, calls, setMasterBody, setTaskData } = createMocks('workflow_run');
+
+    setMasterBody(`<!-- ORCHESTRATOR_STATE:\n{ "status": "IN_PROGRESS", "current_task": { "issue": 2, "pr": 99, "phase": "REVIEW", "turn": 0, "max_turns": 3, "retries": 0 }, "queue": [3], "completed": [], "failed": [], "order": [2, 3] }\n-->`);
+    setTaskData({ labels: [{name: 'auto-merge'}], state: 'open' });
+    github.rest.issues.listComments = async () => ({ data: [{ body: 'Verdict: approve' }] });
+    github.rest.pulls.get = async () => ({ data: { head: { ref: 'opencode/issue2-fix', sha: 'abc' }, merged: true } });
+    github.rest.pulls.listFiles = async () => ({ data: [{ filename: 'fs/a.java', additions: 5 }] });
+    github.rest.checks = { listForRef: async () => ({ data: { check_runs: [{ status: 'completed', conclusion: 'failure' }] } }) };
+
+    await runOrchestrator({ github, context, core });
+
+    assert.strictEqual(calls.mergePR.length, 0);
+    assert.ok(calls.createComment.some(c => c.issue_number === 99 && c.body.includes('deferred')));
+  });
+
+  await t.test('Java CI success re-reviews active REVIEW PR', async () => {
+    const { core, github, context, calls, setMasterBody } = createMocks('workflow_run');
+
+    setMasterBody(`<!-- ORCHESTRATOR_STATE:\n{ "status": "IN_PROGRESS", "current_task": { "issue": 2, "pr": 99, "phase": "REVIEW", "turn": 0, "max_turns": 3, "retries": 0 }, "queue": [3], "completed": [], "failed": [], "order": [2, 3] }\n-->`);
+    context.payload.workflow_run.name = 'Java CI';
+    context.payload.workflow_run.conclusion = 'success';
+    context.payload.workflow_run.head_sha = 'abc';
+    context.payload.workflow_run.id = 55;
+    github.rest.pulls.list = async () => ({ data: [{ number: 99, head: { ref: 'opencode/issue2-fix', sha: 'abc' } }] });
+
+    await runOrchestrator({ github, context, core });
+
+    assert.ok(calls.createComment.some(c => c.issue_number === 99 && c.body.includes('/oc review')));
+    assert.strictEqual(calls.mergePR.length, 0);
+  });
+
+  await t.test('Java CI success skips re-review while a review is in flight', async () => {
+    const { core, github, context, calls, setMasterBody } = createMocks('workflow_run');
+
+    setMasterBody(`<!-- ORCHESTRATOR_STATE:\n{ "status": "IN_PROGRESS", "current_task": { "issue": 2, "pr": 99, "phase": "REVIEW", "turn": 0, "max_turns": 3, "retries": 0, "review_in_progress": true }, "queue": [3], "completed": [], "failed": [], "order": [2, 3] }\n-->`);
+    context.payload.workflow_run.name = 'Java CI';
+    context.payload.workflow_run.conclusion = 'success';
+    context.payload.workflow_run.head_sha = 'abc';
+    context.payload.workflow_run.id = 57;
+    github.rest.pulls.list = async () => ({ data: [{ number: 99, head: { ref: 'opencode/issue2-fix', sha: 'abc' } }] });
+
+    await runOrchestrator({ github, context, core });
+
+    assert.strictEqual(calls.createComment.filter(c => c.issue_number === 99).length, 0, 'No second review while a review is running');
+    assert.strictEqual(calls.mergePR.length, 0);
+  });
+
+  await t.test('Java CI success re-reviews a deferred REVIEW PR', async () => {
+    const { core, github, context, calls, updateIssueDetails, setMasterBody } = createMocks('workflow_run');
+
+    setMasterBody(`<!-- ORCHESTRATOR_STATE:\n{ "status": "IN_PROGRESS", "current_task": { "issue": 2, "pr": 99, "phase": "REVIEW", "turn": 0, "max_turns": 3, "retries": 0, "review_in_progress": false }, "queue": [3], "completed": [], "failed": [], "order": [2, 3] }\n-->`);
+    context.payload.workflow_run.name = 'Java CI';
+    context.payload.workflow_run.conclusion = 'success';
+    context.payload.workflow_run.head_sha = 'abc';
+    context.payload.workflow_run.id = 58;
+    github.rest.pulls.list = async () => ({ data: [{ number: 99, head: { ref: 'opencode/issue2-fix', sha: 'abc' } }] });
+
+    await runOrchestrator({ github, context, core });
+
+    assert.ok(calls.createComment.some(c => c.issue_number === 99 && c.body.includes('/oc review')), 'Deferred review is re-run on green CI');
+    assert.ok(updateIssueDetails.some(u => u.issue_number === 1 && u.body.includes('"review_in_progress": true')), 'Flag is armed for the re-review itself');
+    assert.ok(updateIssueDetails.some(u => u.issue_number === 1 && u.body.includes('ci_green_rereview')), 'Re-review event is recorded');
+  });
+
+  await t.test('Review completion clears review_in_progress when the merge is deferred', async () => {
+    const { core, github, context, calls, updateIssueDetails, setMasterBody, setTaskData } = createMocks('workflow_run');
+
+    setMasterBody(`<!-- ORCHESTRATOR_STATE:\n{ "status": "IN_PROGRESS", "current_task": { "issue": 2, "pr": 99, "phase": "REVIEW", "turn": 0, "max_turns": 3, "retries": 0, "review_in_progress": true }, "queue": [3], "completed": [], "failed": [], "order": [2, 3] }\n-->`);
+    setTaskData({ labels: [{name: 'auto-merge'}], state: 'open' });
+    github.rest.issues.listComments = async () => ({ data: [{ body: 'Verdict: approve' }] });
+    github.rest.pulls.get = async () => ({ data: { head: { ref: 'opencode/issue2-fix', sha: 'abc' }, merged: true } });
+    github.rest.pulls.listFiles = async () => ({ data: [{ filename: 'fs/a.java', additions: 5 }] });
+    github.rest.checks = { listForRef: async () => ({ data: { check_runs: [{ status: 'completed', conclusion: 'failure' }] } }) };
+
+    await runOrchestrator({ github, context, core });
+
+    // The defer branch keeps the same task object alive, so the flag is observable.
+    const persisted = updateIssueDetails.filter(u => u.issue_number === 1).map(u => u.body).join('\n');
+    assert.ok(calls.createComment.some(c => c.issue_number === 99 && c.body.includes('deferred')), 'Merge is deferred rather than performed');
+    assert.strictEqual(calls.mergePR.length, 0, 'No merge on a red CI');
+    assert.ok(persisted.includes('"phase": "REVIEW"'), 'Task stays in REVIEW (merge deferred)');
+    assert.ok(persisted.includes('"review_in_progress": false'), 'Flag is cleared so a later green CI can re-review');
+    assert.ok(persisted.includes('"review_in_progress": true') === false, 'Flag is not left armed');
+  });
+
+  await t.test('FEEDBACK completion re-enters REVIEW with review_in_progress set', async () => {
+    const { core, github, context, calls, updateIssueDetails, setMasterBody, setTaskData } = createMocks('workflow_run');
+
+    setMasterBody(`<!-- ORCHESTRATOR_STATE:\n{ "status": "IN_PROGRESS", "current_task": { "issue": 2, "pr": 99, "phase": "FEEDBACK", "turn": 1, "max_turns": 3, "retries": 0, "review_in_progress": false }, "queue": [3], "completed": [], "failed": [], "order": [2, 3] }\n-->`);
+    setTaskData({ labels: [], state: 'open' });
+    github.rest.issues.listComments = async () => ({ data: [{ body: 'Review done' }] });
+
+    await runOrchestrator({ github, context, core });
+
+    assert.ok(calls.createComment.some(c => c.issue_number === 99 && c.body.includes('/oc review')), 'Re-review scheduled');
+    assert.ok(updateIssueDetails.some(u => u.issue_number === 1 && u.body.includes('"review_in_progress": true')), 'Flag is set for the new review');
+  });
+
+  await t.test('Java CI failure posts one /oc fix on active REVIEW PR', async () => {
+    const { core, github, context, calls, setMasterBody } = createMocks('workflow_run');
+
+    setMasterBody(`<!-- ORCHESTRATOR_STATE:\n{ "status": "IN_PROGRESS", "current_task": { "issue": 2, "pr": 99, "phase": "REVIEW", "turn": 0, "max_turns": 3, "retries": 0 }, "queue": [3], "completed": [], "failed": [], "order": [2, 3] }\n-->`);
+    context.payload.workflow_run.name = 'Java CI';
+    context.payload.workflow_run.conclusion = 'failure';
+    context.payload.workflow_run.head_sha = 'abc';
+    context.payload.workflow_run.id = 56;
+    github.rest.pulls.list = async () => ({ data: [{ number: 99, head: { ref: 'opencode/issue2-fix', sha: 'abc' } }] });
+
+    await runOrchestrator({ github, context, core });
+    await runOrchestrator({ github, context, core });
+
+    const fixes = calls.createComment.filter(c => c.issue_number === 99 && c.body.includes('/oc fix CI failed'));
+    assert.strictEqual(fixes.length, 1, 'marker dedupes the second identical run');
   });
 
 });

@@ -173,3 +173,5 @@ The project uses a label system managed by [sync-labels.js](https://github.com/L
 ### Agent Automation
 
 An experimental agent-based workflow exists for triaging and resolving issues. It's still exploratory — see [opencode.yml](https://github.com/LSantha/jnode_ai/blob/master/.github/workflows/opencode.yml) and [jnode-issue-resolver skill](https://github.com/LSantha/jnode_ai/blob/master/.opencode/skills/jnode-issue-resolver/SKILL.md) for details.
+
+An issue moves through the runner's phases in order: triage (a `## Triage` comment and kind/area labels), `DEV` (the agent implements the fix and opens a PR), `REVIEW` (the agent reviews the PR, looping through `FEEDBACK` when changes are requested), and finally `MERGE` or `HUMAN_REVIEW` (auto-merged for eligible kinds such as `kind/chore`, or handed to a human maintainer).

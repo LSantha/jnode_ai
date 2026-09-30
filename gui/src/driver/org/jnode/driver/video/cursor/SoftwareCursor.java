@@ -36,14 +36,16 @@ public class SoftwareCursor extends BitmapGraphics implements HardwareCursorAPI 
     private HardwareCursorImage cursorImage;
     private boolean cursorVisible = false;
     private int[] screenBackup;
+    private boolean cursorDrawn = false;
     private Rectangle cursorArea = new Rectangle(0, 0, 0, 0);
     private Rectangle screenArea = new Rectangle();
+    private Rectangle readArea = new Rectangle();
 
     public SoftwareCursor(BitmapGraphics graphics) {
         setBitmapGraphics(graphics);
     }
 
-    public void setBitmapGraphics(BitmapGraphics graphics) {
+    public synchronized void setBitmapGraphics(BitmapGraphics graphics) {
         if (this.graphics != graphics) {
             hideCursor();
 
@@ -59,122 +61,161 @@ public class SoftwareCursor extends BitmapGraphics implements HardwareCursorAPI 
                         cursorImage.getHotSpotY());
             }
 
-            // TODO test when screen resolution is changing
-            showCursor();
+            if (cursorVisible) {
+                showCursor();
+            }
         }
     }
 
     @Override
-    public void copyArea(int srcX, int srcY, int w, int h, int dstX, int dstY) {
+    public synchronized void copyArea(int srcX, int srcY, int w, int h, int dstX, int dstY) {
+        final boolean sourceIntersects = intersectsCursor(srcX, srcY, w, h);
+        final boolean destinationIntersects = intersectsCursor(srcX + dstX, srcY + dstY, w, h);
+        if (sourceIntersects || destinationIntersects) {
+            hideCursor();
+        }
 
-        // TODO don't take cursor pixels for the source
+        try {
+            graphics.copyArea(srcX, srcY, w, h, dstX, dstY);
+        } finally {
+            if (sourceIntersects || destinationIntersects) {
+                showCursor();
+            }
+        }
+    }
 
+    @Override
+    public synchronized int doGetPixel(int x, int y) {
+        final boolean intersects = intersectsCursor(x, y, 1, 1);
+        if (intersects) {
+            hideCursor();
+        }
+        try {
+            return graphics.doGetPixel(x, y);
+        } finally {
+            if (intersects) {
+                showCursor();
+            }
+        }
+    }
+
+    @Override
+    public synchronized int[] doGetPixels(Rectangle r) {
+        final boolean intersects = intersectsCursor(r.x, r.y, r.width, r.height);
+        if (intersects) {
+            hideCursor();
+        }
+        try {
+            return graphics.doGetPixels(r);
+        } finally {
+            if (intersects) {
+                showCursor();
+            }
+        }
+    }
+
+    @Override
+    public synchronized void drawAlphaRaster(Raster raster, AffineTransform tx, int srcX, int srcY,
+            int dstX, int dstY, int w, int h, int color) {
         final boolean intersects = intersectsCursor(dstX, dstY, w, h);
         if (intersects) {
             hideCursor();
         }
-
-        graphics.copyArea(srcX, srcY, w, h, dstX, dstY);
-
-        if (intersects) {
-            showCursor();
+        try {
+            graphics.drawAlphaRaster(raster, tx, srcX, srcY, dstX, dstY, w, h, color);
+        } finally {
+            if (intersects) {
+                showCursor();
+            }
         }
     }
 
     @Override
-    public int doGetPixel(int x, int y) {
-        // TODO don't take cursor pixels
-        return graphics.doGetPixel(x, y);
-    }
-
-    @Override
-    public int[] doGetPixels(Rectangle r) {
-        // TODO don't take cursor pixels
-        return graphics.doGetPixels(r);
-    }
-
-    @Override
-    public void drawAlphaRaster(Raster raster, AffineTransform tx, int srcX, int srcY, int dstX,
-            int dstY, int w, int h, int color) {
-
+    public synchronized void drawImage(Raster src, int srcX, int srcY, int dstX, int dstY, int w,
+            int h) {
         final boolean intersects = intersectsCursor(dstX, dstY, w, h);
         if (intersects) {
             hideCursor();
         }
-
-        graphics.drawAlphaRaster(raster, tx, srcX, srcY, dstX, dstY, w, h, color);
-
-        if (intersects) {
-            showCursor();
+        try {
+            graphics.drawImage(src, srcX, srcY, dstX, dstY, w, h);
+        } finally {
+            if (intersects) {
+                showCursor();
+            }
         }
     }
 
     @Override
-    public void drawImage(Raster src, int srcX, int srcY, int dstX, int dstY, int w, int h) {
+    public synchronized void drawImage(Raster src, int srcX, int srcY, int dstX, int dstY, int w,
+            int h, int bgColor) {
         final boolean intersects = intersectsCursor(dstX, dstY, w, h);
         if (intersects) {
             hideCursor();
         }
-
-        graphics.drawImage(src, srcX, srcY, dstX, dstY, w, h);
-
-        if (intersects) {
-            showCursor();
+        try {
+            graphics.drawImage(src, srcX, srcY, dstX, dstY, w, h, bgColor);
+        } finally {
+            if (intersects) {
+                showCursor();
+            }
         }
     }
 
     @Override
-    public void drawImage(Raster src, int srcX, int srcY, int dstX, int dstY, int w, int h,
-            int bgColor) {
-        final boolean intersects = intersectsCursor(dstX, dstY, w, h);
-        if (intersects) {
-            hideCursor();
-        }
-
-        graphics.drawImage(src, srcX, srcY, dstX, dstY, w, h, bgColor);
-
-        if (intersects) {
-            showCursor();
-        }
-    }
-
-    @Override
-    public void drawLine(int x, int y, int w, int color, int mode) {
+    public synchronized void drawLine(int x, int y, int w, int color, int mode) {
         final boolean intersects = intersectsCursor(x, y, w, 1);
         if (intersects) {
             hideCursor();
         }
-
-        graphics.drawLine(x, y, w, color, mode);
-
-        if (intersects) {
-            showCursor();
+        try {
+            graphics.drawLine(x, y, w, color, mode);
+        } finally {
+            if (intersects) {
+                showCursor();
+            }
         }
     }
 
     @Override
-    public void drawPixels(int x, int y, int count, int color, int mode) {
+    public synchronized void drawPixels(int x, int y, int count, int color, int mode) {
         final boolean intersects = intersectsCursor(x, y, count, 1);
         if (intersects) {
             hideCursor();
         }
-
-        graphics.drawPixels(x, y, count, color, mode);
-
-        if (intersects) {
-            showCursor();
+        try {
+            graphics.drawPixels(x, y, count, color, mode);
+        } finally {
+            if (intersects) {
+                showCursor();
+            }
         }
     }
 
-    public int getWidth() {
+    @Override
+    public synchronized void fillRect(int x, int y, int width, int height, int color, int mode) {
+        final boolean intersects = intersectsCursor(x, y, width, height);
+        if (intersects) {
+            hideCursor();
+        }
+        try {
+            graphics.fillRect(x, y, width, height, color, mode);
+        } finally {
+            if (intersects) {
+                showCursor();
+            }
+        }
+    }
+
+    public synchronized int getWidth() {
         return graphics.getWidth();
     }
 
-    public int getHeight() {
+    public synchronized int getHeight() {
         return graphics.getHeight();
     }
 
-    public void setCursorImage(HardwareCursor cursor) {
+    public synchronized void setCursorImage(HardwareCursor cursor) {
         if (cursor == null) {
             return;
         }
@@ -196,24 +237,26 @@ public class SoftwareCursor extends BitmapGraphics implements HardwareCursorAPI 
                     cursorArea.setLocation(newX, newY);
                 }
                 this.cursorImage = cursImage;
-                
-                showCursor();
+
+                if (cursorVisible) {
+                    showCursor();
+                }
             }
         } catch (Throwable t) {
             Unsafe.debugStackTrace("error in setCursorImage (" + t.getClass().getName() + ")", t);
         }
     }
 
-    public void setCursorPosition(int x, int y) {
+    public synchronized void setCursorPosition(int x, int y) {
         try {
-            // x,y corresponds to the location of the cursor's hotspot on the
-            // screen
-            // it can be anywhere in the screen area (but some part of the
-            // cursor might not be visible)
             x = Math.min(Math.max(x, 0), graphics.getWidth() - 1);
             y = Math.min(Math.max(y, 0), graphics.getHeight() - 1);
 
-            if ((cursorArea.getX() != x) || (cursorArea.getY() != y)) {
+            final int currentHotspotX = cursorImage == null ? (int) cursorArea.getX() :
+                    (int) (cursorArea.getX() + cursorImage.getHotSpotX());
+            final int currentHotspotY = cursorImage == null ? (int) cursorArea.getY() :
+                    (int) (cursorArea.getY() + cursorImage.getHotSpotY());
+            if ((currentHotspotX != x) || (currentHotspotY != y)) {
                 hideCursor();
 
                 if (cursorImage != null) {
@@ -224,14 +267,16 @@ public class SoftwareCursor extends BitmapGraphics implements HardwareCursorAPI 
                     cursorArea.setLocation(x, y);
                 }
 
-                showCursor();
+                if (cursorVisible) {
+                    showCursor();
+                }
             }
         } catch (Throwable t) {
             Unsafe.debugStackTrace("error in setCursorPosition", t);
         }
     }
 
-    public void setCursorVisible(boolean visible) {
+    public synchronized void setCursorVisible(boolean visible) {
         try {
             if (this.cursorVisible != visible) {
                 this.cursorVisible = visible;
@@ -259,64 +304,87 @@ public class SoftwareCursor extends BitmapGraphics implements HardwareCursorAPI 
     }
 
     private void showCursor() {
-        if (cursorImage != null) {
-            if (screenBackup == null) {
-                screenBackup = new int[cursorImage.getWidth() * cursorImage.getHeight()];
-            }
-
-            // screenBackup = graphics.doGetPixels(cursorArea);
-            final int cursorX = (int) cursorArea.getX();
-            final int cursorY = (int) cursorArea.getY();
-            final int maxY = Math.min(cursorY + cursorImage.getHeight(), graphics.getHeight());
-            final int maxX = Math.min(cursorX + cursorImage.getWidth(), graphics.getWidth());
-            final int width = cursorImage.getWidth();
-
-            int index = 0;
-            for (int y = cursorY; y < maxY; y++) {
-                int lineIndex = index;
-                for (int x = cursorX; x < maxX; x++) {
-                    screenBackup[lineIndex] = graphics.doGetPixel(x, y);
-                    lineIndex++;
-                }
-
-                index += width;
-            }
-
-            putPixels(cursorImage.getImage(), screenBackup);
+        if (!cursorVisible || (cursorImage == null) || cursorDrawn) {
+            return;
         }
+
+        final int width = cursorImage.getWidth();
+        final int height = cursorImage.getHeight();
+        if ((screenBackup == null) || (screenBackup.length != width * height)) {
+            screenBackup = new int[width * height];
+        }
+
+        final int cursorX = (int) cursorArea.getX();
+        final int cursorY = (int) cursorArea.getY();
+        final int screenWidth = graphics.getWidth();
+        for (int imageY = 0; imageY < height; imageY++) {
+            final int y = cursorY + imageY;
+            if ((y < 0) || (y >= graphics.getHeight())) {
+                continue;
+            }
+            final int firstX = Math.max(cursorX, 0);
+            final int lastX = Math.min(cursorX + width, screenWidth);
+            if (firstX < lastX) {
+                readArea.setBounds(firstX, y, lastX - firstX, 1);
+                final int[] row = graphics.doGetPixels(readArea);
+                System.arraycopy(row, 0, screenBackup, imageY * width + firstX - cursorX,
+                    row.length);
+            }
+        }
+
+        putPixels(cursorImage.getImage(), screenBackup);
+        cursorDrawn = true;
     }
 
     private void hideCursor() {
-        if ((cursorImage != null) && (screenBackup != null)) {
+        if (cursorDrawn && (cursorImage != null) && (screenBackup != null)) {
             putPixels(screenBackup, null);
+            cursorDrawn = false;
+        }
+    }
+
+    private void drawRun(int x, int y, int count, int color) {
+        if (count > 0) {
+            graphics.drawPixels(x, y, count, color, Surface.PAINT_MODE);
         }
     }
 
     private void putPixels(int[] pixels, int[] background) {
         final int cursorX = (int) cursorArea.getX();
         final int cursorY = (int) cursorArea.getY();
-        final int maxY = Math.min(cursorY + cursorImage.getHeight(), graphics.getHeight());
-        final int maxX = Math.min(cursorX + cursorImage.getWidth(), graphics.getWidth());
         final int width = cursorImage.getWidth();
+        final int height = cursorImage.getHeight();
 
-        int index = 0;
-        for (int y = cursorY; y < maxY; y++) {
-            int lineIndex = index;
-            for (int x = cursorX; x < maxX; x++) {
-                int color;
-                if (background == null) {
-                    color = pixels[lineIndex];
-                } else {
-                    final int c = pixels[lineIndex];
-                    final boolean isTransparent = (c == 0);
-                    color = isTransparent ? background[lineIndex] : c;
-                }
-
-                graphics.drawPixels(x, y, 1, color, Surface.PAINT_MODE);
-                lineIndex++;
+        for (int imageY = 0; imageY < height; imageY++) {
+            final int y = cursorY + imageY;
+            if ((y < 0) || (y >= graphics.getHeight())) {
+                continue;
             }
-
-            index += width;
+            int runX = -1;
+            int runCount = 0;
+            int runColor = 0;
+            for (int imageX = 0; imageX < width; imageX++) {
+                final int x = cursorX + imageX;
+                if ((x < 0) || (x >= graphics.getWidth())) {
+                    drawRun(runX, y, runCount, runColor);
+                    runX = -1;
+                    runCount = 0;
+                    continue;
+                }
+                final int index = imageY * width + imageX;
+                final int cursorColor = pixels[index];
+                final int color = background == null ? cursorColor :
+                    (cursorColor == 0 ? background[index] : cursorColor);
+                if ((runCount > 0) && (x == runX + runCount) && (color == runColor)) {
+                    runCount++;
+                } else {
+                    drawRun(runX, y, runCount, runColor);
+                    runX = x;
+                    runCount = 1;
+                    runColor = color;
+                }
+            }
+            drawRun(runX, y, runCount, runColor);
         }
     }
 }

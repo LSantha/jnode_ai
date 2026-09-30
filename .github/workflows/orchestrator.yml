@@ -8,7 +8,7 @@ on:
   issue_comment:
     types: [created]
   workflow_run:
-    workflows: ["opencode"]
+    workflows: ["opencode", "Java CI"]
     types: [completed]
   pull_request_review:
     types: [submitted]

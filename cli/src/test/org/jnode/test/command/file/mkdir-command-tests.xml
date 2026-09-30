@@ -5,6 +5,7 @@
         <script>#!bjorne
                 mkdir @TEMP_DIR@/single/a
         </script>
+        <file name="single" directory="true" input="true"/>
         <file name="single/a" directory="true"/>
     </testSpec>
     <testSpec title="nested-create-with-parents-short" command="run" runMode="AS_SCRIPT" rc="0">
@@ -23,12 +24,15 @@
         <script>#!bjorne
                 mkdir @TEMP_DIR@/no-parents/a/b/c
         </script>
+        <error><![CDATA[Cannot create directory
+]]></error>
     </testSpec>
     <testSpec title="parents-no-error-if-existing" command="run" runMode="AS_SCRIPT" rc="0">
         <script>#!bjorne
                 mkdir @TEMP_DIR@/existing/a
                 mkdir -p @TEMP_DIR@/existing/a
         </script>
+        <file name="existing" directory="true" input="true"/>
         <file name="existing/a" directory="true"/>
     </testSpec>
 </testSet>
