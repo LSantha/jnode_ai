@@ -86,13 +86,33 @@ WORK=${REGRESS_WORK:-/tmp/jnode-regress}
 mkdir -p "$WORK"
 HJ=${HJ:-/home/levente/ext/prg/java/bin/java}
 : > "$ST"
+# ANCHOR-L2-200: a failed phase used to be recorded in $ST and then dropped on
+# the floor -- run() printed "FAIL <phase> rc=N" and the script still exited 0,
+# so any consumer chaining `regress.sh ... && ...` (or CI reading $?) sailed past
+# a red gate. Measured 2026-09-30: a deliberate red produced "FAIL t3 rc=1" with
+# script exit status 0. Every verdict therefore increments this tally and the
+# script exits 1 if it is non-zero; the status file stays as the detailed record.
+FAILURES=0
 say() { echo "$(date +%H:%M:%S) $*" | tee -a "$ST"; }
 want() { case " $PHASES " in *" $1 "*) return 0 ;; esac; return 1; }
+# Report an inline (non-`run`) failure and count it. `||` chains stay readable
+# and the tally cannot be forgotten at the call site.
+fail() { say "$*"; FAILURES=$((FAILURES + 1)); }
 # ANCHOR-L2-164: a phase's exit status IS its verdict. A check chain whose
 # last command happens to succeed (a trailing grep) once reported PASS over
 # a failing census; each multi-check phase therefore ends with an explicit
 # test/exit on its own result.
-run() { _p=$1; shift; say "START $_p"; if "$@" >> "$LOG" 2>&1; then say "PASS  $_p"; else say "FAIL  $_p rc=$?"; fi; }
+run() {
+  _p=$1; shift
+  say "START $_p"
+  if "$@" >> "$LOG" 2>&1; then
+    say "PASS  $_p"
+  else
+    _rc=$?
+    say "FAIL  $_p rc=$_rc"
+    FAILURES=$((FAILURES + 1))
+  fi
+}
 g() { _cap=$1; _lbl=$2; shift 2; sh "$TOOLS/gsh.sh" "$_cap" "$STALL" "$LABEL-$_lbl" "$@"; }
 # ANCHOR-L2-195: the bootimage build logs every compiler baked into the union.
 # A config that NAMES its JIT compiler must get exactly that compiler, no more
@@ -449,9 +469,9 @@ if want oracle; then
   if boot oracleboot; then
     say "LIVE  oracle: guest up"
     g 600 ojavac "mkdir /jnode/tmp/ox" "javac -d /jnode/tmp/ox /devices/sg0/ox/Probes.java /devices/sg0/ox/OracleDriver.java" >/dev/null 2>&1 \
-      && say "LIVE  oracle: probes compiled" || say "LIVE  oracle: javac FAILED"
+      && say "LIVE  oracle: probes compiled" || fail "LIVE  oracle: javac FAILED"
     g 2400 orun "cd /jnode/tmp/ox" "java OracleDriver out-l2.txt" >/dev/null 2>&1 \
-      && say "LIVE  oracle: run ok" || say "LIVE  oracle: run FAILED/STALLED"
+      && say "LIVE  oracle: run ok" || fail "LIVE  oracle: run FAILED/STALLED"
     fetch oout /jnode/tmp/ox/out-l2.txt /tmp/oracle-$LABEL.txt >/dev/null
     vboxmanage controlvm "$VM" poweroff >/dev/null 2>&1
     say "LIVE  oracle rows=$(grep -c '|' /tmp/oracle-$LABEL.txt 2>/dev/null) head=$(head -n 1 /tmp/oracle-$LABEL.txt 2>/dev/null)"
@@ -466,7 +486,7 @@ if want oracle; then
     guest_only=$(grep -c "^> " /tmp/oracle-cmp-$LABEL.txt)
     say "ORACLE DIFF rc=$cmp_rc host_only=$host_only guest_only=$guest_only first: $(grep -E "^[<>] |ORACLE PASS" /tmp/oracle-cmp-$LABEL.txt | head -n 4 | tr '\n' ' ' | cut -c1-240)"
   else
-    say "LIVE  oracle: BOOT FAILED"
+    fail "LIVE  oracle: BOOT FAILED"
   fi
 fi
 if want mauve; then
@@ -480,7 +500,7 @@ if want mauve; then
         fetch "fv$v$m" /jnode/tmp/mv/$m.txt /tmp/mv-v$v-$m-$LABEL.txt >/dev/null
         say "LIVE  mauve v$v $m: rows=$(grep -c '^mauve|' /tmp/mv-v$v-$m-$LABEL.txt 2>/dev/null) done=$(grep -c DONE /tmp/mv-v$v-$m-$LABEL.txt 2>/dev/null)"
       else
-        say "LIVE  mauve v$v $m: BOOT FAILED"
+        fail "LIVE  mauve v$v $m: BOOT FAILED"
       fi
       vboxmanage controlvm "$VM" poweroff >/dev/null 2>&1
     done
@@ -490,4 +510,10 @@ if want mauve; then
   done
 fi
 rm -f /tmp/jnode-ready
-say "=== regress done label=$LABEL (status $ST, log $LOG)"
+# ANCHOR-L2-200: the process exit status is the gate. $ST keeps the per-phase
+# detail; $? is what an automated consumer actually reads.
+if [ "$FAILURES" -gt 0 ]; then
+  say "=== regress FAILED label=$LABEL -- failures=$FAILURES, status $ST, log $LOG"
+  exit 1
+fi
+say "=== regress done label=$LABEL failures=$FAILURES (status $ST, log $LOG)"
