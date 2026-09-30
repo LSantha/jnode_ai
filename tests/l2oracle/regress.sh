@@ -14,6 +14,12 @@
 #              OPT-IN, not in the default flow: ~1 min for the image plus a
 #              boot attempt each, and the panic it reports is not actionable
 #              while known bugs are open. Run it when the boot is the target.
+#   bootl2     PURE L2/L2 image (both compilers named, no L1A fallback) booted
+#              to an AGENT SHELL and GC'd N times, failing on any exception in
+#              the serial log. OPT-IN. The `boot` phase cannot see this class
+#              of failure: JNode has no interpreter, so one CompileError at
+#              plugin startup leaves the shell unstartable while the KDB pipe
+#              stays quiet. Use --boots N to repeat (it is a timing race).
 #   isobuild   oracle ISO (local/mk-ox-iso.sh, boots the tests entry)
 #   oracle     oracle force vs host reference, in its own boot
 #   mauve [n]  mauve subsets (default 1; --full = 1..5), one boot per mode
@@ -422,6 +428,42 @@ if want boot; then
   done
   say "BOOT  signatures seen so far: $(sort -u "$BASE/boot-signatures.txt" 2>/dev/null | wc -l) distinct of $(wc -l < "$BASE/boot-signatures.txt" 2>/dev/null)"
   vboxmanage controlvm "$VM" poweroff >/dev/null 2>&1
+fi
+
+# --------------------------- L2/L2 BOOT TO SHELL ---------------------------
+# ANCHOR-L2-202: the `boot` phase above only asks whether the VM panicked. It
+# cannot see a method that refused to compile: JNode has no interpreter, so one
+# CompileError at plugin startup leaves the shell unstartable while the KDB
+# pipe stays quiet. This phase builds a PURE L2/L2 image (both compilers
+# named, no L1A fallback), boots it to an agent shell, GCs it repeatedly and
+# fails on any exception in the serial log. Opt-in, like `boot`.
+bootl2_image() {
+  # Scratch ISO: -Djnode-x86-lite.iso keeps this build off the live oracle path
+  # (ANCHOR-L2-164/172) and off the compile-gate path the host build uses.
+  rm -f all/build/x86/32bits/bootimage/bootimage.bin || return 1
+  sh build.sh -Djnode.compiler=L2 -Djnode.jit.compiler=L2 \
+    -Djnode-x86-lite.iso="$ROOT/core/build/l2-l2-gate.iso" \
+    "-Dmy-conf.dir=$ROOT/local/l2oracle/conf-x86" cd-x86-lite \
+    > /tmp/bootl2-build.log 2>&1
+  _brc=$?
+  grep -aE "Compiling using|Compiler union|BUILD" /tmp/bootl2-build.log
+  # Exit status is the verdict (ANCHOR-L2-164): the grep above only reports.
+  # ant prints "1 error" with no colon, so a colon count cannot gate this.
+  [ "$_brc" -eq 0 ] || return "$_brc"
+  grep -aq "BUILD SUCCESSFUL" /tmp/bootl2-build.log || return 1
+  [ -f core/build/l2-l2-gate.iso ] || return 1
+  return 0
+}
+if want bootl2; then
+  run bootl2image bootl2_image
+  # A pure L2/L2 image must name exactly those two compilers: a third name
+  # means the L1A fallback leaked in and what boots is not L2/L2.
+  run bootl2policy policy_union "X86-Stub X86-L2" "X86-Stub and X86-L2"
+  b=1
+  while [ "$b" -le "$BOOTS" ]; do
+    run "bootl2-$b" sh "$SELF_DIR/boot-l2.sh" "$ROOT/core/build/l2-l2-gate.iso"
+    b=$((b + 1))
+  done
 fi
 
 # ------------------------------- LIVE ----------------------------------

@@ -1,0 +1,29 @@
+00:00:07,361 WARN  [DefaultSyntaxManager]: problem in syntax
+java.lang.RuntimeException: Error in compilation of org.jnode.shell.syntax.SyntaxSpecLoader#doLoad!(Lorg/jnode/shell/syntax/SyntaxSpecAdapter;)Lorg/jnode/shell/syntax/Syntax;
+	at org.jnode.vm.LoadCompileService$Request.waitUntilFinished(LoadCompileService.java:353)
+	at org.jnode.vm.LoadCompileService.enqueAndWait(LoadCompileService.java:209)
+	at org.jnode.vm.LoadCompileService.compile(LoadCompileService.java:97)
+	at org.jnode.vm.classmgr.VmMethod.recompile(VmMethod.java:283)
+	at org.jnode.vm.classmgr.VmMethod.recompileMethod(VmMethod.java:299)
+	at org.jnode.shell.syntax.SyntaxSpecLoader.loadSyntax(SyntaxSpecLoader.java:35)
+	at org.jnode.shell.syntax.DefaultSyntaxManager.refreshSyntaxes(DefaultSyntaxManager.java:150)
+	at org.jnode.shell.syntax.DefaultSyntaxManager.<init>(DefaultSyntaxManager.java:56)
+	at org.jnode.shell.def.ShellPlugin.startPlugin(ShellPlugin.java:54)
+Caused by: org.jnode.vm.compiler.CompileError: Error in compilation of org.jnode.shell.syntax.SyntaxSpecLoader#doLoad!(Lorg/jnode/shell/syntax/SyntaxSpecAdapter;)Lorg/jnode/shell/syntax/Syntax; with X86-L2: java.lang.NullPointerException: NPE at address 0042B4BB
+	at org.jnode.vm.LoadCompileService.doCompile(LoadCompileService.java:253)
+	at org.jnode.vm.LoadCompileService.access$200(LoadCompileService.java:47)
+	at org.jnode.vm.LoadCompileService$CompileRequest.doExecute(LoadCompileService.java:419)
+	at org.jnode.vm.LoadCompileService$Request.execute(LoadCompileService.java:374)
+	at org.jnode.vm.LoadCompileService.processNextRequest(LoadCompileService.java:223)
+	at org.jnode.vm.LoadCompileThread.run(LoadCompileThread.java:43)
+	at org.jnode.vm.scheduler.VmThread.runThread(VmThread.java:774)
+Caused by: java.lang.NullPointerException: NPE at address 0042B4BB
+	at org.jnode.vm.compiler.ir.quad.BinaryQuad.getLHSLiveAddress(BinaryQuad.java:607)
+	at org.jnode.vm.compiler.ir.Variable.getAssignAddress(Variable.java:103)
+	at org.jnode.vm.compiler.ir.LiveRange.<init>(LiveRange.java:31)
+	at org.jnode.vm.x86.compiler.l2.X86Level2Compiler.getLiveRanges(X86Level2Compiler.java:131)
+	at org.jnode.vm.x86.compiler.l2.X86Level2Compiler.allocateRanges(X86Level2Compiler.java:399)
+	at org.jnode.vm.x86.compiler.l2.X86Level2Compiler.doCompile(X86Level2Compiler.java:238)
+	at org.jnode.vm.compiler.NativeCodeCompiler.compileRuntime(NativeCodeCompiler.java:151)
+	at org.jnode.vm.x86.compiler.l2.X86Level2Compiler.compileRuntime(X86Level2Compiler.java:109)
+	... 7 more

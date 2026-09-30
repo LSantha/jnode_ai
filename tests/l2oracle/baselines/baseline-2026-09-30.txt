@@ -1,0 +1,64 @@
+# Baseline 2026-09-30 (post-L2-202) -- every number here is a pass condition
+# for a later run. If one moves, the regression is real until shown otherwise.
+#
+# Reproduce (from the repo root; the bootimage must be deleted first or the
+# `policy` phase greps an empty log and reports union=[]):
+#
+#   rm -f all/build/x86/32bits/bootimage/bootimage.bin
+#   sh tests/l2oracle/regress.sh --label X host
+#   sh tests/l2oracle/census-wide.sh
+#   sh tests/l2oracle/regress.sh --full --label X isobuild oracle mauve 1 2 3 4 5
+#   sh tests/l2oracle/regress.sh --label X --boots 4 bootl2
+
+== host gate (label BASEFULL2, `regress.sh host`) == exit 0, failures=0
+build    union=[X86-Stub X86-L2 X86-L1A] aot=[X86-Stub and X86-L2]
+anchors  PASS
+t0       OK (24 tests)
+t3       OK (20 tests)
+t1       OK (43 tests)        # was 42; +1 = ANCHOR-L2-202 pin-isolation guard
+alljunit Tests run: 260, Failures: 0, Errors: 0   # was 259, same +1
+census   classes=1403
+         OK=11642 SKIP=1513 SKIP_CLASSES=0 SKIP_METHODS=1513
+         MAGIC=0 HANDLERS=527 FAIL_64=0 INDEXALIAS=0
+         SKIP_MISSING_DEP=0 SKIP_ENV=0
+         CONSTREFFIELD getfield=0 putfield=0
+         SSATAG disagreements=0 handlerEntryPhis=93
+         --- FAILED (0) ---   rangegap=0 stalewide=0 labelcensus=0
+
+== wide classlib census (`census-wide.sh`) == exit 0
+CHUNK org.      OK=3389  FAILED=0
+CHUNK java.     OK=20631 FAILED=0
+CHUNK javax.    OK=25478 FAILED=0
+CHUNK gnu.      OK=18343 FAILED=0
+CHUNK sun./com./netscape. OK=0 (not in the classlib corpus)
+CENSUS-WIDE TOTAL OK=67841 FAILED=0
+
+== live legs (label BASE2live, `--full isobuild oracle mauve 1 2 3 4 5`) == exit 0
+isobuild  iso=109295616 bytes, backend src_md5 8f8cfec3660d1513d6e42a390828945a
+          staged-ox: present
+oracle    rows=203 head=force|115
+          host_only=3 guest_only=3 -- THE RETIRED SET, and nothing else:
+            div_iii|-2147483648,-1   host I:80000000  guest EX:ArithmeticException
+            classLiteral_i|4         host I:411        guest I:1
+            classLiteral_i|5         host I:411        guest I:1
+          (regress.sh fails on any other row: ANCHOR-L2-201 oracle gate)
+mauve v1  base=20 forced=20, no force-only regressions
+mauve v2  base=52 forced=52, no force-only regressions
+mauve v3  base=17 forced=17, no force-only regressions
+mauve v4  base=19 forced=19, no force-only regressions
+mauve v5  base=63 forced=63, no force-only regressions
+          FIXED-UNDER-FORCE(?): ClassTest base fail=14 -> force fail=13
+          FIXED-UNDER-FORCE(?): DoubleTest base fail=1 -> force fail=0
+          (both are FEWER failures under force, i.e. not regressions)
+
+== pure L2/L2 boot to shell (`regress.sh --boots N bootl2`) ==
+union=[X86-Stub X86-L2] aot=[X86-Stub and X86-L2]  -- no L1A fallback
+6 consecutive boots PASS (labels bootl2fix x4, bootl2rc x2), each:
+  serial console ~18s, agent shell up, gc x4 all reporting collection stats,
+  exception hits=0 in /tmp/qemu_serial.log
+Before ANCHOR-L2-202 this gate could not pass reliably: a plain-static codegen
+pin let one LoadCompileThread restore null under the other, and
+BinaryQuad.getLHSLiveAddress then NPE'd while compiling
+SyntaxSpecLoader#doLoad -- see l2202-compile-error.txt for the recorded failure
+and `boot-l2.sh --scan baselines/l2202-compile-error.txt` for the red proof of
+this gate's matcher (rc=1 there, rc=0 on a clean log).
