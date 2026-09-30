@@ -84,6 +84,8 @@ import org.junit.Test;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNotNull;
+import static org.junit.Assert.assertNull;
+import static org.junit.Assert.assertSame;
 import static org.junit.Assert.assertTrue;
 import static org.junit.Assert.fail;
 
@@ -207,6 +209,62 @@ public class L2PipelineTest {
         r.typeSizeInfo = typeSizeInfo;
         r.unboundLabels = unboundLabels;
         return r;
+    }
+
+    // ---------------- ANCHOR-L2-202: the pin must not cross threads ----------
+
+    /**
+     * ANCHOR-L2-202: {@code LoadCompileService.start()} spawns
+     * {@code threadCount = 2} LoadCompileThreads and {@code processNextRequest()}
+     * drops the queue lock before {@code request.execute()}, so two
+     * {@code X86Level2Compiler.doCompile} calls genuinely overlap. doCompile
+     * saves the pin on entry and restores it in a {@code finally}
+     * (ANCHOR-L2-196), so with a shared static one thread's restore-to-null
+     * landed between the other thread's codegen ctor and its allocateRanges:
+     * {@code getLiveRanges -> LiveRange -> BinaryQuad.getLHSLiveAddress} then
+     * called {@code supports3AddrOps()} on a null CodeGenerator. That NPE is
+     * the CompileError that aborted the shell plugin's
+     * {@code SyntaxSpecLoader#doLoad} recompile -- and so the shell -- on a
+     * pure L2/L2 image.
+     * <p/>
+     * Red proof: make {@code CodeGenerator.cgInstance} a plain static again;
+     * the reader thread then observes this thread's generator instead of null.
+     */
+    @Test
+    public void testCodeGeneratorPinIsNotVisibleToOtherThreads() throws Exception {
+        final VmMethod method = findMethod("twice");
+        StringWriter sw = new StringWriter();
+        X86TextAssembler os = new X86TextAssembler(sw, cpuId, Mode.CODE32);
+        VmByteCode code = method.getBytecode();
+        EntryPoints context = new EntryPoints(loader, VmUtils.getVm().getHeapManager(), 1);
+        X86CompilerHelper helper = new X86CompilerHelper(os, null, context, true);
+        helper.setMethod(method);
+        CompiledMethod cm = new CompiledMethod(1);
+        TypeSizeInfo tsi = loader.getArchitecture().getTypeSizeInfo();
+        X86StackFrame sf = new X86StackFrame(os, helper, method, context, cm);
+
+        try {
+            // The ctor publishes the pin for THIS thread.
+            X86CodeGenerator mine = new X86CodeGenerator(method, os, code.getLength(), tsi, sf);
+            assertSame("codegen ctor must publish the pin on the compiling thread",
+                mine, CodeGenerator.getInstance());
+
+            // A second thread must not see it -- that is the whole guard.
+            final CodeGenerator[] foreign = new CodeGenerator[1];
+            Thread reader = new Thread(new Runnable() {
+                public void run() {
+                    foreign[0] = CodeGenerator.getInstance();
+                }
+            }, "l2-pin-reader");
+            reader.start();
+            reader.join();
+            assertNull("ANCHOR-L2-202: the codegen pin leaked across compile "
+                + "threads; a concurrent doCompile's finally-to-null then wipes "
+                + "the pin under the other thread's allocateRanges",
+                foreign[0]);
+        } finally {
+            CodeGenerator.setCodeGenerator(null);
+        }
     }
 
     // ---------------- T1: pipeline completes + emits ----------------
