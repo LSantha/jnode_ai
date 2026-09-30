@@ -64,6 +64,8 @@ import org.jnode.vm.compiler.ir.quad.BinaryOperation;
 import org.jnode.vm.compiler.ir.quad.BinaryQuad;
 import org.jnode.vm.compiler.ir.quad.CallAssignQuad;
 import org.jnode.vm.compiler.ir.quad.CallQuad;
+import org.jnode.vm.compiler.ir.quad.CheckcastQuad;
+import org.jnode.vm.compiler.ir.quad.ConstantClassAssignQuad;
 import org.jnode.vm.compiler.ir.quad.ConditionalBranchQuad;
 import org.jnode.vm.compiler.ir.quad.JsrQuad;
 import org.jnode.vm.compiler.ir.quad.MonitorenterQuad;
@@ -74,6 +76,8 @@ import org.jnode.vm.compiler.ir.quad.NewObjectArrayAssignQuad;
 import org.jnode.vm.compiler.ir.quad.NewPrimitiveArrayAssignQuad;
 import org.jnode.vm.compiler.ir.quad.PhiAssignQuad;
 import org.jnode.vm.compiler.ir.quad.Quad;
+import org.jnode.vm.compiler.ir.quad.RefStoreQuad;
+import org.jnode.vm.compiler.ir.quad.StaticRefStoreQuad;
 import org.jnode.vm.compiler.ir.quad.ThrowQuad;
 import org.jnode.vm.compiler.ir.quad.UnconditionalBranchQuad;
 import org.jnode.vm.compiler.ir.quad.VarReturnQuad;
@@ -820,6 +824,13 @@ public class L2PipelineTest {
                     || q instanceof NewAssignQuad || q instanceof NewObjectArrayAssignQuad
                     || q instanceof NewPrimitiveArrayAssignQuad || q instanceof NewMultiArrayAssignQuad
                     || q instanceof ArrayAssignQuad || q instanceof ArrayStoreQuad
+                    // ANCHOR-L2-204 (G11/M2): this duplicated list had
+                    // already drifted from X86Level2Compiler.isCallLike --
+                    // it predates CheckcastQuad/ConstantClassAssignQuad
+                    // (L2-164) and never had the write-barrier stores. An
+                    // under-covering mirror reads as a clean audit.
+                    || q instanceof CheckcastQuad || q instanceof ConstantClassAssignQuad
+                    || q instanceof RefStoreQuad || q instanceof StaticRefStoreQuad
                     || (q instanceof BinaryQuad
                         && (((BinaryQuad) q).getOperation() == BinaryOperation.LDIV
                             || ((BinaryQuad) q).getOperation() == BinaryOperation.LREM))) {
@@ -843,6 +854,80 @@ public class L2PipelineTest {
                 assertFalse(name + ": register " + lr + " reaches handler",
                     h[0] <= last && last < h[1]);
             }
+        }
+    }
+
+    /**
+     * ANCHOR-L2-204 (G11/M2): a reference putfield/putstatic whose emission
+     * calls the GC write-barrier helper must be call-like. The helper is an
+     * ordinary Java method and nothing preserves the caller-saved registers
+     * (`saveRegisters` is a no-op in every x86 frame), so the allocator's
+     * pooled EBX/ESI die across it -- and `writeFieldBarrier`/
+     * `writeStaticBarrier` save only ECX plus the never-allocated EAX/EDX
+     * scratch. `forcedSpills` is driven by `isCallLike`, so a missing entry
+     * leaves a live value in a register across that call.
+     * <p/>
+     * The barrier call is conditional on `needsWriteBarrier()`, which every
+     * heap manager currently leaves null (`DefaultHeapManager:132`,
+     * `BaseMmtkHeapManager:103`), so no value probe can fire today and no
+     * corpus emission contains the call -- which is exactly why the defect
+     * is invisible to `CALLNOTCALLLIKE`. It is still a defect: the wiring is
+     * live (`EntryPoints:179-190`, `VmHeapManager:307`) and a one-line heap
+     * manager change turns it on. This test audits the classification
+     * structurally, so it fails with or without a barrier-armed GC.
+     */
+    @Test
+    public void testAnchorL2_204_writeBarrierStoresAreCallLike() throws Exception {
+        assertWriteBarrierStoreCallLike("putfieldSpansValue", RefStoreQuad.class);
+        assertWriteBarrierStoreCallLike("putstaticSpansValue", StaticRefStoreQuad.class);
+    }
+
+    private static void assertWriteBarrierStoreCallLike(String name, Class storeType) throws Exception {
+        CompileResult r = compileMethod(findMethod(name));
+        Quad store = null;
+        for (Object b0 : (Iterable<?>) r.cfg) {
+            final List quads = ((IRBasicBlock) b0).getQuads();
+            for (Object q0 : quads) {
+                final Quad q = (Quad) q0;
+                if (!q.isDeadCode() && storeType.isInstance(q)) {
+                    store = q;
+                    break;
+                }
+            }
+            if (store != null) {
+                break;
+            }
+        }
+        assertNotNull("fixture " + name + " produced no live " + storeType.getName(), store);
+
+        // Vacuity guard: some live range really does span the store, so the
+        // allocation half below has something to be right about. Holds in
+        // both states -- only the LOCATION of that range changes with the fix.
+        boolean spans = false;
+        for (int i = 0; i < r.liveRanges.length; i++) {
+            final LiveRange lr = r.liveRanges[i];
+            if (lr.getAssignAddress() <= store.getAddress()
+                && store.getAddress() <= lr.getLastUseAddress()) {
+                spans = true;
+                break;
+            }
+        }
+        assertTrue("fixture " + name + ": no live range spans the store at @"
+            + store.getAddress() + ", the audit would pass vacuously", spans);
+
+        assertTrue(name + ": " + storeType.getSimpleName()
+            + " must be call-like -- its emission may call the write-barrier helper",
+            X86Level2Compiler.isCallLike(store));
+
+        for (int i = 0; i < r.liveRanges.length; i++) {
+            final LiveRange lr = r.liveRanges[i];
+            if (!(lr.getLocation() instanceof RegisterLocation)) {
+                continue;
+            }
+            assertFalse(name + ": register " + lr + " spans "
+                + storeType.getSimpleName() + " @" + store.getAddress(),
+                lr.getAssignAddress() <= store.getAddress()
+                    && store.getAddress() <= lr.getLastUseAddress());
         }
     }
 

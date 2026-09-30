@@ -1296,4 +1296,33 @@ public class PrimitiveTest {
             bzSeed--;
         }
     }
+
+    /**
+     * ANCHOR-L2-204 (G11/M2) fixtures: `a` is defined BEFORE a reference
+     * putfield/putstatic and used AFTER it, so `a`'s live range spans the
+     * store. `writeFieldBarrier` and `writeStaticBarrier` call the GC
+     * write-barrier helper (`callJavaMethod(getPutfieldWriteBarrier())`,
+     * GenericX86CodeGenerator:6763/:6789), and that helper is an ordinary
+     * Java method: nothing preserves the caller-saved registers (`saveRegisters`
+     * is a no-op in every x86 stack frame), so the pooled EBX/ESI die. The
+     * emitter itself saves only ECX (:6757/:6764) plus the never-allocated
+     * EAX/EDX scratch. Such a range therefore MUST take a stack home.
+     *
+     * The arithmetic on `n` is deliberately non-constant so `propagate`/
+     * `foldConstants2` cannot sink or delete `a` across the store: a fixture
+     * whose `a` was folded away would let the audit pass vacuously.
+     */
+    public static int putfieldSpansValue(PrimitiveTest self, Object v, int n) {
+        int a = n * 7 + 3;
+        self.iObj = v;
+        int b = n * 11 + 5;
+        return a + b;
+    }
+
+    public static int putstaticSpansValue(Object v, int n) {
+        int a = n * 7 + 3;
+        sObj = v;
+        int b = n * 11 + 5;
+        return a + b;
+    }
 }

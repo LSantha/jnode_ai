@@ -836,18 +836,47 @@ compare path end to end.
 
 ## M2 (deep review): forcedSpills omits slow-path-calling quads -- SCANNED, not landed
 
-Status 2026-09-26: decisive census-style scan (temp test over 10,807
-corpus methods): pooled (EBX/ESI) live ranges spanning an omitted
-call-like quad = 1,829 sites -- RefStore 993, StaticRef 392, Checkcast
-366, Instanceof 78. But the checkcast/instanceof slow paths explicitly
-PUSH EBX around their init calls and EBX/ESI are callee-saved by the
-JNode convention, so no value-level failure is demonstrated and the
-test-guard policy blocks the landing; the only real exposure is the GC
-write barrier (RefStore). Landing `isCallLike` additions now would be a
-large allocator pessimization on an unproven clobber. Kept as a recipe:
-the scan is a `LiveRange.getAssignAddress() <= hazardAddr <=
-getLastUseAddress()` filter over `CheckcastQuad`/`InstanceofAssignQuad`
-/`StaticRef*Quad`/`RefStoreQuad` in `CompileResult.cfg`.
+Status 2026-09-30: LANDED as ANCHOR-L2-204, and the scan below was not a
+valid closure -- a census may prioritise, never close. It also missed the
+real exposure while claiming to find it.
+
+What the reading settles:
+
+1. **`RefStoreQuad` / `StaticRefStoreQuad` call out and were not
+   call-like.** `writeFieldBarrier` (`GenericX86CodeGenerator:6750-6765`)
+   and `writeStaticBarrier` (`:6772-6795`) end in
+   `callJavaMethod(getPutfieldWriteBarrier()/getPutstaticWriteBarrier())`
+   (`:6763`/`:6789`). That helper is an ordinary Java method, so the
+   caller-saved EBX/ESI die -- the emitter pushes only ECX (`:6757`,
+   `:6764`) plus the never-allocated EAX/EDX scratch. `forcedSpills` is
+   driven by `isCallLike`, so those two types were the 993 + 392 sites the
+   scan counted. Fixed by adding both to both `isCallLike` copies.
+2. **The class-init concern is REFUTED.** `writeClassInitialize` emits
+   `os.writeCALL(initializer)` (`X86CompilerHelper:433`), but the stub
+   `writeClassInitializers` bracketed it with `writePUSHA()` (`:451`) and
+   `writePOPA()` (`:478`), so no GPR survives damaged. Its only other
+   call sites are `CheckcastQuad` (`:6108`) and `ThrowQuad` (`:6738`),
+   both already call-like.
+3. **The checkcast/instanceof PUSH-EBX argument was beside the point** --
+   it addresses a path that was already protected, not the barrier.
+   `InstanceofAssignQuad`'s only call-out is class-init (safe per 2).
+   `TableswitchQuad`'s `writeCALL` (`:6394`/`:6420`/`:6446`) is the
+   `call $+5` / `POP` PC trick, not a callee.
+4. **Why the scan and `CALLNOTCALLLIKE` both read nothing:** the barrier
+   call sits behind `needsWriteBarrier()`, and both heap managers call
+   `setWriteBarrier(null)` (`DefaultHeapManager:132`,
+   `BaseMmtkHeapManager:103`; the instantiation is commented out at
+   `DefaultHeapManager:131`). No emission contains the call. The wiring is
+   live (`EntryPoints:179-190`, `VmHeapManager:307`), so this is latent,
+   not absent -- hence a structural T1 probe rather than a value probe.
+
+Guard: `L2PipelineTest#testAnchorL2_204_writeBarrierStoresAreCallLike`,
+red on the pre-fix tree as `putfieldSpansValue: RefStoreQuad must be
+call-like`, and -- with that assertion silenced -- as
+`register s5_3: 2-5 (ebx) spans RefStoreQuad @2`. The duplicated
+call-like list inside `testNoRegisterSpansCall` had drifted from
+production (it predated L2-164's `CheckcastQuad` /
+`ConstantClassAssignQuad` and never had the stores); it is extended too.
 
 ## Wave C attempt: handler-entry phi copies -- REVERTED, root cause moved one level deeper
 

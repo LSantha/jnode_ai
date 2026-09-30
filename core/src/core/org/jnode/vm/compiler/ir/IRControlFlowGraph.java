@@ -54,6 +54,8 @@ import org.jnode.vm.compiler.ir.quad.NewObjectArrayAssignQuad;
 import org.jnode.vm.compiler.ir.quad.NewPrimitiveArrayAssignQuad;
 import org.jnode.vm.compiler.ir.quad.PhiAssignQuad;
 import org.jnode.vm.compiler.ir.quad.Quad;
+import org.jnode.vm.compiler.ir.quad.RefStoreQuad;
+import org.jnode.vm.compiler.ir.quad.StaticRefStoreQuad;
 import org.jnode.vm.compiler.ir.quad.TableswitchQuad;
 import org.jnode.vm.compiler.ir.quad.ThrowQuad;
 import org.jnode.vm.compiler.ir.quad.UnconditionalBranchQuad;
@@ -2500,6 +2502,12 @@ public class IRControlFlowGraph<T> implements Iterable<IRBasicBlock<T>> {
             // structural check that keeps them from drifting again.
             || q instanceof ConstantClassAssignQuad
             || q instanceof CheckcastQuad
+            // ANCHOR-L2-204 (G11/M2): keep this mirror in step with the
+            // allocator's view -- a reference putfield/putstatic may call
+            // the GC write-barrier helper, and it can also throw, so it is
+            // not always-executed either.
+            || q instanceof RefStoreQuad
+            || q instanceof StaticRefStoreQuad
             // ANCHOR-L2-147: LDIV/LREM trap like the X86 mirror says
             // (plus IDIV/IREM: the backend emits trapping IDIV -- the
             // mirror's omission there is documented drift, not a model).

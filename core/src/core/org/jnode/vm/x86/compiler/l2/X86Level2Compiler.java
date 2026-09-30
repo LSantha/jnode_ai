@@ -65,6 +65,8 @@ import org.jnode.vm.compiler.ir.quad.NewMultiArrayAssignQuad;
 import org.jnode.vm.compiler.ir.quad.NewObjectArrayAssignQuad;
 import org.jnode.vm.compiler.ir.quad.NewPrimitiveArrayAssignQuad;
 import org.jnode.vm.compiler.ir.quad.Quad;
+import org.jnode.vm.compiler.ir.quad.RefStoreQuad;
+import org.jnode.vm.compiler.ir.quad.StaticRefStoreQuad;
 import org.jnode.vm.compiler.ir.quad.ThrowQuad;
 import org.jnode.vm.compiler.ir.quad.VariableRefAssignQuad;
 import org.jnode.vm.facade.TypeSizeInfo;
@@ -505,7 +507,21 @@ public class X86Level2Compiler extends AbstractX86Compiler {
             // call, which is silent corruption and invisible to the SSA
             // verifier because it happens after allocation.
             || q instanceof ConstantClassAssignQuad
-            || q instanceof CheckcastQuad) {
+            || q instanceof CheckcastQuad
+            // ANCHOR-L2-204 (G11/M2): a reference putfield/putstatic calls
+            // the GC write-barrier helper (writeFieldBarrier:6763,
+            // writeStaticBarrier:6789 -> callJavaMethod). The helper is an
+            // ordinary Java method, so nothing preserves the pooled
+            // caller-saved EBX/ESI; the emitter saves only ECX
+            // (:6757/:6764) plus the never-allocated EAX/EDX scratch.
+            // ArrayStoreQuad has covered the aastore arm of that same
+            // helper all along. The call sits behind needsWriteBarrier(),
+            // which every heap manager currently leaves null
+            // (DefaultHeapManager:132, BaseMmtkHeapManager:103) -- latent,
+            // not absent: the wiring is live (EntryPoints:179-190,
+            // VmHeapManager:307).
+            || q instanceof RefStoreQuad
+            || q instanceof StaticRefStoreQuad) {
             return true;
         }
         if (q instanceof BinaryQuad) {
