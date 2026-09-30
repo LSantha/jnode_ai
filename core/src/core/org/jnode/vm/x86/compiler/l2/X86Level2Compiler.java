@@ -240,12 +240,14 @@ public class X86Level2Compiler extends AbstractX86Compiler {
         // ctor (GenericX86CodeGenerator:167, CodeGenerator.setCodeGenerator(this))
         // and read by allocateRanges -> LinearScanAllocator.<init> ->
         // cg.getRegisterPool(). A compile nested inside this one --
-        // LoadCompileService's REENTRANT path, e.g. resolving a type during IR
-        // construction runs its <clinit>, which compiles -- used to clear the
-        // pin on the way out, so the OUTER compile reached allocateRanges with
-        // getInstance() == null and died in LinearScanAllocator.<init> on a
-        // null CodeGenerator: the NPE that made an explicitly-L2-configured
-        // image hang at plugin startup (the shape X86-L1A then rescued).
+        // LoadCompileService compiles inline rather than queueing when the
+        // caller is a LoadCompileThread (or the service has not started),
+        // e.g. resolving a type during IR construction runs its <clinit>,
+        // which compiles -- used to clear the pin on the way out, so the
+        // OUTER compile reached allocateRanges with getInstance() == null
+        // and died in LinearScanAllocator.<init> on a null CodeGenerator:
+        // the NPE that made an explicitly-L2-configured image hang at plugin
+        // startup (the shape X86-L1A then rescued).
         // Save and restore instead of clearing: for the outermost compile
         // the saved value is null, so ANCHOR-L2-118's boot-image leak
         // guarantee still holds exactly. The save/restore above is scoped to

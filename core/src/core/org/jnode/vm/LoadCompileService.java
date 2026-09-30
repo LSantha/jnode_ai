@@ -69,10 +69,6 @@ public final class LoadCompileService {
 
     private static final int threadCount = 2; //4
 
-    private static int compileDepth = 0;
-
-    private static int reentrantCount = 0;
-
     /**
      * Default ctor
      */
@@ -100,26 +96,7 @@ public final class LoadCompileService {
 
         if ((!started) || (Thread.currentThread() instanceof LoadCompileThread)) {
             // Compile now
-            if ((compileDepth > 0) && (reentrantCount < 8)) {
-                reentrantCount++;
-                final StringBuilder msg = new StringBuilder();
-                msg.append("REENTRANT compile depth=");
-                msg.append(compileDepth);
-                msg.append(" lvl=");
-                msg.append(optLevel);
-                msg.append(" cur=");
-                msg.append(method.getNativeCodeOptLevel());
-                msg.append(" of ");
-                msg.append(method.getFullName());
-                msg.append('\n');
-                Unsafe.debug(msg.toString());
-            }
-            compileDepth++;
-            try {
-                service.doCompile(method, optLevel, enableTestCompilers);
-            } finally {
-                compileDepth--;
-            }
+            service.doCompile(method, optLevel, enableTestCompilers);
         } else {
             // Put request in queue
             service.enqueAndWait(new CompileRequest(method, optLevel,
