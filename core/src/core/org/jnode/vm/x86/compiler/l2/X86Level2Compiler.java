@@ -236,19 +236,22 @@ public class X86Level2Compiler extends AbstractX86Compiler {
     @Override
     protected CompiledMethod doCompile(VmMethod method, NativeStream os, int level, boolean isBootstrap) {
         final CompiledMethod cm = new CompiledMethod(level);
-        // ANCHOR-L2-196: the codegen pin is ONE static, published by the
-        // X86CodeGenerator ctor (GenericX86CodeGenerator:164) and read by
-        // allocateRanges -> LinearScanAllocator.<init> -> cg.getRegisterPool().
-        // A compile nested inside this one -- LoadCompileService's REENTRANT
-        // path, e.g. resolving a type during IR construction runs its
-        // <clinit>, which compiles -- used to clear that static on the way
-        // out, so the OUTER compile reached allocateRanges with
+        // ANCHOR-L2-196: the codegen pin is published by the X86CodeGenerator
+        // ctor (GenericX86CodeGenerator:167, CodeGenerator.setCodeGenerator(this))
+        // and read by allocateRanges -> LinearScanAllocator.<init> ->
+        // cg.getRegisterPool(). A compile nested inside this one --
+        // LoadCompileService's REENTRANT path, e.g. resolving a type during IR
+        // construction runs its <clinit>, which compiles -- used to clear the
+        // pin on the way out, so the OUTER compile reached allocateRanges with
         // getInstance() == null and died in LinearScanAllocator.<init> on a
         // null CodeGenerator: the NPE that made an explicitly-L2-configured
         // image hang at plugin startup (the shape X86-L1A then rescued).
         // Save and restore instead of clearing: for the outermost compile
         // the saved value is null, so ANCHOR-L2-118's boot-image leak
-        // guarantee still holds exactly.
+        // guarantee still holds exactly. The save/restore above is scoped to
+        // ONE thread since ANCHOR-L2-202 moved the holder to a ThreadLocal:
+        // it preserves this nesting, and the other LoadCompileThread never
+        // observes this compile's pin at all.
         final CodeGenerator prevCg = CodeGenerator.getInstance();
         try {
             if (method.isNative()) {
@@ -270,9 +273,12 @@ public class X86Level2Compiler extends AbstractX86Compiler {
 
                 // ANCHOR-L2-119: create the codegen BEFORE optimize, not
                 // after. Phi doPass2 queries CodeGenerator.getInstance()
-                // (BinaryQuad liveness 3-addr check); the old order relied
-                // on the previous method's leftover instance, which the
-                // ANCHOR-L2-118 finally now clears. Same order as L2Dump.
+                // (PhiAssignQuad.doPass2 -> Variable.getAssignAddress ->
+                // BinaryQuad.getLHSLiveAddress, the 3-addr liveness check);
+                // the old order relied on the previous method's leftover
+                // instance, which the ANCHOR-L2-118 finally now restores to
+                // what this compile entered with (null when outermost).
+                // Same order as L2Dump.
                 X86CodeGenerator x86cg = new X86CodeGenerator(method, (X86Assembler) os, bytecode.getLength(),
                     typeSizeInfo, stackFrame);
                 constructAndOptimize(cfg);
@@ -291,16 +297,21 @@ public class X86Level2Compiler extends AbstractX86Compiler {
             System.err.println("ERROR in compilation of " + method.getFullName());
             throw x;
         } finally {
-            // ANCHOR-L2-118: drop the global codegen pin. Its ctor publishes
-            // it statically for phi/live-range queries during this compile,
-            // but it roots spilledVariables and the assemblers; leaving it
-            // set drags the last method's whole IR graph plus the native
-            // streams into the boot image via static copying (locked-list
-            // crashes and hashCode cycles in emitObjects).
+            // ANCHOR-L2-118: drop the codegen pin. The ctor publishes it for
+            // phi/live-range queries during this compile, but the value roots
+            // spilledVariables and the assemblers. While the holder was a bare
+            // static (before ANCHOR-L2-202) leaving it set dragged the last
+            // method's whole IR graph plus the native streams into the boot
+            // image via static copying (locked-list crashes and hashCode cycles
+            // in emitObjects). The static now roots only the ThreadLocal
+            // holder itself -- the generator lives in the thread's map -- so
+            // that path no longer reaches the graph; the restore below stays
+            // because it is what ANCHOR-L2-196 relies on.
             // ANCHOR-L2-196: restore what was there when this compile
-            // STARTED, which is null for the outermost compile (so the leak
-            // guarantee above is unchanged) and the caller's pin for a
-            // nested one (so the caller's allocateRanges still works).
+            // STARTED, which is null for the outermost compile (so nothing
+            // is left published once the outermost compile finishes) and the
+            // caller's pin for a nested one (so the caller's allocateRanges
+            // still works).
             CodeGenerator.setCodeGenerator(prevCg);
         }
 
