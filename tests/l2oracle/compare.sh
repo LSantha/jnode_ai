@@ -2,10 +2,21 @@
 # usage: compare.sh <host-out> <jnode-out>
 # exit 0 = all case lines identical; force line checked separately.
 H="$1"; J="$2"
+# ANCHOR-L2-201: the temp dir used to be ASSUMED, and a missing dir made
+# this comparator report PASS on a real diff. `tr` could not create .h.n/.j.n,
+# grep then found no input, diff compared two empty streams -- identical --
+# and the script printed ORACLE PASS with exit 0. Measured 2026-09-30: the
+# BASEFULL oracle leg reported "ORACLE PASS" on a 3-row divergence, and the
+# rerun (BASELIVE, dir present) reported those same 3 rows as a diff. Every
+# input failure is now fatal, because "no data" and "no difference" must not
+# look alike.
+mkdir -p /tmp/oracle || { echo "FATAL: cannot create /tmp/oracle" >&2; exit 3; }
 # normalize: strip CR (serial artifact), drop force lines + EX messages
 # (message texts differ per VM; classes must match) for the case diff
-tr -d '\r' < "$H" > /tmp/oracle/.h.n
-tr -d '\r' < "$J" > /tmp/oracle/.j.n
+tr -d '\r' < "$H" > /tmp/oracle/.h.n \
+  || { echo "FATAL: cannot read host output: $H" >&2; exit 3; }
+tr -d '\r' < "$J" > /tmp/oracle/.j.n \
+  || { echo "FATAL: cannot read jnode output: $J" >&2; exit 3; }
 hf=$(grep -c "^force|" "$H"); jf=$(grep -c "^force|" "$J")
 echo "host force lines: $hf  jnode force lines: $jf"
 echo "host: $(head -n 1 "$H")   jnode: $(head -n 1 "$J")"

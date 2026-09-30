@@ -492,6 +492,17 @@ if want oracle; then
     host_only=$(grep -c "^< " /tmp/oracle-cmp-$LABEL.txt)
     guest_only=$(grep -c "^> " /tmp/oracle-cmp-$LABEL.txt)
     say "ORACLE DIFF rc=$cmp_rc host_only=$host_only guest_only=$guest_only first: $(grep -E "^[<>] |ORACLE PASS" /tmp/oracle-cmp-$LABEL.txt | head -n 4 | tr '\n' ' ' | cut -c1-240)"
+    # ANCHOR-L2-201: this leg printed host_only/guest_only but never judged
+    # them, so a NEW divergence left the gate green -- the accepted set was a
+    # note, not a check. Everything outside the three retired rows
+    # (div_iii MIN/-1 -> EX, classLiteral_i|4 and |5 = 1, JNode classlib
+    # semantics) now fails the run. Missing rows are fine; new ones are not.
+    unexpected=$(grep -E "^[<>] " /tmp/oracle-cmp-$LABEL.txt | grep -vE "^[<>] (div_iii\\|-2147483648,-1|classLiteral_i\\|(4|5))" || true)
+    if [ -n "$unexpected" ]; then
+      fail "LIVE  oracle: UNEXPECTED diff rows: $(printf '%s' "$unexpected" | tr '\n' ' ' | cut -c1-240)"
+    else
+      say "ORACLE GATE  retired-set only (host_only=$host_only guest_only=$guest_only)"
+    fi
   else
     fail "LIVE  oracle: BOOT FAILED"
   fi
