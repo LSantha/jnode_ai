@@ -215,6 +215,13 @@ if want anchors; then
   run anchors sh -c '
     javap -p -c -classpath core/build/classes org.jnode.vm.x86.compiler.l2.GenericX86CodeGenerator | grep -q iconst_m1 || { echo "ANCHOR prev_addr=-1 missing"; exit 1; }
     javap -p -classpath core/build/classes org.jnode.vm.x86.compiler.l2.GenericX86CodeGenerator | grep -q countUnboundInstrLabels || { echo "ANCHOR countUnboundInstrLabels missing"; exit 1; }
+    # ANCHOR-L2-161 (report invariant 2). The iconst_m1 grep above only says
+    # the -1 initialiser is still in the bytecode; it says nothing about a real
+    # branch to bci 0 being emitted and bound, and no other corpus method has
+    # that shape. Keep the fixture honest, otherwise the T1 guard that closes
+    # the gap has nothing to fire on and the gap silently reopens.
+    javap -p -c -classpath core/build/classes org.jnode.vm.compiler.ir.PrimitiveTest | grep -A 14 "branchToZero(int)" | grep -qE "goto[[:space:]]+0$" || { echo "ANCHOR-L2-161 branchToZero lost its branch to bci 0"; exit 1; }
+    javap -p -c -classpath core/build/classes org.jnode.vm.compiler.ir.PrimitiveTest | grep -A 16 "branchToZeroNoArg()" | grep -qE "goto[[:space:]]+0$" || { echo "ANCHOR-L2-161 branchToZeroNoArg lost its branch to bci 0"; exit 1; }
     # insertQuadAt is DECLARED on IRBasicBlock; IRControlFlowGraph only calls
     # it (IRControlFlowGraph.java:1835), so javaping the caller could never
     # find it and this check was red from the day it was written. Point it at

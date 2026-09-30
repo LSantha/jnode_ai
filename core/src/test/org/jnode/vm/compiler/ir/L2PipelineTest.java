@@ -28,6 +28,7 @@ import java.util.HashSet;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Set;
+import java.util.regex.Pattern;
 
 import org.jnode.assembler.x86.X86Assembler;
 import org.jnode.assembler.x86.X86BinaryAssembler;
@@ -162,6 +163,7 @@ public class L2PipelineTest {
         IRControlFlowGraph cfg;
         LiveRange[] liveRanges;
         TypeSizeInfo typeSizeInfo;
+        int unboundLabels;
     }
 
     private static CompileResult compileMethod(VmMethod method) throws Exception {
@@ -192,6 +194,9 @@ public class L2PipelineTest {
         LinearScanAllocator lsa = X86Level2Compiler.allocate(liveRanges,
             X86Level2Compiler.forcedSpills(cfg, liveRanges));
         X86Level2Compiler.generateCode(x86cg, cfg, irg, lsa);
+        // ANCHOR-L2-161: the same census doCompile() runs after endMethod().
+        // Read it HERE, while the generator is the one that just emitted.
+        final int unboundLabels = x86cg.countUnboundInstrLabels();
         // X86TextAssembler buffers into an internal buffer: flush to the writer.
         os.flush();
         CompileResult r = new CompileResult();
@@ -200,6 +205,7 @@ public class L2PipelineTest {
         r.cfg = cfg;
         r.liveRanges = liveRanges;
         r.typeSizeInfo = typeSizeInfo;
+        r.unboundLabels = unboundLabels;
         return r;
     }
 
@@ -226,6 +232,36 @@ public class L2PipelineTest {
         assertCompiles("appel");
         assertCompiles("simpleWhile");
         assertCompiles("const1");
+    }
+
+    /**
+     * ANCHOR-L2-161 guard gap closed (report invariant 2: "no test emits a
+     * branch to address 0"). The fix itself was only ever anchored by a javap
+     * grep for {@code iconst_m1}, which says the initialiser is present but
+     * nothing about a real {@code goto 0} having its label bound.
+     * <p/>
+     * Two fixtures, because measuring showed one is not enough:
+     * {@code branchToZero(int)} is javac-shaped ({@code 9: goto 0}) but its
+     * loop head lands at IR address 1 -- address 0 is the argument-init slot --
+     * so no jump ever references label 0 there and the census cannot fire on
+     * it. {@code branchToZeroNoArg()} has no argument-init slot, so its loop
+     * head sits at address 0 and the back edge is a bare {@code jmp _qb_0}.
+     * <p/>
+     * Red proof: set {@code GenericX86CodeGenerator.prev_addr} back to 0 (its
+     * pre-fix value) and the second assertion fails with {@code unboundLabels=1}.
+     */
+    @Test
+    public void testBranchToBytecodeZeroBindsItsLabel() throws Exception {
+        CompileResult withArg = compileMethod(findMethod("branchToZero"));
+        CompileResult noArg = compileMethod(findMethod("branchToZeroNoArg"));
+        assertTrue("no code emitted for branchToZero", withArg.text.length() > 0);
+        assertTrue("branchToZero must keep its loop back edge, got:\n" + withArg.text,
+            withArg.text.contains("jmp"));
+        assertTrue("branchToZeroNoArg must still branch to label 0, else this guard"
+                + " has nothing to fire on. Got:\n" + noArg.text,
+            Pattern.compile("(?m)^\\s*jmp\\s+\\S*__qb_0\\s*$").matcher(noArg.text).find());
+        assertEquals("ANCHOR-L2-161: a branch to bci 0 shipped with an unbound label",
+            0, noArg.unboundLabels);
     }
 
     @Test

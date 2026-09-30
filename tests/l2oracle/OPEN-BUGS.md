@@ -33,7 +33,7 @@ post-deSSA on every method, so structural SSA regressions are corpus-wide.
 
 | # | Sev | Defect | Status | Guard today |
 |---|---|---|---|---|
-| A1 | P0 | `_qb_0` never bound -> every branch to bci 0 ships an unpatched rel32 (wild jump) | **LANDED** L2-161 | unbound-label census over all classes, 0 expected. **GUARD GAP**: no test emits a branch to address 0 (report invariant 2) |
+| A1 | P0 | `_qb_0` never bound -> every branch to bci 0 ships an unpatched rel32 (wild jump) | **LANDED** L2-161 | unbound-label census over all classes, 0 expected. **GUARD GAP closed 2026-09-30** (report invariant 2): `PrimitiveTest#branchToZeroNoArg`, a `goto 0` whose loop head really sits at IR address 0 (`branchToZero(int)` cannot carry it -- its address 0 is the argument-init slot and the back edge lands on 1), plus `L2PipelineTest#testBranchToBytecodeZeroBindsItsLabel` asserting `countUnboundInstrLabels()==0`; red on `prev_addr=0` with `expected:<0> but was:<1>`. The census itself was rebuilt in the same commit: it read `ObjectRef.isResolved()`, which `X86TextAssembler.ObjectRefImpl` hardcodes to `true`, so it could never have reported a hit under the text assembler T1 uses |
 | A2 | P0 | `flushCopy` places a deSSA edge copy before its own source's definition | **LANDED** L2-162 | corpus SSA verifier (was: T1 synthetic only) |
 | A3 | P1 | `arraylength` clobbers EBX, an allocated register, with no push/pop | **LANDED** L2-163 | census lint `ARRAYLENGTHREG` (105 corpus sites -> 0) + T3 test, red on the pre-fix overlay |
 | A4 | P1 | shift arms destroy the destination when it is ECX (12 arms) | **LANDED** L2-165 | T3 test for all three shift ops with dst=ECX, red on the overlay; also closes invariant 5 for this shape |
@@ -135,7 +135,8 @@ and (iii).
 ## H. Coverage gaps with no bug attached (report Part 7)
 
 Invariant list, with what changed since: 1 label binding **now covered**
-(A1's census); 2 branch-to-address-0 **still open**; 3 handler-entry copy
+(A1's census); 2 branch-to-address-0 **now covered** (A1's T1 guard: the census
+is asked directly and proven red on `prev_addr=0`); 3 handler-entry copy
 value correctness **now covered by a value probe** (`Probes#b1HandlerPhi` +
 the L2-189 throw-point phi sources; the self-edge half is L2-159 and the
 structural lint that was meant to cover both examined 0 phis and was removed); 4 register/address correspondence under

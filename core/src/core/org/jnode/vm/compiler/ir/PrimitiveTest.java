@@ -1242,4 +1242,41 @@ public class PrimitiveTest {
             return 0;
         }
     }
+
+    /**
+     * ANCHOR-L2-161 guard fixture, javac shape: a method that OPENS with an
+     * infinite loop, so javac puts the loop head at bytecode offset 0 and the
+     * back edge is a literal `goto 0` (measured: `9: goto 0`). Keep it as the
+     * `goto 0` javac anchor, but note it does NOT carry the label-0 reference:
+     * because it takes an argument, address 0 belongs to the argument-init
+     * slot and its loop head lands at IR address 1. The method below is the
+     * one the census is asserted on.
+     */
+    public static int branchToZero(int x) {
+        while (true) {
+            if (x > 0) {
+                return x;
+            }
+            x--;
+        }
+    }
+
+    static int bzSeed = 5;
+
+    /**
+     * Same shape with NO arguments, so no argument-init quad can occupy
+     * address 0 (measured: with an argument the loop head lands at address 1).
+     * The back edge here has to target address 0 directly -- `jmp _qb_0` --
+     * which is exactly the shape the `prev_addr = -1` fix exists for: with
+     * `prev_addr = 0` the first `checkLabel(0)` binds nothing, `_qb_0` stays
+     * undefined, and the branch ships an unpatched rel32.
+     */
+    public static int branchToZeroNoArg() {
+        while (true) {
+            if (bzSeed > 0) {
+                return bzSeed;
+            }
+            bzSeed--;
+        }
+    }
 }

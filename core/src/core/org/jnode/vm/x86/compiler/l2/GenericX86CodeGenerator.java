@@ -154,6 +154,9 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
 
     private Label[] addressLabels;
 
+    /** Which dense labels have actually been handed to {@code setObjectRef}. */
+    private boolean[] labelBound;
+
     private final RegisterPool<T> registerPool;
 
     /**
@@ -172,6 +175,7 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
         // whichever setObjectRef runs last would misresolve the other.
         instrLabelPrefix = labelPrefix + "_qb_";
         addressLabels = new Label[lenght];
+        labelBound = new boolean[lenght];
         this.typeSizeInfo = typeSizeInfo;
         this.stackFrame = stackFrame;
         this.currentMethod = method;
@@ -184,6 +188,9 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
             Label[] grown = new Label[address + 16];
             System.arraycopy(addressLabels, 0, grown, 0, addressLabels.length);
             addressLabels = grown;
+            boolean[] grownBound = new boolean[address + 16];
+            System.arraycopy(labelBound, 0, grownBound, 0, labelBound.length);
+            labelBound = grownBound;
         }
         Label l = addressLabels[address];
         if (l == null) {
@@ -368,6 +375,7 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
         for (int i = prev_addr + 1; i <= address; i++) {
             // getInstrLabel (not direct indexing) so the table can grow (ANCHOR-L2-00D).
             os.setObjectRef(getInstrLabel(i));
+            labelBound[i] = true;
         }
         prev_addr = address;
     }
@@ -377,14 +385,21 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
      * {@link #checkLabel(int)}. An unbound one means some jmp/jcc still carries
      * its placeholder rel32 (a wild jump at run time), which the assembler's
      * Label exemption lets through unnoticed (ANCHOR-L2-161).
+     * <p>
+     * The binding state is tracked here rather than read back through
+     * {@code os.getObjectRef(l).isResolved()}, because
+     * {@code X86TextAssembler.ObjectRefImpl.isResolved()} is hardcoded to
+     * return {@code true} -- asking it could never report an unbound label, so
+     * the census (and every guard built on it) was vacuous for as long as L2
+     * runs under the text assembler. {@link #checkLabel(int)} is the only site
+     * that binds a dense label, so recording it there is both cheap and exact.
      *
      * @return the number of referenced-but-undefined {@code _qb_} labels
      */
     public int countUnboundInstrLabels() {
         int unbound = 0;
         for (int i = 0; i < addressLabels.length; i++) {
-            final Label l = addressLabels[i];
-            if ((l != null) && !os.getObjectRef(l).isResolved()) {
+            if ((addressLabels[i] != null) && !labelBound[i]) {
                 unbound++;
             }
         }
