@@ -140,9 +140,14 @@ is asked directly and proven red on `prev_addr=0`); 3 handler-entry copy
 value correctness **now covered by a value probe** (`Probes#b1HandlerPhi` +
 the L2-189 throw-point phi sources; the self-edge half is L2-159 and the
 structural lint that was meant to cover both examined 0 phis and was removed); 4 register/address correspondence under
-synthetic layout **open**; 5 shift destination ECX value **open**; 6 any FP
-arithmetic emission test **open**; 7 static-call push widths **open**
-(A7); 8 EBX/ESI across calls **open** (E3); 9 `disp1 == disp2` FP aliasing
+synthetic layout **open**; 5 shift destination ECX value **now covered**
+(A4/L2-165: T3 red on the overlay, all three shift ops with dst=ECX); 6 any FP
+arithmetic emission test **now covered on the oracle side** (A6's 14 FP probe
+rows, including the constant-LEFT shape -- A6 itself still rests on
+measurement rather than on a code reading, so the row is not a resting
+state); 7 static-call push widths **now covered**
+(A7/L2-166: T1 red on the overlay, `WIDTHMISMATCH` extended to static calls);
+8 EBX/ESI across calls **open** (E3); 9 `disp1 == disp2` FP aliasing
 **open**; 10 `#DE` semantics **open**; 11 post-deSSA jsr **open** (D1); 12
 wide phi homes across critical-edge copies **open**; 13 `ExceptionArgument`
 as a phi source at non-handler joins **open**; 14 AOT path **open** (F4);
