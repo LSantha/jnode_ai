@@ -2187,6 +2187,128 @@ public class L2PipelineTest {
         assertEquals(cfg.getBasicBlockCount(), countBlocks(cfg));
     }
 
+    // ---------------- ANCHOR-L2-203: critical-edge layout coverage ----------
+
+    /**
+     * ANCHOR-L2-203 (B2 / invariant 4): {@code splitCriticalEdges} appends
+     * its synthetic blocks at the END of {@code bblocks}, and
+     * {@code fixupAddresses} numbers the array in order, so those blocks get
+     * the HIGHEST addresses in the method -- while the phi result they copy
+     * is read in the join, far lower in the layout. A range whose start came
+     * from such a def would start above its own uses and let two values that
+     * are live at the same time share one register.
+     * <p/>
+     * Two assertions, and both must be able to fail: the shape really is
+     * built (a layout change that stopped splitting would otherwise leave a
+     * test that still passes while guarding nothing), and every reference of
+     * every variable sits inside that variable's FINAL range -- the rule
+     * ANCHOR-L2-178 checks corpus-wide as the {@code RANGEGAP} lint, pinned
+     * here to the methods that exercise the shape.
+     * <p/>
+     * Synthetic blocks are recognised by their PRE-fixup address
+     * ({@code nextSyntheticBlockPC} starts at {@code Integer.MIN_VALUE} and
+     * {@code fixupAddresses} renumbers afterwards), so a plain one-pred /
+     * one-successor branch block that came from bytecode cannot be mistaken
+     * for one; the terminator is used rather than the quad count because the
+     * block also holds the flushed phi copy.
+     * <p/>
+     * Red proofs: the blindness assertion is not decorative -- its first
+     * detector looked only at single-quad blocks and made this test fail
+     * until the shape was recognised; the coverage assertion fails if
+     * {@code LiveRange} stops taking the minimum of {@code firstDef + 1} and
+     * the assign quad's own address (22 {@code PrimitiveTest} methods, 644
+     * corpus-wide), which is how L2-177's lowering and L2-085's minimum are
+     * delivered to the allocator.
+     */
+    @Test
+    public void testAnchorL2_203_criticalEdgeBlocksKeepRangesCovered()
+        throws Exception {
+        final String[] methods = {"trivial1", "const0", "twoCatches",
+            "lookupLongTry", "nestedCatchLong", "handlerAlwaysExec",
+            // hull-sensitive: these go red if LiveRange stops taking the
+            // minimum of firstDef+1 and the assign quad's own address
+            "appel", "simpleWhile", "const1"};
+        int synthetic = 0;
+        for (int k = 0; k < methods.length; k++) {
+            CompileResult r = compileMethod(findMethod(methods[k]));
+            synthetic += countSyntheticEdgeBlocks(r.cfg);
+            assertRangeCoverage(methods[k], r.cfg);
+        }
+        assertTrue("no synthetic critical-edge block was built; this test has"
+            + " stopped exercising the shape it guards", synthetic > 0);
+    }
+
+    private static int countSyntheticEdgeBlocks(IRControlFlowGraph cfg) {
+        int n = 0;
+        java.util.Map preFixup = cfg.getBcQuadAddresses();
+        if (preFixup == null) {
+            return 0;
+        }
+        Iterator it = cfg.iterator();
+        while (it.hasNext()) {
+            IRBasicBlock b = (IRBasicBlock) it.next();
+            if (b.getPredecessors().size() != 1
+                || b.getSuccessors().size() != 1) {
+                continue;
+            }
+            List quads = b.getQuads();
+            if (quads.isEmpty()) {
+                continue;
+            }
+            // The block holds the flushed phi copy(es) followed by its branch,
+            // so identify it on the terminator, not on the quad count.
+            Object last = quads.get(quads.size() - 1);
+            if (!(last instanceof UnconditionalBranchQuad)) {
+                continue;
+            }
+            Integer pre = (Integer) preFixup.get(last);
+            if (pre != null && pre.intValue() < 0) {
+                n++;
+            }
+        }
+        return n;
+    }
+
+    private static void assertRangeCoverage(String name, IRControlFlowGraph cfg) {
+        final java.util.IdentityHashMap ranges =
+            new java.util.IdentityHashMap();
+        Iterator it = cfg.iterator();
+        while (it.hasNext()) {
+            IRBasicBlock b = (IRBasicBlock) it.next();
+            List quads = b.getQuads();
+            for (int i = 0; i < quads.size(); i++) {
+                Quad q = (Quad) quads.get(i);
+                if (q.isDeadCode()) {
+                    continue;
+                }
+                Operand[] refs = q.getReferencedOps();
+                if (refs == null) {
+                    continue;
+                }
+                for (int j = 0; j < refs.length; j++) {
+                    if (!(refs[j] instanceof Variable)
+                        || (refs[j] instanceof UndefinedVariable)) {
+                        continue;
+                    }
+                    Variable v = (Variable) refs[j];
+                    LiveRange r = (LiveRange) ranges.get(v);
+                    if (r == null) {
+                        r = new LiveRange(v);
+                        ranges.put(v, r);
+                    }
+                    final int at = q.getAddress();
+                    if (at < r.getAssignAddress()
+                        || at > r.getLastUseAddress()) {
+                        fail(name + "#" + q.getBasicBlock().getStartPC()
+                            + ": use of v" + v.getIndex() + " at " + at
+                            + " outside its range [" + r.getAssignAddress()
+                            + "," + r.getLastUseAddress() + "]");
+                    }
+                }
+            }
+        }
+    }
+
     private static int countBlocks(IRControlFlowGraph cfg) {
         int n = 0;
         Iterator it = cfg.iterator();
