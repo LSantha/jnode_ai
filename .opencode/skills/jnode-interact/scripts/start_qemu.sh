@@ -5,6 +5,14 @@ MODE="${1:-simple}"
 ISO="${2:-all/build/cdroms/jnode-x86-lite.iso}"
 ENTRY="${3:-0}"
 
+# kvm:tcg only picks the accelerator at STARTUP. A KVM failure at RUNTIME
+# (KVM: entry failed, hardware error 0x0) pauses the VM in an internal-error
+# state forever; the tcg half of the fallback never engages. Callers that
+# need to survive that set QEMU_ACCEL=tcg and restart.
+ACCEL="${QEMU_ACCEL:-kvm:tcg}"
+# QEMU's stderr carries that failure, so it is captured instead of discarded.
+QEMU_ERR="${QEMU_ERR:-/tmp/qemu.err}"
+
 # Validate entry
 if [ "$ENTRY" -lt 0 ] || [ "$ENTRY" -gt 5 ] 2>/dev/null; then
   echo "ENTRY must be 0-5 (GRUB menu index)"
@@ -25,9 +33,9 @@ fi
 
 case "$MODE" in
   simple)
-    rm -f /tmp/qemu_serial.log /tmp/jnode.serial2 /tmp/qemu_monitor.sock
+    rm -f /tmp/qemu_serial.log /tmp/jnode.serial2 /tmp/qemu_monitor.sock "$QEMU_ERR"
     qemu-system-x86_64 \
-      -machine accel=kvm:tcg \
+      -machine "accel=$ACCEL" \
       -m 1024 \
       -name "JNode x86" \
       -cdrom "$ISO" \
@@ -36,12 +44,12 @@ case "$MODE" in
       $MONITOR \
       -no-reboot \
       -display none \
-      </dev/null >/dev/null 2>&1 &
+      </dev/null >/dev/null 2>"$QEMU_ERR" &
     ;;
   full)
-    rm -f /tmp/qemu_serial.log /tmp/jnode.serial2 /tmp/jnode.kdb /tmp/qemu_monitor.sock
+    rm -f /tmp/qemu_serial.log /tmp/jnode.serial2 /tmp/jnode.kdb /tmp/qemu_monitor.sock "$QEMU_ERR"
     qemu-system-x86_64 \
-      -machine accel=kvm:tcg \
+      -machine "accel=$ACCEL" \
       -m 1024 \
       -name "JNode x86" \
       -cdrom "$ISO" \
@@ -51,7 +59,7 @@ case "$MODE" in
       $MONITOR \
       -no-reboot \
       -display none \
-      </dev/null >/dev/null 2>&1 &
+      </dev/null >/dev/null 2>"$QEMU_ERR" &
     ;;
   *)
     echo "Usage: $0 [simple|full] [iso-path] [entry]"

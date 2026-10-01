@@ -35,8 +35,12 @@ single-shape fix: one synthetic test plus a probe row when the shape is
 value-visible.
 
 Gate order before committing: `regress.sh host` (T0/T3/T1, all-junit,
-census with `FAILED == 0`) then the live legs, and a boot attempt when the
-fix can plausibly move the boot.
+census with `FAILED == 0`) then the live legs, then `regress.sh bootl2` --
+the pure L2/L2 boot-to-shell + GC gate, which fails on any exception in the
+serial log. `bootl2` is in the default phase set since 2026-10-01; its pass
+conditions are recorded in `baselines/baseline-2026-09-30.txt`. A bare
+`regress.sh` runs host + bootl2 + live; `regress.sh host` alone is the fast
+pre-commit gate and covers no boots.
 
 ## Method contract (settled 2026-09-27; L2 is hard enough without methodology bugs)
 
@@ -122,6 +126,9 @@ a wrong conclusion.
 | `OracleDriver.java` | Harness: forces L2 (`VmType.compileRuntime(...,0,true)`), invokes cases reflectively, writes `method\|args\|hex-or-EX:Class` lines to a file. Same source runs on host (forcing auto-skips). |
 | `compare.sh` | Scoreboard: strips serial CR, drops `force\|` proof, reduces `EX:Class:msg` to `EX:Class`, diffs. |
 | `run_oracle.sh` | One-command end-to-end run (see below). |
+| `regress.sh` | The gate: host phases, `bootl2`, live legs; a phase's exit status is its verdict. |
+| `boot-l2.sh` | Boots a pure L2/L2 ISO to an agent shell, GCs 4x (each must print collection stats), then scores the serial log against `Exception\|CompileError\|Error in compilation\|panic\|FATAL` -- 0 hits is the pass condition. `--scan LOG` scores an already-captured log; red proof: `--scan baselines/l2202-compile-error.txt` exits 1. Two guards run before any boot: a `stop_qemu` self-test against a process whose comm name is `qemu-system-x86` (red proof: put `qemu-system-x86_64` back in the `pgrep -x` and it exits 2 without booting), and a one-shot restart under `-accel tcg` when QEMU reports `KVM: entry failed` (see the host-KVM gotcha). It also exports `JNODE_AGENT_OUTPUT_TIMEOUT`, because a TCG `gc` prints nothing for longer than the agent's 10s default and the empty result is indistinguishable from a no-op. |
+| `baselines/` | Recorded pass conditions (`baseline-2026-09-30.txt`), the boot panic signatures, and the recorded L2-202 failure log. |
 | `kdb_mux.py` | KDB-over-pipe mux for hang diagnosis (holds the single pipe client, drains to log, forwards FIFO commands). |
 
 ## Prerequisites
@@ -325,6 +332,34 @@ without it the CR-strip fails silently and diffs vanish (false PASS).
 - Everything else in the L2 diff is an L2 bug; file it with method + inputs + expected vs actual bits.
 
 ## Gotchas (paid for in full)
+
+- **Host KVM is not trustworthy for a boot gate** (measured 2026-10-01).
+`-machine accel=kvm:tcg` only chooses the accelerator at STARTUP: when KVM
+fails later, QEMU prints `KVM: entry failed, hardware error 0x0`, the monitor
+answers `VM status: paused (internal-error)`, the vCPU thread then burns zero
+CPU and the serial log simply stops growing -- which reads exactly like a JNode
+boot hang. It is NOT an L2 defect: the L1A oracle image hit it in the same
+session. Tell-tale: log frozen mid-plugin (last line
+`DefaultIDEIO: Using PCI IDE Compatibility mode [irq=15]`) with QEMU idle and
+`grep 'KVM: entry failed' /tmp/qemu.err` non-empty. `start_qemu.sh` now writes
+QEMU's stderr to `/tmp/qemu.err` instead of `/dev/null`, and `boot-l2.sh`
+restarts once under `-accel tcg` when it sees that line (measured 191s/196s to
+the serial console, against 18-22s on healthy KVM), so a boot timeout is scored
+only when KVM itself never failed. Never discard that stderr when a boot stalls.
+
+- **`pgrep -x qemu-system-x86_64` can never match anything.** `/proc/PID/comm`
+(what `pgrep -x` compares against) is capped at 15 characters, so the pattern is
+truncated to `qemu-system-x86` first and pgrep warns
+`pattern that searches for process name longer than 15 characters will result in
+zero matches`. That silently turned `boot-l2.sh`'s `stop_qemu` into a no-op and
+let stale QEMUs squat `/tmp/jnode.serial2`. Match `qemu-system-x86`.
+`boot-l2.sh` now self-tests this against a stand-in process before it boots
+anything (a `/bin/sh` copy renamed to `qemu-system-x86`, NOT a copy of
+`/bin/sleep`, which on this host is a coreutils multicall that refuses to run
+under a renamed argv[0] -- that made the first version of the check pass
+vacuously).
+
+
 - **Do not gate a build on `grep -c "error:"`.** Ant prints `1 error` (no colon),
   so that check reports 0 on a FAILED build -- and the next census run then executes
   a STALE `L2Census.class`, quietly measuring the previous code. Hit on 2026-09-27:

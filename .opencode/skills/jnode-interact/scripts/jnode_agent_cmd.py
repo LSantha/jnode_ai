@@ -6,6 +6,7 @@ Usage:
     python3 jnode_agent_cmd.py "cmd1" "cmd2" ...
 """
 
+import os
 import socket
 import time
 import sys
@@ -24,7 +25,10 @@ PROMPT = b'[JNODE_AGENT_READY]'
 # errors. The handshake auto-retries a few times before giving up.
 PROMPT_TIMEOUT = 10.0
 PROMPT_RETRIES = 3
-OUTPUT_TIMEOUT = 10.0
+# Seconds of SILENCE tolerated before giving up on a command's output. A
+# command that only prints when it finishes (gc under TCG takes well over ten
+# seconds) is otherwise reported as "produced nothing" while still exiting 0.
+OUTPUT_TIMEOUT = float(os.environ.get("JNODE_AGENT_OUTPUT_TIMEOUT", "10"))
 
 
 def clear_buffer(sock):

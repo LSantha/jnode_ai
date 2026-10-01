@@ -24,7 +24,16 @@ cd "$ROOT" || exit 2
 SKILL="$ROOT/.opencode/skills/jnode-interact/scripts"
 LOG=${BOOTL2_LOG:-/tmp/qemu_serial.log}
 BOOT_TIMEOUT=${BOOT_TIMEOUT:-180}
+# TCG has no KVM entry failures but runs the guest about five times slower:
+# measured 180s wall from launch to "Serial console available" on this host.
+BOOT_TIMEOUT_TCG=${BOOT_TIMEOUT_TCG:-420}
+QEMU_ERR=${QEMU_ERR:-/tmp/qemu.err}
 BOOT_GC_TIMES=${BOOT_GC_TIMES:-4}
+# A command that only prints once it finishes (gc collects, then reports)
+# needs more tolerated silence than the agent's 10s default when the guest
+# runs under TCG: measured 2026-10-01, gc round 1 returned with an EMPTY
+# buffer and exit 0 while the guest was still collecting.
+export JNODE_AGENT_OUTPUT_TIMEOUT=${BOOTL2_OUTPUT_TIMEOUT:-90}
 
 # The failure this gate exists for is not "the VM died" -- it is a method that
 # refused to compile and was therefore never runnable. JNode has no
@@ -62,14 +71,55 @@ done
 ISO=${ISO:-$ROOT/core/build/l2-l2-gate.iso}
 
 rc=0
+# Match the executable by comm name, NOT by its full argv0. /proc/PID/comm
+# (what pgrep -x matches) is capped at 15 chars, so the pattern
+# qemu-system-x86_64 can never match anything. Measured 2026-10-01 with one
+# QEMU running: `pgrep -x qemu-system-x86_64` printed pgrep's own
+# "pattern that searches for process name longer than 15 characters will
+# result in zero matches" warning plus 0 pids, while
+# `pgrep -x qemu-system-x86` printed 1. The old pattern therefore made this
+# function a silent no-op and let stale QEMUs squat /tmp/jnode.serial2.
 stop_qemu() {
-  # Match the binary by its own name: a `pkill -f` carrying this pattern
-  # matches the shell that is running it.
-  for p in $(pgrep -x qemu-system-x86_64 2>/dev/null); do
+  for p in $(pgrep -x qemu-system-x86 2>/dev/null); do
     kill -9 "$p" 2>/dev/null
   done
 }
 trap stop_qemu EXIT
+
+# Guard for the pgrep line above: it runs before anything else, against a
+# process that carries exactly that comm name. Reverting the pattern to
+# qemu-system-x86_64 makes this fake survive, and the gate exits 2 without
+# booting -- a red that cannot be mistaken for a slow boot.
+selftest_stopqemu() {
+  d=$(mktemp -d) || { echo "boot-l2: selftest mktemp failed"; exit 2; }
+  # Not /bin/sleep: on this host it is a coreutils multicall, so a copy
+  # renamed to qemu-system-x86 refuses to run ("coreutils: unknown program")
+  # and the check below would then pass while having proved nothing. A shell
+  # takes its comm name from whatever argv[0] it was exec'd as, so it is a
+  # stand-in that really does carry the name stop_qemu matches.
+  cp /bin/sh "$d/qemu-system-x86" ||
+    { echo "boot-l2: selftest cp failed"; exit 2; }
+  "$d/qemu-system-x86" -c 'sleep 30' &
+  fake=$!
+  sleep 0.3
+  comm=$(cat "/proc/$fake/comm" 2>/dev/null || echo missing)
+  if [ "$comm" != "qemu-system-x86" ]; then
+    kill -9 "$fake" 2>/dev/null
+    rm -rf "$d"
+    echo "boot-l2: selftest setup FAILED -- stand-in comm is '$comm', not qemu-system-x86"
+    exit 2
+  fi
+  stop_qemu
+  sleep 0.3
+  rm -rf "$d"
+  if kill -0 "$fake" 2>/dev/null; then
+    kill -9 "$fake" 2>/dev/null
+    echo "boot-l2: selftest FAILED -- stop_qemu left a qemu-system-x86 process alive"
+    echo "boot-l2: the pgrep pattern in stop_qemu does not match the executable name"
+    exit 2
+  fi
+}
+selftest_stopqemu
 
 if [ ! -f "$ISO" ]; then
   echo "boot-l2: no ISO at $ISO (run the bootl2image phase first)"
@@ -77,25 +127,49 @@ if [ ! -f "$ISO" ]; then
 fi
 
 stop_qemu
-rm -f "$LOG" /tmp/jnode.serial2 /tmp/jnode_com2 /tmp/qemu_monitor.sock
+rm -f "$LOG" /tmp/jnode.serial2 /tmp/jnode_com2 /tmp/qemu_monitor.sock "$QEMU_ERR"
 
 bash "$SKILL/start_qemu.sh" simple "$ISO" 0 || { echo "boot-l2: start_qemu failed"; exit 2; }
 
-# 1. serial up
+# 1. serial up.
+#
+# A host KVM failure stops the guest dead before JNode logs a single line:
+# QEMU prints "KVM: entry failed, hardware error 0x0", reports
+# "VM status: paused (internal-error)" and then burns no CPU at all, so the
+# serial log just stops growing. That is not a JNode verdict, and it is not
+# even L2-specific -- measured 2026-10-01, both this image and the L1A
+# oracle image hit it under -machine accel=kvm:tcg, while the very same
+# image reached a working shell under -accel tcg. So detect it on QEMU's
+# own stderr, restart once under TCG, and start the clock over; only a
+# timeout with KVM still healthy is a boot this gate scores.
 i=0
-while [ "$i" -lt "$BOOT_TIMEOUT" ]; do
+deadline=$BOOT_TIMEOUT
+accel=kvm
+while [ "$i" -lt "$deadline" ]; do
   if [ -f "$LOG" ] && grep -qa "Serial console available" "$LOG"; then
     break
+  fi
+  if [ "$accel" = kvm ] && [ -f "$QEMU_ERR" ] &&
+     grep -qa "KVM: entry failed" "$QEMU_ERR"; then
+    echo "boot-l2: host KVM failed (QEMU stderr in $QEMU_ERR) -- retrying under TCG"
+    stop_qemu
+    rm -f "$LOG" /tmp/jnode.serial2 /tmp/jnode_com2 /tmp/qemu_monitor.sock "$QEMU_ERR"
+    QEMU_ACCEL=tcg bash "$SKILL/start_qemu.sh" simple "$ISO" 0 ||
+      { echo "boot-l2: TCG restart failed"; exit 2; }
+    accel=tcg
+    deadline=$BOOT_TIMEOUT_TCG
+    i=0
+    continue
   fi
   sleep 1
   i=$((i + 1))
 done
-if [ "$i" -ge "$BOOT_TIMEOUT" ]; then
-  echo "boot-l2: FAILED -- no serial console after ${BOOT_TIMEOUT}s"
+if [ "$i" -ge "$deadline" ]; then
+  echo "boot-l2: FAILED -- no serial console after ${deadline}s (accel=$accel)"
   scan_log "$LOG" || true
   exit 1
 fi
-echo "boot-l2: serial console after ${i}s"
+echo "boot-l2: serial console after ${i}s (accel=$accel)"
 ln -sfn /tmp/jnode.serial2 /tmp/jnode_com2
 
 # 2. agent shell. Plugins finish well after the serial line, so this retries

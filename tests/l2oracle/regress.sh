@@ -4,7 +4,7 @@
 # Usage:
 #   local/regress.sh [options] [phase ...]
 #
-# Phases (default: everything EXCEPT the L2 boot check, in this order):
+# Phases (default: everything except the opt-in `boot` panic poll):
 #   build      L2 build (also produces core/build/classes for the gates)
 #   anchors    javap verification that the edited code is in the classes
 #   t0 t3 t1   the three fast host suites
@@ -16,15 +16,17 @@
 #              while known bugs are open. Run it when the boot is the target.
 #   bootl2     PURE L2/L2 image (both compilers named, no L1A fallback) booted
 #              to an AGENT SHELL and GC'd N times, failing on any exception in
-#              the serial log. OPT-IN. The `boot` phase cannot see this class
-#              of failure: JNode has no interpreter, so one CompileError at
-#              plugin startup leaves the shell unstartable while the KDB pipe
-#              stays quiet. Use --boots N to repeat (it is a timing race).
+#              the serial log. IN THE DEFAULT FLOW -- after census, before
+#              isobuild, so mk-ox-iso always restores the L1A bootimage
+#              afterwards (ANCHOR-L2-170). The `boot` phase cannot see this
+#              class of failure: JNode has no interpreter, so one CompileError
+#              at plugin startup leaves the shell unstartable while the KDB
+#              pipe stays quiet. Use --boots N to repeat it.
 #   isobuild   oracle ISO (local/mk-ox-iso.sh, boots the tests entry)
 #   oracle     oracle force vs host reference, in its own boot
 #   mauve [n]  mauve subsets (default 1; --full = 1..5), one boot per mode
 # Groups: host = build anchors t0 t3 t1 alljunit census
-#         live = isobuild oracle mauve
+#         live = bootl2 isobuild oracle mauve
 #         all  = the default (host + live); boot stays opt-in
 #
 # Options:
@@ -57,8 +59,8 @@ while [ $# -gt 0 ]; do
     --stall) STALL=$2; shift 2; continue ;;
     --boots) BOOTS=$2; shift 2; continue ;;
     host) PHASES="$PHASES build anchors t0 t3 t1 alljunit census" ;;
-    live) PHASES="$PHASES isobuild oracle mauve" ;;
-    all) PHASES="$PHASES build anchors t0 t3 t1 alljunit census isobuild oracle mauve" ;;
+    live) PHASES="$PHASES bootl2 isobuild oracle mauve" ;;
+    all) PHASES="$PHASES build anchors t0 t3 t1 alljunit census bootl2 isobuild oracle mauve" ;;
     # 'boot' is opt-in: regress.sh boot [--boots N]
     mauve) PHASES="$PHASES mauve"; shift
            while [ $# -gt 0 ]; do
@@ -73,12 +75,19 @@ while [ $# -gt 0 ]; do
   esac
   shift
 done
-# The L2 boot check is deliberately NOT in the default flow: it costs an
-# image build plus boot attempts, and its signal (the Integer.stringSize
-# null-sizeTable panic) is not actionable while known bugs are open. Run it
-# explicitly -- regress.sh boot --boots 3 -- when the tree is otherwise
-# green and the boot signal is what you are chasing.
-[ -n "$PHASES" ] || PHASES="build anchors t0 t3 t1 alljunit census isobuild oracle mauve"
+# Only the panic-poll `boot` check is held out of the default flow: it costs
+# an image build plus boot attempts, and the panic it reports (the
+# Integer.stringSize null-sizeTable signature) is not actionable while known
+# bugs are open. Run it explicitly -- regress.sh boot --boots 3 -- when the
+# tree is otherwise green and the boot signal is what you are chasing.
+# `bootl2` IS in the default flow: it is the phase with a recorded baseline
+# (baselines/baseline-2026-09-30.txt), it boots to a shell and GCs instead of
+# polling for a panic, and it costs ~45s for the image plus two boots on
+# healthy host KVM -- about 13 minutes when QEMU reports KVM: entry failed and
+# the gate restarts itself under TCG (see the host-KVM gotcha). It runs before
+# isobuild so the oracle builder always restores the L1A bootimage this phase
+# replaces (ANCHOR-L2-170).
+[ -n "$PHASES" ] || PHASES="build anchors t0 t3 t1 alljunit census bootl2 isobuild oracle mauve"
 [ -n "$LABEL" ] || LABEL=$(date +%H%M%S)
 [ -n "$MAUVE_SUBS" ] || { [ "$MODE" = full ] && MAUVE_SUBS="1 2 3 4 5" || MAUVE_SUBS=1; }
 
