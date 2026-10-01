@@ -312,6 +312,16 @@ the 4 pre-existing divergences.
 without it the CR-strip fails silently and diffs vanish (false PASS).
 - `force|N` first line, N > 0 on JNode = forcing worked (count includes one extra slot; `-1` host, `-2` forcing threw).
 - Known pre-existing divergences (NOT L2 bugs): int `MIN/-1` → `EX` (x86 `#DE` mapped by the runtime) and `parseDouble` 1-ULP (library).
+- The **L1 vs host** section (the `noforce` baseline) can show rows that never
+  appear in the L2 diff. Measured 2026-10-01: `fArith_f|3.5,1.25` and
+  `fArith_f|-7.25,2.5` differ by 1 ULP on L1 but match the host under L2.
+  Not a bug: `fArith_f` is `(a % b) + (a / b) * (a - b)` and is not
+  `strictfp`, so FP-non-strict evaluation (the rule until Java 17, JEP 306)
+  lets each side round its intermediates at its own precision. Reproduced
+  exactly both ways: the chain evaluated in `double` and rounded once gives
+  40e9999a / 41d03333 (the JNode values), every operation rounded to `float`
+  gives 40e99999 / 41d03334 (the host values). Both are conforming -- never
+  chase L1A to parity with the host here.
 - Everything else in the L2 diff is an L2 bug; file it with method + inputs + expected vs actual bits.
 
 ## Gotchas (paid for in full)
