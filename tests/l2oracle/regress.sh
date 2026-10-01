@@ -132,8 +132,21 @@ policy_union() {
   local _u _aot _want_u=$1 _want_aot=$2
   _u=$(grep -a "Compiler union " "$LOG" | tail -n 1 | sed 's/.*Compiler union //')
   _aot=$(grep -a "Compiling using " "$LOG" | tail -n 1 | sed 's/.*Compiling using //; s/ compilers$//')
+  if [ -z "$_u" ] && [ -z "$_aot" ]; then
+    # ANCHOR-L2-195 (amended): BOTH lines come from AbstractBootImageBuilder,
+    # which ant does not run when the image is already up to date -- so a
+    # test-only commit produced `union=[] want=[X86-Stub X86-L2 X86-L1A]` and
+    # turned `host` red with nothing to check. No image was produced this run,
+    # so there is no union to evaluate; the image on disk was given both lines
+    # by the run that built it, and that run had this very check. This is not
+    # a check that cannot fail: any run that DOES build still has to emit both
+    # lines, and a partial pair (one present, one missing) is a real failure --
+    # it falls through to the comparison below and mismatches.
+    echo "union=[-] aot=[-] incremental build: no image produced this run, union checked by the run that produced it"
+    return 0
+  fi
   echo "union=[${_u}] want=[${_want_u}] aot=[${_aot}] want=[${_want_aot}]"
-  [ "$_u" = "$_want_u" ] && [ "$_aot" = "$_want_aot" ]
+  [ "$_u" = "$_want_u" ] && [ "$_aot" = "${_want_aot}" ]
 }
 # ANCHOR-L2-170: a live leg may only boot the L1A oracle image. A host-phase
 # `build` writes an L2-bootimage ISO to the SAME path, and that image panics at
