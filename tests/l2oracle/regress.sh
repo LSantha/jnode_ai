@@ -280,6 +280,17 @@ if want census; then
     # the GC follows. Same reasoning as rangegap, so same treatment.
     sw=$(grep -c "^STALEWIDE " /tmp/census-'"$LABEL"'.stdout)
     echo "stalewide=$sw"
+    # ANCHOR-L2-131 / C4: FAILED/RANGEGAP above only see the VALUE shape. A phi
+    # copy dropped on the wrong predecessor edge still writes the home on every
+    # path -- so the SSA verifier stays clean while the join still reads the
+    # other value on that edge. The deSSA tag-vs-placement counter is the
+    # only thing that sees the EDGE choice, and until now it was printed and
+    # never gated (red proof: swapping two available placements yields
+    # ssatag=2 with FAILED=0 and this phase still passed). A missing report
+    # line must fail too, per ANCHOR-L2-187: a check that cannot fail looks
+    # exactly like a check that found nothing.
+    st=$(sed -n "s/^SSATAG disagreements=\([0-9]*\).*/\1/p" /tmp/census-'"$LABEL"'.txt | head -n 1)
+    echo "ssatag=${st:-missing}"
     n=$(awk "/^--- FAILED \(/{f=1;next} /^--- /{f=0} f" /tmp/census-'"$LABEL"'.txt | wc -l)
     echo "FAILED=$n"
     awk "/^--- FAILED \(/{f=1;next} /^--- /{f=0} f" /tmp/census-'"$LABEL"'.txt | sort > /tmp/census-'"$LABEL"'.failed
@@ -383,10 +394,10 @@ if want census; then
     else
       echo "probe census gate: CONSTREFFIELD==0 and FAILED==0 on the shape-carrying corpus"
     fi
-    if [ ! -s '"$BASE"'/census-failed.txt ] && [ "$n" -eq 0 ] && [ "$rg" -eq 0 ] && [ "$sw" -eq 0 ] && [ "$pc_missing" -eq 0 ]; then
-      echo "census gate: FAILED==0 and RANGEGAP==0 and STALEWIDE==0 as required"
+    if [ ! -s '"$BASE"'/census-failed.txt ] && [ "$n" -eq 0 ] && [ "$rg" -eq 0 ] && [ "$sw" -eq 0 ] && [ "${st:-1}" -eq 0 ] && [ "$pc_missing" -eq 0 ]; then
+      echo "census gate: FAILED==0 and RANGEGAP==0 and STALEWIDE==0 and SSATAG==0 as required"
     else
-      echo "REGRESSION: $n FAILED entries, $rg RANGEGAP entries, $sw STALEWIDE entries; first ones:"
+      echo "REGRESSION: $n FAILED entries, $rg RANGEGAP entries, $sw STALEWIDE entries, ${st:-missing} SSATAG disagreements; first ones:"
       head -n 10 /tmp/census-'"$LABEL"'.failed
       grep -E "^RANGEGAP " /tmp/census-'"$LABEL"'.stdout | head -n 10
       grep -E "^STALEWIDE " /tmp/census-'"$LABEL"'.stdout | head -n 10
