@@ -226,12 +226,15 @@ public class RedirectingInterpreter extends DefaultInterpreter implements
                         to = parseFileName(tokenizer, ">");
                         if (to == null && !completing) {
                             throw new ShellSyntaxException("no filename after '>'");
-                        } else if (completing && 
+                        } else if (completing &&
                                 (to == null || (!tokenizer.hasNext() && !wspAfter))) {
                             return new ArgumentCompleter(
                                     new FileArgument("?", Argument.MANDATORY, null), to);
                         }
                         continue;
+                    } else if (token.text.equals(">>")) {
+                        throw new ShellSyntaxException(
+                                "unsupported '>>' redirection: use '>' instead");
                     } else if (token.text.equals("|")) {
                         pipeTo = true;
                         break;
