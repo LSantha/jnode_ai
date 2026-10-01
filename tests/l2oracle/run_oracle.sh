@@ -18,17 +18,27 @@ fail() { echo "ORACLE ABORT: $1" >&2; exit 1; }
 step "host reference"
 rm -rf "$REFDIR" && mkdir -p "$REFDIR" || fail "refdir"
 cp "$HERE/Probes.java" "$HERE/OracleDriver.java" "$REFDIR/" || fail "copy"
-"$HOST_JAVAC" -d "$REFDIR" "$REFDIR/Probes.java" "$REFDIR/OracleDriver.java" || fail "host javac"
-"$HOST_JAVA" -cp "$REFDIR" OracleDriver "$REFDIR/out-host.txt" noforce || fail "host run"
+# Probes.java has called org.vmmagic.unboxed.{Word,Address,Offset} since the
+# magic section landed, but this reference compile ran with NO -cp at all:
+# javac could not resolve Word/Address and reported 49 "cannot find symbol"
+# errors, so the loop aborted before it ever reached the guest. AGENTS.md
+# (Magic probes) documents the host support set and its classpath; honor it
+# here, and refuse to start without it rather than silently degrade.
+MAGIC_CP="${MAGIC_CP:-/tmp/mghost/classes}"
+[ -d "$MAGIC_CP" ] || fail "magic host support set missing at $MAGIC_CP -- see AGENTS.md, Magic probes"
+"$HOST_JAVAC" -cp "$MAGIC_CP" -d "$REFDIR" "$REFDIR/Probes.java" "$REFDIR/OracleDriver.java" || fail "host javac"
+"$HOST_JAVA" -cp "$MAGIC_CP:$REFDIR" OracleDriver "$REFDIR/out-host.txt" noforce || fail "host run"
 
-step "push to VM ($OX)"
+step "on-VM javac (CD-staged ox/)"
+# The old body piped Probes.java through --write, which is ~950 lines of
+# echo: a push that size reliably OOMs the guest heap (AGENTS.md, ISO
+# hygiene / manual loop) and was why the preferred flow moved to CD-staged
+# sources. local/mk-ox-iso.sh already puts these exact files on the CD, so
+# compile them in place and let a missing ox/ say so instead of OOMing.
 python3 "$JAC" "mkdir $OX" > /dev/null || fail "mkdir"
-cat "$HERE/Probes.java" | python3 "$JAC" --write "$OX/Probes.java" > /dev/null || fail "push Probes"
-cat "$HERE/OracleDriver.java" | python3 "$JAC" --write "$OX/OracleDriver.java" > /dev/null || fail "push Driver"
-
-step "on-VM javac"
+python3 "$JAC" "javac -d $OX /devices/sg0/ox/Probes.java /devices/sg0/ox/OracleDriver.java" \
+  || fail "guest javac -- ox/ is not staged on the ISO, run local/mk-ox-iso.sh"
 python3 "$JAC" "cd $OX" > /dev/null || fail "cd"
-python3 "$JAC" "javac Probes.java OracleDriver.java" > /dev/null || fail "guest javac"
 
 step "L1 baseline + L2 run"
 python3 "$JAC" "java OracleDriver out-l1.txt noforce" > /dev/null || fail "L1 run"
