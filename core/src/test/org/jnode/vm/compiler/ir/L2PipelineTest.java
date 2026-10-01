@@ -377,6 +377,81 @@ public class L2PipelineTest {
     }
 
     /**
+     * D2 (report 4.3): a switch has no fallthrough -- it transfers
+     * unconditionally to one of its targets -- but the Finder only recorded
+     * CONDITIONAL_BRANCH at a switch address, and createBasicBlocks clears
+     * nextIsSuccessor only for UNCONDITIONAL_BRANCH. Every switch block
+     * therefore also gained an edge to the next block in ADDRESS order: a
+     * predecessor no quad names, feeding extra phis, extra edge splits and a
+     * skewed liveness picture.
+     * <p/>
+     * javac cannot show it: it always lays the first case body out directly
+     * behind the switch table, so the address-order successor is a real
+     * target too and {@code addSuccessor} de-duplicates the fake edge away.
+     * The guard therefore uses {@link SwitchProbeBuilder}, where the block
+     * behind the table (pc 24) is deliberately not a target: 3 successors
+     * against 2 targets without the fix, 2 against 2 with it. The three
+     * javac-shaped switches are checked too, to pin that a real target is
+     * never dropped.
+     */
+    @Test
+    public void testSwitchBlockHasNoFallthroughSuccessor() throws Exception {
+        java.io.File dir = java.io.File.createTempFile("switchprobe", "");
+        dir.delete();
+        dir.mkdirs();
+        java.io.FileOutputStream fos = new java.io.FileOutputStream(
+            new java.io.File(dir, "SwitchProbe.class"));
+        fos.write(SwitchProbeBuilder.build());
+        fos.close();
+        VmSystemClassLoader child = new VmSystemClassLoader(
+            classlibUrls(dir), loader.getArchitecture());
+        VmType type = child.loadClass("SwitchProbe", true);
+        VmMethod found = null;
+        for (int i = 0; i < type.getNoDeclaredMethods(); i++) {
+            VmMethod m = type.getDeclaredMethod(i);
+            if ("swDemo".equals(m.getName())) {
+                found = m;
+            }
+        }
+        assertNotNull("swDemo not found", found);
+        assertSwitchSuccessors("SwitchProbe#swDemo", compileMethod(found).cfg);
+
+        for (String name : new String[]{"switchDense", "switchSmall", "switchSparse"}) {
+            assertSwitchSuccessors(name, compileMethod(findMethod(name)).cfg);
+        }
+    }
+
+    private static void assertSwitchSuccessors(String name, IRControlFlowGraph cfg) {
+        int switchBlocks = 0;
+        for (Object b0 : (Iterable<?>) cfg) {
+            IRBasicBlock b = (IRBasicBlock) b0;
+            IRBasicBlock[] targets = null;
+            for (Object q0 : (List<?>) b.getQuads()) {
+                if (q0 instanceof org.jnode.vm.compiler.ir.quad.TableswitchQuad) {
+                    targets =
+                        ((org.jnode.vm.compiler.ir.quad.TableswitchQuad) q0).getTargetBlocks();
+                } else if (q0 instanceof org.jnode.vm.compiler.ir.quad.LookupswitchQuad) {
+                    targets =
+                        ((org.jnode.vm.compiler.ir.quad.LookupswitchQuad) q0).getTargetBlocks();
+                }
+            }
+            if (targets == null) {
+                continue;
+            }
+            switchBlocks++;
+            List succ = b.getSuccessors();
+            assertEquals(name + ": switch block " + b + " must have exactly "
+                + targets.length + " successor(s) -- its own targets -- but has "
+                + succ, targets.length, succ.size());
+            for (int i = 0; i < targets.length; i++) {
+                assertTrue(name + ": switch target " + targets[i]
+                    + " is not a successor of " + b, succ.contains(targets[i]));
+            }
+        }
+        assertTrue(name + ": no switch quad found", switchBlocks > 0);
+    }
+
+    /**
      * CG-4b (ANCHOR-L2-071): arrays through the real pipeline (4-byte
      * element types: int/float/object; bounds checks; allocation).
      */

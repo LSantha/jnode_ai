@@ -271,20 +271,27 @@ public class IRBasicBlockFinder<T> extends BytecodeVisitorSupport implements Com
 
     public void visit_tableswitch(int defValue, int lowValue, int highValue, int[] addresses) {
         for (int address : addresses) {
-            // Next block could be successor, e.g. switch could fall through
             addBranch(address, CONDITIONAL_BRANCH);
         }
         // Same for default case
         addBranch(defValue, CONDITIONAL_BRANCH);
+        // D2 (report 4.3): tableswitch has no fallthrough -- it transfers
+        // unconditionally to one of its targets. Without this, only
+        // CONDITIONAL_BRANCH is recorded at the switch address, and
+        // createBasicBlocks keeps nextIsSuccessor set, adding an edge to the
+        // next block in ADDRESS order: a predecessor that no quad names,
+        // which feeds extra phis and edge splits and skews liveness.
+        endBB(UNCONDITIONAL_BRANCH);
     }
 
     public void visit_lookupswitch(int defValue, int[] matchValues, int[] addresses) {
         for (int address : addresses) {
-            // Next block could be successor, e.g. switch could fall through
             addBranch(address, CONDITIONAL_BRANCH);
         }
         // Same for default case
         addBranch(defValue, CONDITIONAL_BRANCH);
+        // See visit_tableswitch: no fallthrough, and none in address order.
+        endBB(UNCONDITIONAL_BRANCH);
     }
 
     public void visit_ifnull(int address) {
