@@ -178,6 +178,25 @@ public class IRBasicBlock<T> {
      * @param initialOffset
      */
     public void setStackOffset(int initialOffset) {
+        // D1 (report 4.2): the depth of a block is written by every
+        // predecessor that gets translated -- setSuccessorStackOffset from
+        // the branch, visit_jsr for the subroutine entry and for its own
+        // resume block, visit_ret for every resume block at once. Nothing
+        // checked that those writes agree, so a subroutine entered at two
+        // depths took whichever jsr was translated last, and visit_ret's
+        // overwrite of ALL resumes (IRGenerator:1600) was justified with
+        // "harmless if already set -- depths agree by verification".
+        // It now does: a second, different value is a real disagreement on
+        // the operand stack, and the translation that produced it is wrong.
+        // Handler entries are exempt: they set their own depth at
+        // IRGenerator:239 while ANCHOR-L2-110's in-range exception edges
+        // make ordinary blocks successors of the handler too, so they are
+        // written with a depth that is not theirs by construction.
+        if (stackOffset >= 0 && stackOffset != initialOffset
+            && !startOfExceptionHandler) {
+            throw new AssertionError("stack depth disagreement in " + this
+                + ": already " + stackOffset + ", now " + initialOffset);
+        }
         stackOffset = initialOffset;
     }
 
