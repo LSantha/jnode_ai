@@ -73,7 +73,7 @@ post-deSSA on every method, so structural SSA regressions are corpus-wide.
 
 | # | Sev | Defect | Status | Guard today |
 |---|---|---|---|---|
-| D1 | P2 | jsr/ret entry depth depends on translation order | **OPEN** | post-deSSA verification of the jsr probe deliberately skipped (invariant 11) |
+| D1 | P2 | jsr/ret entry depth depends on translation order | **OPEN, narrowed 2026-10-01; invariant 11 (its guard column) CLOSED.** `L2PipelineTest#testSSAVerifierCorpus` now runs `deSSAAndFixup` + `verifyPostDessA` + `verifyWidths` on `jsrDemo` instead of stopping after `verifyPreDessA`, and it is green -- the carve-out ("the ret to all-resumes over-approximation makes post-deSSA path analysis ambiguous there") does not survive contact with the verifier. Reading report 4.2: **hazard A** fires only when the subroutine entry address is BELOW its `jsr`. `IRGenerator.startInstruction:260-261` takes the new block's depth from `currentBlock.getStackOffset()`, and `IRBasicBlock.getStackOffset:167-176` falls back to `idominator.getStackOffset()` when the block was never written -- that is the jsr block's own (pre-push) depth, so the subroutine would translate `astore <ret-slot>` at the wrong slot and `ret` would jump to garbage. `visit_jsr`'s `setSuccessorStackOffset()` (`IRGenerator:1572`) corrects the block only if it has not been translated yet, which is exactly the order dependence. The probe does not exercise it: `jsr/mkjsr.py` puts the jsr at pc 0 and the subroutine entry at pc 10. **Hazard B** is untouched: `IRBasicBlock.setStackOffset:180-182` assigns unconditionally, so a shared subroutine entered at two depths, and `visit_ret`'s `setSuccessorStackOffset()` (`IRGenerator:1600`) which overwrites EVERY resume block with the depth at the single ret, are both silent -- the `visit_ret` comment says "harmless if already set -- depths agree by verification" and there is no such verification anywhere. | invariant 11 closed: post-deSSA + width verification of `jsrDemo` in `testSSAVerifierCorpus`. Still missing: a depth-agreement assertion in `setStackOffset` (would fire on both A and B: A because the jsr later writes a different value over the idom-derived one, B because the second writer disagrees with the first). |
 | D2 | P3 | latent quad-semantics items (report 4.3) | **OPEN**, unitemised | none |
 
 ## E. Interop / structural (report Part 5)
@@ -151,7 +151,9 @@ state); 7 static-call push widths **now covered**
 (A7/L2-166: T1 red on the overlay, `WIDTHMISMATCH` extended to static calls);
 8 EBX/ESI across calls **now covered** (E3's `testNoRegisterSpansCall`, red on
 both an empty and an incomplete `forcedSpills`); 9 `disp1 == disp2` FP aliasing
-**open**; 10 `#DE` semantics **open**; 11 post-deSSA jsr **open** (D1); 12
+**open**; 10 `#DE` semantics **open**; 11 post-deSSA jsr **closed**
+(`testSSAVerifierCorpus` verifies `jsrDemo` on both sides now; the jsr
+depth-agreement question is D1, still open); 12
 wide phi homes across critical-edge copies **open**; 13 `ExceptionArgument`
 as a phi source at non-handler joins **open**; 14 AOT path **partly covered,
 values still open** (F4: emission is guarded by the `build` phase, which

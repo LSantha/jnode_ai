@@ -594,8 +594,9 @@ public class L2PipelineTest {
      * (live phi arity == pred count; every use's def dominates the use) over
      * a broad host corpus, then the post-deSSA invariants (no live phi;
      * every read written on every path) after deSSA+fixup. The jsr probe is
-     * verified pre-deSSA only: the ret to all-resumes over-approximation
-     * makes post-deSSA path analysis ambiguous there (documented carve-out).
+     * verified on BOTH sides as of invariant 11 (D1): the ret to all-resumes
+     * over-approximation used to be given as a reason to skip post-deSSA
+     * there, and skipping it is what made the carve-out unverifiable.
      */
     @Test
     public void testSSAVerifierCorpus() throws Exception {
@@ -630,7 +631,7 @@ public class L2PipelineTest {
                 fail("width violation in " + methods[i] + ": " + v);
             }
         }
-        // jsr probe: pre-deSSA only (ret/resume over-approximation).
+        // jsr probe: pre-deSSA and post-deSSA (the carve-out closed by D1).
         java.io.File dir = java.io.File.createTempFile("jsrverif", "");
         dir.delete();
         dir.mkdirs();
@@ -653,6 +654,15 @@ public class L2PipelineTest {
         String v = SSAVerifier.verifyPreDessA(cfg);
         if (v != null) {
             fail("SSA violation (pre-deSSA) in jsrDemo: " + v);
+        }
+        X86Level2Compiler.deSSAAndFixup(cfg);
+        v = SSAVerifier.verifyPostDessA(cfg);
+        if (v != null) {
+            fail("SSA violation (post-deSSA) in jsrDemo: " + v);
+        }
+        v = SSAVerifier.verifyWidths(cfg);
+        if (v != null) {
+            fail("width violation in jsrDemo: " + v);
         }
         // ANCHOR-L2-132 regression guard: NativeStrictMath#remPiOver2 (a real
         // guest method, OpenJDK classlib) had a post-deSSA dcmpl reading a
