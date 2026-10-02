@@ -127,7 +127,7 @@ a wrong conclusion.
 | `compare.sh` | Scoreboard: strips serial CR, drops `force\|` proof, reduces `EX:Class:msg` to `EX:Class`, diffs. |
 | `run_oracle.sh` | One-command end-to-end run (see below). |
 | `regress.sh` | The gate: host phases, `bootl2`, live legs; a phase's exit status is its verdict. |
-| `boot-l2.sh` | Boots a pure L2/L2 ISO to an agent shell, GCs 4x (each must print collection stats), then scores the serial log against `Exception\|CompileError\|Error in compilation\|panic\|FATAL` -- 0 hits is the pass condition. `--scan LOG` scores an already-captured log; red proof: `--scan baselines/l2202-compile-error.txt` exits 1. Two guards run before any boot: a `stop_qemu` self-test against a process whose comm name is `qemu-system-x86` (red proof: put `qemu-system-x86_64` back in the `pgrep -x` and it exits 2 without booting), and a one-shot restart under `-accel tcg` when QEMU reports `KVM: entry failed` (see the host-KVM gotcha). It also exports `JNODE_AGENT_OUTPUT_TIMEOUT`, because a TCG `gc` prints nothing for longer than the agent's 10s default and the empty result is indistinguishable from a no-op. |
+| `boot-l2.sh` | Boots a pure L2/L2 ISO to an agent shell, GCs 4x (each must print collection stats), then scores the serial log against `Exception\|CompileError\|Error in compilation\|panic\|FATAL` -- 0 hits is the pass condition. `--scan LOG` scores an already-captured log; red proof: `--scan baselines/l2202-compile-error.txt` exits 1. Three guards run before any boot: a `stop_qemu` self-test against a process whose comm name is `qemu-system-x86` (red proof: put `qemu-system-x86_64` back in the `pgrep -x` and it exits 2 without booting), an ANCHOR-L2-205 pre-boot scan that names any persistent holder of `/tmp/jnode.serial2` (red proof: run `python3 /tmp/.../serial_mux.py` in the background, it exits 2 with that PID and boots nothing), and an ANCHOR-L2-205 runtime check, run right after the serial console comes up, that resolves a foreign client on the endpoint to its PID via the `ss -xp` peer inode (red proof: force its `ESTAB` test to `:`, it exits 2 after the serial line). A one-shot restart under `-accel tcg` follows when QEMU reports `KVM: entry failed` (see the host-KVM gotcha). It also exports `JNODE_AGENT_OUTPUT_TIMEOUT`, because a TCG `gc` prints nothing for longer than the agent's 10s default and the empty result is indistinguishable from a no-op. The agent-shell wait reports wall-clock seconds: each attempt also spends up to ~34s inside the agent's prompt handshake, so the old `i*5` figure called a ~20 minute wait "150s". |
 | `baselines/` | Recorded pass conditions (`baseline-2026-09-30.txt`), the boot panic signatures, and the recorded L2-202 failure log. |
 | `kdb_mux.py` | KDB-over-pipe mux for hang diagnosis (holds the single pipe client, drains to log, forwards FIFO commands). |
 
@@ -418,6 +418,27 @@ incidental fix in 097-103. Regression-guarded by `CASES` now.
   Do not debug the guest, the ISO or the probe until `ss` shows the right owner.
   A timed-out shell command may also leave an orphaned `regress.sh` behind --
   `ps -eo pid,etime,cmd | grep regress` before rerunning.
+
+- **The mirror image of that gotcha: the mux also steals `bootl2` from QEMU**
+  (cost 5 boots across 4 runs on 2026-10-02). QEMU serves `/tmp/jnode.serial2`
+  as `-serial unix:...,server,nowait`, i.e. one client; `serial_mux.py` (the
+  `jnode-serial` skill's VirtualBox helper) attaches to that same path and
+  keeps "the single client attached even when idle", retrying every `<=10s`.
+  While it runs, every `jnode_agent_cmd.py` connect fails `EAGAIN` and the
+  gate reports a guest that booted perfectly as
+  `FAILED -- no agent shell ...` / `ERROR: [Errno 11] Resource temporarily
+  unavailable` with `exception hits=0`. The tell-tale that separates this from
+  a real guest stall: **no `Prompt not seen yet` lines**, i.e. the agent
+  never got as far as the handshake. Diagnose with
+  `grep -E 'link up|link lost' /tmp/jnode_serial_mux.log` -- each lost boot
+  matched a `link up` -> `link lost (FIN)` pair to the second -- and with
+  `ss -xp | grep jnode.serial2` (an `ESTAB` there with our agent not yet run
+  is a squatter). `boot-l2.sh` now fails fast on both, naming the PID
+  (ANCHOR-L2-205); kill it by PID, never with `pkill`/`pgrep -f`. Nothing
+  respawns it: it is started by hand from the `jnode-serial` skill, so check
+  `ps -eo pid,cmd | grep 'serial_mu[x]'` after any session that used that
+  skill. Never run a `bootl2` leg and a VBox serial session concurrently --
+  they own one path between them.
 
 - **A value-level probe beat every structural instrument on B1 (L2-189).** A
   census lint for handler-entry phis was written, could not identify handler

@@ -116,7 +116,7 @@ and (iii).
 
 | # | Defect | Status |
 |---|---|---|
-| G1 | P11 fall-through / ret-resume edges never explicit | **OPEN** |
+| G1 | P11 fall-through / ret-resume edges never explicit | **FIXED 2026-10-02 (working tree; gate `failures=0`).** `splitCriticalEdges` split only edges `isExplicitEdge` recognises (Branch/Jsr/Lookupswitch/Tableswitch), so a fall-through edge -- non-terminator predecessor whose layout successor is the `join` -- was skipped even when genuinely critical (2+ successors / 2+ predecessors). Those are precisely the edges deSSA's edge copies must not run on both outgoing branches of. `splitCriticalEdges` now also accepts `isFallThroughEdge(pred, join)` (terminator is not an explicit branch AND `join` is `pred`'s layout successor) and **inserts** that synthetic block at `blockIndexOf(pred)+1` through the new `insertBasicBlock`, so `fixupAddresses` numbers it immediately after `pred` and the fall-through shape survives; explicit and non-fall-through edges still append at layout end. `RetQuad` edges stay unsplit (`ret` jumps dynamically past an inserted block) and exception edges stay unsplit (S6.4 / `tagHandlerEntryPhis`). `IRBasicBlock.livePhiJoin` records the blocks `splitCriticalEdges` built a `joinBlocks` entry for, and `SSAVerifier` check (c) now tests that instead of `hasPhi(b)`: a critical join whose phis were already coalesced has no phi yet still must be split | t1 `nestedCatchLong`, red both ways. Split disabled (`isFallThroughEdge` forced false): `AssertionError: SSA violation (post-deSSA) in nestedCatchLong: unsplit critical edge B22 -> B27 (pred has 2 successors); ... succs=[B27, B36] quads=[11: l3_1 = e4_0, ... 14: l1_6 = l1_3]`. Split done but the verifier left on `hasPhi`: census `FAILED (1581)` + t1 `nestedCatchLong` FAIL. Green: `regress.sh --label final` `failures=0` exit 0 (host + live), census `OK=11659 FAILED=0` |
 | G2 | P12 `IRGenerator.fixType` shared-slot mutation | **OPEN** |
 | G3 | P13 `typePhiResults` single-wide-source upgrade | **OPEN** |
 | G4 | P14 `pruneDeadPhis` undefined-source drop | **OPEN** |
@@ -184,6 +184,40 @@ inline live-phase failures (`javac FAILED`, `run FAILED/STALLED`, both
 the per-phase detail stays in `$ST`. Red proof: the red `t3` exits 1, the
 same phase on a good tree exits 0. Third instance of "a check that cannot
 fail looks exactly like a check that found nothing", after ANCHOR-L2-187.
+
+Two more gate-level gaps, both found and fixed 2026-10-02 while validating
+the P11 (G1) fix.
+
+**`regress.sh` never truncated `$LOG`.** `$ST` is reset per run
+(`: > "$ST"`) but `$LOG` was append-only, so a reused label kept every
+earlier run's output and `policy_union()`'s `grep -a "Compiler union "
+"$LOG" | tail -n 1` could pick a union baked by a *previous* run. That
+defeats the ANCHOR-L2-195 early-return (both greps empty on an incremental
+build) and compares a stale union against the current want: measured,
+`--label final build` produced `FAIL policy rc=1` against a log first
+created 2026-09-27, the identical build under a fresh label passed, and the
+original label passed after the fix -- same tree, only the log's age
+changed. **LANDED (ANCHOR-L2-206)**: `: > "$LOG"` beside `: > "$ST"`. The
+only readers are `policy_union()` (gated) and the isobuild `ARTIFACT` line
+(informational `say`). Fourth instance of the same class as ANCHOR-L2-200.
+
+**The serial mux stole `boot-l2.sh`'s endpoint.** `gsh.sh` ->
+`serial_cmd.py` auto-starts `serial_mux.py`, a persistent helper that
+re-attaches every `<=10s`, and the oracle/mauve legs leave it running. QEMU
+serves `/tmp/jnode.serial2` as a single-client
+`-serial unix:...,server,nowait`, so once the mux held the slot every later
+standalone `bootl2` -- and any gate run that did not start from a clean
+state -- died in the agent loop with `Prompt not seen yet`, no `ss` path
+visible for QEMU's chardev at all, and a wait figure understated because it
+was `i*5` rather than wall clock. The bare gate run is self-consistent only
+by luck of phase order (`bootl2` precedes `oracle`/`mauve`). **LANDED
+(ANCHOR-L2-205)**: `boot-l2.sh` fails fast before any boot -- the pre-boot
+`guard_endpoint_holder` names the offending PID and exits 2, the runtime
+`guard_foreign_client` requires an `ESTAB` peer, dumps `ss -xp` for the
+endpoint and its peer inode, stops QEMU and exits 2, the agent-loop failure
+dumps `ss -xp` too, and its wait figure is wall clock. Red proofs: a
+backgrounded `serial_mux.py` gives `RC=2` naming the PID with nothing
+booted; a forced `ESTAB` peer gives `RC=2` after the serial line.
 
 ## I. Closed tonight (do not re-chase)
 
