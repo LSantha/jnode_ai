@@ -101,6 +101,16 @@ WORK=${REGRESS_WORK:-/tmp/jnode-regress}
 mkdir -p "$WORK"
 HJ=${HJ:-/home/levente/ext/prg/java/bin/java}
 : > "$ST"
+# ANCHOR-L2-206: $ST is per-run but $LOG used to be append-only, so a reused
+# label kept every earlier run's output and policy_union()'s
+# "Compiler union " grep | tail -n 1 read a union baked by a *previous* run.
+# That defeated the ANCHOR-L2-195 early-return (both greps empty on an
+# incremental build) and compared a stale union against the current want:
+# measured 2026-10-02, `--label final build` FAILED policy rc=1 against a log
+# first created 2026-09-27, while the same build with a fresh label PASSED.
+# $LOG is therefore per-run like $ST. The only readers are policy_union()
+# (gated) and the isobuild ARTIFACT line (informational say).
+: > "$LOG"
 # ANCHOR-L2-200: a failed phase used to be recorded in $ST and then dropped on
 # the floor -- run() printed "FAIL <phase> rc=N" and the script still exited 0,
 # so any consumer chaining `regress.sh ... && ...` (or CI reading $?) sailed past

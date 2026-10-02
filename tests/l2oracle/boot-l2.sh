@@ -126,6 +126,36 @@ if [ ! -f "$ISO" ]; then
   exit 2
 fi
 
+# ANCHOR-L2-205 (pre-boot half): /tmp/jnode.serial2 carries ONE client.
+# QEMU starts it as `-serial unix:...,server,nowait`, which serves a single
+# connection and leaves every further connect queued until it overflows and
+# the connect fails EAGAIN. serial_mux.py -- the VirtualBox serial helper in
+# the jnode-serial skill -- attaches to that same path and deliberately keeps
+# "the single client attached even when idle", retrying every <=10s, so it
+# wins the race against our agent most of the time it is running. The agent
+# then fails every connect, and the gate burns its whole retry budget before
+# reporting a guest that booted perfectly as "no agent shell" with
+# ERROR: [Errno 11] Resource temporarily unavailable and exception hits=0.
+# Measured 2026-10-02: 5 boots lost across 4 runs, each loss matching a
+# `link up` -> `link lost (FIN)` pair in /tmp/jnode_serial_mux.log to the
+# second. Refuse to spend a boot on it and name the holder instead.
+#
+# The `[m]` bracket keeps the literal name out of this script's own argv:
+# `ps` shows the shell running it, so a bare serial_mux.py pattern would
+# match that command line and every run would fail (the pgrep -f
+# self-match documented for stop_qemu above, one level up).
+guard_endpoint_holder() {
+  _hold=$(ps -eo pid=,cmd= | grep -E 'serial_[m]ux\.py' || true)
+  [ -n "$_hold" ] || return 0
+  echo "boot-l2: FAILED -- a persistent helper already holds /tmp/jnode.serial2:"
+  printf '%s\n' "$_hold"
+  echo "boot-l2: it owns the socket's only client slot, so the agent cannot"
+  echo "boot-l2: connect (ERROR: [Errno 11]). Kill it by the PID printed above"
+  echo "boot-l2: and rerun; pkill and pgrep -f both self-match here."
+  exit 2
+}
+guard_endpoint_holder
+
 stop_qemu
 rm -f "$LOG" /tmp/jnode.serial2 /tmp/jnode_com2 /tmp/qemu_monitor.sock "$QEMU_ERR"
 
@@ -172,10 +202,38 @@ fi
 echo "boot-l2: serial console after ${i}s (accel=$accel)"
 ln -sfn /tmp/jnode.serial2 /tmp/jnode_com2
 
+# ANCHOR-L2-205 (runtime half): the pre-boot scan only knows the helpers it
+# names, so check the socket itself. Unattached, QEMU's unix chardev carries
+# no path in `ss -xp` at all; once somebody is attached, the server side
+# shows `ESTAB ... /tmp/jnode.serial2`. Our own agent has not connected yet
+# at this point, so an ESTAB here is a foreign client on the only slot -- the
+# peer inode resolves it to a pid. Say so now rather than let the agent-shell
+# loop retry for minutes and then blame the guest for the squatter.
+guard_foreign_client() {
+  command -v ss >/dev/null 2>&1 || return 0
+  ss -xp 2>/dev/null | grep -F /tmp/jnode.serial2 | grep -q ESTAB || return 0
+  echo "boot-l2: FAILED -- a foreign client is already on /tmp/jnode.serial2:"
+  ss -xp 2>/dev/null | grep -F /tmp/jnode.serial2 | head -n 2
+  _peer=$(ss -xp 2>/dev/null | grep -F /tmp/jnode.serial2 | grep ESTAB |
+    head -n 1 | awk '{print $(NF-1)}')
+  # The peer's own line has no path, only the inode and its users(): entry.
+  # -w on an empty pattern matches every line, so only look when the inode
+  # was actually extracted.
+  if [ -n "$_peer" ]; then
+    ss -xp 2>/dev/null | grep -w "$_peer" | grep -o 'users:([^)]*)' | head -n 2
+  fi
+  echo "boot-l2: that client owns the slot the agent needs (ERROR: [Errno 11])."
+  echo "boot-l2: kill it by PID and rerun; pkill and pgrep -f self-match here."
+  stop_qemu
+  exit 2
+}
+guard_foreign_client
+
 # 2. agent shell. Plugins finish well after the serial line, so this retries
 #    rather than sleeping a fixed amount.
 ready=0
 i=0
+agent_start=$(date +%s)
 while [ "$i" -lt 30 ]; do
   if python3 "$SKILL/jnode_agent_cmd.py" "echo L2_SHELL_READY" \
        > /tmp/bootl2-ready.out 2>&1 && grep -q "L2_SHELL_READY" /tmp/bootl2-ready.out; then
@@ -185,13 +243,21 @@ while [ "$i" -lt 30 ]; do
   sleep 5
   i=$((i + 1))
 done
+# Report wall clock, not i*5: each attempt also spends up to ~34s inside the
+# agent's prompt handshake, so a 150s budget actually lasts ~20 minutes and
+# the old figure understated the wait by an order of magnitude.
+agent_secs=$(( $(date +%s) - agent_start ))
 if [ "$ready" -ne 1 ]; then
-  echo "boot-l2: FAILED -- no agent shell after $((i * 5))s"
+  echo "boot-l2: FAILED -- no agent shell after ${agent_secs}s"
   tail -n 6 /tmp/bootl2-ready.out 2>/dev/null
+  # Whoever holds the slot when the agent gives up is the diagnosis; without
+  # this the output is an opaque errno from a guest that booted fine.
+  command -v ss >/dev/null 2>&1 &&
+    ss -xp 2>/dev/null | grep -F /tmp/jnode.serial2 | head -n 2
   scan_log "$LOG" || true
   exit 1
 fi
-echo "boot-l2: agent shell up after $((i * 5))s"
+echo "boot-l2: agent shell up after ${agent_secs}s"
 
 # 3. GC repeatedly. Each round re-enters the allocator; a compile that only
 #    breaks under a warm heap is the bug class this gate is for.
