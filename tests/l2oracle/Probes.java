@@ -563,6 +563,24 @@ public class Probes {
         return -1;
     }
 
+    public static int INIT_CALLS = 0;
+    public static Object NOTHING = null;
+
+    static Object initProbeMark() {
+        INIT_CALLS++;
+        return null;
+    }
+
+    public interface InitProbe {
+        Object MARK = Probes.initProbeMark();
+    }
+
+    public static int instanceofNullInit() {
+        INIT_CALLS = 0;
+        boolean r = (NOTHING instanceof InitProbe);
+        return (r ? 10 : 0) + INIT_CALLS;
+    }
+
     public static int swTable(int x) {
         switch (x) {
             case 1:

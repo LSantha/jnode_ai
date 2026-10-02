@@ -104,6 +104,7 @@ public class OracleDriver {
         {"blnArr", "5"},
         {"castStr", "0"},
         {"instStr", "5"},
+        {"instanceofNullInit"},
         {"swTable", "2"},
         {"swTable", "9"},
         {"swLookup", "10000"},

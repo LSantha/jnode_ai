@@ -6091,7 +6091,8 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
      * constants arrive as CONSTANT; strings/classes have their own quads),
      * then runs the class fast path ({@code instanceOfClass}, which
      * initializes internally) or the interface/array loop ({@code instanceOf},
-     * with explicit resolve + init first so EAX-objectr is loaded after).
+     * with explicit resolve + init emitted after the null test so a null
+     * reference never runs the target's {@code <clinit>}).
      * Jumps to {@code trueLabel} on success, falls through on failure with
      * ECX + EBX pushed (caller pops on both paths).
      * <p/>
@@ -6103,10 +6104,6 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
     private void writeInstanceTest(Operand ref, VmConstClass clazz, VmType<?> resolvedType,
                                    Label curLabel, Label trueLabel, Label nullLabel) {
         X86CompilerHelper helper = stackFrame.getHelper();
-        if (resolvedType.isInterface() || resolvedType.isArray()) {
-            writeResolveAndLoadClassToReg(clazz, X86Register.EDX, curLabel);
-            helper.writeClassInitialize(curLabel, X86Register.EDX, X86Register.EAX, resolvedType);
-        }
         GPR refr;
         if (ref.getAddressingMode() == REGISTER) {
             refr = (GPR) ((RegisterLocation) ((Variable) ref).getLocation()).getRegister();
@@ -6129,6 +6126,20 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
         os.writePUSH(X86Register.ECX);
         os.writePUSH(X86Register.EBX);
         if (resolvedType.isInterface() || resolvedType.isArray()) {
+            // D2(4): resolve + init belong to the non-null path only. Emitted
+            // before the TEST above, `null instanceof Iface` ran the target's
+            // <clinit> before deciding the answer (oracle red:
+            // instanceofNullInit host I:0 vs L2 I:1); the class path already
+            // initializes after its null test, inside instanceOfClass. The
+            // CONSTANT case returns before this point, so it never inits.
+            writeResolveAndLoadClassToReg(clazz, X86Register.EDX, curLabel);
+            // tmpReg must NOT be EAX: SR1 == EAX and holds refr here, so the
+            // isolated-statics load would overwrite the reference with the
+            // statics table and checkcast would fail on a valid object (boot
+            // red: ClassCastException WorkManager/WorkPlugin). ECX is already
+            // pushed above, is documented as destroyed by the init call, and
+            // the initializer body is PUSHA/POPA guarded so EAX and EDX survive.
+            helper.writeClassInitialize(curLabel, X86Register.EDX, X86Register.ECX, resolvedType);
             instanceOf(refr, X86Register.EDX, X86Register.EAX, X86Register.EBX, trueLabel, true, curLabel);
         } else {
             instanceOfClass(refr, (VmClassType<?>) resolvedType, X86Register.EDX, null, trueLabel, true,
