@@ -37,6 +37,7 @@ import org.jnode.vm.objects.BootableArrayList;
  */
 public class IRBasicBlock<T> {
     private boolean startOfExceptionHandler;
+    private boolean livePhiJoin;
     private int endPC;
     private int startPC;
     private Variable<T>[] variables;
@@ -459,6 +460,27 @@ public class IRBasicBlock<T> {
      */
     public void setStartOfExceptionHandler(boolean b) {
         startOfExceptionHandler = b;
+    }
+
+    /**
+     * Set by {@link IRControlFlowGraph#splitCriticalEdges} for every block
+     * that carried a phi still live at deSSA time, i.e. every block that
+     * actually collects predecessor copies. Post-deSSA every phi is a dead
+     * no-op, so the verifier cannot tell a block that needed an edge split
+     * from one whose phi was merely pruned; this marker is how it can.
+     *
+     * @param b true if this join had a live phi at deSSA time
+     */
+    public void setLivePhiJoin(boolean b) {
+        livePhiJoin = b;
+    }
+
+    /**
+     * @return true if this join had a phi live at deSSA time, see
+     *         {@link #setLivePhiJoin}
+     */
+    public boolean isLivePhiJoin() {
+        return livePhiJoin;
     }
 
     /**

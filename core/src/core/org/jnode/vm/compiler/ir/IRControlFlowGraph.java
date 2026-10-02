@@ -55,6 +55,7 @@ import org.jnode.vm.compiler.ir.quad.NewPrimitiveArrayAssignQuad;
 import org.jnode.vm.compiler.ir.quad.PhiAssignQuad;
 import org.jnode.vm.compiler.ir.quad.Quad;
 import org.jnode.vm.compiler.ir.quad.RefStoreQuad;
+import org.jnode.vm.compiler.ir.quad.RetQuad;
 import org.jnode.vm.compiler.ir.quad.StaticRefStoreQuad;
 import org.jnode.vm.compiler.ir.quad.TableswitchQuad;
 import org.jnode.vm.compiler.ir.quad.ThrowQuad;
@@ -895,15 +896,23 @@ public class IRControlFlowGraph<T> implements Iterable<IRBasicBlock<T>> {
     /**
      * Split live-phi critical edges before emitting predecessor copies. The
      * edge block has exactly one predecessor and one successor, so a copy
-     * placed there cannot execute on an unrelated outgoing edge. Only edges
-     * with an explicit IR branch target are split; implicit exceptional
-     * dispatch edges retain the existing handler approximation.
+     * placed there cannot execute on an unrelated outgoing edge.
+     * <p/>
+     * Two edge kinds are split. A named one (branch / jsr / switch target)
+     * is retargeted in the quads and the edge block is appended. A quad-less
+     * fall-through has no quad to retarget, so the edge block is spliced
+     * into the layout between the two instead -- see
+     * {@link #isFallThroughEdge}. Exceptional dispatch edges and the
+     * ret-to-all-resumes over-approximation are neither: they retain the
+     * documented handler / ret approximations.
      */
     private void splitCriticalEdges(List<PhiAssignQuad<T>> phiQuads) {
         final java.util.IdentityHashMap<IRBasicBlock<T>, Boolean> joinBlocks =
             new java.util.IdentityHashMap<IRBasicBlock<T>, Boolean>();
         for (int i = 0; i < phiQuads.size(); i++) {
-            joinBlocks.put(phiQuads.get(i).getBasicBlock(), Boolean.TRUE);
+            IRBasicBlock<T> join = phiQuads.get(i).getBasicBlock();
+            joinBlocks.put(join, Boolean.TRUE);
+            join.setLivePhiJoin(true);
         }
         if (joinBlocks.isEmpty()) {
             return;
@@ -927,8 +936,24 @@ public class IRControlFlowGraph<T> implements Iterable<IRBasicBlock<T>> {
                 IRBasicBlock<T> join = successors.get(si);
                 if (!joinBlocks.containsKey(join)
                     || pred.getSuccessors().size() <= 1
-                    || join.getPredecessors().size() <= 1
-                    || !isExplicitEdge(pred, join)) {
+                    || join.getPredecessors().size() <= 1) {
+                    continue;
+                }
+                // P11: only an edge some quad names can be retargeted, so
+                // that used to be the sole kind split. A quad-less
+                // fall-through into the join names no quad either, yet it is
+                // exactly as critical -- the copy sits before pred's
+                // terminator and therefore runs on pred's other successors
+                // too. Such an edge is retargeted by putting the synthetic
+                // block in the LAYOUT instead of in the quads: it goes
+                // between pred and join, so pred's fall-through reaches it
+                // and it branches on to join. Everything else (a real
+                // branch/jsr/switch target, or an edge with no quad to
+                // rewrite) keeps the old behaviour.
+                final boolean explicit = isExplicitEdge(pred, join);
+                final boolean fallThrough = !explicit
+                    && isFallThroughEdge(pred, join);
+                if (!explicit && !fallThrough) {
                     continue;
                 }
                 java.util.IdentityHashMap<IRBasicBlock<T>, IRBasicBlock<T>> byPred =
@@ -980,7 +1005,12 @@ public class IRControlFlowGraph<T> implements Iterable<IRBasicBlock<T>> {
                     }
                 }
                 byPred.put(join, edge);
-                addBasicBlock(edge);
+                if (fallThrough) {
+                    // Layout, not quads: pred must fall into the edge block.
+                    insertBasicBlock(blockIndexOf(pred) + 1, edge);
+                } else {
+                    addBasicBlock(edge);
+                }
             }
         }
     }
@@ -1017,6 +1047,68 @@ public class IRControlFlowGraph<T> implements Iterable<IRBasicBlock<T>> {
             }
         }
         return false;
+    }
+
+    /**
+     * P11: true when {@code join} is reached from {@code pred} purely by
+     * falling off the end of {@code pred}, so no quad names the edge and
+     * {@link #isExplicitEdge} says false. Only then does putting the
+     * synthetic edge block between the two in the layout reproduce the
+     * edge: {@code join} must be the very next block (the finder only ever
+     * falls into {@code list[i + 1]}), {@code pred} must not end in a
+     * {@code RetQuad} (a ret dispatches to its resume by VALUE, so it would
+     * jump straight past a block inserted here and the edge copy would
+     * never run -- the ret to all-resumes over-approximation is documented
+     * and deliberately left unsplit), and {@code join} must not be a handler
+     * entry (that edge is an exception dispatch, ANCHOR-L2-110, and is
+     * documented as an approximation rather than split).
+     *
+     * @param pred the predecessor
+     * @param join its successor
+     * @return true for a pure layout fall-through
+     */
+    private boolean isFallThroughEdge(IRBasicBlock<T> pred,
+                                      IRBasicBlock<T> join) {
+        if (join.isStartOfExceptionHandler()) {
+            return false;
+        }
+        final List<Quad<T>> quads = pred.getQuads();
+        if (!quads.isEmpty() && quads.get(quads.size() - 1) instanceof RetQuad) {
+            return false;
+        }
+        return blockIndexOf(join) == blockIndexOf(pred) + 1;
+    }
+
+    /**
+     * @param block a block of {@code bblocks}
+     * @return its position in {@code bblocks}
+     */
+    private int blockIndexOf(IRBasicBlock<T> block) {
+        for (int i = 0; i < bblocks.length; i++) {
+            if (bblocks[i] == block) {
+                return i;
+            }
+        }
+        throw new AssertionError("block not in bblocks: " + block);
+    }
+
+    /**
+     * Splice a synthetic block into the layout. Used for fall-through edge
+     * blocks, which have to sit between their predecessor and their join to
+     * be reachable at all; {@link #addBasicBlock} appends, which is right
+     * for a block a quad can name.
+     *
+     * @param index the position to insert at
+     * @param block the block
+     */
+    private void insertBasicBlock(int index, IRBasicBlock<T> block) {
+        IRBasicBlock<T>[] expanded =
+            (IRBasicBlock<T>[]) new IRBasicBlock[bblocks.length + 1];
+        System.arraycopy(bblocks, 0, expanded, 0, index);
+        expanded[index] = block;
+        System.arraycopy(bblocks, index, expanded, index + 1,
+            bblocks.length - index);
+        bblocks = expanded;
     }
 
     private void retargetEdge(IRBasicBlock<T> pred, IRBasicBlock<T> oldTarget,

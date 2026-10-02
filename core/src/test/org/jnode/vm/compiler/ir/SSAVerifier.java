@@ -240,12 +240,56 @@ public final class SSAVerifier {
                 }
             }
         }
+        // (c) every critical edge into a phi join is split (P11 / G1). A
+        // deSSA edge copy is flushed into a PREDECESSOR and bounded only by
+        // that block's terminator, so it executes on every one of that
+        // predecessor's outgoing edges. splitCriticalEdges is what gives
+        // such an edge its own single-successor block; isExplicitEdge used
+        // to recognise only branch/jsr/switch quads, so a quad-less
+        // fall-through or a RetQuad edge was skipped and stayed critical --
+        // the join then reads a value that was computed for another
+        // successor. After the split, join's predecessors are the synthetic
+        // edge blocks, each with exactly one successor; so is any real
+        // predecessor left with more than one successor. Handler entries
+        // are exempt: ANCHOR-L2-110 makes ordinary in-try blocks successors
+        // of the handler, exception edges are never split, and their phi
+        // sources are the documented S6.4 pre-try snapshot.
+        blocks = cfg.iterator();
+        while (blocks.hasNext()) {
+            IRBasicBlock b = (IRBasicBlock) blocks.next();
+            if (b.isStartOfExceptionHandler()) {
+                continue;
+            }
+            List preds = b.getPredecessors();
+            if (preds == null || preds.size() < 2) {
+                continue;
+            }
+            if (!b.isLivePhiJoin()) {
+                // splitCriticalEdges only splits joins that carry a phi
+                // still live at deSSA time -- a pruned phi collects no
+                // copies, so an unsplit critical edge here writes nothing
+                // and cannot be observed.
+                continue;
+            }
+            for (int p = 0; p < preds.size(); p++) {
+                IRBasicBlock pred = (IRBasicBlock) preds.get(p);
+                if (pred.getSuccessors().size() > 1) {
+                    return "unsplit critical edge " + pred + " -> " + b
+                        + " (pred has " + pred.getSuccessors().size()
+                        + " successors); a copy there runs on all of them;"
+                        + " succs=" + pred.getSuccessors()
+                        + " quads=" + pred.getQuads();
+                }
+            }
+        }
         return null;
     }
 
+
     /**
      * True when v is written on every path from the CFG entry to the use at
-     * useAddr in useBlock. Defs are collected per use (equals matching, no
+     * useAddr in useBlock.
+     * Defs are collected per use (equals matching, no
      * identity assumptions); a def in a block that dominates the use block
      * covers every path by dominance; a def in the use block before the use
      * covers it by in-block order; otherwise a forward "uncovered" fixpoint
