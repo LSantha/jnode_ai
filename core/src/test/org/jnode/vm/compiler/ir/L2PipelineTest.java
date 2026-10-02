@@ -452,6 +452,83 @@ public class L2PipelineTest {
     }
 
     /**
+     * D2 (1) + D2 (2), guarded together because they are one defect seen from
+     * two ends: a compare result is typed with the operand type, and the
+     * {@code dup} family's form selection reads exactly that type.
+     * <p/>
+     * javac cannot show it. {@code lcmp} is always immediately followed by an
+     * {@code if*}, and {@code visitBranchCondition} (IRGenerator:1685)
+     * re-stamps the very same slot with {@code Operand.INT} before anything
+     * can read it -- 5,672 of 5,672 compare sites in {@code classlib.jar}
+     * work that way. So the wrong type exists only in the window between
+     * {@code doBinaryQuad} and the branch, and in javac output that window is
+     * empty. Hand-written bytecode has no such obligation: the probe lets the
+     * compare result flow straight into {@code dup2}/{@code dup_x2}.
+     * <p/>
+     * Two independent reds with the fix reverted:
+     * <ul>
+     * <li>{@code cmpDupX2} does not compile at all -- {@code visit_dup_x2}
+     * rejects form 1 (its top slot looks category 2), fails form 2's
+     * precondition too, and reaches {@code throw new
+     * IllegalArgumentException("byte code not yet supported")}.</li>
+     * <li>{@code cmpDup2} compiles, but the LCMP result slot is still LONG,
+     * which is the type {@code visit_dup2} reads at
+     * {@code variables[index - 2]} to choose between its category-1 and
+     * category-2 branch.</li>
+     * </ul>
+     * Both go green once {@code doBinaryQuad} types a compare result
+     * {@code Operand.INT}.
+     */
+    @Test
+    public void testCompareResultSlotIsInt() throws Exception {
+        java.io.File dir = java.io.File.createTempFile("cmpresultprobe", "");
+        dir.delete();
+        dir.mkdirs();
+        java.io.FileOutputStream fos = new java.io.FileOutputStream(
+            new java.io.File(dir, "CmpResultProbe.class"));
+        fos.write(CmpResultProbeBuilder.build());
+        fos.close();
+        VmSystemClassLoader child = new VmSystemClassLoader(
+            classlibUrls(dir), loader.getArchitecture());
+        VmType type = child.loadClass("CmpResultProbe", true);
+
+        assertCompareResultIsInt(type, "cmpDup2");
+        assertCompareResultIsInt(type, "cmpDupX2");
+    }
+
+    private static void assertCompareResultIsInt(VmType type, String name) throws Exception {
+        VmMethod found = null;
+        for (int i = 0; i < type.getNoDeclaredMethods(); i++) {
+            VmMethod m = type.getDeclaredMethod(i);
+            if (name.equals(m.getName())) {
+                found = m;
+            }
+        }
+        assertNotNull(name + " not found", found);
+        CompileResult r = compileMethod(found);
+        boolean seen = false;
+        for (Object b0 : (Iterable<?>) r.cfg) {
+            IRBasicBlock b = (IRBasicBlock) b0;
+            for (Object q0 : (List<?>) b.getQuads()) {
+                if (!(q0 instanceof org.jnode.vm.compiler.ir.quad.BinaryQuad)) {
+                    continue;
+                }
+                org.jnode.vm.compiler.ir.quad.BinaryQuad q =
+                    (org.jnode.vm.compiler.ir.quad.BinaryQuad) q0;
+                if (q.getOperation() != org.jnode.vm.compiler.ir.quad.BinaryOperation.LCMP) {
+                    continue;
+                }
+                seen = true;
+                assertEquals(name + ": a compare pushes an int, so its result slot must be "
+                    + "typed INT; it is the operand's type only because lhs aliases "
+                    + "operand1, and a dup form test reading it as LONG mis-routes",
+                    Operand.INT, q.getLHS().getType());
+            }
+        }
+        assertTrue(name + ": no LCMP quad survived", seen);
+    }
+
+    /**
      * CG-4b (ANCHOR-L2-071): arrays through the real pipeline (4-byte
      * element types: int/float/object; bounds checks; allocation).
      */

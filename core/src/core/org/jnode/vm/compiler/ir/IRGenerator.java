@@ -1609,7 +1609,23 @@ public class IRGenerator<T> extends BytecodeVisitor {
         stackOffset -= sCount;
         int s1 = stackOffset - sCount;
         Variable[] variables = currentBlock.getVariables();
-        variables[s1].setType(type);
+        // D2(1): a compare pushes an INT although its operands are wide.
+        // lhs and operand1 are the SAME slot (both s1), so this slot carried
+        // the operand type while holding the result. In javac output that is
+        // invisible, because lcmp/dcmp*/fcmp* are always immediately followed
+        // by an if* and visitBranchCondition re-stamps this very slot
+        // (s1 = stackOffset - 1) with Operand.INT before anything reads it --
+        // 5,672 of 5,672 compare sites in classlib.jar work that way. The
+        // operand read does not depend on the type: it is dispatched on
+        // `operation` and derives the wide half from the stack home, which is
+        // why the corpus already runs with this slot typed INT by the time SSA
+        // and the allocator see it. Typing it INT here only moves that state
+        // earlier, into the window a handwritten "lcmp; dup2" reaches, where
+        // visit_dup2/visit_dup_x2 read the slot to choose their form.
+        final boolean isCompare = op == BinaryOperation.LCMP || op == BinaryOperation.DCMPL ||
+            op == BinaryOperation.DCMPG || op == BinaryOperation.FCMPL ||
+            op == BinaryOperation.FCMPG;
+        variables[s1].setType(isCompare ? Operand.INT : type);
         variables[stackOffset].setType(type);
         if (sCount == 2 && op != BinaryOperation.LCMP && op != BinaryOperation.DCMPL &&
             op != BinaryOperation.DCMPG) {
