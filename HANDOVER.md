@@ -474,6 +474,12 @@ ANT_OPTS=-Djnode.dump.methodmap=true JAVA_TOOL_OPTIONS=-Djnode.dump.methodmap=tr
   matches**, which independently confirms "not a compiled method".
   (`local/l2boot-tools/EipMatch.java` is that sweep, adapted from `BulkMatch`; gitignored.)
 
+> **F1 CLOSED 2026-10-02 in `OPEN-BUGS.md`.** The defect that actually held the boot
+> was the §5.7 first-block loop header, which is fixed and guarded; since then the
+> boot-crash campaign advanced the boot to an error-free L2/L2 boot-to-shell, recorded
+> on every run of `regress.sh --label <l> host bootl2`. The paragraph below is retained
+> as the historical analysis of the stack-overflow vector, not as queued work.
+
 **Next action (F1, restated now that the vector is known):** the question is no longer
 "which routine owns `jmp 0xb1d2`" — it is **why L2 exhausts a ~60 KB boot stack**.
 Cheapest discriminating measurement first: make the fatal `int_stack_overflow` path print
