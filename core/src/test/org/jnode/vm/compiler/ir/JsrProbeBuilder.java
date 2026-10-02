@@ -43,8 +43,31 @@ import java.io.IOException;
  * </pre>
  * max_stack 1, max_locals 3, no exception table. The bytes were validated
  * with host javap (disassembles to the above).
+ * <p/>
+ * It also carries {@code jsrDemoA}, the D1 hazard-A shape, where the
+ * subroutine sits BELOW its jsr so the address-ordered translation reaches
+ * the subroutine entry first:
+ *
+ * <pre>
+ * static int jsrDemoA(int x) {
+ *   0: iload_0
+ *   1: istore_1          // l1 = x
+ *   2: goto 11           // skip over the subroutine
+ *   5: astore_2          // subroutine entry -- BELOW the jsr at 11
+ *   6: iinc 1, 10        // l1 += 10
+ *   9: ret 2
+ *  11: jsr 5             // target 5, resume 14
+ *  14: iload_1
+ *  15: ireturn
+ * }
+ * </pre>
+ * javac never emits this (it lays subroutines out last), so it is built by
+ * hand -- see {@code L2PipelineTest#testJsrEntryBelowJsrDecidesDepthFromCfg}.
  */
 final class JsrProbeBuilder {
+
+    /** max_locals of both demo methods: arg x, local l1, the return address. */
+    static final int MAX_LOCALS = 3;
 
     private JsrProbeBuilder() {
     }
@@ -55,7 +78,7 @@ final class JsrProbeBuilder {
         out.writeInt(0xCAFEBABE);
         out.writeShort(0);
         out.writeShort(49);
-        out.writeShort(13); // constant_pool_count
+        out.writeShort(14); // constant_pool_count
         writeUtf8(out, "JsrProbe"); // 1
         out.writeByte(7);
         out.writeShort(1); // 2 Class #1
@@ -76,12 +99,13 @@ final class JsrProbeBuilder {
         out.writeByte(12);
         out.writeShort(5);
         out.writeShort(6); // 12 NameAndType #5:#6
+        writeUtf8(out, "jsrDemoA"); // 13
         out.writeShort(0x0021);
         out.writeShort(2);
         out.writeShort(4);
         out.writeShort(0);
         out.writeShort(0);
-        out.writeShort(2); // two methods
+        out.writeShort(3); // three methods
         // <init>
         out.writeShort(1);
         out.writeShort(8);
@@ -107,6 +131,27 @@ final class JsrProbeBuilder {
         out.writeInt(13);
         out.write(new byte[]{0x03, 0x3C, (byte) 0xA8, 0x00, 0x05, 0x1B, (byte) 0xAC, 0x4D, (byte) 0x84,
             0x01, 0x0A, (byte) 0xA9, 0x02});
+        out.writeShort(0);
+        out.writeShort(0);
+        // jsrDemoA -- D1 hazard A: the subroutine entry (pc 5) is BELOW the
+        // jsr (pc 11), so the address-ordered translation reaches it first.
+        out.writeShort(0x0009);
+        out.writeShort(13);
+        out.writeShort(6);
+        out.writeShort(1);
+        out.writeShort(7);
+        out.writeInt(12 + 16);
+        out.writeShort(1);
+        out.writeShort(MAX_LOCALS);
+        out.writeInt(16);
+        out.write(new byte[]{
+            0x1A, 0x3C,                                  //  0 iload_0,  1 istore_1
+            (byte) 0xA7, 0x00, 0x09,                     //  2 goto +9 -> 11
+            0x4D,                                        //  5 astore_2
+            (byte) 0x84, 0x01, 0x0A,                     //  6 iinc 1, 10
+            (byte) 0xA9, 0x02,                           //  9 ret 2
+            (byte) 0xA8, (byte) 0xFF, (byte) 0xFA,       // 11 jsr -6 -> 5
+            0x1B, (byte) 0xAC});                         // 14 iload_1, 15 ireturn
         out.writeShort(0);
         out.writeShort(0);
         out.writeShort(0); // class attributes

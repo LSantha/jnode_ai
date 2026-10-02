@@ -201,6 +201,19 @@ public class IRBasicBlock<T> {
     }
 
     /**
+     * D1: the raw entry depth, or -1 when no one has decided it yet.
+     * Unlike {@link #getStackOffset()} this never walks the idominator
+     * chain, so a caller can tell "not decided" from "decided" without
+     * memoizing a guess. Only {@link JsrDepthProbe} needs that: it has to
+     * defer a block until a translated predecessor fixes its depth.
+     *
+     * @return the raw stack offset, -1 when undecided
+     */
+    public int peekStackOffset() {
+        return stackOffset;
+    }
+
+    /**
      * @param q a quad
      */
     public void add(Quad<T> q) {

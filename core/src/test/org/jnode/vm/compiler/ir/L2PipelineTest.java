@@ -2160,6 +2160,95 @@ public class L2PipelineTest {
         assertTrue("jsr must CALL the subroutine, got:\n" + text, text.contains("call "));
     }
 
+    /**
+     * Load the hand-built JsrProbe class through a child loader and return
+     * one of its methods.
+     *
+     * @param name the method name to find
+     * @return that method
+     */
+    private VmMethod findProbeMethod(String name) throws Exception {
+        java.io.File dir = java.io.File.createTempFile("jsrprobe2", "");
+        dir.delete();
+        dir.mkdirs();
+        java.io.FileOutputStream fos = new java.io.FileOutputStream(
+            new java.io.File(dir, "JsrProbe.class"));
+        fos.write(JsrProbeBuilder.build());
+        fos.close();
+        VmSystemClassLoader child = new VmSystemClassLoader(
+            classlibUrls(dir), loader.getArchitecture());
+        VmType type = child.loadClass("JsrProbe", true);
+        VmMethod found = null;
+        for (int i = 0; i < type.getNoDeclaredMethods(); i++) {
+            VmMethod m = type.getDeclaredMethod(i);
+            if (name.equals(m.getName())) {
+                found = m;
+            }
+        }
+        assertNotNull(name + " not found", found);
+        return found;
+    }
+
+    /**
+     * D1 hazard A: the subroutine entry sits BELOW its jsr (jsrDemoA has the
+     * entry at pc 5 and the jsr at pc 11), so the address-ordered
+     * translation reaches the entry first. Without the pre-translation
+     * decision ({@link JsrDepthProbe}) the entry resolves through
+     * {@code IRBasicBlock.getStackOffset}'s idominator fallback, which walks
+     * straight past the jsr block without applying the pushed return
+     * address: the entry would be entered at nLocals instead of
+     * nLocals + 1, {@code astore 2} would read local slot 2 instead of the
+     * pushed address, and {@code ret} would jump to garbage. The write from
+     * visit_jsr then lands on an already-decided block and the D1 guard
+     * fires with "stack depth disagreement".
+     *
+     * <p/>
+     * javac never lays a subroutine out below its caller, which is exactly
+     * why the probe is hand-built: jnode has to compile bytecode it did not
+     * get from javac.
+     */
+    @Test
+    public void testJsrEntryBelowJsrDecidesDepthFromCfg() throws Exception {
+        VmMethod found = findProbeMethod("jsrDemoA");
+        // Assert at post-DCE, where block startPC/endPC are still bytecode
+        // addresses: fixupAddresses (run by deSSAAndFixup) renumbers them, so
+        // getBasicBlock(5) would no longer name the subroutine entry.
+        IRControlFlowGraph cfg = runToPostDce(found);
+
+        IRBasicBlock entry = cfg.getBasicBlock(5);
+        assertNotNull("no subroutine entry block at pc 5", entry);
+        assertEquals("subroutine entry depth must include the pushed return address",
+            JsrProbeBuilder.MAX_LOCALS + 1, entry.peekStackOffset());
+
+        IRBasicBlock resume = cfg.getBasicBlock(14);
+        assertNotNull("no resume block at pc 14", resume);
+        assertEquals("resume depth is the pre-push depth at the jsr",
+            JsrProbeBuilder.MAX_LOCALS, resume.peekStackOffset());
+
+        String v = SSAVerifier.verifyPreDessA(cfg);
+        if (v != null) {
+            fail("SSA violation (pre-deSSA) in jsrDemoA: " + v);
+        }
+        v = SSAVerifier.verifyWidths(cfg);
+        if (v != null) {
+            fail("width violation in jsrDemoA: " + v);
+        }
+        X86Level2Compiler.deSSAAndFixup(cfg);
+        v = SSAVerifier.verifyPostDessA(cfg);
+        if (v != null) {
+            fail("SSA violation (post-deSSA) in jsrDemoA: " + v);
+        }
+        v = SSAVerifier.verifyWidths(cfg);
+        if (v != null) {
+            fail("width violation in jsrDemoA: " + v);
+        }
+
+        String text = compileToText(found);
+        assertTrue("no code emitted for jsrDemoA", text.length() > 0);
+        assertTrue("jsr must CALL the subroutine, got:\n" + text,
+            text.contains("call "));
+    }
+
     // ---------------- T1: dominator-tree exactness (ANCHOR-L2-004) ----------------
 
     private static void assertDominatedTreeExact(String name) throws Exception {

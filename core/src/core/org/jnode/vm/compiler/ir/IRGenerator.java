@@ -173,13 +173,39 @@ public class IRGenerator<T> extends BytecodeVisitor {
     private TypeSizeInfo typeSizeInfo;
     private VmClassLoader vmClassLoader;
     private IRControlFlowGraph<T> cfg;
+    /**
+     * D1: set only on the throwaway generator {@link JsrDepthProbe} drives.
+     * That one walks blocks in CFG order instead of address order, and it
+     * must not start a probe of its own.
+     */
+    private final boolean depthProbe;
 
     public IRGenerator(IRControlFlowGraph<T> cfg, TypeSizeInfo typeSizeInfo, VmClassLoader loader) {
+        this(cfg, typeSizeInfo, loader, false);
+    }
+
+    private IRGenerator(IRControlFlowGraph<T> cfg, TypeSizeInfo typeSizeInfo, VmClassLoader loader,
+                        boolean depthProbe) {
         basicBlockIterator = cfg.iterator();
         currentBlock = basicBlockIterator.next();
         this.typeSizeInfo = typeSizeInfo;
         this.vmClassLoader = loader;
         this.cfg = cfg;
+        this.depthProbe = depthProbe;
+    }
+
+    /**
+     * D1: build the generator {@link JsrDepthProbe} parses with. Package
+     * private on purpose: nothing outside the ir package runs a probe.
+     *
+     * @param cfg the throwaway CFG the probe parses into
+     * @param typeSizeInfo the type sizes
+     * @param loader the class loader
+     * @return a probe-mode generator that skips the probe itself
+     */
+    static <T> IRGenerator<T> newDepthProbe(IRControlFlowGraph<T> cfg, TypeSizeInfo typeSizeInfo,
+                                            VmClassLoader loader) {
+        return new IRGenerator<T>(cfg, typeSizeInfo, loader, true);
     }
 
     public void setParser(BytecodeParser parser) {
@@ -222,9 +248,57 @@ public class IRGenerator<T> extends BytecodeVisitor {
             index += 1;
         }
         currentBlock.setVariables(variables);
+        if (!depthProbe) {
+            // D1: decide the jsr/ret depths from the CFG before the real,
+            // address-ordered translation below starts reading them.
+            JsrDepthProbe.run(cfg, method, typeSizeInfo, vmClassLoader);
+        }
     }
 
     public void endMethod() {
+    }
+
+    /**
+     * D1: position this generator at {@code b} using the depth the CFG probe
+     * already decided for it. The probe walks blocks in CFG order, not
+     * address order, so the linear bookkeeping in {@code startInstruction}
+     * cannot run: there is no meaningful "last block" to compare against, and
+     * the block's depth must not be re-derived from its idominator (that is
+     * the order dependence D1 is about). Only {@link JsrDepthProbe} calls this.
+     *
+     * @param b the block about to be parsed
+     */
+    void beginBlock(IRBasicBlock<T> b) {
+        currentBlock = b;
+        address = b.getStartPC();
+        stackOffset = b.getStackOffset();
+        if (b.isStartOfExceptionHandler()) {
+            // Same setup startInstruction does on entering a handler, minus
+            // the address-order test: the implicit exception store consumes
+            // the slot, so the handler body starts one deeper than the
+            // block's recorded entry depth.
+            stackOffset = nLocals;
+            b.setStackOffset(stackOffset);
+            b.setVariables(variables.clone());
+            b.getVariables()[stackOffset] = new ExceptionArgument(Operand.REFERENCE, stackOffset);
+            exceptionSlot = stackOffset;
+            handlerEntry = true;
+            stackOffset++;
+        } else {
+            handlerEntry = false;
+            exceptionSlot = -1;
+        }
+    }
+
+    /**
+     * D1: the depth this generator is at right now -- i.e. the exit depth of
+     * the block the probe just finished parsing. Only {@link JsrDepthProbe}
+     * reads it, to propagate that depth to the block's successors.
+     *
+     * @return the live operand-stack depth
+     */
+    int getBlockExitDepth() {
+        return stackOffset;
     }
 
     public void startInstruction(int address) {
@@ -1593,11 +1667,23 @@ public class IRGenerator<T> extends BytecodeVisitor {
 
     public void visit_ret(int index) {
         // ANCHOR-L2-079: indirect jump through the local (no stack effect,
-        // no fallthrough -- the Finder already ends the block). Propagate the
-        // (unchanged) depth to the resume blocks (same value the jsr set;
-        // harmless if already set -- depths agree by verification).
+        // no fallthrough -- the Finder already ends the block).
+        //
+        // D1 hazard B: this used to call setSuccessorStackOffset() here,
+        // justified with "harmless if already set -- depths agree by
+        // verification". No such verification existed, and the successor
+        // list is an OVER-APPROXIMATION: IRBasicBlockFinder:127-141 wires
+        // every ret to the resume block of EVERY jsr site, not just its own
+        // subroutine. A method with two jsr's at different operand depths
+        // therefore had ret1 overwrite jsr2's resume with ret1's depth, and
+        // whichever writer ran second threw "stack depth disagreement" on
+        // legal bytecode.
+        //
+        // Nothing is lost by dropping it: a resume block's depth is the
+        // depth at its OWN jsr, which visit_jsr already writes (IRGenerator
+        // just below), and JsrDepthProbe decides it from the CFG before the
+        // translation reaches it at all.
         currentBlock.add(new RetQuad<T>(address, currentBlock, index));
-        setSuccessorStackOffset();
     }
 
     // TODO
