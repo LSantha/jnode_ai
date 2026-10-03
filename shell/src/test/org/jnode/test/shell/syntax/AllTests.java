@@ -29,7 +29,7 @@ import org.junit.runners.Suite;
     MuSyntaxTest.class, MuParserTest.class, MuParserTest2.class, ArgumentMultiplicityTest.class,
     CommandLineTest.class, RepeatSyntaxTest.class, SequenceSyntaxTest.class,
     OptionSyntaxTest.class, PowersetSyntaxTest.class, OptionSetSyntaxTest.class,
-    AlternativesSyntaxTest.class })
+    AlternativesSyntaxTest.class, GroupSyntaxTest.class })
 public class AllTests {
 
 }
