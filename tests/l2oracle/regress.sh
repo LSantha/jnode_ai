@@ -263,7 +263,7 @@ boot() {
   # a once-per-run prelude -- a build between legs replaces the image under the
   # runner. Cheap size check before each boot; mismatch means the ISO on disk is
   # not the verified oracle image, so refuse rather than boot it.
-  local iso_now iso_want
+  local iso_now iso_want _svout _state _ready
   iso_now=$(stat -c %s all/build/cdroms/jnode-x86-lite.iso 2>/dev/null)
   iso_want=$(sed -n 's/^iso_bytes=//p' all/build/cdroms/jnode-x86-lite.iso.artifact 2>/dev/null)
   if [ -n "$iso_want" ] && [ "$iso_now" != "$iso_want" ]; then
@@ -274,9 +274,35 @@ boot() {
   rm -f /tmp/jnode-ready /tmp/jnode.kdb
   vboxmanage controlvm "$VM" poweroff >/dev/null 2>&1
   sleep 3
-  vboxmanage startvm "$VM" --type headless >/dev/null 2>&1
+  # ANCHOR-L2-211: startvm was swallowed into /dev/null and the readiness test
+  # was `[ -f /tmp/jnode-ready ]` -- but boot-wait.sh ALWAYS writes that file:
+  # seconds on success, "timeout" at line 27, "panic" at line 19. So the test
+  # could not fail, and a VM that never started still reached the caller's
+  # "guest up" line. Measured 2026-10-03: this session runs with NoNewPrivs=1,
+  # which neutralises VBoxHeadless's setuid bit, so the front end died in
+  # SUPR3HardenedMain ("Effective UID is not root"), the VM stayed powered off
+  # since 07:15, and the oracle leg logged `LIVE oracle: guest up` anyway --
+  # after which every batch ended `TIMEOUT link down too long`, which reads
+  # like a slow guest rather than a dead one (see ANCHOR-L2-187).
+  # A check that cannot fail is not a check: require startvm to succeed, the
+  # VM to be running, and the probe file to hold a number.
+  if ! _svout=$(vboxmanage startvm "$VM" --type headless 2>&1); then
+    say "BOOT FATAL: vboxmanage startvm failed: $(printf '%s' "$_svout" | tr '\n' ' ' | cut -c1-240)"
+    return 1
+  fi
   sh "$TOOLS/boot-wait.sh" >/dev/null 2>&1
-  [ -f /tmp/jnode-ready ]; }
+  _state=$(vboxmanage showvminfo "$VM" --machinereadable 2>/dev/null | sed -n 's/^VMState="\(.*\)"$/\1/p')
+  if [ "$_state" != "running" ]; then
+    say "BOOT FATAL: VMState=${_state:-missing} after boot-wait, guest never came up"
+    return 1
+  fi
+  _ready=$(cat /tmp/jnode-ready 2>/dev/null)
+  if ! printf '%s' "$_ready" | grep -Eq '^[0-9]+$'; then
+    say "BOOT FATAL: no live agent shell (jnode-ready=${_ready:-missing})"
+    return 1
+  fi
+  return 0
+}
 fetch() { g 90 "$1" "cat $2" 2>/dev/null | grep -avE '^\[batch|still running' | tr -d '\r' > "$3"; wc -l < "$3"; }
 CP=core/build/testclasses:core/build/classes:local/classlib:core/lib/junit-4.5.jar
 
