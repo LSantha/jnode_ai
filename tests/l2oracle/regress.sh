@@ -123,6 +123,57 @@ want() { case " $PHASES " in *" $1 "*) return 0 ;; esac; return 1; }
 # Report an inline (non-`run`) failure and count it. `||` chains stay readable
 # and the tally cannot be forgotten at the call site.
 fail() { say "$*"; FAILURES=$((FAILURES + 1)); }
+# ANCHOR-L2-210: gsh.sh runs serial_cmd.py, which calls ensure_mux() and
+# starts serial_mux.py -- and nothing ever stopped it, so every run that
+# reached oracle or mauve left one behind and the NEXT run bootl2 died rc=2
+# on the leftover. The interact boot path does not use the mux at all, so
+# for boot-l2 a leftover is pure garbage over a single-client socket.
+# Measured 2026-10-03: a run left a mux, the next run bootl2-1 and
+# bootl2-2 both failed rc=2 while every other phase passed (build, policy,
+# anchors, t0/t3/t1, alljunit, census, isobuild all green), and the only
+# cure was killing the PID by hand -- four times that morning, again after
+# an aborted run.
+# Stop ONLY a mux this run created. A pre-existing one is somebody else
+# session (the jnode-serial skill against VirtualBox) and is left alone,
+# which keeps the ANCHOR-L2-205 fail-fast decision intact: a foreign holder
+# still stops boot-l2 with its PID named rather than being killed.
+PRE_MUX=
+if [ -r /tmp/jnode_serial_mux.pid ]; then
+  PRE_MUX=$(cat /tmp/jnode_serial_mux.pid 2>/dev/null || true)
+fi
+stop_own_mux() {
+  if [ ! -r /tmp/jnode_serial_mux.pid ]; then
+    return 0
+  fi
+  _mpid=$(cat /tmp/jnode_serial_mux.pid 2>/dev/null || true)
+  if [ -z "$_mpid" ] || [ "$_mpid" = "$PRE_MUX" ]; then
+    return 0
+  fi
+  say "MUXCLEAN stopping mux started by this run pid=$_mpid"
+  kill "$_mpid" 2>/dev/null || true
+  _i=0
+  while [ "$_i" -lt 50 ] && kill -0 "$_mpid" 2>/dev/null; do
+    sleep 0.1
+    _i=$((_i + 1))
+  done
+  if kill -0 "$_mpid" 2>/dev/null; then
+    say "MUXCLEAN FAILED pid=$_mpid survived the stop"
+    FAILURES=$((FAILURES + 1))
+    return 1
+  fi
+  # Drop the pidfile as well: a stale entry would make the NEXT run capture
+  # a recycled PID as PRE_MUX and then refuse to stop a mux it did create.
+  # It also makes this function idempotent, which is why the INT trap plus
+  # the exit trap used to log the same stop twice.
+  rm -f /tmp/jnode_serial_mux.pid /tmp/jnode_serial_mux.status
+  return 0
+}
+# The trap covers every exit path, including an early exit 2 and a Ctrl-C;
+# the explicit call before the verdict is what makes a leak fail the gate
+# (a trap that runs after the verdict cannot change it).
+trap stop_own_mux 0
+trap 'stop_own_mux; exit 130' INT
+trap 'stop_own_mux; exit 143' TERM
 # ANCHOR-L2-164: a phase's exit status IS its verdict. A check chain whose
 # last command happens to succeed (a trailing grep) once reported PASS over
 # a failing census; each multi-check phase therefore ends with an explicit
@@ -613,6 +664,10 @@ if want mauve; then
   done
 fi
 rm -f /tmp/jnode-ready
+# ANCHOR-L2-210: stop the mux this run created before the verdict, so a
+# leak increments FAILURES and reddens the gate. The trap above still runs
+# on every other exit path, but it fires after the exit code is decided.
+stop_own_mux || true
 # ANCHOR-L2-200: the process exit status is the gate. $ST keeps the per-phase
 # detail; $? is what an automated consumer actually reads.
 if [ "$FAILURES" -gt 0 ]; then
