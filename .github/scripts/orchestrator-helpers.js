@@ -115,7 +115,7 @@ module.exports = function createHelpers({ github, context, core }) {
       if (FORBIDDEN_DIFF_RE.test(filename)) return false;
       if (!TEST_PATH_RE.test(filename)) testOnly = false;
     }
-    return additions <= (testOnly ? 300 : 100);
+    return additions <= (testOnly ? 400 : 100);
   }
 
   /** True when CI check runs on the PR head SHA show success and no failure. */

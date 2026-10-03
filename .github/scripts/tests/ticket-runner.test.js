@@ -447,9 +447,9 @@ test("merge safety gate helpers", async (t) => {
   });
 
   await t.test("isDiffSafe: allows large test-only diffs but not production diffs", async () => {
-    const hTest = makeHelpers({ files: [{ filename: "core/src/test/NumberUtilsTest.java", additions: 244 }] });
+    const hTest = makeHelpers({ files: [{ filename: "core/src/test/NumberUtilsTest.java", additions: 301 }] });
     assert.strictEqual(await hTest.isDiffSafe(99), true);
-    const hTestTooBig = makeHelpers({ files: [{ filename: "core/src/test/NumberUtilsTest.java", additions: 301 }] });
+    const hTestTooBig = makeHelpers({ files: [{ filename: "core/src/test/NumberUtilsTest.java", additions: 401 }] });
     assert.strictEqual(await hTestTooBig.isDiffSafe(99), false);
     const hMixed = makeHelpers({ files: [
       { filename: "core/src/test/NumberUtilsTest.java", additions: 200 },
