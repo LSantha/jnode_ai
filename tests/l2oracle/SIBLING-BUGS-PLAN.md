@@ -697,6 +697,21 @@ a `placeHandlerPhis`-style fix only on a hit. Repro sketch: two-block try
 - Reconcile `hasPhiFor:1924` break-on-first-non-phi vs `:759` full scan
   (currently saved by phi-prepend convention only).
 
+Status 2026-10-03 (applied as ANCHOR-L2-217): all three bullets.
+`IRControlFlowGraph.isCallLike` is public and the only `boolean isCallLike`
+in `core/src` (guarded by an anchors count of 1); `forcedSpills`, the DCE
+keep-list, the census lint and both `L2PipelineTest` mirrors call it.
+`handlerTops/handlerPres` was already deleted by P0 in `5813624ad` (zero
+hits left). `hasPhiFor` scans the whole list like `newPhiVariable`.
+The ArrayLength half of the bullet turned out to be a live defect, not a
+cleanup: P5 only put `ArrayLengthAssignQuad` in the DCE keep-list, so the
+always-executed scan (which includes the def own address) said "definitely
+written" for `v = arr.length` and the catch read the caller register
+instead of the pre-try value -- witness `PrimitiveTest#lenInTry`, whose
+catch went from `mov eax, dword esi` to `mov eax, 0x00000000`. Census lint
+`CALLNOTCALLLIKE` (232 hits when `ConstantClassAssignQuad` is dropped from
+the predicate) is gated at 0 from now on.
+
 ## Execution order
 
 P0 → P1 → P2 → P3 → P4 → P5 → P6 → P7 → P8 → P9 → P10 → P11 → P12 → P13 →

@@ -1075,6 +1075,25 @@ public class PrimitiveTest {
     }
 
     /**
+     * ANCHOR-L2-217 (G9/P19): ArrayLengthAssignQuad reads arr.length and
+     * throws NPE before its own result exists, exactly as ArrayAssignQuad
+     * does -- but P5 only added it to the DCE keep-list, never to
+     * isCallLike. The def quad's address equals the address scanned by
+     * isDefUnwrittenOnExceptionalEdge (q.getAddress() <= defAddr), so its
+     * membership decides whether the handler is handed the pre-try version
+     * of v or the in-try one the NPE path never produced.
+     */
+    public static int lenInTry(int[] arr) {
+        int v = 0;
+        try {
+            v = arr.length;
+        } catch (RuntimeException e) {
+            return v;
+        }
+        return v + 1;
+    }
+
+    /**
      * ANCHOR-L2-216 (G8/P18): the in-try def sits AFTER a call in its own
      * block, so isDefUnwrittenOnExceptionalEdge calls it possibly-unwritten,
      * yet the exception is thrown from a LATER block that this def block

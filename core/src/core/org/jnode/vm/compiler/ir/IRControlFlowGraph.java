@@ -407,24 +407,18 @@ public class IRControlFlowGraph<T> implements Iterable<IRBasicBlock<T>> {
 
 
                 AssignQuad dq = u.getKey().getAssignQuad();
-                if (dq instanceof CallAssignQuad ||
-                    dq instanceof NewAssignQuad ||
-                    dq instanceof NewObjectArrayAssignQuad ||
-                    dq instanceof NewPrimitiveArrayAssignQuad ||
-                    dq instanceof NewMultiArrayAssignQuad ||
-                    dq instanceof JsrQuad ||
-                    // ANCHOR-L2-146: throwing defs are live for their
-                    // effects. An apparently-unused arr[i] (bounds/NPE),
-                    // arr.length (NPE) or idiv/irem/ldiv/lrem
-                    // (ArithmeticException) inside a try must still trap;
-                    // deleting it silently drops the precise exception
-                    // (witness: deadThrowObserved compiled to bare
-                    // `return 1`). MemLoad/MagicOp deliberately NOT kept:
-                    // no trap-capable instance identified (revisit with
-                    // evidence). Shared throwing-predicate is P19.
-                    dq instanceof ArrayAssignQuad ||
-                    dq instanceof ArrayLengthAssignQuad ||
-                    isThrowingBinary(dq)) {
+                // ANCHOR-L2-146: throwing defs are live for their effects.
+                // An apparently-unused arr[i] (bounds/NPE), arr.length (NPE)
+                // or idiv/irem/ldiv/lrem (ArithmeticException) inside a try
+                // must still trap; deleting it silently drops the precise
+                // exception (witness: deadThrowObserved compiled to bare
+                // `return 1`). MemLoad/MagicOp deliberately NOT kept: no
+                // trap-capable instance identified (revisit with evidence).
+                // ANCHOR-L2-217 (G9/P19): this was a second hand-kept list
+                // of that same question; P5 asked for one shared predicate
+                // and P19 delivers it -- isCallLike now answers for DCE, the
+                // always-executed reasoning, the allocator and the mirrors.
+                if (isCallLike(dq)) {
                     //todo optimize it, could be transformed to CallQuad
                     // (JsrQuad: control effects -- entering the subroutine.
                     // ANCHOR-L2-079.)
@@ -2714,7 +2708,28 @@ public class IRControlFlowGraph<T> implements Iterable<IRBasicBlock<T>> {
         return false;
     }
 
-    private static boolean isCallLike(Quad q) {
+    /**
+     * ANCHOR-L2-217 (G9/P19): THE call-like predicate. It answers one
+     * question -- can this quad fail to complete normally (it calls out, or
+     * it traps) -- and four call sites used to answer it from four hand
+     * kept-in-step lists: the always-executed reasoning in
+     * {@link #isDefUnwrittenOnExceptionalEdge}, the allocator's
+     * {@code X86Level2Compiler.forcedSpills}, the DCE keep-list in
+     * {@link #removeUnusedVars}, and the census/test mirrors. P6 (L2-147)
+     * is what that arrangement costs: the IR copy missed LDIV/LREM, so a
+     * def after a divide was deemed always-executed and the handler/resume
+     * phi read a never-written home (witness: divInTry handler returning
+     * in-try s7_3).
+     *
+     * <p>Census lint CALLNOTCALLLIKE is the structural backstop for this
+     * list and is gated: it asks the EMISSION whether it calls out, without
+     * consulting any list, so a quad that starts calling out without being
+     * added here fails the gate instead of silently corrupting.
+     *
+     * @param q quad to classify
+     * @return true if {@code q} may not complete normally
+     */
+    public static boolean isCallLike(Quad q) {
         return q instanceof CallQuad || q instanceof CallAssignQuad
             || q instanceof MonitorenterQuad || q instanceof MonitorexitQuad
             || q instanceof JsrQuad || q instanceof ThrowQuad
@@ -2722,26 +2737,33 @@ public class IRControlFlowGraph<T> implements Iterable<IRBasicBlock<T>> {
             || q instanceof NewPrimitiveArrayAssignQuad
             || q instanceof NewMultiArrayAssignQuad
             || q instanceof ArrayAssignQuad || q instanceof ArrayStoreQuad
-            // ANCHOR-L2-164: keep the two isCallLike copies in step --
-            // the backend calls out for a class literal (getClassForVmType)
-            // and for the interface/array checkcast helper, and this mirror
-            // drives the always-executed reasoning that must agree with the
-            // allocator's view. Census lint CALLNOTCALLLIKE is the
-            // structural check that keeps them from drifting again.
+            // ANCHOR-L2-217 (G9/P19): P5 put ArrayLengthAssignQuad in the
+            // DCE keep-list only, so this list never saw it. Its address is
+            // the def's own address and isDefUnwrittenOnExceptionalEdge
+            // scans q.getAddress() <= defAddr, so membership alone decides
+            // whether the handler is handed the pre-try version of the local
+            // or the in-try one the NPE never produced. Witness lenInTry:
+            // pre-fix the catch read ESI (the unwritten arr.length result,
+            // caller garbage); post-fix it returns the pre-try 0.
+            || q instanceof ArrayLengthAssignQuad
+            // ANCHOR-L2-164: quads that CALL OUT without being calls -- a
+            // class literal (getClassForVmType) and the interface/array
+            // checkcast helper. Once a second copy in X86Level2Compiler had
+            // to be kept in step with this one; ANCHOR-L2-217 removed it.
             || q instanceof ConstantClassAssignQuad
             || q instanceof CheckcastQuad
-            // ANCHOR-L2-204 (G11/M2): keep this mirror in step with the
-            // allocator's view -- a reference putfield/putstatic may call
-            // the GC write-barrier helper, and it can also throw, so it is
-            // not always-executed either.
+            // ANCHOR-L2-204 (G11/M2): a reference putfield/putstatic may
+            // call the GC write-barrier helper, and it can also throw, so it
+            // is not always-executed either.
             || q instanceof RefStoreQuad
             || q instanceof StaticRefStoreQuad
-            // ANCHOR-L2-147: LDIV/LREM trap like the X86 mirror says
-            // (plus IDIV/IREM: the backend emits trapping IDIV -- the
-            // mirror's omission there is documented drift, not a model).
-            // Without this, a def after a divide was deemed
-            // always-executed and handler/resume phis read a never-written
-            // home (witness: divInTry handler returning in-try s7_3).
+            // ANCHOR-L2-147: LDIV/LREM and IDIV/IREM trap. Without this a
+            // def after a divide was deemed always-executed and
+            // handler/resume phis read a never-written home (witness:
+            // divInTry handler returning in-try s7_3). The allocator sees
+            // the same list now: a trapping divide can transfer control to
+            // a handler in the same frame, and nothing preserves the pooled
+            // caller-saved registers across the unwind.
             || isThrowingBinary(q);
     }
 
@@ -2879,13 +2901,23 @@ public class IRControlFlowGraph<T> implements Iterable<IRBasicBlock<T>> {
 
     /**
      * ANCHOR-L2-125: true when a live phi for the given local slot already
-     * exists at the head of the block's quads.
+     * exists in the block.
+     *
+     * <p>ANCHOR-L2-217 (G9/P19): this used to stop at the first non-phi,
+     * which is correct only while every phi is physically prepended, while
+     * the other half of the same question ({@link #newPhiVariable}) has
+     * always scanned the whole list. The two disagreed by construction and
+     * were held together by the prepend convention alone: a phi that ever
+     * lands after a quad makes this return false and the caller insert a
+     * SECOND phi for the same slot -- two defs of one slot in one block.
+     * Full scan now: never adds a duplicate, whatever the layout.
+     * Package-visible for L2PipelineTest#testHasPhiForScansPastNonPhi.
      */
-    private boolean hasPhiFor(IRBasicBlock<T> block, int slot) {
+    boolean hasPhiFor(IRBasicBlock<T> block, int slot) {
         List<Quad<T>> quads = block.getQuads();
         for (Quad<T> q : quads) {
             if (!(q instanceof PhiAssignQuad)) {
-                break;
+                continue;
             }
             if (!q.isDeadCode() && q.getDefinedOp() != null
                 && ((Variable) q.getDefinedOp()).getIndex() == slot) {

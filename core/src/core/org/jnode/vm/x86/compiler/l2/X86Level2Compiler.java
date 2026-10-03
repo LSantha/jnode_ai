@@ -48,26 +48,9 @@ import org.jnode.vm.compiler.ir.LiveRange;
 import org.jnode.vm.compiler.ir.MethodArgument;
 import org.jnode.vm.compiler.ir.StackLocation;
 import org.jnode.vm.compiler.ir.Variable;
-import org.jnode.vm.compiler.ir.quad.ArrayAssignQuad;
-import org.jnode.vm.compiler.ir.quad.ArrayStoreQuad;
 import org.jnode.vm.compiler.ir.quad.AssignQuad;
-import org.jnode.vm.compiler.ir.quad.BinaryOperation;
 import org.jnode.vm.compiler.ir.quad.BinaryQuad;
-import org.jnode.vm.compiler.ir.quad.CheckcastQuad;
-import org.jnode.vm.compiler.ir.quad.ConstantClassAssignQuad;
-import org.jnode.vm.compiler.ir.quad.CallAssignQuad;
-import org.jnode.vm.compiler.ir.quad.CallQuad;
-import org.jnode.vm.compiler.ir.quad.JsrQuad;
-import org.jnode.vm.compiler.ir.quad.MonitorenterQuad;
-import org.jnode.vm.compiler.ir.quad.MonitorexitQuad;
-import org.jnode.vm.compiler.ir.quad.NewAssignQuad;
-import org.jnode.vm.compiler.ir.quad.NewMultiArrayAssignQuad;
-import org.jnode.vm.compiler.ir.quad.NewObjectArrayAssignQuad;
-import org.jnode.vm.compiler.ir.quad.NewPrimitiveArrayAssignQuad;
 import org.jnode.vm.compiler.ir.quad.Quad;
-import org.jnode.vm.compiler.ir.quad.RefStoreQuad;
-import org.jnode.vm.compiler.ir.quad.StaticRefStoreQuad;
-import org.jnode.vm.compiler.ir.quad.ThrowQuad;
 import org.jnode.vm.compiler.ir.quad.VariableRefAssignQuad;
 import org.jnode.vm.facade.TypeSizeInfo;
 import org.jnode.vm.scheduler.VmProcessor;
@@ -441,7 +424,7 @@ public class X86Level2Compiler extends AbstractX86Compiler {
             }
             for (Object q0 : (List<?>) b.getQuads()) {
                 final Quad q = (Quad) q0;
-                if (isCallLike(q)) {
+                if (IRControlFlowGraph.isCallLike(q)) {
                     callAddrs.add(Integer.valueOf(q.getAddress()));
                 }
             }
@@ -482,55 +465,6 @@ public class X86Level2Compiler extends AbstractX86Compiler {
             }
         }
         return forced;
-    }
-
-    /**
-     * 107: quads whose emission contains (or may contain, on a slow path) a
-     * call instruction. Array accesses throw via a runtime call on the
-     * failure path; long div/rem call the runtime; unwinding preserves
-     * nothing, hence ThrowQuad.
-     */
-    public static boolean isCallLike(Quad q) {
-        if (q instanceof CallQuad || q instanceof CallAssignQuad
-            || q instanceof MonitorenterQuad || q instanceof MonitorexitQuad
-            || q instanceof JsrQuad || q instanceof ThrowQuad
-            || q instanceof NewAssignQuad || q instanceof NewObjectArrayAssignQuad
-            || q instanceof NewPrimitiveArrayAssignQuad || q instanceof NewMultiArrayAssignQuad
-            || q instanceof ArrayAssignQuad || q instanceof ArrayStoreQuad
-            // ANCHOR-L2-164: quads that CALL OUT without being calls.
-            // ConstantClassAssignQuad emits an unconditional
-            // SoftByteCodes.getClassForVmType (no PUSHA wrapper), and the
-            // interface/array CheckcastQuad arms call the runtime helper --
-            // census lint CALLNOTCALLLIKE counted 232 and 11 sites
-            // respectively, in 161 methods. Claiming "not call-like" left
-            // live pooled registers (ECX/EBX/ESI) unspilled across the
-            // call, which is silent corruption and invisible to the SSA
-            // verifier because it happens after allocation.
-            || q instanceof ConstantClassAssignQuad
-            || q instanceof CheckcastQuad
-            // ANCHOR-L2-204 (G11/M2): a reference putfield/putstatic calls
-            // the GC write-barrier helper (writeFieldBarrier:6763,
-            // writeStaticBarrier:6789 -> callJavaMethod). The helper is an
-            // ordinary Java method, so nothing preserves the pooled
-            // caller-saved EBX/ESI; the emitter saves only ECX
-            // (:6757/:6764) plus the never-allocated EAX/EDX scratch.
-            // ArrayStoreQuad has covered the aastore arm of that same
-            // helper all along. The call sits behind needsWriteBarrier(),
-            // which every heap manager currently leaves null
-            // (DefaultHeapManager:132, BaseMmtkHeapManager:103) -- latent,
-            // not absent: the wiring is live (EntryPoints:179-190,
-            // VmHeapManager:307).
-            || q instanceof RefStoreQuad
-            || q instanceof StaticRefStoreQuad) {
-            return true;
-        }
-        if (q instanceof BinaryQuad) {
-            final BinaryOperation op = ((BinaryQuad) q).getOperation();
-            if (op == BinaryOperation.LDIV || op == BinaryOperation.LREM) {
-                return true;
-            }
-        }
-        return false;
     }
 
     public static void initMethodArguments(VmMethod method, X86StackFrame stackFrame, TypeSizeInfo typeSizeInfo,

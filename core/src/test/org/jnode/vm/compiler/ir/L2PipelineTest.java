@@ -968,8 +968,14 @@ public class L2PipelineTest {
      * 107: no register-held value may span a call-like quad (callers
      * preserve nothing: saveRegisters is a no-op in every x86 frame) or
      * end inside a handler block (the native unwinder preserves nothing).
-     * Independent audit of X86Level2Compiler.forcedSpills: the call-like
-     * list below is deliberately duplicated, not shared.
+     * Audit of X86Level2Compiler.forcedSpills. The call-like set here was
+     * deliberately a second copy -- and had already drifted from the
+     * allocator's by the time ANCHOR-L2-204 noticed (ANCHOR-L2-217/G9-P19
+     * now shares IRControlFlowGraph.isCallLike with forcedSpills, so the two
+     * cannot disagree). What this audits from then on is forcedSpills'
+     * address arithmetic rather than the list; the list itself is guarded by
+     * census lint CALLNOTCALLLIKE, which reads the EMISSION and consults no
+     * list at all.
      */
     @Test
     public void testNoRegisterSpansCall() throws Exception {
@@ -996,22 +1002,7 @@ public class L2PipelineTest {
             }
             for (Object q0 : (List<?>) b.getQuads()) {
                 final Quad q = (Quad) q0;
-                if (q instanceof CallQuad || q instanceof CallAssignQuad
-                    || q instanceof MonitorenterQuad || q instanceof MonitorexitQuad
-                    || q instanceof JsrQuad || q instanceof ThrowQuad
-                    || q instanceof NewAssignQuad || q instanceof NewObjectArrayAssignQuad
-                    || q instanceof NewPrimitiveArrayAssignQuad || q instanceof NewMultiArrayAssignQuad
-                    || q instanceof ArrayAssignQuad || q instanceof ArrayStoreQuad
-                    // ANCHOR-L2-204 (G11/M2): this duplicated list had
-                    // already drifted from X86Level2Compiler.isCallLike --
-                    // it predates CheckcastQuad/ConstantClassAssignQuad
-                    // (L2-164) and never had the write-barrier stores. An
-                    // under-covering mirror reads as a clean audit.
-                    || q instanceof CheckcastQuad || q instanceof ConstantClassAssignQuad
-                    || q instanceof RefStoreQuad || q instanceof StaticRefStoreQuad
-                    || (q instanceof BinaryQuad
-                        && (((BinaryQuad) q).getOperation() == BinaryOperation.LDIV
-                            || ((BinaryQuad) q).getOperation() == BinaryOperation.LREM))) {
+                if (IRControlFlowGraph.isCallLike(q)) {
                     callAddrs.add(Integer.valueOf(q.getAddress()));
                 }
             }
@@ -1095,7 +1086,7 @@ public class L2PipelineTest {
 
         assertTrue(name + ": " + storeType.getSimpleName()
             + " must be call-like -- its emission may call the write-barrier helper",
-            X86Level2Compiler.isCallLike(store));
+            IRControlFlowGraph.isCallLike(store));
 
         for (int i = 0; i < r.liveRanges.length; i++) {
             final LiveRange lr = r.liveRanges[i];
@@ -1421,6 +1412,113 @@ public class L2PipelineTest {
         assertTrue("interBlockDef: the handler never reads an in-try local -- "
             + "it folded to the pre-try constant, so the merge phi is missing "
             + "(ANCHOR-L2-216); handler quads: " + h.getQuads(), sawRead);
+    }
+
+    /**
+     * ANCHOR-L2-217 (G9/P19): the catch in lenInTry may only reach v through
+     * a merge phi, because the arr.length load can fault before its own
+     * result exists. Pre-fix ArrayLengthAssignQuad was in the DCE keep-list
+     * but not in isCallLike, so isDefUnwrittenOnExceptionalEdge answered
+     * "definitely written" (the scan includes the def's own address) and the
+     * handler was handed the in-try version: the emitted catch was
+     * `mov eax, dword esi`, reading the register the faulting load never
+     * wrote -- the caller's garbage -- where the pre-try value of v is 0.
+     *
+     * <p>The requirement is spelled out here instead of derived from
+     * IRControlFlowGraph.isCallLike on purpose: this test is the independent
+     * specification of "may throw before it writes", and a test that asked
+     * the production predicate the very question the predicate gets wrong
+     * would pass on the broken tree. The same independence is why
+     * defPrecededByThrowingBinary below names its four binary ops itself.
+     */
+    @Test
+    public void testHandlerArrayLengthDef() throws Exception {
+        CompileResult r = compileMethod(findMethod("lenInTry"));
+        boolean handlerBlock = false;
+        for (Object b0 : (Iterable<?>) r.cfg) {
+            final IRBasicBlock b = (IRBasicBlock) b0;
+            if (!b.isStartOfExceptionHandler()) {
+                continue;
+            }
+            handlerBlock = true;
+            for (Object q0 : (List<?>) b.getQuads()) {
+                final Quad q = (Quad) q0;
+                if (q.isDeadCode()) {
+                    continue;
+                }
+                final Operand[] refs = q.getReferencedOps();
+                if (refs == null) {
+                    continue;
+                }
+                for (int j = 0; j < refs.length; j++) {
+                    if (!(refs[j] instanceof Variable)) {
+                        continue;
+                    }
+                    final Variable v = (Variable) refs[j];
+                    final AssignQuad def = v.getAssignQuad();
+                    if (def == null || def.getBasicBlock() == b) {
+                        continue;
+                    }
+                    assertFalse("lenInTry: handler " + q + " reads " + v
+                        + " straight from def " + def + " in " + def
+                        .getBasicBlock() + " -- arr.length can fault before "
+                        + "it writes, so only a merge phi may carry v into "
+                        + "the catch (ANCHOR-L2-217)",
+                        !(def instanceof PhiAssignQuad));
+                }
+            }
+        }
+        assertTrue("lenInTry: no handler block found, test is vacuous",
+            handlerBlock);
+    }
+
+    /**
+     * ANCHOR-L2-217 (G9/P19): hasPhiFor stopped at the first non-phi, while
+     * newPhiVariable -- the other half of the same question -- has always
+     * scanned the whole list. The two only agreed because phis are
+     * physically prepended; move one behind a quad (which no pass does
+     * today) and the caller inserts a SECOND phi for the same slot: two defs
+     * of one slot in one block. The scan must not depend on that layout.
+     */
+    @Test
+    public void testHasPhiForScansPastNonPhi() throws Exception {
+        // pre-deSSA: deSSA lowers the phi away, so a post-pipeline cfg has
+        // nothing left for hasPhiFor to find.
+        final IRControlFlowGraph cfg = runToPostDce(findMethod("interBlockDef"));
+        IRBasicBlock block = null;
+        PhiAssignQuad phi = null;
+        for (Object b0 : (Iterable<?>) cfg) {
+            final IRBasicBlock b = (IRBasicBlock) b0;
+            for (Object q0 : (List<?>) b.getQuads()) {
+                if (q0 instanceof PhiAssignQuad && !((Quad) q0).isDeadCode()) {
+                    block = b;
+                    phi = (PhiAssignQuad) q0;
+                    break;
+                }
+            }
+            if (block != null) {
+                break;
+            }
+        }
+        assertTrue("interBlockDef has no live phi to hide behind a quad",
+            phi != null);
+        final List quads = block.getQuads();
+        Quad mover = null;
+        for (int i = 0; i < quads.size(); i++) {
+            final Quad q = (Quad) quads.get(i);
+            if (q != phi && !(q instanceof PhiAssignQuad)) {
+                mover = q;
+                break;
+            }
+        }
+        assertTrue("no non-phi quad to move in front of the phi", mover != null);
+        quads.remove(mover);
+        quads.add(quads.indexOf(phi), mover);
+        final int slot = ((Variable) phi.getDefinedOp()).getIndex();
+        assertTrue("hasPhiFor missed a phi that follows a non-phi -- it still "
+            + "stops at the first non-phi while newPhiVariable scans the "
+            + "whole list (ANCHOR-L2-217)",
+            cfg.hasPhiFor(block, slot));
     }
 
     /**

@@ -359,6 +359,17 @@ if want anchors; then
     # trap, not a bytecode one.
     g=$(grep -rn "getDefaultAddress()" core/src --include=*.java | grep -v "public int getDefaultAddress" | grep -v "^[^:]*:[0-9]*:[[:space:]]*//" | wc -l)
     [ "$g" -eq 0 ] || { echo "ANCHOR-L2-214 P16: the stale switch default address now has $g reader(s)"; exit 1; }
+    # ANCHOR-L2-217 (G9/P19): exactly ONE isCallLike implementation. Four
+    # hand-kept lists used to answer the same question -- the IR
+    # always-executed reasoning, the allocator forcedSpills, the DCE
+    # keep-list and the census/test mirrors -- and P6 (L2-147) is what drift
+    # between two of them cost: the IR copy missed LDIV/LREM and the
+    # handler/resume phi read a never-written home. Source-level on purpose,
+    # like ANCHOR-L2-214 above: a second copy is a SOURCE-level hazard, and
+    # this is what makes adding one fail the gate instead of waiting for the
+    # next census to disagree with itself.
+    c=$(grep -rn "boolean isCallLike" core/src --include=*.java | wc -l)
+    [ "$c" -eq 1 ] || { echo "ANCHOR-L2-217 P19: $c isCallLike implementations in core/src, expected 1"; exit 1; }
     echo anchors-ok'
 fi
 # ANCHOR-L2-187: these three verdicts used to end on `| tail -n 3`, so the
@@ -426,6 +437,15 @@ if want census; then
     p18=$(sed -n "s/^P18 interBlock=\([0-9]*\).*/\1/p" /tmp/census-'"$LABEL"'.txt | head -n 1)
     echo "p15=${p15r:-missing}/${p15t:-missing}"
     echo "p18=${p18:-missing}"
+    # ANCHOR-L2-217 (G9/P19): the emission-based backstop for the one
+    # isCallLike list -- this lint asks the emitted text whether the quad
+    # calls out and consults no list at all, so a quad class that starts
+    # calling out without being added to the predicate fails here instead of
+    # silently leaving live pooled registers across the call. Printed since
+    # L2-164, gated only now: a check that cannot fail looks exactly like a
+    # check that found nothing (ANCHOR-L2-187).
+    cn=$(grep -c "^CALLNOTCALLLIKE " /tmp/census-'"$LABEL"'.stdout)
+    echo "callnotcalllike=$cn"
     n=$(awk "/^--- FAILED \(/{f=1;next} /^--- /{f=0} f" /tmp/census-'"$LABEL"'.txt | wc -l)
     echo "FAILED=$n"
     awk "/^--- FAILED \(/{f=1;next} /^--- /{f=0} f" /tmp/census-'"$LABEL"'.txt | sort > /tmp/census-'"$LABEL"'.failed
@@ -529,13 +549,14 @@ if want census; then
     else
       echo "probe census gate: CONSTREFFIELD==0 and FAILED==0 on the shape-carrying corpus"
     fi
-    if [ ! -s '"$BASE"'/census-failed.txt ] && [ "$n" -eq 0 ] && [ "$rg" -eq 0 ] && [ "$sw" -eq 0 ] && [ "${st:-1}" -eq 0 ] && [ "${p15r:-1}" -eq 0 ] && [ "${p15t:-1}" -eq 0 ] && [ "${p18:-1}" -eq 0 ] && [ "$pc_missing" -eq 0 ]; then
-      echo "census gate: FAILED==0 and RANGEGAP==0 and STALEWIDE==0 and SSATAG==0 and P15==0 and P18==0 as required"
+    if [ ! -s '"$BASE"'/census-failed.txt ] && [ "$n" -eq 0 ] && [ "$rg" -eq 0 ] && [ "$sw" -eq 0 ] && [ "${st:-1}" -eq 0 ] && [ "${p15r:-1}" -eq 0 ] && [ "${p15t:-1}" -eq 0 ] && [ "${p18:-1}" -eq 0 ] && [ "${cn:-1}" -eq 0 ] && [ "$pc_missing" -eq 0 ]; then
+      echo "census gate: FAILED==0 and RANGEGAP==0 and STALEWIDE==0 and SSATAG==0 and P15==0 and P18==0 and CALLNOTCALLLIKE==0 as required"
     else
-      echo "REGRESSION: $n FAILED entries, $rg RANGEGAP entries, $sw STALEWIDE entries, ${st:-missing} SSATAG disagreements, p15=${p15r:-missing}/${p15t:-missing} p18=${p18:-missing}; first ones:"
+      echo "REGRESSION: $n FAILED entries, $rg RANGEGAP entries, $sw STALEWIDE entries, ${st:-missing} SSATAG disagreements, p15=${p15r:-missing}/${p15t:-missing} p18=${p18:-missing} callnotcalllike=${cn:-missing}; first ones:"
       head -n 10 /tmp/census-'"$LABEL"'.failed
       grep -E "^RANGEGAP " /tmp/census-'"$LABEL"'.stdout | head -n 10
       grep -E "^STALEWIDE " /tmp/census-'"$LABEL"'.stdout | head -n 10
+      grep -E "^CALLNOTCALLLIKE " /tmp/census-'"$LABEL"'.stdout | head -n 10
       grep -E "^OK=" /tmp/census-'"$LABEL"'.txt
       exit 1
     fi

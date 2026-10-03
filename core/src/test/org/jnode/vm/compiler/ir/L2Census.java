@@ -1357,11 +1357,13 @@ public class L2Census {
      * corruption, and invisible to the SSA verifier because it happens after
      * register allocation.
      *
-     * The two isCallLike implementations (X86Level2Compiler and
-     * IRControlFlowGraph) have drifted before, so this lint asks the
-     * question structurally -- does the emitted text call out? -- instead of
-     * trusting either list. The X86 copy is the authority (it is the one the
-     * allocator consults).
+     * ANCHOR-L2-217 (G9/P19): there is one isCallLike implementation now
+     * (IRControlFlowGraph), so this lint no longer arbitrates between two
+     * copies -- it is the list-independent backstop FOR that copy. It asks
+     * the question structurally (does the emitted text call out?) instead of
+     * trusting the list, which is what keeps a newly added call-emitting
+     * quad class from landing outside it unnoticed. Gated: regress.sh
+     * requires the count to be 0, a missing/lint-clean run included.
      */
     static void checkCallLikeCoverage(VmMethod method, String text) {
         try {
@@ -1384,7 +1386,7 @@ public class L2Census {
                     if (low.indexOf("call ") < 0) {
                         continue;
                     }
-                    if (!org.jnode.vm.x86.compiler.l2.X86Level2Compiler.isCallLike(q)) {
+                    if (!IRControlFlowGraph.isCallLike(q)) {
                         System.out.println("CALLNOTCALLLIKE "
                             + method.getDeclaringClass().getName() + "#"
                             + method.getName() + " @" + q.getAddress()
