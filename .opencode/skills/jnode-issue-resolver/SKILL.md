@@ -213,10 +213,10 @@ Use inline comments on the diff via `pull_request_review_comment` context (exist
 | Marker | Meaning | Required action |
 |---|---|---|
 | 🔴 | Must-fix: bug, license violation, Java 1.6 violation, missing test | request changes |
-| 🟡 | Should-fix: style, naming, missing edge case | comment, do not block |
+| 🟡 | Should-fix: correctness, test validity, maintainability, or a tracked follow-up | request changes; a deferred 🟡 requires a follow-up issue created in the same review |
 | 🟢 | Nit: typo, formatting, optional refactor | comment, do not block |
 
-End every review with a single **summary comment** (not a review submission) that lists the findings in priority order and ends with `Verdict: approve | request-changes | comment`. Then submit a GitHub Review with the matching verdict using `gh pr review <N> --request-changes` (etc.).
+End every review with a single **summary comment** (not a review submission) that lists the findings in priority order and ends with `Verdict: approve | request-changes | comment`. Never approve with an untracked 🟡: either request changes or create a follow-up issue and link it in the summary. Then submit a GitHub Review with the matching verdict using `gh pr review <N> --request-changes` (etc.).
 
 ### 5.3 `investigation` (single structured comment)
 
