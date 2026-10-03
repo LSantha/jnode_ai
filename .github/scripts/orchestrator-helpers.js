@@ -91,6 +91,7 @@ module.exports = function createHelpers({ github, context, core }) {
 
   /** Forbidden diff paths: ASM, build config, plugin lists. Mirrors the resolver skill self-check. */
   var FORBIDDEN_DIFF_RE = /(^|\/)(core\/src\/native\/x86\/|jnode\.properties$|all\/build\.xml$|all\/conf\/)/;
+  var TEST_PATH_RE = /(^|\/)(src\/test\/|tests\/)/;
 
   /** True when the PR diff is small and touches no forbidden path. */
   async function isDiffSafe(prNumber) {
@@ -107,11 +108,14 @@ module.exports = function createHelpers({ github, context, core }) {
     if (list.length === 0 || list.length >= 100) return false;
     if (list.length > 5) return false;
     var additions = 0;
+    var testOnly = true;
     for (var i = 0; i < list.length; i++) {
+      var filename = list[i].filename || "";
       additions += list[i].additions || 0;
-      if (FORBIDDEN_DIFF_RE.test(list[i].filename || "")) return false;
+      if (FORBIDDEN_DIFF_RE.test(filename)) return false;
+      if (!TEST_PATH_RE.test(filename)) testOnly = false;
     }
-    return additions <= 100;
+    return additions <= (testOnly ? 300 : 100);
   }
 
   /** True when CI check runs on the PR head SHA show success and no failure. */

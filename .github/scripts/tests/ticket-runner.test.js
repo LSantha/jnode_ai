@@ -446,6 +446,18 @@ test("merge safety gate helpers", async (t) => {
     assert.strictEqual(await hEmpty.isDiffSafe(99), false);
   });
 
+  await t.test("isDiffSafe: allows large test-only diffs but not production diffs", async () => {
+    const hTest = makeHelpers({ files: [{ filename: "core/src/test/NumberUtilsTest.java", additions: 244 }] });
+    assert.strictEqual(await hTest.isDiffSafe(99), true);
+    const hTestTooBig = makeHelpers({ files: [{ filename: "core/src/test/NumberUtilsTest.java", additions: 301 }] });
+    assert.strictEqual(await hTestTooBig.isDiffSafe(99), false);
+    const hMixed = makeHelpers({ files: [
+      { filename: "core/src/test/NumberUtilsTest.java", additions: 200 },
+      { filename: "core/src/core/NumberUtils.java", additions: 1 }
+    ] });
+    assert.strictEqual(await hMixed.isDiffSafe(99), false);
+  });
+
   await t.test("isCIGreen: success, failure, none", async () => {
     assert.strictEqual(await makeHelpers({ runs: ok }).isCIGreen(99), true);
     assert.strictEqual(await makeHelpers({ runs: ok.concat([{ name: "boot", status: "completed", conclusion: "failure" }]) }).isCIGreen(99), false);
