@@ -29,7 +29,8 @@ import org.junit.runners.Suite;
     MuSyntaxTest.class, MuParserTest.class, MuParserTest2.class, ArgumentMultiplicityTest.class,
     CommandLineTest.class, RepeatSyntaxTest.class, SequenceSyntaxTest.class,
     OptionSyntaxTest.class, PowersetSyntaxTest.class, OptionSetSyntaxTest.class,
-    AlternativesSyntaxTest.class })
+    AlternativesSyntaxTest.class, VerbSyntaxTest.class, GroupSyntaxTest.class,
+    OptionalSyntaxTest.class, SymbolSyntaxTest.class, EmptySyntaxTest.class })
 public class AllTests {
 
 }
