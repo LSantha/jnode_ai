@@ -24,7 +24,8 @@ import org.junit.runner.RunWith;
 import org.junit.runners.Suite;
 
 @RunWith(Suite.class)
-@Suite.SuiteClasses({ArgumentTypesTest.class, ArgumentBundleTest.class, DefaultTokenizerTest.class,
+@Suite.SuiteClasses({ArgumentTypesTest.class, HostArgumentTypesTest.class, ArgumentBundleTest.class,
+    DefaultTokenizerTest.class,
     DefaultInterpreterSequenceTest.class,
     MuSyntaxTest.class, MuParserTest.class, MuParserTest2.class, ArgumentMultiplicityTest.class,
     CommandLineTest.class, RepeatSyntaxTest.class, SequenceSyntaxTest.class,
