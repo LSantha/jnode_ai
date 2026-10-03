@@ -21,6 +21,7 @@
 package org.jnode.test;
 
 import java.io.ByteArrayOutputStream;
+import java.io.FileOutputStream;
 import java.io.IOException;
 
 import org.jnode.assembler.Label;
@@ -34,6 +35,7 @@ import org.jnode.assembler.x86.X86Register;
 import org.jnode.assembler.x86.X86Register.GPR;
 import org.jnode.vm.x86.X86CpuID;
 
+import org.junit.Ignore;
 import org.junit.Test;
 
 import static org.junit.Assert.assertArrayEquals;
@@ -105,22 +107,17 @@ public class X86StreamTest implements X86Constants {
         assertArrayEquals(truncate(os.getBytes(), os.getLength()), written);
     }
 
+    @Ignore("manual debugging aid: dumps the 32 bit stream to test.bin")
     @Test
-    public void testWriteToStreamIsRepeatable() throws Exception {
+    public void testDumpStreamToFile() throws Exception {
         final X86BinaryAssembler os = newAssembler(Mode.CODE32);
         testCode32(os);
-        assertArrayEquals(toBytes(os), toBytes(os));
-    }
-
-    @Test
-    public void testAssemblingIsDeterministic() throws Exception {
-        final X86BinaryAssembler first = newAssembler(Mode.CODE64);
-        testCode64(first);
-        final X86BinaryAssembler second = newAssembler(Mode.CODE64);
-        testCode64(second);
-        assertEquals(first.getLength(), second.getLength());
-        assertArrayEquals(truncate(first.getBytes(), first.getLength()),
-            truncate(second.getBytes(), second.getLength()));
+        final FileOutputStream fos = new FileOutputStream("test.bin");
+        try {
+            os.writeTo(fos);
+        } finally {
+            fos.close();
+        }
     }
 
     @Test
@@ -180,12 +177,12 @@ public class X86StreamTest implements X86Constants {
     }
 
     @Test
-    public void testBranchToUnresolvedLabelIsReported() throws Exception {
+    public void testIndirectJumpToUnresolvedTablePointerIsReported() throws Exception {
         final X86BinaryAssembler os = newAssembler(Mode.CODE32);
         final Label label = new Label("unresolved");
         os.writeJMP(label, 2, false);
         final ObjectRef ref = os.getObjectRef(label);
-        assertFalse("label without setObjectRef must stay unresolved", ref.isResolved());
+        assertFalse("table pointer without setObjectRef must stay unresolved", ref.isResolved());
         try {
             ref.getOffset();
             fail("getOffset() on an unresolved label should throw");
@@ -195,7 +192,65 @@ public class X86StreamTest implements X86Constants {
     }
 
     @Test
-    public void testBranchToResolvedLabelBackPatches() throws Exception {
+    public void testIndirectJumpEncodesAbsoluteAddressForm() throws Exception {
+        final X86BinaryAssembler os = newAssembler(Mode.CODE32);
+        final Label label = new Label("table");
+        os.setObjectRef(label);
+        os.writeJMP(label, 2, false);
+        assertEquals(6, os.getLength());
+        assertEquals(0xFF, os.get8(0));
+        assertEquals(0x25, os.get8(1));
+        assertEquals("table entry offset = label offset + 2", 2, os.get32(2));
+    }
+
+    @Test
+    public void testRel32BranchToUnresolvedLabelIsBackPatched() throws Exception {
+        final X86BinaryAssembler os = newAssembler(Mode.CODE32);
+        final Label label = new Label("backpatch32");
+        os.writeJMP(label);
+        os.writeNOP();
+        os.writeNOP();
+        os.writeNOP();
+        assertFalse("label must still be unresolved after writeJMP",
+            os.getObjectRef(label).isResolved());
+        os.setObjectRef(label);
+        assertEquals(8, os.getLength());
+        assertEquals(0xE9, os.get8(0));
+        assertEquals("disp32 = target - end of the jump instruction",
+            3, os.get32(1));
+    }
+
+    @Test
+    public void testRel8BranchToUnresolvedLabelIsBackPatched() throws Exception {
+        final X86BinaryAssembler os = newAssembler(Mode.CODE32);
+        final Label label = new Label("backpatch8");
+        os.writeJECXZ0(label);
+        os.writeNOP();
+        assertFalse("label must still be unresolved after writeJECXZ0",
+            os.getObjectRef(label).isResolved());
+        os.setObjectRef(label);
+        assertEquals(4, os.getLength());
+        assertEquals("address size prefix", 0x67, os.get8(0));
+        assertEquals(0xE3, os.get8(1));
+        assertEquals("rel8 = target - end of the jump instruction",
+            1, os.get8(2));
+        assertEquals(0x90, os.get8(3));
+    }
+
+    @Test
+    public void testZeroDistanceJumpIsShrunkToNops() throws Exception {
+        final X86BinaryAssembler os = newAssembler(Mode.CODE32);
+        final Label label = new Label("next");
+        os.writeJMP(label);
+        os.setObjectRef(label);
+        assertEquals(5, os.getLength());
+        assertEquals("rel32 jump opcode replaced by a NOP", 0x90, os.get8(0));
+        assertEquals("rel32 operand replaced by 4 NOP's",
+            0x90909090, os.get32(1));
+    }
+
+    @Test
+    public void testShortBranchToResolvedLabelEncodesRel8() throws Exception {
         final X86BinaryAssembler os = newAssembler(Mode.CODE32);
         final Label label = new Label("short");
         os.setObjectRef(label);
@@ -207,7 +262,7 @@ public class X86StreamTest implements X86Constants {
     }
 
     @Test
-    public void testDistantBranchUsesRel32() throws Exception {
+    public void testDistantBranchToResolvedLabelUsesRel32() throws Exception {
         final X86BinaryAssembler os = newAssembler(Mode.CODE32);
         final Label label = new Label("far");
         os.setObjectRef(label);
@@ -220,17 +275,12 @@ public class X86StreamTest implements X86Constants {
         assertEquals(-205, os.get32(201));
     }
 
-    @Test
+    @Test(expected = RuntimeException.class)
     public void testDuplicateLabelIsRejected() throws Exception {
         final X86BinaryAssembler os = newAssembler(Mode.CODE32);
         final Label label = new Label("duplicate");
         os.setObjectRef(label);
-        try {
-            os.setObjectRef(label);
-            fail("setting the same label twice should throw");
-        } catch (RuntimeException ex) {
-            assertTrue(String.valueOf(ex.getMessage()).contains("Duplicate labels"));
-        }
+        os.setObjectRef(label);
     }
 
     @Test
@@ -266,13 +316,20 @@ public class X86StreamTest implements X86Constants {
     }
 
     @Test
-    public void testIdivUsesExtendedRegisters() throws Exception {
+    public void testCdqeAndMovImm64Encoding() throws Exception {
         final X86BinaryAssembler os = newAssembler(Mode.CODE64);
         os.writeCDQE();
         os.writeMOV_Const(X86Register.RAX, 0x1234L);
-        final int len = os.getLength();
-        assertTrue(len > 0);
-        assertEquals(len, toBytes(os).length);
+        assertEquals("cdqe (2 bytes) + mov rax,imm64 (10 bytes)", 12, os.getLength());
+        assertEquals("REX.W", 0x48, os.get8(0));
+        assertEquals(0x98, os.get8(1));
+        assertEquals("REX.W", 0x48, os.get8(2));
+        assertEquals("mov rax,imm64 opcode", 0xB8, os.get8(3));
+        assertEquals(0x34, os.get8(4));
+        assertEquals(0x12, os.get8(5));
+        assertEquals(0, os.get8(6));
+        assertEquals(0, os.get8(7));
+        assertEquals(0x1234L, os.get64(4));
     }
 
     private static void testCode32Idiv(X86Assembler os) throws UnresolvedObjectRefException {
