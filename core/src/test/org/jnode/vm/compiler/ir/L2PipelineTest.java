@@ -784,38 +784,54 @@ public class L2PipelineTest {
             }
         }
         // jsr probe: pre-deSSA and post-deSSA (the carve-out closed by D1).
-        java.io.File dir = java.io.File.createTempFile("jsrverif", "");
-        dir.delete();
-        dir.mkdirs();
-        java.io.FileOutputStream fos = new java.io.FileOutputStream(
-            new java.io.File(dir, "JsrProbe.class"));
-        fos.write(JsrProbeBuilder.build());
-        fos.close();
-        VmSystemClassLoader child = new VmSystemClassLoader(
-            classlibUrls(dir), loader.getArchitecture());
-        VmType type = child.loadClass("JsrProbe", true);
-        VmMethod found = null;
-        for (int i = 0; i < type.getNoDeclaredMethods(); i++) {
-            VmMethod m = type.getDeclaredMethod(i);
-            if ("jsrDemo".equals(m.getName())) {
-                found = m;
+        // ANCHOR-L2-215 (G7/P17): all THREE jsr shapes, not just jsrDemo.
+        // jsrMulti is the two-jsr/one-ret shape -- one ret, two resume
+        // points, two defs for the pushed return address -- which is the
+        // single-rename/multiple-resume case the RetQuad carve-out was
+        // written for. Until now no test ran it, so the carve-out's own
+        // justification was never exercised either way.
+        String[] jsrNames = {"jsrDemo", "jsrDemoA", "jsrMulti"};
+        for (int ji = 0; ji < jsrNames.length; ji++) {
+            VmMethod found = findProbeMethod(jsrNames[ji]);
+            IRControlFlowGraph cfg = runToPostDce(found);
+            // ANCHOR-L2-215: the fixture exists for ONE reason -- two jsr
+            // sites feeding a single ret -- so pin that shape. Without this a
+            // later edit to JsrProbeBuilder could turn jsrMulti into a second
+            // copy of jsrDemo and the whole multi-resume coverage would go
+            // blind while every assertion above still passed.
+            if ("jsrMulti".equals(jsrNames[ji])) {
+                int jsrs = 0;
+                int rets = 0;
+                for (Object mb0 : (Iterable<?>) cfg) {
+                    IRBasicBlock mb = (IRBasicBlock) mb0;
+                    for (Object mq0 : mb.getQuads()) {
+                        if (mq0 instanceof JsrQuad) {
+                            jsrs++;
+                        } else if (mq0
+                            instanceof org.jnode.vm.compiler.ir.quad.RetQuad) {
+                            rets++;
+                        }
+                    }
+                }
+                assertEquals("jsrMulti must keep two jsr sites, else this"
+                    + " fixture stops covering the multi-resume shape", 2, jsrs);
+                assertEquals("jsrMulti must keep exactly one ret", 1, rets);
+            }
+            String v = SSAVerifier.verifyPreDessA(cfg);
+            if (v != null) {
+                fail("SSA violation (pre-deSSA) in " + jsrNames[ji] + ": " + v);
+            }
+            X86Level2Compiler.deSSAAndFixup(cfg);
+            v = SSAVerifier.verifyPostDessA(cfg);
+            if (v != null) {
+                fail("SSA violation (post-deSSA) in " + jsrNames[ji] + ": " + v);
+            }
+            v = SSAVerifier.verifyWidths(cfg);
+            if (v != null) {
+                fail("width violation in " + jsrNames[ji] + ": " + v);
             }
         }
-        assertNotNull("jsrDemo not found", found);
-        IRControlFlowGraph cfg = runToPostDce(found);
-        String v = SSAVerifier.verifyPreDessA(cfg);
-        if (v != null) {
-            fail("SSA violation (pre-deSSA) in jsrDemo: " + v);
-        }
-        X86Level2Compiler.deSSAAndFixup(cfg);
-        v = SSAVerifier.verifyPostDessA(cfg);
-        if (v != null) {
-            fail("SSA violation (post-deSSA) in jsrDemo: " + v);
-        }
-        v = SSAVerifier.verifyWidths(cfg);
-        if (v != null) {
-            fail("width violation in jsrDemo: " + v);
-        }
+        String v;
         // ANCHOR-L2-132 regression guard: NativeStrictMath#remPiOver2 (a real
         // guest method, OpenJDK classlib) had a post-deSSA dcmpl reading a
         // variable with NO defining quad - deSSA's phiMove.doPass2 killed the
@@ -2158,6 +2174,15 @@ public class L2PipelineTest {
         String text = compileToText(found);
         assertTrue("no code emitted for jsrDemo", text.length() > 0);
         assertTrue("jsr must CALL the subroutine, got:\n" + text, text.contains("call "));
+        // ANCHOR-L2-215 (G7/P17): pin the RET side too. The carve-out is
+        // about the renamed ret local, and until now nothing asserted the
+        // ret was emitted at all -- "call " alone survives a dropped ret.
+        // A ret becomes an indirect jmp to a bare register (emit writes
+        // "jmp <reg>"; every other jmp target in this listing is a label).
+        assertTrue("ret must emit an indirect jmp through the renamed local, got:\n" + text,
+            java.util.regex.Pattern
+                .compile("\n\tjmp\\s+e[a-z]{2}\\s*(\n|$)")
+                .matcher(text).find());
     }
 
     /**

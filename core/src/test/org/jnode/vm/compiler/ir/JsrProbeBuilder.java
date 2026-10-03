@@ -63,6 +63,27 @@ import java.io.IOException;
  * </pre>
  * javac never emits this (it lays subroutines out last), so it is built by
  * hand -- see {@code L2PipelineTest#testJsrEntryBelowJsrDecidesDepthFromCfg}.
+ * <p/>
+ * It also carries {@code jsrMulti}, the shape P17 is about: TWO jsr sites
+ * feeding ONE subroutine, so the single {@code ret} has two resume points and
+ * the pushed return address has two defs. That is the
+ * single-rename/multiple-resume case the SSAVerifier RetQuad carve-out was
+ * written for, and neither of the other two methods exercises it:
+ *
+ * <pre>
+ * static int jsrMulti(int x) {
+ *   0: iconst_0
+ *   1: istore_1          // l1 = 0
+ *   2: jsr 10            // target 10, resume 5
+ *   5: jsr 10            // target 10, resume 8
+ *   8: iload_1
+ *   9: ireturn
+ *  10: astore_2          // save the return address of whichever jsr ran
+ *  11: iinc 1, 10        // l1 += 10, twice over
+ *  14: ret 2
+ * }
+ * </pre>
+ * max_stack 1, max_locals 3, code length 16, no exception table.
  */
 final class JsrProbeBuilder {
 
@@ -78,7 +99,7 @@ final class JsrProbeBuilder {
         out.writeInt(0xCAFEBABE);
         out.writeShort(0);
         out.writeShort(49);
-        out.writeShort(14); // constant_pool_count
+        out.writeShort(15); // constant_pool_count
         writeUtf8(out, "JsrProbe"); // 1
         out.writeByte(7);
         out.writeShort(1); // 2 Class #1
@@ -100,12 +121,13 @@ final class JsrProbeBuilder {
         out.writeShort(5);
         out.writeShort(6); // 12 NameAndType #5:#6
         writeUtf8(out, "jsrDemoA"); // 13
+        writeUtf8(out, "jsrMulti"); // 14
         out.writeShort(0x0021);
         out.writeShort(2);
         out.writeShort(4);
         out.writeShort(0);
         out.writeShort(0);
-        out.writeShort(3); // three methods
+        out.writeShort(4); // four methods
         // <init>
         out.writeShort(1);
         out.writeShort(8);
@@ -152,6 +174,29 @@ final class JsrProbeBuilder {
             (byte) 0xA9, 0x02,                           //  9 ret 2
             (byte) 0xA8, (byte) 0xFF, (byte) 0xFA,       // 11 jsr -6 -> 5
             0x1B, (byte) 0xAC});                         // 14 iload_1, 15 ireturn
+        out.writeShort(0);
+        out.writeShort(0);
+        // jsrMulti -- two jsr sites, one subroutine, one ret with two resume
+        // points: the multi-resume shape the RetQuad carve-out is about.
+        out.writeShort(0x0009);
+        out.writeShort(14);
+        out.writeShort(6);
+        out.writeShort(1);
+        out.writeShort(7);
+        out.writeInt(12 + 16);
+        out.writeShort(1);
+        out.writeShort(MAX_LOCALS);
+        out.writeInt(16);
+        out.write(new byte[]{
+            0x03,                                    //  0 iconst_0
+            0x3C,                                    //  1 istore_1
+            (byte) 0xA8, 0x00, 0x08,                 //  2 jsr +8 -> 10 (resume 5)
+            (byte) 0xA8, 0x00, 0x05,                 //  5 jsr +5 -> 10 (resume 8)
+            0x1B,                                    //  8 iload_1
+            (byte) 0xAC,                             //  9 ireturn
+            0x4D,                                    // 10 astore_2
+            (byte) 0x84, 0x01, 0x0A,                 // 11 iinc 1, 10
+            (byte) 0xA9, 0x02});                     // 14 ret 2
         out.writeShort(0);
         out.writeShort(0);
         out.writeShort(0); // class attributes

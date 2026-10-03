@@ -47,7 +47,11 @@ import org.jnode.vm.compiler.ir.quad.VariableRefAssignQuad;
  * are not Variables (constants); MethodArgument/ExceptionArgument (values
  * runtime-provided at method/handler entry, no IR def); JsrQuad-defined
  * return addresses and RetQuad reads (the ret to all-resumes
- * over-approximation carries the value only on the real edge); dead-code
+ * over-approximation carries the value only on the real edge; pinned by
+ * {@code JsrProbeBuilder#jsrMulti}, the two-jsr/one-ret multi-resume shape
+ * that neither jsrDemo nor jsrDemoA covers, run through this verifier on
+ * both sides by {@code L2PipelineTest#testSSAVerifierCorpus}, ANCHOR-L2-215);
+ * dead-code
  * paths (L2-110 leaves pre-SSA variables in dead/unreachable uses).
  * The post-deSSA walk models the compiler's own exceptional-edge
  * approximation (in-try defs count as executed on paths through a handler;
@@ -130,6 +134,16 @@ public final class SSAVerifier {
                 Quad q = (Quad) quads.get(i);
                 if (q.isDeadCode() || q instanceof PhiAssignQuad
                     || q instanceof RetQuad) {
+                    // ANCHOR-L2-215 (G7/P17): ret reads are skipped because a
+                    // ret resumes at EVERY resume point of its jsr sites, so
+                    // the value it reads is only carried on the one edge that
+                    // actually ran -- single rename, multiple resumes (see the
+                    // class javadoc). Measured 2026-10-03: with this skip
+                    // removed, jsrDemo, jsrDemoA AND the two-jsr/one-ret
+                    // jsrMulti all still verify on both sides, so the skip is
+                    // precautionary rather than known load-bearing. Keep it
+                    // and revisit on a real ret-local miscompile, which is the
+                    // plan position and is now pinned by JsrProbeBuilder.
                     continue;
                 }
                 Operand[] refs = q.getReferencedOps();
@@ -197,6 +211,8 @@ public final class SSAVerifier {
             for (int i = 0; i < quads.size(); i++) {
                 Quad q = (Quad) quads.get(i);
                 if (q.isDeadCode() || q instanceof RetQuad) {
+                    // ANCHOR-L2-215 (G7/P17): same ret carve-out as the
+                    // pre-deSSA walk above; same 2026-10-03 measurement.
                     continue;
                 }
                 Operand[] refs = q.getReferencedOps();
