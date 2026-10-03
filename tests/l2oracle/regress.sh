@@ -349,6 +349,16 @@ if want anchors; then
     # unspecified one both arrive as "L2" on the Java side, and VmX86Architecture
     # can no longer tell whether to add the L1A fallback.
     grep -qE "<property name=\"jnode\.jit\.compiler\" value=\"\" */>" all/build-x86.xml || { echo "ANCHOR-L2-195 jnode.jit.compiler default is not empty"; exit 1; }
+    # ANCHOR-L2-214 (G6/P16): the switch quads keep a construction-time
+    # default address that fixupAddresses and retarget both leave stale, and
+    # emission deliberately reads getTargetBlocks() instead (ANCHOR-L2-070).
+    # The whole P16 claim was that something reads that int. Nothing does, and
+    # this check is what keeps it that way: any new caller of the accessor,
+    # beyond its two declarations and comment lines, is the defect becoming
+    # real. Source-level on purpose -- the stale value is a SOURCE-level
+    # trap, not a bytecode one.
+    g=$(grep -rn "getDefaultAddress()" core/src --include=*.java | grep -v "public int getDefaultAddress" | grep -v "^[^:]*:[0-9]*:[[:space:]]*//" | wc -l)
+    [ "$g" -eq 0 ] || { echo "ANCHOR-L2-214 P16: the stale switch default address now has $g reader(s)"; exit 1; }
     echo anchors-ok'
 fi
 # ANCHOR-L2-187: these three verdicts used to end on `| tail -n 3`, so the

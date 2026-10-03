@@ -76,6 +76,18 @@ public class TableswitchQuad<T> extends Quad<T> {
         refs = new Operand[]{getOperand(indIndex)};
     }
 
+    /**
+     * ANCHOR-L2-214 (G6/P16): the default arm's bytecode address as of
+     * translation time. Not usable for emission: fixupAddresses renumbers
+     * block startPCs and retarget moves the default entry onto the split
+     * block without touching this field, so it goes stale exactly like
+     * JsrQuad.getTargetAddress (ANCHOR-L2-083). Emission reads
+     * getTargetBlocks()[targetBlocks.length - 1] instead, and nothing in the
+     * tree calls this method -- proven by corrupting the field, which leaves
+     * the AOT build, the census and both boots unchanged.
+     *
+     * @return the construction-time bytecode address of the default arm
+     */
     public int getDefaultAddress() {
         return defaultValue;
     }
