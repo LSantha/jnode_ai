@@ -1,0 +1,102 @@
+mauve|START
+mauve|gnu.testlet.java.lang.Integer.parseInt|loading
+mauve|gnu.testlet.java.lang.Integer.parseInt|forcing
+mauve|gnu.testlet.java.lang.Integer.parseInt|force=2
+mauve|gnu.testlet.java.lang.Integer.parseInt|running
+mauve|gnu.testlet.java.lang.Integer.parseInt|pass=15|fail=1|checks=16
+mauve|gnu.testlet.java.lang.Integer.decode|loading
+mauve|gnu.testlet.java.lang.Integer.decode|forcing
+mauve|gnu.testlet.java.lang.Integer.decode|force=2
+mauve|gnu.testlet.java.lang.Integer.decode|running
+mauve|gnu.testlet.java.lang.Integer.decode|runEX:java.lang.NullPointerException:NPE at address 0019F2FA|pass=0|fail=0|checks=0
+mauve|gnu.testlet.java.lang.Integer.compareTo|loading
+mauve|gnu.testlet.java.lang.Integer.compareTo|forcing
+mauve|gnu.testlet.java.lang.Integer.compareTo|force=3
+mauve|gnu.testlet.java.lang.Integer.compareTo|running
+mauve|gnu.testlet.java.lang.Integer.compareTo|pass=29|fail=0|checks=29
+mauve|gnu.testlet.java.lang.Long.LongTest|loading
+mauve|gnu.testlet.java.lang.Long.LongTest|forcing
+mauve|gnu.testlet.java.lang.Long.LongTest|force=22
+mauve|gnu.testlet.java.lang.Long.LongTest|running
+mauve|gnu.testlet.java.lang.Long.LongTest|runEX:java.lang.NullPointerException:NPE at address 2640686F|pass=3|fail=0|checks=3
+mauve|gnu.testlet.java.lang.Double.parseDouble|loading
+mauve|gnu.testlet.java.lang.Double.parseDouble|forcing
+mauve|gnu.testlet.java.lang.Double.parseDouble|force=5
+mauve|gnu.testlet.java.lang.Double.parseDouble|running
+mauve|gnu.testlet.java.lang.Double.parseDouble|pass=22|fail=5|checks=27
+mauve|gnu.testlet.java.lang.Float.toHexString|loading
+mauve|gnu.testlet.java.lang.Float.toHexString|forcing
+mauve|gnu.testlet.java.lang.Float.toHexString|force=2
+mauve|gnu.testlet.java.lang.Float.toHexString|running
+mauve|gnu.testlet.java.lang.Float.toHexString|pass=8|fail=0|checks=8
+mauve|gnu.testlet.java.lang.String.compareTo|loading
+mauve|gnu.testlet.java.lang.String.compareTo|forcing
+mauve|gnu.testlet.java.lang.String.compareTo|force=2
+mauve|gnu.testlet.java.lang.String.compareTo|running
+mauve|gnu.testlet.java.lang.String.compareTo|pass=5|fail=7|checks=12
+mauve|gnu.testlet.java.lang.String.substring|loading
+mauve|gnu.testlet.java.lang.String.substring|forcing
+mauve|gnu.testlet.java.lang.String.substring|force=2
+mauve|gnu.testlet.java.lang.String.substring|running
+mauve|gnu.testlet.java.lang.String.substring|runEX:java.lang.StringIndexOutOfBoundsException:String index out of range: -8|pass=1|fail=0|checks=1
+mauve|gnu.testlet.java.lang.String.split|loading
+mauve|gnu.testlet.java.lang.String.split|forcing
+mauve|gnu.testlet.java.lang.String.split|force=2
+mauve|gnu.testlet.java.lang.String.split|running
+mauve|gnu.testlet.java.lang.String.split|pass=32|fail=0|checks=32
+mauve|gnu.testlet.java.lang.String.indexOf|loading
+mauve|gnu.testlet.java.lang.String.indexOf|forcing
+mauve|gnu.testlet.java.lang.String.indexOf|force=2
+mauve|gnu.testlet.java.lang.String.indexOf|running
+mauve|gnu.testlet.java.lang.String.indexOf|pass=22|fail=0|checks=22
+mauve|gnu.testlet.java.lang.StringBuffer.StringBufferTest|loading
+mauve|gnu.testlet.java.lang.StringBuffer.StringBufferTest|forcing
+mauve|gnu.testlet.java.lang.StringBuffer.StringBufferTest|force=13
+mauve|gnu.testlet.java.lang.StringBuffer.StringBufferTest|running
+mauve|gnu.testlet.java.lang.StringBuffer.StringBufferTest|runEX:java.lang.NullPointerException:NPE at address 0016036A|pass=1|fail=1|checks=2
+mauve|gnu.testlet.java.lang.Math.min|loading
+mauve|gnu.testlet.java.lang.Math.min|forcing
+mauve|gnu.testlet.java.lang.Math.min|force=2
+mauve|gnu.testlet.java.lang.Math.min|running
+mauve|gnu.testlet.java.lang.Math.min|runEX:java.lang.NullPointerException:NPE at address 2696E87F|pass=38|fail=2|checks=40
+mauve|gnu.testlet.java.lang.Character.digit|loading
+mauve|gnu.testlet.java.lang.Character.digit|forcing
+mauve|gnu.testlet.java.lang.Character.digit|force=2
+mauve|gnu.testlet.java.lang.Character.digit|running
+mauve|gnu.testlet.java.lang.Character.digit|pass=15|fail=0|checks=15
+mauve|gnu.testlet.java.lang.Boolean.BooleanTest|loading
+mauve|gnu.testlet.java.lang.Boolean.BooleanTest|forcing
+mauve|gnu.testlet.java.lang.Boolean.BooleanTest|force=8
+mauve|gnu.testlet.java.lang.Boolean.BooleanTest|running
+mauve|gnu.testlet.java.lang.Boolean.BooleanTest|runEX:java.lang.NullPointerException:NPE at address 0016318C|pass=0|fail=1|checks=1
+mauve|gnu.testlet.java.math.BigInteger.add|loading
+mauve|gnu.testlet.java.math.BigInteger.add|forcing
+mauve|gnu.testlet.java.math.BigInteger.add|force=2
+mauve|gnu.testlet.java.math.BigInteger.add|running
+mauve|gnu.testlet.java.math.BigInteger.add|runEX:java.lang.NullPointerException:NPE at address 27FE7C19|pass=4|fail=0|checks=4
+mauve|gnu.testlet.java.math.BigDecimal.construct|loading
+mauve|gnu.testlet.java.math.BigDecimal.construct|forcing
+mauve|gnu.testlet.java.math.BigDecimal.construct|force=2
+mauve|gnu.testlet.java.math.BigDecimal.construct|running
+mauve|gnu.testlet.java.math.BigDecimal.construct|runEX:java.lang.NullPointerException:NPE at address 284259FD|pass=1|fail=0|checks=1
+mauve|gnu.testlet.java.util.ArrayList.AcuniaArrayListTest|loading
+mauve|gnu.testlet.java.util.ArrayList.AcuniaArrayListTest|forcing
+mauve|gnu.testlet.java.util.ArrayList.AcuniaArrayListTest|force=27
+mauve|gnu.testlet.java.util.ArrayList.AcuniaArrayListTest|running
+mauve|gnu.testlet.java.util.ArrayList.AcuniaArrayListTest|runEX:java.lang.NullPointerException:NPE at address 0023E4D3|pass=1|fail=0|checks=1
+mauve|gnu.testlet.java.util.HashMap.AcuniaHashMapTest|loading
+mauve|gnu.testlet.java.util.HashMap.AcuniaHashMapTest|forcing
+mauve|gnu.testlet.java.util.HashMap.AcuniaHashMapTest|force=21
+mauve|gnu.testlet.java.util.HashMap.AcuniaHashMapTest|running
+mauve|gnu.testlet.java.util.HashMap.AcuniaHashMapTest|runEX:java.lang.NullPointerException:NPE at address 0016406C|pass=0|fail=0|checks=0
+mauve|gnu.testlet.java.util.Random.basic|loading
+mauve|gnu.testlet.java.util.Random.basic|forcing
+mauve|gnu.testlet.java.util.Random.basic|force=2
+mauve|gnu.testlet.java.util.Random.basic|running
+mauve|gnu.testlet.java.util.Random.basic|runEX:java.lang.NullPointerException:NPE at address 296576B4|pass=1|fail=1|checks=2
+mauve|gnu.testlet.java.text.DecimalFormat.format|loading
+mauve|gnu.testlet.java.text.DecimalFormat.format|forcing
+mauve|gnu.testlet.java.text.DecimalFormat.format|force=11
+mauve|gnu.testlet.java.text.DecimalFormat.format|running
+mauve|gnu.testlet.java.text.DecimalFormat.format|runEX:java.lang.NullPointerException:NPE at address 29A1022A|pass=71|fail=1|checks=72
+mauve|DONE

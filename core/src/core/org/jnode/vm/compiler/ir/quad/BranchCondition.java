@@ -30,7 +30,13 @@ public enum BranchCondition {
     IF_ICMPEQ("==", true), IF_ICMPNE("!=", true), IF_ICMPLT("<", true), IF_ICMPGE(
     ">=", true), IF_ICMPGT(">", true), IF_ICMPLE("<=", true),
 
-    IF_ACMPEQ("==", true), IF_ACMPNE("!=", true);
+    IF_ACMPEQ("==", true), IF_ACMPNE("!=", true),
+
+    // Unsigned word comparisons (magic ops; L1b methodToCC maps plain
+    // LT/LE/GT/GE to unsigned, S-prefixed to signed). Value-producing only
+    // (CmpAssignQuad); the branch emitter rejects them (fail loud).
+    IF_ICMPULT("u<", true), IF_ICMPULE("u<=", true), IF_ICMPUGT("u>", true),
+    IF_ICMPUGE("u>=", true);
 
     private final String v;
 

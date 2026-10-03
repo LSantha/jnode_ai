@@ -89,7 +89,14 @@ public class ConstantRefAssignQuad<T> extends AssignQuad<T> {
     }
 
     public Operand<T> propagate(Variable<T> operand) {
-        setDeadCode(true);
+        // ANCHOR-L2-132: NO kill here. The old unconditional
+        // setDeadCode(true) fired when ANY use was propagated, including
+        // deSSA's phiMove.doPass2 - while OTHER live uses of this variable
+        // still referenced it (guest-relevant: NativeStrictMath#remPiOver2
+        // post-deSSA had a dcmpl reading the variable with NO defining quad
+        // left - the codegen emitted no write for that home and the compare
+        // read garbage). removeUnusedVars gives the same end state when no
+        // uses remain (zero counted uses) and keeps the def when they do.
         return rhs;
     }
 

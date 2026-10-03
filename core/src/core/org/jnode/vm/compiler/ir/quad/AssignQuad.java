@@ -115,6 +115,9 @@ public abstract class AssignQuad<T> extends Quad<T> {
         if (lhs.getLastUseAddress() < getAddress()) {
             lhs.setLastUseAddress(getAddress());
         }
+        // ANCHOR-L2-085: record every definition so loop-carried ranges span
+        // from the first def (assignQuad only remembers the last one).
+        lhs.noteDef(getAddress());
         if (!liveVariables.contains(lhs)) {
             liveVariables.add(lhs);
         }
