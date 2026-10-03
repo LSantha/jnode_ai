@@ -2245,7 +2245,7 @@ public abstract class VmType<T> extends VmAnnotatedElement implements
      */
     @Inline
     public final void initialize() {
-        if (!isInitialized() && !isInitializing()) {
+        if (!isInitialized()) {
             linkAndInitialize();
         }
     }
