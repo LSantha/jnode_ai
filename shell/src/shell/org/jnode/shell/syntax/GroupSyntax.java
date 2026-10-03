@@ -43,6 +43,12 @@ public abstract class GroupSyntax extends Syntax {
         this.syntaxes = syntaxes;
         this.childLabels = new HashSet<String>();
         for (Syntax syntax : syntaxes) {
+            if (syntax == null) {
+                continue;
+            }
+            if (syntax.isLabelled()) {
+                childLabels.add(syntax.getLabel());
+            }
             childLabels.addAll(syntax.childLabels());
             syntax.setParent(this);
         }
