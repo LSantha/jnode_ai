@@ -199,6 +199,8 @@ public class FatEntry extends FatObject implements FSEntry, FSEntryCreated, FSEn
                 parent.setFatDirEntry(entry);
                 entry.flush();
             }
+            getFatFileSystem().getFat().flush();
+            getFatFileSystem().getApi().flush();
         }
     }
 
