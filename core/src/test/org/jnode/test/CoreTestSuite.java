@@ -44,6 +44,7 @@ import org.junit.runners.Suite.SuiteClasses;
     JavaCommandParserTest.class,
     ThreadingTestJUnit4.class,
     X86RegisterPoolTest.class,
+    X86StreamTest.class,
 }
 )
 public class CoreTestSuite {
