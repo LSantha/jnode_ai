@@ -1075,6 +1075,28 @@ public class PrimitiveTest {
     }
 
     /**
+     * ANCHOR-L2-216 (G8/P18): the in-try def sits AFTER a call in its own
+     * block, so isDefUnwrittenOnExceptionalEdge calls it possibly-unwritten,
+     * yet the exception is thrown from a LATER block that this def block
+     * dominates -- control can only reach that block after the def ran. The
+     * handler must see twice(a), not the pre-try 0. The branch between them
+     * is what makes it an inter-block case rather than the intra-block one
+     * ANCHOR-L2-139 already decides.
+     */
+    public static int interBlockDef(int[] arr, int a, int n) {
+        int x = 0;
+        try {
+            x = twice(a);
+            if (n > 0) {
+                arr[n] = a;
+            }
+            return x;
+        } catch (RuntimeException e) {
+            return -x;
+        }
+    }
+
+    /**
      * TEMP-P9 probe: always-executed in-try def + in-handler join.
      * The handler join must see the in-try version on the entry edge.
      */

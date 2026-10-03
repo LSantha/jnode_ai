@@ -82,6 +82,18 @@ public class IRControlFlowGraph<T> implements Iterable<IRBasicBlock<T>> {
     // classification uses blockReachesNormal; non-zero if it is reverted.
     public static int p15RouteBad = 0;
     public static int p15TagBad = 0;
+    // ANCHOR-L2-216 (G8/P18 guard): a local popped at handler entry whose def
+    // block dominates some OTHER exceptional predecessor of that handler AND
+    // that has no merge phi. popHandlerVersions decides from the def block
+    // alone (ANCHOR-L2-139 scans defBlock for a call-like quad at an address
+    // <= the def), so it cannot see that the exception may have been thrown
+    // from a LATER block that the def block dominates -- in which case the
+    // def executed and the handler must not be given the pre-try value.
+    // placeInterBlockHandlerPhis places the phi that closes the gap, so this
+    // must be 0; 170 on the pre-fix core corpus (the 80 sites the standard
+    // dominance frontier had already phi-covered are excluded by the check).
+    public static int p18InterBlock = 0;
+    public static String p18First = "";
     static final boolean SSATAG_LOG = Boolean.getBoolean("jnode.l2.ssatag");
 
     private SSAStack<T>[] renumberArray;
@@ -792,6 +804,9 @@ public class IRControlFlowGraph<T> implements Iterable<IRBasicBlock<T>> {
         // ANCHOR-L2-125: handler-resume merge phis, before the rename so the
         // resume uses bind to the phi results.
         placeHandlerPhis();
+        // ANCHOR-L2-216 (G8/P18): handler-entry merge for locals the standard
+        // dominance frontier misses (see the method javadoc).
+        placeInterBlockHandlerPhis();
         renameVariables(startBlock);
         typePhiResults();
     }
@@ -2624,9 +2639,47 @@ public class IRControlFlowGraph<T> implements Iterable<IRBasicBlock<T>> {
                 if (!isDefUnwrittenOnExceptionalEdge(peeked, defBlock)) {
                     break;
                 }
+                // ANCHOR-L2-216 (G8/P18 instrumentation): count, do not
+                // change what is popped.
+                p18CheckInterBlock(peeked, defBlock, exPreds, block, i);
                 popped.add(st.pop());
                 cnt++;
             }
+        }
+    }
+
+    /**
+     * ANCHOR-L2-216 (G8/P18 instrumentation): does the def being popped sit
+     * in a block that dominates a DIFFERENT exceptional predecessor of this
+     * handler, AND no merge phi covers the slot? Basic blocks have no
+     * internal control flow, so a def in a block that dominates the block
+     * which threw must have executed before that throw -- yet
+     * {@link #isDefUnwrittenOnExceptionalEdge} only ever looks inside
+     * {@code defBlock} and answers from there, so the handler would be
+     * handed the pre-try value for a local that was actually written.
+     * placeInterBlockHandlerPhis places the phi that makes this unreachable;
+     * the counter is the guard that it did. Count-only: the pop itself is
+     * left exactly as it was.
+     */
+    private void p18CheckInterBlock(Variable<T> var, IRBasicBlock<T> defBlock,
+        java.util.HashSet<IRBasicBlock<T>> exPreds, IRBasicBlock<T> handler,
+        int slot) {
+        if (hasPhiFor(handler, slot)) {
+            return;
+        }
+        for (Object t0 : exPreds) {
+            IRBasicBlock<T> t = (IRBasicBlock<T>) t0;
+            if (t == defBlock || !blockDominates(defBlock, t)) {
+                continue;
+            }
+            p18InterBlock++;
+            if (p18InterBlock == 1) {
+                p18First = "handlerPC=" + handler.getStartPC() + " slot="
+                    + slot + " defPC=" + defBlock.getStartPC() + " throwPC="
+                    + t.getStartPC();
+                System.out.println("P18INTERBLOCK " + p18First);
+            }
+            return;
         }
     }
 
@@ -2743,6 +2796,85 @@ public class IRControlFlowGraph<T> implements Iterable<IRBasicBlock<T>> {
                 }
             }
         }
+    }
+
+    /**
+     * ANCHOR-L2-216 (G8/P18): merge at a handler entry for a local whose
+     * standard dominance-frontier phi was never placed. The frontier misses
+     * exactly this shape: the def sits in an exceptional predecessor P that
+     * DOMINATES the handler (so P is the only reaching def and no phi is
+     * needed by the ordinary rule), while the def is still possibly unwritten
+     * on P's own exception edge -- a call-like quad at or before the def in
+     * P may have thrown first. The edges therefore disagree: P's edge
+     * carries the pre-try value, and the edge from any other exceptional
+     * predecessor T that P dominates (control can only reach T after the def
+     * ran) carries the in-try one. Without a phi the handler body reads a
+     * single reaching def and is wrong on one of them: `interBlockDef`
+     * compiled to `INEG 0` in the catch, returning 0 instead of -twice(a).
+     * Placed before the rename, alongside placeHandlerPhis, so every
+     * predecessor can still fill its source (throwTops on the exceptional
+     * edges, ANCHOR-L2-188).
+     */
+    private void placeInterBlockHandlerPhis() {
+        for (IRBasicBlock<T> h : bblocks) {
+            if (!h.isStartOfExceptionHandler()) {
+                continue;
+            }
+            final List<IRBasicBlock<T>> preds = h.getPredecessors();
+            if (preds == null || preds.isEmpty()) {
+                continue;
+            }
+            final java.util.HashSet<IRBasicBlock<T>> exPreds =
+                new java.util.HashSet<IRBasicBlock<T>>(preds);
+            final int nLocalSlots = h.getStackOffset();
+            for (IRBasicBlock<T> p : preds) {
+                final List defs = p.getDefList();
+                if (defs == null) {
+                    continue;
+                }
+                for (Object d0 : defs) {
+                    if (!(d0 instanceof Variable)) {
+                        continue;
+                    }
+                    final Variable<T> v = (Variable<T>) d0;
+                    final int slot = v.getIndex();
+                    if (slot < 0 || slot >= nLocalSlots) {
+                        continue;
+                    }
+                    if (hasPhiFor(h, slot)) {
+                        continue;
+                    }
+                    final AssignQuad<T> aq = v.getAssignQuad();
+                    if (aq == null || aq.getBasicBlock() != p) {
+                        continue;
+                    }
+                    if (!isDefUnwrittenOnExceptionalEdge(v, p)) {
+                        continue;
+                    }
+                    if (!p18DefExecutedOnOtherEdge(p, exPreds)) {
+                        continue;
+                    }
+                    h.add(new PhiAssignQuad<T>(h, slot));
+                }
+            }
+        }
+    }
+
+    /**
+     * ANCHOR-L2-216 (G8/P18): true when some OTHER exceptional predecessor
+     * of the handler is dominated by {@code p}. Basic blocks have no
+     * internal control flow, so reaching that block means every quad of
+     * {@code p} ran -- including the def this is about.
+     */
+    private boolean p18DefExecutedOnOtherEdge(IRBasicBlock<T> p,
+        java.util.HashSet<IRBasicBlock<T>> exPreds) {
+        for (Object t0 : exPreds) {
+            final IRBasicBlock<T> t = (IRBasicBlock<T>) t0;
+            if (t != p && blockDominates(p, t)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /**

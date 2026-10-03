@@ -432,6 +432,11 @@ public class L2Census {
         // Must be 0; 7 on the pre-fix tree.
         out.println("P15 routeBad=" + IRControlFlowGraph.p15RouteBad
             + " tagBad=" + IRControlFlowGraph.p15TagBad);
+        // ANCHOR-L2-216 (G8/P18): handler-entry pops whose def block
+        // dominates another exceptional predecessor of the same handler, i.e.
+        // the def executed on that edge and the pre-try value is wrong.
+        // Instrumentation only -- must stay 0 until a hit earns the fix.
+        out.println("P18 interBlock=" + IRControlFlowGraph.p18InterBlock);
         out.flush();
         if (out != null && args.length > 1) {
             out.close();

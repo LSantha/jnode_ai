@@ -1327,6 +1327,103 @@ public class L2PipelineTest {
     }
 
     /**
+     * ANCHOR-L2-216 (G8/P18): the local is written after a call in its own
+     * try block, and the exception comes from a LATER block that the def
+     * block dominates, so the def had already run. The handler must reach it
+     * through a merge phi whose sources are the per-throw-point versions
+     * (ANCHOR-L2-188). Pre-fix the dominance frontier placed no phi -- the
+     * def block dominates the handler, so there is only one reaching def by
+     * the ordinary rule -- and the catch folded to `return 0` instead of
+     * `-twice(a)`.
+     */
+    @Test
+    public void testHandlerReadsInterBlockDef() throws Exception {
+        CompileResult r = compileMethod(findMethod("interBlockDef"));
+        IRBasicBlock h = null;
+        final Set exPreds = new HashSet();
+        final Set inTryLocalSlots = new HashSet();
+        for (Object b0 : (Iterable<?>) r.cfg) {
+            final IRBasicBlock b = (IRBasicBlock) b0;
+            if (b.isStartOfExceptionHandler()) {
+                h = b;
+                continue;
+            }
+            for (Object q0 : (List<?>) b.getQuads()) {
+                final Quad q = (Quad) q0;
+                // Dead quads count too: pre-fix the handler folds x to a
+                // constant, DCE kills the in-try def, and skipping it here
+                // would make the test blind to exactly what it checks.
+                final Operand def = q.getDefinedOp();
+                if (def instanceof Variable) {
+                    final int si = ((Variable) def).getIndex();
+                    if (si < b.getStackOffset()) {
+                        inTryLocalSlots.add(Integer.valueOf(si));
+                    }
+                }
+            }
+        }
+        assertTrue("interBlockDef: no handler block, test is vacuous", h != null);
+        exPreds.addAll(h.getPredecessors());
+        boolean sawRead = false;
+        for (Object q0 : (List<?>) h.getQuads()) {
+            final Quad q = (Quad) q0;
+            if (q.isDeadCode()) {
+                continue;
+            }
+            final Operand[] refs = q.getReferencedOps();
+            if (refs == null) {
+                continue;
+            }
+            for (int j = 0; j < refs.length; j++) {
+                if (!(refs[j] instanceof Variable)) {
+                    continue;
+                }
+                final Variable v = (Variable) refs[j];
+                if (!inTryLocalSlots.contains(Integer.valueOf(v.getIndex()))) {
+                    continue;
+                }
+                sawRead = true;
+                final AssignQuad def = v.getAssignQuad();
+                assertTrue("interBlockDef: handler read of " + v + " has no def",
+                    def != null);
+                if (def instanceof PhiAssignQuad) {
+                    final List sources =
+                        ((PhiAssignQuad) def).getPhiOperand().getSources();
+                    boolean inTrySource = false;
+                    for (int k = 0; k < sources.size(); k++) {
+                        if (!(sources.get(k) instanceof Variable)) {
+                            continue;
+                        }
+                        final AssignQuad sd =
+                            ((Variable) sources.get(k)).getAssignQuad();
+                        if (sd != null
+                            && exPreds.contains(sd.getBasicBlock())) {
+                            inTrySource = true;
+                        }
+                    }
+                    assertTrue("interBlockDef: the handler phi for " + v
+                        + " has no in-try source, only pre-try ones: " + sources,
+                        inTrySource);
+                } else {
+                    assertFalse("interBlockDef: handler read of " + v
+                        + " bound outside the try (def " + def + " in "
+                        + def.getBasicBlock() + "); the def ran before the "
+                        + "throw (ANCHOR-L2-216)",
+                        !exPreds.contains(def.getBasicBlock())
+                            && def.getBasicBlock() != h);
+                }
+            }
+        }
+        // The phi itself is lowered away by deSSA (it becomes the pruned
+        // nop above), so the observable symptom is the READ: pre-fix the
+        // catch folded x to the pre-try constant and no local read survived
+        // at all (`s5_9 = INEG 0`, `return 0`).
+        assertTrue("interBlockDef: the handler never reads an in-try local -- "
+            + "it folded to the pre-try constant, so the merge phi is missing "
+            + "(ANCHOR-L2-216); handler quads: " + h.getQuads(), sawRead);
+    }
+
+    /**
      * ANCHOR-L2-148: handler-flow edges carry always-executed defs.
      * Pre-fix `isUsableEdge` deemed any in-try def unusable on handler
      * flow, so the entry edge into an in-handler join got no copy and the
