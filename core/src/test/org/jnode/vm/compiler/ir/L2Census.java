@@ -427,6 +427,11 @@ public class L2Census {
         // over every method compiled above (log-only layer in deconstructOnePhi).
         out.println("SSATAG disagreements=" + IRControlFlowGraph.tagDisagreements
             + " handlerEntryPhis=" + IRControlFlowGraph.tagHandlerEntryPhis);
+        // ANCHOR-L2-213 (G5/P15): phi copies accepted by the loop
+        // classification on the strength of full-edge reachability alone.
+        // Must be 0; 7 on the pre-fix tree.
+        out.println("P15 routeBad=" + IRControlFlowGraph.p15RouteBad
+            + " tagBad=" + IRControlFlowGraph.p15TagBad);
         out.flush();
         if (out != null && args.length > 1) {
             out.close();

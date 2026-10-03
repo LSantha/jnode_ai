@@ -400,6 +400,15 @@ if want census; then
     # exactly like a check that found nothing.
     st=$(sed -n "s/^SSATAG disagreements=\([0-9]*\).*/\1/p" /tmp/census-'"$LABEL"'.txt | head -n 1)
     echo "ssatag=${st:-missing}"
+    # ANCHOR-L2-213 (G5/P15): a phi copy accepted onto a predecessor the loop
+    # classification only liked because blockReaches walks into handler
+    # entries, i.e. a copy that does not execute on the path that carries it.
+    # Measured 7 on the pre-fix tree (all in taggedUsableEdge), structurally
+    # unreachable while the classification uses blockReachesNormal. A missing
+    # report line fails too, same rule as SSATAG above.
+    p15r=$(sed -n "s/^P15 routeBad=\([0-9]*\).*/\1/p" /tmp/census-'"$LABEL"'.txt | head -n 1)
+    p15t=$(sed -n "s/^P15 routeBad=[0-9]* tagBad=\([0-9]*\).*/\1/p" /tmp/census-'"$LABEL"'.txt | head -n 1)
+    echo "p15=${p15r:-missing}/${p15t:-missing}"
     n=$(awk "/^--- FAILED \(/{f=1;next} /^--- /{f=0} f" /tmp/census-'"$LABEL"'.txt | wc -l)
     echo "FAILED=$n"
     awk "/^--- FAILED \(/{f=1;next} /^--- /{f=0} f" /tmp/census-'"$LABEL"'.txt | sort > /tmp/census-'"$LABEL"'.failed
@@ -503,10 +512,10 @@ if want census; then
     else
       echo "probe census gate: CONSTREFFIELD==0 and FAILED==0 on the shape-carrying corpus"
     fi
-    if [ ! -s '"$BASE"'/census-failed.txt ] && [ "$n" -eq 0 ] && [ "$rg" -eq 0 ] && [ "$sw" -eq 0 ] && [ "${st:-1}" -eq 0 ] && [ "$pc_missing" -eq 0 ]; then
-      echo "census gate: FAILED==0 and RANGEGAP==0 and STALEWIDE==0 and SSATAG==0 as required"
+    if [ ! -s '"$BASE"'/census-failed.txt ] && [ "$n" -eq 0 ] && [ "$rg" -eq 0 ] && [ "$sw" -eq 0 ] && [ "${st:-1}" -eq 0 ] && [ "${p15r:-1}" -eq 0 ] && [ "${p15t:-1}" -eq 0 ] && [ "$pc_missing" -eq 0 ]; then
+      echo "census gate: FAILED==0 and RANGEGAP==0 and STALEWIDE==0 and SSATAG==0 and P15==0 as required"
     else
-      echo "REGRESSION: $n FAILED entries, $rg RANGEGAP entries, $sw STALEWIDE entries, ${st:-missing} SSATAG disagreements; first ones:"
+      echo "REGRESSION: $n FAILED entries, $rg RANGEGAP entries, $sw STALEWIDE entries, ${st:-missing} SSATAG disagreements, p15=${p15r:-missing}/${p15t:-missing}; first ones:"
       head -n 10 /tmp/census-'"$LABEL"'.failed
       grep -E "^RANGEGAP " /tmp/census-'"$LABEL"'.stdout | head -n 10
       grep -E "^STALEWIDE " /tmp/census-'"$LABEL"'.stdout | head -n 10

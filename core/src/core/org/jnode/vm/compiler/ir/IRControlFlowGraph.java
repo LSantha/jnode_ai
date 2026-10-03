@@ -76,6 +76,12 @@ public class IRControlFlowGraph<T> implements Iterable<IRBasicBlock<T>> {
     // be replaced by the tags (C3).
     public static int tagDisagreements = 0;
     public static int tagHandlerEntryPhis = 0;
+    // ANCHOR-L2-213 (G5/P15 guard): phi copies accepted onto a predecessor that
+    // ONLY the full-edge over-approximation supports -- reachable from the join
+    // solely through exceptional dispatch. Structurally zero once the
+    // classification uses blockReachesNormal; non-zero if it is reverted.
+    public static int p15RouteBad = 0;
+    public static int p15TagBad = 0;
     static final boolean SSATAG_LOG = Boolean.getBoolean("jnode.l2.ssatag");
 
     private SSAStack<T>[] renumberArray;
@@ -1476,8 +1482,40 @@ public class IRControlFlowGraph<T> implements Iterable<IRBasicBlock<T>> {
     }
 
     /**
+     * ANCHOR-L2-213 (G5/P15 guard): true only for a phi-copy predecessor that
+     * the classification accepted but that normal-flow reachability rejects,
+     * i.e. one whose path to the join exists solely through exceptional
+     * dispatch. The classification itself is supposed to use
+     * {@link #blockReachesNormal}, so while it does this cannot fire: the
+     * first check below already rejects whatever the classification accepted.
+     * Reverting the classification to {@link #blockReaches} makes it fire.
+     *
+     * @param join the join the copy is being routed onto
+     * @param pred the candidate predecessor (tag or route candidate)
+     * @param defBlock reaching-definition block of the phi, or null
+     */
+    private boolean p15FullOnly(IRBasicBlock<T> join, IRBasicBlock<T> pred,
+                                IRBasicBlock<T> defBlock) {
+        final boolean entry = (defBlock == null) || (defBlock == join);
+        final boolean nInLoop = entry
+            || (blockReachesNormal(defBlock, join, null)
+                && blockReachesNormal(join, defBlock, null));
+        final boolean nInternal = blockReachesNormal(join, pred, null);
+        if (nInLoop == nInternal) {
+            return false;
+        }
+        final boolean fInLoop = entry
+            || (blockReaches(defBlock, join, null)
+                && blockReaches(join, defBlock, null));
+        final boolean fInternal = blockReaches(join, pred, null);
+        return fInLoop == fInternal;
+    }
+
+    /**
      * Reachability over successor edges, optionally refusing to pass through
-     * one block. Used to route phi copies onto the edge that carries them.
+     * one block, counting the exceptional dispatch into a handler entry as an
+     * edge. Not for phi-copy routing -- see {@link #blockReachesNormal} and
+     * the ANCHOR-L2-213 guard, which is now the only caller.
      */
     private boolean blockReaches(IRBasicBlock<T> from, IRBasicBlock<T> to,
                                  IRBasicBlock<T> avoid) {        if (from == null || to == null) {
@@ -1819,6 +1857,9 @@ public class IRControlFlowGraph<T> implements Iterable<IRBasicBlock<T>> {
                 continue;
             }
             final IRBasicBlock<T> x = e.getValue();
+            // ANCHOR-L2-213: measured domDiff=0 over the core corpus, so this
+            // stays on blockDominates (its normal twin agrees); see OPEN-BUGS
+            // G5/P15.
             if (x != tag && !(blockDominates(x, tag)
                 && blockDominates(e.getKey().defBlock, x))) {
                 tagDisagreements++;
@@ -2059,8 +2100,8 @@ public class IRControlFlowGraph<T> implements Iterable<IRBasicBlock<T>> {
         if (defBlock == null || defBlock == join) {
             inLoop = true;
         } else {
-            inLoop = blockReaches(defBlock, join, null)
-                && blockReaches(join, defBlock, null);
+            inLoop = blockReachesNormal(defBlock, join, null)
+                && blockReachesNormal(join, defBlock, null);
         }
         // Internal preds are reachable back from the join (back edges);
         // the rest are entry edges.
@@ -2069,9 +2110,18 @@ public class IRControlFlowGraph<T> implements Iterable<IRBasicBlock<T>> {
             if (p == null || p == join || claimed.contains(p)) {
                 continue;
             }
-            final boolean internal = blockReaches(join, p, null);
+            final boolean internal = blockReachesNormal(join, p, null);
             if (inLoop == internal
                 && isUsableEdge(join, p, hflow, defBlock, version)) {
+                // ANCHOR-L2-213 (G5/P15 guard): must never be accepted on the
+                // strength of the full-edge over-approximation alone.
+                if (p15FullOnly(join, p, defBlock)) {
+                    p15RouteBad++;
+                    if (p15RouteBad <= 40) {
+                        System.out.println("P15ROUTEBAD joinPC="
+                            + join.getStartPC() + " predPC=" + p.getStartPC());
+                    }
+                }
                 out.add(p);
             }
         }
@@ -2101,12 +2151,23 @@ public class IRControlFlowGraph<T> implements Iterable<IRBasicBlock<T>> {
         if (defBlock == null || defBlock == join) {
             inLoop = true;
         } else {
-            inLoop = blockReaches(defBlock, join, null)
-                && blockReaches(join, defBlock, null);
+            inLoop = blockReachesNormal(defBlock, join, null)
+                && blockReachesNormal(join, defBlock, null);
         }
-        final boolean internal = blockReaches(join, tag, null);
+        final boolean internal = blockReachesNormal(join, tag, null);
         if (inLoop != internal) {
             return null;
+        }
+        // ANCHOR-L2-213 (G5/P15 guard): the acceptance above must come from
+        // normal flow, not from the full-edge over-approximation, which used
+        // to accept tags reachable from the join only through exceptional
+        // dispatch (7 in the core corpus).
+        if (p15FullOnly(join, tag, defBlock)) {
+            p15TagBad++;
+            if (p15TagBad <= 40) {
+                System.out.println("P15TAGBAD joinPC=" + join.getStartPC()
+                    + " tagPC=" + tag.getStartPC());
+            }
         }
         final java.util.HashSet<IRBasicBlock<T>> hflow = handlerFlowSet();
         return isUsableEdge(join, tag, hflow, defBlock, version) ? tag : null;
