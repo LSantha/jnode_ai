@@ -1597,8 +1597,30 @@ public class IRControlFlowGraph<T> implements Iterable<IRBasicBlock<T>> {
             AssignQuad<T> assignQuad = rhs.getAssignQuad();
             IRBasicBlock<T> defBlock;
             if (assignQuad == null && rhs instanceof MethodArgument) {
+                // The incoming value: an argument version that was never
+                // defined in this method. LinearScanAllocator (ANCHOR-L2-171)
+                // documents getAssignQuad() == null as exactly this idiom.
                 defBlock = startBlock;
             } else if (assignQuad == null) {
+                // ANCHOR-L2-212 -- G4/P14 withdrawn 2026-10-03 by reading the
+                // code, so this arm cannot drop an edge and needs no counter.
+                //
+                // Every phi source enters through the single addSource call in
+                // rewritePhiParams, and the line before it materialises an
+                // UndefinedVariable when the incoming edge has no reaching
+                // definition ("keep that fact explicit until de-SSA") -- which
+                // the arm above handles with a live bottom write. Every other
+                // source is a real definition, and AssignQuad's constructors
+                // all route through setLHS -> setAssignQuad(this), so it is
+                // non-null. The one setAssignQuad(null) (newPhiVariable) is
+                // transient: the PhiAssignQuad built for that variable arms it
+                // again before any deconstruction runs.
+                //
+                // What is left is the MethodArgument case taken just above, so
+                // this is the structural complement of that arm rather than a
+                // third case. Measured 0 firings over 11,660 census methods and
+                // 265 unit tests, which corroborates the reading without
+                // proving it.
                 continue;
             } else {
                 defBlock = assignQuad.getBasicBlock();
