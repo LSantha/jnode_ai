@@ -1168,6 +1168,65 @@ public class PrimitiveTest {
     }
 
     /**
+     * ANCHOR-L2-219 (G12/M5): both constants below are REFERENCE-valued and
+     * both quad constructors overwrote that on the SSA-visible lhs. The
+     * index ctor CLONES the stack slot, so IRGenerator's own REFERENCE
+     * stamp on the slot survives while the clone does not. Measured: the
+     * class def cannot fold (a VmConstClass is not a Constant) and stays
+     * live through the store; the null def folds into its consumer as a
+     * constant 0 and dies. javac emits plain `ldc <class>; putstatic` /
+     * `aconst_null; putstatic`, so nothing here needs hand-built bytecode.
+     */
+    public static int classConstTyped() {
+        sObj = String.class;
+        return 1;
+    }
+
+    public static int nullConstTyped() {
+        sObj = null;
+        return 1;
+    }
+
+    /**
+     * ANCHOR-L2-219 (G12/M5), the merge shape: a phi needs variable
+     * sources, so the constant cannot vanish into a consumer. Measured on
+     * the pre-fix tree, the phi home and the phi-edge copies read
+     * REFERENCE anyway -- their type comes from the SSA slot chain, not
+     * from this quad's lhs -- so no live miscompile is claimed for either
+     * constant half; the census lints stamp the defect corpus-wide.
+     */
+    public static int nullMergeTyped(boolean c, Object p) {
+        Object o;
+        if (c) {
+            o = null;
+        } else {
+            o = p;
+        }
+        sObj = o;
+        return 1;
+    }
+
+    /**
+     * ANCHOR-L2-219 (G12/M5), the live half: a VmConstClass is not a
+     * Constant, so this def cannot fold away the way aconst_null does (all
+     * 1052 corpus null defs fold to IntConstant(0) and die) -- it stays a
+     * live phi source, carrying its own stamp. Measured pre-fix the stamp
+     * was INT at 231 live sites, while the phi home still read REFERENCE
+     * because typePhiResults (IRControlFlowGraph:825) reads the phi-edge
+     * copies and not this quad.
+     */
+    public static int classMergeTyped(boolean c, Object p) {
+        Object o;
+        if (c) {
+            o = String.class;
+        } else {
+            o = p;
+        }
+        sObj = o;
+        return 1;
+    }
+
+    /**
      * ANCHOR-L2-149: wide constant static store. Pre-fix the
      * `putstatic` wide-CONSTANT arm materialized both halves into
      * SR1/EDX and fell off the end without the store, leaving the

@@ -66,6 +66,7 @@ import org.jnode.vm.compiler.ir.quad.CallAssignQuad;
 import org.jnode.vm.compiler.ir.quad.CallQuad;
 import org.jnode.vm.compiler.ir.quad.CheckcastQuad;
 import org.jnode.vm.compiler.ir.quad.ConstantClassAssignQuad;
+import org.jnode.vm.compiler.ir.quad.ConstantRefAssignQuad;
 import org.jnode.vm.compiler.ir.quad.ConditionalBranchQuad;
 import org.jnode.vm.compiler.ir.quad.JsrQuad;
 import org.jnode.vm.compiler.ir.quad.MonitorenterQuad;
@@ -1276,6 +1277,83 @@ public class L2PipelineTest {
             }
         }
         return false;
+    }
+
+    /**
+     * ANCHOR-L2-219 (G12/M5): a REFERENCE-valued constant that was stamped
+     * INT on its SSA-visible lhs. The index ctor CLONES the stack slot, so
+     * the slot IRGenerator just typed REFERENCE keeps its type while the
+     * clone does not; defineBottom already carries a workaround comment for
+     * the same clobber (it restores the phi's own REFERENCE after
+     * constructing the constant edge copy). No live miscompile is claimed:
+     * the phi-edge copies measured REFERENCE on both sides of the fix.
+     * Both fixtures are plain javac output: `ldc <class>; putstatic` and an
+     * `aconst_null` in one arm of an if/else merge, each keeping its shape
+     * in the bytecode, so nothing here needs hand-built bytecode.
+     */
+    @Test
+    public void testNullAndClassConstantsKeepReferenceType() throws Exception {
+        assertConstantClassIsReference("classConstTyped");
+        // The merge shape is the one where the def is a live phi source:
+        // a VmConstClass is not a Constant, so it cannot fold away the way
+        // aconst_null does (all 1052 corpus null defs fold to IntConstant(0)
+        // and die).
+        assertConstantClassIsReference("classMergeTyped");
+        assertAconstNullIsReference("nullMergeTyped");
+    }
+
+    private static void assertConstantClassIsReference(String name) throws Exception {
+        final IRControlFlowGraph cfg = runToPostDce(findMethod(name));
+        int seen = 0;
+        for (Object b0 : (Iterable<?>) cfg) {
+            final IRBasicBlock b = (IRBasicBlock) b0;
+            for (Object q0 : (List<?>) b.getQuads()) {
+                final Quad q = (Quad) q0;
+                if (q.isDeadCode() || !(q instanceof ConstantClassAssignQuad)) {
+                    continue;
+                }
+                seen++;
+                assertEquals("a class constant is a REFERENCE (ANCHOR-L2-219): " + q,
+                    Operand.REFERENCE,
+                    ((ConstantClassAssignQuad) q).getLHS().getType());
+            }
+        }
+        assertTrue("fixture must emit a class constant: " + name, seen > 0);
+    }
+
+    private static void assertAconstNullIsReference(String name) throws Exception {
+        final VmMethod m = findMethod(name);
+        final VmByteCode code = m.getBytecode();
+        final IRControlFlowGraph cfg = runToPostDce(m);
+        int seen = 0;
+        for (Object b0 : (Iterable<?>) cfg) {
+            final IRBasicBlock b = (IRBasicBlock) b0;
+            for (Object q0 : (List<?>) b.getQuads()) {
+                final Quad q = (Quad) q0;
+                if (!(q instanceof ConstantRefAssignQuad)) {
+                    continue;
+                }
+                // Addresses are still bcis here: fixupAddresses runs later,
+                // in X86Level2Compiler.deSSAAndFixup (X86Level2Compiler:390).
+                // Dead quads are counted on purpose: the null folds into its
+                // consumer as a constant 0, so this def is dead after DCE and
+                // only the stamp the ctor writes remains to check. The class
+                // half above runs live-only, and the census lints both
+                // corpus-wide.
+                final int bci = q.getAddress();
+                if (bci < 0 || bci >= code.getLength()) {
+                    continue;
+                }
+                if ((code.getBytecode().get(bci) & 0xFF) != 0x01) { // ACONST_NULL
+                    continue;
+                }
+                seen++;
+                assertEquals("aconst_null is a REFERENCE (ANCHOR-L2-219): " + q,
+                    Operand.REFERENCE,
+                    ((ConstantRefAssignQuad) q).getLHS().getType());
+            }
+        }
+        assertTrue("fixture must emit an aconst_null: " + name, seen > 0);
     }
 
     /**

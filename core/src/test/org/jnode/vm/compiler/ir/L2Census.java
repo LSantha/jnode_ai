@@ -42,6 +42,8 @@ import org.jnode.vm.compiler.ir.Operand;
 import org.jnode.vm.compiler.ir.UndefinedVariable;
 import org.jnode.vm.compiler.ir.quad.AssignQuad;
 import org.jnode.vm.compiler.ir.quad.ArrayLengthAssignQuad;
+import org.jnode.vm.compiler.ir.quad.ConstantClassAssignQuad;
+import org.jnode.vm.compiler.ir.quad.ConstantRefAssignQuad;
 import org.jnode.vm.compiler.ir.quad.InstanceCallAssignQuad;
 import org.jnode.vm.compiler.ir.quad.InstanceCallQuad;
 import org.jnode.vm.compiler.ir.quad.ConditionalBranchQuad;
@@ -303,6 +305,8 @@ public class L2Census {
                     checkConstRefField(m, text);
                     checkCallLikeCoverage(m, text);
                     checkDeadFieldLoads(m);
+                    checkConstantClassTypes(m);
+                    checkAconstNullTypes(m);
                     checkRangeCoverage(m);
                     ok++;
                     if (hasHandlers && handlerExamples.size() < 20) {
@@ -1457,6 +1461,90 @@ public class L2Census {
                             + method.getDeclaringClass().getName() + "#"
                             + method.getName() + " @" + q.getAddress()
                             + " " + q.getClass().getSimpleName());
+                    }
+                }
+            }
+        } catch (Throwable t) {
+            // lint only
+        }
+    }
+
+    /**
+     * ANCHOR-L2-219 (G12/M5): {@code ldc <class>} yields a Class REFERENCE,
+     * but ConstantClassAssignQuad stamped its lhs INT. The index ctor
+     * CLONES the stack slot, so IRGenerator's REFERENCE stamp on the slot
+     * survives while the SSA-visible clone does not -- and the clone is
+     * what fixType (IRGenerator:614) scans for. 231 live sites pre-fix; a
+     * VmConstClass is not a Constant, so unlike aconst_null this def
+     * cannot fold and stays live. Fires on the live, emitted quads only.
+     */
+    static void checkConstantClassTypes(VmMethod method) {
+        try {
+            final IRControlFlowGraph cfg = lastCfg;
+            if (cfg == null) {
+                return;
+            }
+            for (Object b0 : (Iterable<?>) cfg) {
+                final IRBasicBlock b = (IRBasicBlock) b0;
+                for (Object q0 : (List<?>) b.getQuads()) {
+                    final Quad q = (Quad) q0;
+                    if (q.isDeadCode() || !(q instanceof ConstantClassAssignQuad)) {
+                        continue;
+                    }
+                    final int type = ((ConstantClassAssignQuad) q).getLHS().getType();
+                    if (type != Operand.REFERENCE) {
+                        System.out.println("CONSTCLASSREF "
+                            + method.getDeclaringClass().getName() + "#"
+                            + method.getName() + " @" + q.getAddress()
+                            + " type=" + type);
+                    }
+                }
+            }
+        } catch (Throwable t) {
+            // lint only
+        }
+    }
+
+    /**
+     * ANCHOR-L2-219 (G12/M5), the aconst_null half: NULL_CONSTANT is an
+     * IntConstant(0), so ConstantRefAssignQuad derived INT from it and
+     * stamped the CLONED lhs, undoing the REFERENCE IRGenerator had just
+     * written on the slot. The bci identifies the opcode, since the class
+     * and the int form of zero are the same Constant object. Liveness is in
+     * the report because the def usually folds into its consumer as a
+     * constant and dies -- the stamp is the quad contract either way.
+     */
+    static void checkAconstNullTypes(VmMethod method) {
+        try {
+            final IRControlFlowGraph cfg = lastCfg;
+            if (cfg == null) {
+                return;
+            }
+            final int bclen = method.getBytecode().getLength();
+            final java.nio.ByteBuffer bc = method.getBytecode().getBytecode();
+            for (Object b0 : (Iterable<?>) cfg) {
+                final IRBasicBlock b = (IRBasicBlock) b0;
+                for (Object q0 : (List<?>) b.getQuads()) {
+                    final Quad q = (Quad) q0;
+                    if (!(q instanceof ConstantRefAssignQuad)) {
+                        continue;
+                    }
+                    final Integer bci =
+                        (Integer) cfg.getBcQuadAddresses().get(q);
+                    if (bci == null || bci.intValue() < 0
+                        || bci.intValue() >= bclen) {
+                        continue;
+                    }
+                    if ((bc.get(bci.intValue()) & 0xFF) != 0x01) { // ACONST_NULL
+                        continue;
+                    }
+                    final int type =
+                        ((ConstantRefAssignQuad) q).getLHS().getType();
+                    if (type != Operand.REFERENCE) {
+                        System.out.println("CONSTNULLREF "
+                            + method.getDeclaringClass().getName() + "#"
+                            + method.getName() + " @" + bci + " type=" + type
+                            + " dead=" + q.isDeadCode());
                     }
                 }
             }

@@ -370,6 +370,19 @@ if want anchors; then
     # next census to disagree with itself.
     c=$(grep -rn "boolean isCallLike" core/src --include=*.java | wc -l)
     [ "$c" -eq 1 ] || { echo "ANCHOR-L2-217 P19: $c isCallLike implementations in core/src, expected 1"; exit 1; }
+    # ANCHOR-L2-219 (G12/M5): a quad class that overrides equals without
+    # hashCode breaks the Object contract. Both quad maps are IdentityHashMap
+    # today, so nothing hashes quads yet and the violation is latent -- which
+    # is when it is still cheap to hold. Source-level on purpose, like the
+    # isCallLike count above: the PAIR is what matters, not the bytecode it
+    # happens to compile to.
+    bad=""
+    for f in core/src/core/org/jnode/vm/compiler/ir/quad/*.java; do
+      if grep -q "public boolean equals(" "$f" && ! grep -q "public int hashCode(" "$f"; then
+        bad="$bad ${f##*/}"
+      fi
+    done
+    [ -z "$bad" ] || { echo "ANCHOR-L2-219 M5: equals without hashCode:$bad"; exit 1; }
     echo anchors-ok'
 fi
 # ANCHOR-L2-187: these three verdicts used to end on `| tail -n 3`, so the
@@ -454,6 +467,19 @@ if want census; then
     # output; a missing report line fails too (ANCHOR-L2-187).
     dfl=$(grep -c "^DEADFIELDLOAD " /tmp/census-'"$LABEL"'.stdout)
     echo "deadfieldload=$dfl"
+    # ANCHOR-L2-219 (G12/M5): ldc <class> is a REFERENCE, and its quad
+    # stamped the SSA-visible lhs INT. The index ctor clones the stack slot,
+    # so the slot IRGenerator typed REFERENCE survives while the clone every
+    # phi sees does not. Corpus-wide because the ctor is the single site and
+    # every class constant in the corpus goes through it.
+    ccr=$(grep -c "^CONSTCLASSREF " /tmp/census-'"$LABEL"'.stdout)
+    echo "constclassref=$ccr"
+    # ANCHOR-L2-219 (G12/M5), the aconst_null half: NULL_CONSTANT is an
+    # IntConstant(0), so the quad derived INT from it and re-typed the
+    # cloned lhs, undoing the REFERENCE just written on the stack slot.
+    # The bci selects the opcode, so iconst 0 stays out of this count.
+    cnr=$(grep -c "^CONSTNULLREF " /tmp/census-'"$LABEL"'.stdout)
+    echo "constnullref=$cnr"
     n=$(awk "/^--- FAILED \(/{f=1;next} /^--- /{f=0} f" /tmp/census-'"$LABEL"'.txt | wc -l)
     echo "FAILED=$n"
     awk "/^--- FAILED \(/{f=1;next} /^--- /{f=0} f" /tmp/census-'"$LABEL"'.txt | sort > /tmp/census-'"$LABEL"'.failed
@@ -557,15 +583,17 @@ if want census; then
     else
       echo "probe census gate: CONSTREFFIELD==0 and FAILED==0 on the shape-carrying corpus"
     fi
-    if [ ! -s '"$BASE"'/census-failed.txt ] && [ "$n" -eq 0 ] && [ "$rg" -eq 0 ] && [ "$sw" -eq 0 ] && [ "${st:-1}" -eq 0 ] && [ "${p15r:-1}" -eq 0 ] && [ "${p15t:-1}" -eq 0 ] && [ "${p18:-1}" -eq 0 ] && [ "${cn:-1}" -eq 0 ] && [ "${dfl:-1}" -eq 0 ] && [ "$pc_missing" -eq 0 ]; then
-      echo "census gate: FAILED==0 and RANGEGAP==0 and STALEWIDE==0 and SSATAG==0 and P15==0 and P18==0 and CALLNOTCALLLIKE==0 and DEADFIELDLOAD==0 as required"
+    if [ ! -s '"$BASE"'/census-failed.txt ] && [ "$n" -eq 0 ] && [ "$rg" -eq 0 ] && [ "$sw" -eq 0 ] && [ "${st:-1}" -eq 0 ] && [ "${p15r:-1}" -eq 0 ] && [ "${p15t:-1}" -eq 0 ] && [ "${p18:-1}" -eq 0 ] && [ "${cn:-1}" -eq 0 ] && [ "${dfl:-1}" -eq 0 ] && [ "${ccr:-1}" -eq 0 ] && [ "${cnr:-1}" -eq 0 ] && [ "$pc_missing" -eq 0 ]; then
+      echo "census gate: FAILED==0 and RANGEGAP==0 and STALEWIDE==0 and SSATAG==0 and P15==0 and P18==0 and CALLNOTCALLLIKE==0 and DEADFIELDLOAD==0 and CONSTCLASSREF==0 and CONSTNULLREF==0 as required"
     else
-      echo "REGRESSION: $n FAILED entries, $rg RANGEGAP entries, $sw STALEWIDE entries, ${st:-missing} SSATAG disagreements, p15=${p15r:-missing}/${p15t:-missing} p18=${p18:-missing} callnotcalllike=${cn:-missing} deadfieldload=${dfl:-missing}; first ones:"
+      echo "REGRESSION: $n FAILED entries, $rg RANGEGAP entries, $sw STALEWIDE entries, ${st:-missing} SSATAG disagreements, p15=${p15r:-missing}/${p15t:-missing} p18=${p18:-missing} callnotcalllike=${cn:-missing} deadfieldload=${dfl:-missing} constclassref=${ccr:-missing} constnullref=${cnr:-missing}; first ones:"
       head -n 10 /tmp/census-'"$LABEL"'.failed
       grep -E "^RANGEGAP " /tmp/census-'"$LABEL"'.stdout | head -n 10
       grep -E "^STALEWIDE " /tmp/census-'"$LABEL"'.stdout | head -n 10
       grep -E "^CALLNOTCALLLIKE " /tmp/census-'"$LABEL"'.stdout | head -n 10
       grep -E "^DEADFIELDLOAD " /tmp/census-'"$LABEL"'.stdout | head -n 10
+      grep -E "^CONSTCLASSREF " /tmp/census-'"$LABEL"'.stdout | head -n 10
+      grep -E "^CONSTNULLREF " /tmp/census-'"$LABEL"'.stdout | head -n 10
       grep -E "^OK=" /tmp/census-'"$LABEL"'.txt
       exit 1
     fi

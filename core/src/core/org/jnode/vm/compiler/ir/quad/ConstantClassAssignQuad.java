@@ -37,7 +37,13 @@ public class ConstantClassAssignQuad<T> extends AssignQuad <T> {
         super(address, block, lhsIndex);
         refs = new Operand[0];
         this.constClass = constClass;
-        getLHS().setType(Operand.INT);
+        // ANCHOR-L2-219 (G12/M5): `ldc <class>` yields a Class, which is a
+        // REFERENCE. The index ctor CLONES the stack slot IRGenerator just
+        // typed REFERENCE, so the slot keeps its type while this stamp on the
+        // clone is what the optimizer, fixType (IRGenerator:614) and any phi
+        // source that still names this variable see. 231 live corpus sites
+        // arrived here typed INT instead.
+        getLHS().setType(Operand.REFERENCE);
     }
 
     public VmConstClass getConstClass() {

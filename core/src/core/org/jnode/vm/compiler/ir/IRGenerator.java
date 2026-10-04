@@ -379,8 +379,18 @@ public class IRGenerator<T> extends BytecodeVisitor {
 
     public void visit_aconst_null() {
         variables[stackOffset].setType(Operand.REFERENCE);
-        currentBlock.add(new ConstantRefAssignQuad<T>(address, currentBlock, stackOffset,
-            NULL_CONSTANT));
+        ConstantRefAssignQuad<T> quad = new ConstantRefAssignQuad<T>(address,
+            currentBlock, stackOffset, NULL_CONSTANT);
+        // ANCHOR-L2-219 (G12/M5): NULL_CONSTANT is Constant.getInstance(0),
+        // an IntConstant (the null-Constant form at its declaration is
+        // commented out), so the ctor derives INT from it and re-types the
+        // CLONED lhs, undoing the REFERENCE just written on the slot. The
+        // value is a reference and the clone is the quad contract; corpus
+        // measurement: the def folds into its consumer as a constant 0 at
+        // all 1052 sites, so the stamp was never read live -- it was wrong
+        // anyway, and the census now holds it at 0.
+        quad.getLHS().setType(Operand.REFERENCE);
+        currentBlock.add(quad);
         stackOffset += 1;
     }
 

@@ -122,6 +122,16 @@ public class PhiAssignQuad<T> extends AssignQuad<T> {
         return false;
     }
 
+    /**
+     * ANCHOR-L2-219 (G12/M5): the pair of the equals above. The two quad maps
+     * (bcQuadAddresses, live) are IdentityHashMap today, so nothing hashes a
+     * phi yet and the missing hashCode was latent -- which is exactly when it
+     * is cheap to hold. Same key as equals, therefore same hash.
+     */
+    public int hashCode() {
+        return getLHS().hashCode();
+    }
+
     public String toString() {
         if (isDeadCode()) {
             return getAddress() + ": " + "            nop (pruned phi)";
