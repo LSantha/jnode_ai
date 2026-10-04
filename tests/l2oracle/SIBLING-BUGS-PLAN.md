@@ -805,6 +805,24 @@ its RRR row uses reg3 = ESI. Regression:
 count registers and asserts sar/shr (and sal for ISHL); fails pre-fix,
 passes post-fix. T3 15->16.
 
+Re-audit 2026-10-04 (H1 was picked again off the stale queued row below,
+then WITHDRAWN by reading -- no code change): the review's cited raw
+`writeSAL_CL` else-arms no longer exist. ISHR's ECX branch is SAR
+(L2-150), and IUSHR now routes through `writeShiftCountInCL`/`emitShiftCL`
+where kind 1 = SAR and kind 2 = SHR. Direction audit over ALL 99 shift
+arms of `GenericX86CodeGenerator`: the 48 arms with a direct emission are
+direction-correct (ISHL SAL x15 + kind 0 x4, ISHR SAR x16 + kind 1 x4,
+IUSHR SHR x15 + kind 2 x4); the other 51 are constant folds by method
+name (`c1.iShr`/`c1.iUshr`), unsupported-op throws, or the shared
+LSHL/LSHR/LUSHR body delegating to `writeLongShift` -- whose BOTH paths
+(count < 32 and >= 32) were read line by line: SHLD+SAL / SHRD+SAR /
+SHRD+SHR with the `SAR 31` sign-fill for LSHR and the zero-fill for
+LUSHR. `writeSAL_CL` occurs only in ISHL arms, the long helper and
+`emitShiftCL(kind 0)`. Guard re-proven on THIS tree, not just trusted
+from the 09-25 record: revert the ISHR ECX arm to SAL ->
+`--label h1rerad t3` FAIL (`ISHR with count in ecx must emit sar: ...
+sal ebx,cl`), restore -> `--label h1regreen t3` `OK (20 tests)`.
+
 ## H7 (deep review): constant-fold IDIV/IREM by zero crashes compilation
 
 Source: deep review H7. Status 2026-09-25 (applied as ANCHOR-L2-151):
@@ -1463,16 +1481,16 @@ review (its section 3 entries for them are stale).
 | H5 | checkcast ESP leak on success | LANDED L2-152 (emission pin, census identical) |
 | boot | Integer.stringSize null sizeTable (0x18E11B) | open: layout-sensitive value corruption; sentinel runs prove the store lands |
 | infra | ESP-depth per-edge lint over corpus emission (H5 class) | next |
-| M2 | forcedSpills omissions incl. class-init | queued (boot suspect) |
-| H7 | fold zero-divisor compile crash | queued (loud; composes w/ P5) |
-| H1 | shift-ECX SAL slip (verified) | queued (2-word fix) |
+| M2 | forcedSpills omissions incl. class-init | LANDED as ANCHOR-L2-204 (OPEN-BUGS G11; the class-init half refuted by reading). Stale pre-landing duplicate row. |
+| H7 | fold zero-divisor compile crash | LANDED L2-151 (detail in the H7 section above). Stale pre-landing duplicate row. |
+| H1 | shift-ECX SAL slip (verified) | LANDED L2-150 (detail in the H1 section above; re-audited 2026-10-04: 99 shift arms, 0 SAL slips outside ISHL/long-helper, guard re-red on this tree `--label h1rerad t3`). Stale pre-landing duplicate row. |
 | H2 | LCMP RSC destroys spilled operand | queued |
 | H4 | F2L/D2I/D2L rounding via helpers | queued |
 | H6 | dup2 form-1 transposition | **LANDED 2026-10-04 as ANCHOR-L2-221** (the "hand-built test" note was the whole cost): the last two copies in each form-1 arm of `visit_dup2_x1`/`visit_dup2_x2` read slots the earlier copies already wrote, wired the wrong way round (`index` / `index + 1`), which transposes the rebuilt pair -- JVMS `[..., v2, v1, ...]`, the IR produced `[..., v1, v2, ...]`. Fixed by swapping those two sources in both arms. Guard: `Dup2ProbeBuilder` (v49 fixture, the `JsrProbeBuilder` mould) + `L2PipelineTest#testDup2Form1KeepsJvmPairOrder`, red per half (`--label dup2red` `[4, 5] vs [5, 4]`, `--label dup2red2` `[6, 7] vs [7, 6]`, `Tests run: 54, Failures: 1`), green `--label dup2ship failures=0` with census `OK=11673 FAILED=0`. Full write-up in OPEN-BUGS G10 |
 | - | FAILED=169 attribution + terminator lint | queued (cheap gate) |
-| P18 | inter-block over-pop (instrument-first) | queued |
-| P11-P15 | edge explicitness, fixType, phi types, undef sources, loops | queued, repro-driven |
-| P19 | shared throwing predicate + leftovers | queued |
+| P18 | inter-block over-pop (instrument-first) | LANDED as ANCHOR-L2-216 (OPEN-BUGS G8). Stale pre-landing duplicate row. |
+| P11-P15 | edge explicitness, fixType, phi types, undef sources, loops | LANDED as OPEN-BUGS G1-G5 (P14/G4 withdrawn by reading). Stale pre-landing duplicate row. |
+| P19 | shared throwing predicate + leftovers | LANDED as ANCHOR-L2-217 (OPEN-BUGS G9). Stale pre-landing duplicate row. |
 | M5 | comparator, INT stamps, keep-list get/setfield, PhiAssign hashCode -- all four | **LANDED in three steps, all four M5 items closed:** comparator L2-169/C1, keep-list L2-218 (2026-10-04: `RefAssignQuad`/`StaticRefAssignQuad`/`InstanceofAssignQuad` join the one `isCallLike`, `emissionBlock` widened so `CALLNOTCALLLIKE` sees past helper labels -- 6473 hits pre-fix against 0 with the old instrument -- census lint `DEADFIELDLOAD` 4 -> 0), and INT stamps + `PhiAssign.hashCode` L2-219 (2026-10-04: `ConstantClassAssignQuad` stamps REFERENCE not INT and `visit_aconst_null` re-stamps the cloned lhs that `NULL_CONSTANT` had re-typed INT; 231 live class-constant sites and 1052 null sites -> 0 under the new `CONSTCLASSREF` / `CONSTNULLREF` lints; `PhiAssignQuad.hashCode` pairs its `equals`, gated by an anchors check -- red `equals without hashCode: PhiAssignQuad.java`)
 | B/D/E | verifier wiring, tag-gate, copy completeness, harness delegation, guest grid, fuzz | queued (infra) |
 | P7/P8 | investigated, NOT landed (no firing case) | closed unless repro appears |
