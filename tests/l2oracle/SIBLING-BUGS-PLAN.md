@@ -881,6 +881,23 @@ this arm -- the arm is guarded white-box through the matrix harness
 `PrimitiveTest.lcmpSpilledOperand` covers the reachable spilled-long
 compare path end to end.
 
+Re-audit 2026-10-04 (H2 was picked as the next task off the stale queued
+row below, then WITHDRAWN by reading -- no code change): the R,S,C arm at
+`GenericX86CodeGenerator:2191` is the L2-154 rewrite (scratch
+`MOV SR1,[EBP+disp]` + `CMP_Const`, 0/1/-1 materialized in the result
+register; it never writes a memory destination). All FOUR `LCMP` arms
+were span-checked mechanically for `writeSUB/writeSBB(BITS32, EBP, ...)`
+-- **none has one**: RSC is L2-154, the S,S,C twin L2-061, the
+reg/two-slot arm L2-061, the two-slot arm L2-00B ("the old sequence
+stored the low-half difference back into [disp2lsb]"), and the only
+memory-destination SUB/SBB left in the whole file sit in `ISUB` arms
+writing their own lhs slot, which is the result, not an operand. Guard
+re-proven on THIS tree instead of trusted from the 09-26 record: the
+pre-fix arm from `28fe9a373^` spliced back in gives `--label h2rerad t3`
+FAIL with the exact recorded defect line
+`LCMP RSC destroys its spilled long operand: sub dword[ebp-20],0x23456789`;
+restored, `--label h2regreen t3` `OK (20 tests)`.
+
 ## M2 (deep review): forcedSpills omits slow-path-calling quads -- SCANNED, not landed
 
 Status 2026-09-30: LANDED as ANCHOR-L2-204, and the scan below was not a
@@ -1484,7 +1501,7 @@ review (its section 3 entries for them are stale).
 | M2 | forcedSpills omissions incl. class-init | LANDED as ANCHOR-L2-204 (OPEN-BUGS G11; the class-init half refuted by reading). Stale pre-landing duplicate row. |
 | H7 | fold zero-divisor compile crash | LANDED L2-151 (detail in the H7 section above). Stale pre-landing duplicate row. |
 | H1 | shift-ECX SAL slip (verified) | LANDED L2-150 (detail in the H1 section above; re-audited 2026-10-04: 99 shift arms, 0 SAL slips outside ISHL/long-helper, guard re-red on this tree `--label h1rerad t3`). Stale pre-landing duplicate row. |
-| H2 | LCMP RSC destroys spilled operand | queued |
+| H2 | LCMP RSC destroys spilled operand | LANDED L2-154 (detail in the H2 section above; re-audited 2026-10-04: all four LCMP arms span-checked for memory-dest SUB/SBB -- none, guard re-red on this tree `--label h2rerad t3` with the recorded defect line). Stale pre-landing duplicate row. |
 | H4 | F2L/D2I/D2L rounding via helpers | queued |
 | H6 | dup2 form-1 transposition | **LANDED 2026-10-04 as ANCHOR-L2-221** (the "hand-built test" note was the whole cost): the last two copies in each form-1 arm of `visit_dup2_x1`/`visit_dup2_x2` read slots the earlier copies already wrote, wired the wrong way round (`index` / `index + 1`), which transposes the rebuilt pair -- JVMS `[..., v2, v1, ...]`, the IR produced `[..., v1, v2, ...]`. Fixed by swapping those two sources in both arms. Guard: `Dup2ProbeBuilder` (v49 fixture, the `JsrProbeBuilder` mould) + `L2PipelineTest#testDup2Form1KeepsJvmPairOrder`, red per half (`--label dup2red` `[4, 5] vs [5, 4]`, `--label dup2red2` `[6, 7] vs [7, 6]`, `Tests run: 54, Failures: 1`), green `--label dup2ship failures=0` with census `OK=11673 FAILED=0`. Full write-up in OPEN-BUGS G10 |
 | - | FAILED=169 attribution + terminator lint | queued (cheap gate) |
