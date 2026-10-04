@@ -1459,7 +1459,7 @@ review (its section 3 entries for them are stale).
 | P18 | inter-block over-pop (instrument-first) | queued |
 | P11-P15 | edge explicitness, fixType, phi types, undef sources, loops | queued, repro-driven |
 | P19 | shared throwing predicate + leftovers | queued |
-| M5 | comparator, INT stamps, keep-list get/setfield, PhiAssign hashCode | queued, low |
+| M5 | comparator, INT stamps, keep-list get/setfield, PhiAssign hashCode | **keep-list half LANDED L2-218 (2026-10-04)**: `RefAssignQuad`/`StaticRefAssignQuad`/`InstanceofAssignQuad` join the one `isCallLike`, `emissionBlock` widened so `CALLNOTCALLLIKE` can see past helper labels (6473 hits pre-fix against 0 with the old instrument), census lint `DEADFIELDLOAD` 4 -> 0; comparator half was already closed as L2-169/C1; INT stamps and `PhiAssign.hashCode` still queued |
 | B/D/E | verifier wiring, tag-gate, copy completeness, harness delegation, guest grid, fuzz | queued (infra) |
 | P7/P8 | investigated, NOT landed (no firing case) | closed unless repro appears |
 | M1 | poll-free loop back edges (numeric back-edge test + 3 branch overloads) | LANDED L2-158 (lint 1954 -> 0, census clean, mauve v1 20/20) |

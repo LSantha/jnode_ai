@@ -76,7 +76,9 @@ import org.jnode.vm.compiler.ir.quad.NewObjectArrayAssignQuad;
 import org.jnode.vm.compiler.ir.quad.NewPrimitiveArrayAssignQuad;
 import org.jnode.vm.compiler.ir.quad.PhiAssignQuad;
 import org.jnode.vm.compiler.ir.quad.Quad;
+import org.jnode.vm.compiler.ir.quad.RefAssignQuad;
 import org.jnode.vm.compiler.ir.quad.RefStoreQuad;
+import org.jnode.vm.compiler.ir.quad.StaticRefAssignQuad;
 import org.jnode.vm.compiler.ir.quad.StaticRefStoreQuad;
 import org.jnode.vm.compiler.ir.quad.ThrowQuad;
 import org.jnode.vm.compiler.ir.quad.UnconditionalBranchQuad;
@@ -1238,6 +1240,42 @@ public class L2PipelineTest {
         assertTrue("dead arr[n] was deleted by DCE", arrayLoad);
         assertTrue("dead arr.length was deleted by DCE", arrayLength);
         assertTrue("dead 1/n was deleted by DCE", idiv);
+    }
+
+    /**
+     * ANCHOR-L2-218 (G12/M5): a field load whose result is never read is
+     * still live for the effect it may have -- getfield throws NPE on a
+     * null receiver, getstatic runs class initialization -- so DCE must not
+     * delete it. Pre-fix `isCallLike` had neither quad: `deadGetField(null)`
+     * returned 1 instead of -1 and the emitted text jumped straight from
+     * bci_0 to the return-1 block with no getfield at all, its NPE handler
+     * present but unreachable. Same mechanism as the array/divide keeps
+     * above, one class over. The fixtures are plain javac output: the dead
+     * store survives into the bytecode (`aload_0; getfield; istore_1` with
+     * no later read), so nothing here needs hand-built bytecode -- the M5
+     * note that said otherwise is refuted by `javap -c`.
+     */
+    @Test
+    public void testDeadFieldLoadsSurviveDce() throws Exception {
+        assertTrue("dead getfield was deleted by DCE (ANCHOR-L2-218)",
+            liveQuadPresent("deadGetField", RefAssignQuad.class));
+        assertTrue("dead getstatic was deleted by DCE (ANCHOR-L2-218)",
+            liveQuadPresent("deadGetStatic", StaticRefAssignQuad.class));
+    }
+
+    private static boolean liveQuadPresent(String name, Class quadClass)
+        throws Exception {
+        CompileResult r = compileMethod(findMethod(name));
+        for (Object b0 : (Iterable<?>) r.cfg) {
+            final IRBasicBlock b = (IRBasicBlock) b0;
+            for (Object q0 : (List<?>) b.getQuads()) {
+                final Quad q = (Quad) q0;
+                if (!q.isDeadCode() && quadClass.isInstance(q)) {
+                    return true;
+                }
+            }
+        }
+        return false;
     }
 
     /**

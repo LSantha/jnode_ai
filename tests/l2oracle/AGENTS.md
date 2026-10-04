@@ -440,6 +440,21 @@ incidental fix in 097-103. Regression-guarded by `CASES` now.
   skill. Never run a `bootl2` leg and a VBox serial session concurrently --
   they own one path between them.
 
+- **Every VirtualBox leg dies in this agent shell: `NoNewPrivs: 1`** (measured
+2026-10-04). `/usr/lib/virtualbox/VBoxHeadless` is setuid-root (`-rwsr-sr-x`), and
+with the no-new-privileges flag set the euid stays 1000, so SUPR3HardenedMain aborts
+with `Error -10 ... Effective UID is not root (euid=1000 ...)`, the frontend exits 1,
+and `vboxmanage startvm JNode` reports `has terminated unexpectedly during startup
+with exit code 1` -- which reads exactly like a broken VM. `setsid`/`nohup` inherit
+the flag, `systemd-run --user --scope` inherits it too (scope = caller context), and
+`sudo` refuses with the same words, so none of them helps. PID 1 shows
+`NoNewPrivs: 0` and `/` is mounted without `nosuid`, so it is the tool sandbox, not
+the host. The fix is a transient USER SERVICE, which the user manager starts itself:
+`systemd-run --user --unit=<name> --collect sh -c '... gate command ... > log 2>&1'`
+-- verified `NoNewPrivs: 0` inside, and the oracle leg then boots the VM normally.
+Diagnose first with `grep NoNewPrivs /proc/self/status` and a direct
+`VBoxHeadless --startvm <vm>`; the QEMU `bootl2` leg needs none of this.
+
 - **A value-level probe beat every structural instrument on B1 (L2-189).** A
   census lint for handler-entry phis was written, could not identify handler
   blocks (the flag is not on the blocks that hold the phis; post-fixup startPCs do

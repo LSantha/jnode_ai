@@ -42,6 +42,7 @@ import org.jnode.vm.compiler.ir.quad.BinaryQuad;
 import org.jnode.vm.compiler.ir.quad.BranchQuad;
 import org.jnode.vm.compiler.ir.quad.CallAssignQuad;
 import org.jnode.vm.compiler.ir.quad.CallQuad;
+import org.jnode.vm.compiler.ir.quad.InstanceofAssignQuad;
 import org.jnode.vm.compiler.ir.quad.CheckcastQuad;
 import org.jnode.vm.compiler.ir.quad.ConstantClassAssignQuad;
 import org.jnode.vm.compiler.ir.quad.JsrQuad;
@@ -54,8 +55,10 @@ import org.jnode.vm.compiler.ir.quad.NewObjectArrayAssignQuad;
 import org.jnode.vm.compiler.ir.quad.NewPrimitiveArrayAssignQuad;
 import org.jnode.vm.compiler.ir.quad.PhiAssignQuad;
 import org.jnode.vm.compiler.ir.quad.Quad;
+import org.jnode.vm.compiler.ir.quad.RefAssignQuad;
 import org.jnode.vm.compiler.ir.quad.RefStoreQuad;
 import org.jnode.vm.compiler.ir.quad.RetQuad;
+import org.jnode.vm.compiler.ir.quad.StaticRefAssignQuad;
 import org.jnode.vm.compiler.ir.quad.StaticRefStoreQuad;
 import org.jnode.vm.compiler.ir.quad.TableswitchQuad;
 import org.jnode.vm.compiler.ir.quad.ThrowQuad;
@@ -2757,6 +2760,28 @@ public class IRControlFlowGraph<T> implements Iterable<IRBasicBlock<T>> {
             // is not always-executed either.
             || q instanceof RefStoreQuad
             || q instanceof StaticRefStoreQuad
+            // ANCHOR-L2-218 (G12/M5): a FIELD LOAD. getfield throws NPE on
+            // a null receiver and getstatic runs class initialization
+            // (ExceptionInInitializerError), so a zero-use field load is
+            // still live for that effect -- and it is also call-like for the
+            // always-executed reasoning above. Pre-fix the DCE keep-list
+            // (which is this list since ANCHOR-L2-217) killed the def and
+            // left the handler unreachable: deadGetField(null) returned 1
+            // instead of -1 and the emitted text jumped straight from bci_0
+            // to the return-1 block with no getfield at all. The same entry
+            // is what puts the quad into forcedSpills -- and getstatic's
+            // class-init is a real call, 6,395 live sites in the core
+            // census before this entry.
+            || q instanceof RefAssignQuad
+            || q instanceof StaticRefAssignQuad
+            // ANCHOR-L2-218: instanceof TESTS a type that may not be
+            // initialized yet, and instanceOfClass writes the class-init
+            // call for it (GenericX86CodeGenerator:6217) -- so the emission
+            // calls out and the test can throw ExceptionInInitializerError.
+            // Measured 78 live sites in the core census before this entry;
+            // the emission-based lint could not see them until it stopped
+            // ending the block at the first helper label (see L2Census).
+            || q instanceof InstanceofAssignQuad
             // ANCHOR-L2-147: LDIV/LREM and IDIV/IREM trap. Without this a
             // def after a divide was deemed always-executed and
             // handler/resume phis read a never-written home (witness:

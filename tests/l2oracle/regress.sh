@@ -446,6 +446,14 @@ if want census; then
     # check that found nothing (ANCHOR-L2-187).
     cn=$(grep -c "^CALLNOTCALLLIKE " /tmp/census-'"$LABEL"'.stdout)
     echo "callnotcalllike=$cn"
+    # ANCHOR-L2-218 (G12/M5): field loads DCE is not allowed to delete.
+    # getfield throws NPE on a null receiver and getstatic runs class
+    # initialization, so a zero-use field load is still live for that
+    # effect -- the throwing-def mechanism of L2-146 one class over. The
+    # count is the corpus telling us the shape really occurs in javac
+    # output; a missing report line fails too (ANCHOR-L2-187).
+    dfl=$(grep -c "^DEADFIELDLOAD " /tmp/census-'"$LABEL"'.stdout)
+    echo "deadfieldload=$dfl"
     n=$(awk "/^--- FAILED \(/{f=1;next} /^--- /{f=0} f" /tmp/census-'"$LABEL"'.txt | wc -l)
     echo "FAILED=$n"
     awk "/^--- FAILED \(/{f=1;next} /^--- /{f=0} f" /tmp/census-'"$LABEL"'.txt | sort > /tmp/census-'"$LABEL"'.failed
@@ -549,14 +557,15 @@ if want census; then
     else
       echo "probe census gate: CONSTREFFIELD==0 and FAILED==0 on the shape-carrying corpus"
     fi
-    if [ ! -s '"$BASE"'/census-failed.txt ] && [ "$n" -eq 0 ] && [ "$rg" -eq 0 ] && [ "$sw" -eq 0 ] && [ "${st:-1}" -eq 0 ] && [ "${p15r:-1}" -eq 0 ] && [ "${p15t:-1}" -eq 0 ] && [ "${p18:-1}" -eq 0 ] && [ "${cn:-1}" -eq 0 ] && [ "$pc_missing" -eq 0 ]; then
-      echo "census gate: FAILED==0 and RANGEGAP==0 and STALEWIDE==0 and SSATAG==0 and P15==0 and P18==0 and CALLNOTCALLLIKE==0 as required"
+    if [ ! -s '"$BASE"'/census-failed.txt ] && [ "$n" -eq 0 ] && [ "$rg" -eq 0 ] && [ "$sw" -eq 0 ] && [ "${st:-1}" -eq 0 ] && [ "${p15r:-1}" -eq 0 ] && [ "${p15t:-1}" -eq 0 ] && [ "${p18:-1}" -eq 0 ] && [ "${cn:-1}" -eq 0 ] && [ "${dfl:-1}" -eq 0 ] && [ "$pc_missing" -eq 0 ]; then
+      echo "census gate: FAILED==0 and RANGEGAP==0 and STALEWIDE==0 and SSATAG==0 and P15==0 and P18==0 and CALLNOTCALLLIKE==0 and DEADFIELDLOAD==0 as required"
     else
-      echo "REGRESSION: $n FAILED entries, $rg RANGEGAP entries, $sw STALEWIDE entries, ${st:-missing} SSATAG disagreements, p15=${p15r:-missing}/${p15t:-missing} p18=${p18:-missing} callnotcalllike=${cn:-missing}; first ones:"
+      echo "REGRESSION: $n FAILED entries, $rg RANGEGAP entries, $sw STALEWIDE entries, ${st:-missing} SSATAG disagreements, p15=${p15r:-missing}/${p15t:-missing} p18=${p18:-missing} callnotcalllike=${cn:-missing} deadfieldload=${dfl:-missing}; first ones:"
       head -n 10 /tmp/census-'"$LABEL"'.failed
       grep -E "^RANGEGAP " /tmp/census-'"$LABEL"'.stdout | head -n 10
       grep -E "^STALEWIDE " /tmp/census-'"$LABEL"'.stdout | head -n 10
       grep -E "^CALLNOTCALLLIKE " /tmp/census-'"$LABEL"'.stdout | head -n 10
+      grep -E "^DEADFIELDLOAD " /tmp/census-'"$LABEL"'.stdout | head -n 10
       grep -E "^OK=" /tmp/census-'"$LABEL"'.txt
       exit 1
     fi

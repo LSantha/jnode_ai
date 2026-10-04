@@ -49,6 +49,7 @@ import org.jnode.vm.compiler.ir.quad.PhiAssignQuad;
 import org.jnode.vm.compiler.ir.quad.RefAssignQuad;
 import org.jnode.vm.compiler.ir.quad.RefStoreQuad;
 import org.jnode.vm.compiler.ir.quad.Quad;
+import org.jnode.vm.compiler.ir.quad.StaticRefAssignQuad;
 import org.jnode.vm.compiler.ir.quad.StaticCallAssignQuad;
 import org.jnode.vm.compiler.ir.quad.StaticCallQuad;
 import org.jnode.vm.compiler.ir.quad.UnconditionalBranchQuad;
@@ -301,6 +302,7 @@ public class L2Census {
                     checkArrayLengthRegisters(m, text);
                     checkConstRefField(m, text);
                     checkCallLikeCoverage(m, text);
+                    checkDeadFieldLoads(m);
                     checkRangeCoverage(m);
                     ok++;
                     if (hasHandlers && handlerExamples.size() < 20) {
@@ -650,14 +652,41 @@ public class L2Census {
             }
             if (in) {
                 // helper-internal labels (f2i_N_*) belong to the sequence
+                // ANCHOR-L2-218: so do the labels THIS quad emitted inside
+                // its own block. The getstatic class-initialisation sequence
+                // is split by qb_N$$testiso_cinit / $$do_cinit_ex /
+                // $$done_cinit_ex, and the old rule ended the block at the
+                // first of them -- four lines before the call. Measured on
+                // PrimitiveTest#deadGetStatic, where CALLNOTCALLLIKE read 0
+                // for an emission that plainly calls out: an instrument that
+                // stops before the call is exactly the guard that cannot
+                // fail (ANCHOR-L2-187).
                 if (t.endsWith(":") && !t.endsWith("$$ediok:")
-                    && t.indexOf("f2i_") < 0 && t.indexOf("f2l_") < 0) {
+                    && t.indexOf("f2i_") < 0 && t.indexOf("f2l_") < 0
+                    && !isOwnQuadLabel(t, addr)) {
                     break;
                 }
                 sb.append(t).append('\n');
             }
         }
         return in ? sb.toString() : null;
+    }
+
+    /**
+     * Is {@code t} a label this quad emitted inside its own block? The quad
+     * label is _qb_&lt;addr&gt;: and every label it derives from carries the
+     * same base -- io_true, notInstanceOf, qb_0$$testiso_cinit, f2i_0.
+     * The base must not be a PREFIX of a larger address (_qb_1 is not part
+     * of _qb_18), hence the non-digit test.
+     */
+    private static boolean isOwnQuadLabel(String t, int addr) {
+        final String base = "_qb_" + addr;
+        final int k = t.indexOf(base);
+        if (k < 0) {
+            return false;
+        }
+        final int after = k + base.length();
+        return after >= t.length() || !Character.isDigit(t.charAt(after));
     }
 
     /**
@@ -1388,6 +1417,43 @@ public class L2Census {
                     }
                     if (!IRControlFlowGraph.isCallLike(q)) {
                         System.out.println("CALLNOTCALLLIKE "
+                            + method.getDeclaringClass().getName() + "#"
+                            + method.getName() + " @" + q.getAddress()
+                            + " " + q.getClass().getSimpleName());
+                    }
+                }
+            }
+        } catch (Throwable t) {
+            // lint only
+        }
+    }
+
+    /**
+     * ANCHOR-L2-218 (G12/M5) census lint: a getfield/getstatic whose result
+     * is never read is still live for the effect it may have -- getfield
+     * throws NPE on a null receiver, getstatic runs class initialization
+     * (ExceptionInInitializerError) -- so DCE must not delete it. Same
+     * mistake as the array/divide keeps of L2-146: a THROWING DEF is live
+     * for its effect. Counted corpus-wide because the fixture test can only
+     * see its own two methods, and a zero here is the whole-corpus statement
+     * that no real bytecode lost its field load to DCE.
+     */
+    static void checkDeadFieldLoads(VmMethod method) {
+        try {
+            final IRControlFlowGraph cfg = lastCfg;
+            if (cfg == null) {
+                return;
+            }
+            for (Object b0 : (Iterable<?>) cfg) {
+                final IRBasicBlock b = (IRBasicBlock) b0;
+                for (Object q0 : (List<?>) b.getQuads()) {
+                    final Quad q = (Quad) q0;
+                    if (!q.isDeadCode()) {
+                        continue;
+                    }
+                    if (q instanceof RefAssignQuad
+                        || q instanceof StaticRefAssignQuad) {
+                        System.out.println("DEADFIELDLOAD "
                             + method.getDeclaringClass().getName() + "#"
                             + method.getName() + " @" + q.getAddress()
                             + " " + q.getClass().getSimpleName());

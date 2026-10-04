@@ -1135,6 +1135,39 @@ public class PrimitiveTest {
     }
 
     /**
+     * ANCHOR-L2-218 (G12/M5): a field is loaded into a local that is never
+     * read. Zero use, so removeUnusedVars kills the def -- and with it the
+     * NullPointerException the getfield would throw on a null receiver, or
+     * the class initialization the getstatic performs. Same mechanism as
+     * P5's deadThrowObserved (L2-146), one class over: a throwing DEF is
+     * live for its effect whether the operation is a divide, an array
+     * access or a field load. The fixtures are plain javac output -- the
+     * dead store survives into the bytecode, so nothing here needs
+     * hand-built bytecode.
+     */
+    public int instanceField;
+
+    private static int staticField = 7;
+
+    public static int deadGetField(PrimitiveTest p) {
+        try {
+            int t = p.instanceField;
+        } catch (NullPointerException e) {
+            return -1;
+        }
+        return 1;
+    }
+
+    public static int deadGetStatic() {
+        try {
+            int t = staticField;
+        } catch (ExceptionInInitializerError e) {
+            return -1;
+        }
+        return 1;
+    }
+
+    /**
      * ANCHOR-L2-149: wide constant static store. Pre-fix the
      * `putstatic` wide-CONSTANT arm materialized both halves into
      * SR1/EDX and fell off the end without the store, leaving the
