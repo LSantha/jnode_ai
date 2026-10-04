@@ -1160,6 +1160,29 @@ Census OK=11392 (the 7 probes), FAILED list identical, zero lint hits.
 Boot: unchanged (panic 0x18E5E3 this build -- the same stringSize
 null-sizeTable signature at a shifted EIP, as always layout-dependent).
 
+Re-audit 2026-10-04 (H4 was the next queued HIGH row, picked with the
+task stated, then WITHDRAWN as already fixed -- with one real residual
+found and fixed): the L2 generator now has **zero `writeFISTP*` calls**
+and eight helper routes (six `emitF2I`, two `emitF2L`), i.e. L2-156
+holds on this tree. The residual was in the GUARD, not the fix: the
+`FISTPMISMATCH` lint -- the corpus-scale half of L2-156's guard, the
+whole reason the pre-fix 22-hit count was known -- was counted only in
+the informational `lints=` union at `regress.sh:412` and was NOT in the
+gate condition (`:595` gated FAILED/RANGEGAP/STALEWIDE/STALEWIDEMIX/
+SSATAG/P15/P18/CALLNOTCALLLIKE/DEADFIELDLOAD/CONSTCLASSREF/CONSTNULLREF
+only), so a reintroduced raw FISTP reddened nothing. Promoted as
+**ANCHOR-L2-222**: own `fistpmismatch=` verdict, own condition term,
+missing-line-fails (`${fm:-1}`), own REGRESSION echo and head-10, same
+promotion CALLNOTCALLLIKE got in L2-217. Red proof on this tree: the
+pre-L2-156 register-destination D2I site (`0d102d716^:746`) spliced back
+in gives `--label h4rerad census` FAIL with `fistpmismatch=9`
+(`NativeStrictMath#remPiOver2/exp/expm1` D2I quads) while FAILED and
+every other verdict stayed 0 -- i.e. the new condition alone reddened
+it; restored, `--label h4regreen census` `fistpmismatch=0` PASS and the
+gate line now ends `and FISTPMISMATCH==0 as required`. Two sibling lints
+in the same `lints=` union remain print-only (`NOYIELDPOINT`,
+`WIDTHMISMATCH`); filed as **OPEN-BUGS B4**, not silently left.
+
 ## M3 (deep review): float-const CCE / FREM arm -- CLOSED as not-reproducible (2026-09-26)
 
 Both halves of the M3 claim were tested directly on the current tree
@@ -1502,7 +1525,7 @@ review (its section 3 entries for them are stale).
 | H7 | fold zero-divisor compile crash | LANDED L2-151 (detail in the H7 section above). Stale pre-landing duplicate row. |
 | H1 | shift-ECX SAL slip (verified) | LANDED L2-150 (detail in the H1 section above; re-audited 2026-10-04: 99 shift arms, 0 SAL slips outside ISHL/long-helper, guard re-red on this tree `--label h1rerad t3`). Stale pre-landing duplicate row. |
 | H2 | LCMP RSC destroys spilled operand | LANDED L2-154 (detail in the H2 section above; re-audited 2026-10-04: all four LCMP arms span-checked for memory-dest SUB/SBB -- none, guard re-red on this tree `--label h2rerad t3` with the recorded defect line). Stale pre-landing duplicate row. |
-| H4 | F2L/D2I/D2L rounding via helpers | queued |
+| H4 | F2L/D2I/D2L rounding via helpers | LANDED L2-156; guard re-audited 2026-10-04 -- FISTPMISMATCH was print-only, gated as L2-222 (detail + red proof in the H4 section above). Stale pre-landing duplicate row. |
 | H6 | dup2 form-1 transposition | **LANDED 2026-10-04 as ANCHOR-L2-221** (the "hand-built test" note was the whole cost): the last two copies in each form-1 arm of `visit_dup2_x1`/`visit_dup2_x2` read slots the earlier copies already wrote, wired the wrong way round (`index` / `index + 1`), which transposes the rebuilt pair -- JVMS `[..., v2, v1, ...]`, the IR produced `[..., v1, v2, ...]`. Fixed by swapping those two sources in both arms. Guard: `Dup2ProbeBuilder` (v49 fixture, the `JsrProbeBuilder` mould) + `L2PipelineTest#testDup2Form1KeepsJvmPairOrder`, red per half (`--label dup2red` `[4, 5] vs [5, 4]`, `--label dup2red2` `[6, 7] vs [7, 6]`, `Tests run: 54, Failures: 1`), green `--label dup2ship failures=0` with census `OK=11673 FAILED=0`. Full write-up in OPEN-BUGS G10 |
 | - | FAILED=169 attribution + terminator lint | queued (cheap gate) |
 | P18 | inter-block over-pop (instrument-first) | LANDED as ANCHOR-L2-216 (OPEN-BUGS G8). Stale pre-landing duplicate row. |

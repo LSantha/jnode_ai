@@ -489,6 +489,17 @@ if want census; then
     # The bci selects the opcode, so iconst 0 stays out of this count.
     cnr=$(grep -c "^CONSTNULLREF " /tmp/census-'"$LABEL"'.stdout)
     echo "constnullref=$cnr"
+    # ANCHOR-L2-222 (H4): the corpus-scale guard for the L2-156 FISTP fix --
+    # one FISTPMISMATCH line per conversion quad that still emits a bare
+    # FLD+FISTP instead of the JLS-correct helper (truncate toward zero,
+    # NaN -> 0, +-Inf saturating). It has printed since L2-156 and was never
+    # part of the condition below, so a reintroduced raw FISTP reddened only
+    # the informational lints= count, which nothing reads: a check that
+    # cannot fail looks exactly like a check that found nothing
+    # (ANCHOR-L2-187). Same promotion CALLNOTCALLLIKE got in L2-217. A
+    # missing report line fails too, same rule as SSATAG above.
+    fm=$(grep -c "^FISTPMISMATCH " /tmp/census-'"$LABEL"'.stdout)
+    echo "fistpmismatch=$fm"
     n=$(awk "/^--- FAILED \(/{f=1;next} /^--- /{f=0} f" /tmp/census-'"$LABEL"'.txt | wc -l)
     echo "FAILED=$n"
     awk "/^--- FAILED \(/{f=1;next} /^--- /{f=0} f" /tmp/census-'"$LABEL"'.txt | sort > /tmp/census-'"$LABEL"'.failed
@@ -592,10 +603,10 @@ if want census; then
     else
       echo "probe census gate: CONSTREFFIELD==0 and FAILED==0 on the shape-carrying corpus"
     fi
-    if [ ! -s '"$BASE"'/census-failed.txt ] && [ "$n" -eq 0 ] && [ "$rg" -eq 0 ] && [ "$sw" -eq 0 ] && [ "${sm:-1}" -eq 0 ] && [ "${st:-1}" -eq 0 ] && [ "${p15r:-1}" -eq 0 ] && [ "${p15t:-1}" -eq 0 ] && [ "${p18:-1}" -eq 0 ] && [ "${cn:-1}" -eq 0 ] && [ "${dfl:-1}" -eq 0 ] && [ "${ccr:-1}" -eq 0 ] && [ "${cnr:-1}" -eq 0 ] && [ "$pc_missing" -eq 0 ]; then
-      echo "census gate: FAILED==0 and RANGEGAP==0 and STALEWIDE==0 and STALEWIDEMIX==0 and SSATAG==0 and P15==0 and P18==0 and CALLNOTCALLLIKE==0 and DEADFIELDLOAD==0 and CONSTCLASSREF==0 and CONSTNULLREF==0 as required"
+    if [ ! -s '"$BASE"'/census-failed.txt ] && [ "$n" -eq 0 ] && [ "$rg" -eq 0 ] && [ "$sw" -eq 0 ] && [ "${sm:-1}" -eq 0 ] && [ "${st:-1}" -eq 0 ] && [ "${p15r:-1}" -eq 0 ] && [ "${p15t:-1}" -eq 0 ] && [ "${p18:-1}" -eq 0 ] && [ "${cn:-1}" -eq 0 ] && [ "${dfl:-1}" -eq 0 ] && [ "${ccr:-1}" -eq 0 ] && [ "${cnr:-1}" -eq 0 ] && [ "${fm:-1}" -eq 0 ] && [ "$pc_missing" -eq 0 ]; then
+      echo "census gate: FAILED==0 and RANGEGAP==0 and STALEWIDE==0 and STALEWIDEMIX==0 and SSATAG==0 and P15==0 and P18==0 and CALLNOTCALLLIKE==0 and DEADFIELDLOAD==0 and CONSTCLASSREF==0 and CONSTNULLREF==0 and FISTPMISMATCH==0 as required"
     else
-      echo "REGRESSION: $n FAILED entries, $rg RANGEGAP entries, $sw STALEWIDE entries, ${sm:-missing} STALEWIDEMIX entries, ${st:-missing} SSATAG disagreements, p15=${p15r:-missing}/${p15t:-missing} p18=${p18:-missing} callnotcalllike=${cn:-missing} deadfieldload=${dfl:-missing} constclassref=${ccr:-missing} constnullref=${cnr:-missing}; first ones:"
+      echo "REGRESSION: $n FAILED entries, $rg RANGEGAP entries, $sw STALEWIDE entries, ${sm:-missing} STALEWIDEMIX entries, ${st:-missing} SSATAG disagreements, p15=${p15r:-missing}/${p15t:-missing} p18=${p18:-missing} callnotcalllike=${cn:-missing} deadfieldload=${dfl:-missing} constclassref=${ccr:-missing} constnullref=${cnr:-missing} fistpmismatch=${fm:-missing}; first ones:"
       head -n 10 /tmp/census-'"$LABEL"'.failed
       grep -E "^RANGEGAP " /tmp/census-'"$LABEL"'.stdout | head -n 10
       grep -E "^STALEWIDE " /tmp/census-'"$LABEL"'.stdout | head -n 10
@@ -604,6 +615,7 @@ if want census; then
       grep -E "^DEADFIELDLOAD " /tmp/census-'"$LABEL"'.stdout | head -n 10
       grep -E "^CONSTCLASSREF " /tmp/census-'"$LABEL"'.stdout | head -n 10
       grep -E "^CONSTNULLREF " /tmp/census-'"$LABEL"'.stdout | head -n 10
+      grep -E "^FISTPMISMATCH " /tmp/census-'"$LABEL"'.stdout | head -n 10
       grep -E "^OK=" /tmp/census-'"$LABEL"'.txt
       exit 1
     fi
