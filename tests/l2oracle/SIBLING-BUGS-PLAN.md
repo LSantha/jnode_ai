@@ -639,6 +639,20 @@ Hunk: require unanimity of live sources (all wide → wide, else narrow) +
 census-diff review; keep the L2-137 restore. Repro: int/long-mixed phi
 (`NanoTime`-style) — assert result type + edge-copy homes.
 
+Status 2026-10-04 (closed as ANCHOR-L2-220; see OPEN-BUGS G3): the hunk
+above stayed withdrawn (its boot-panic red proof, 2026-10-03). The
+residual named in OPEN-BUGS -- a LONG/DOUBLE result surviving
+`unanimousNarrowType` whenever every source is one word but the narrow
+types disagree -- was re-measured at the same 10 sites and then closed by
+removing what made it observable: at the emission point those wide homes
+are read by nothing but other phis (`STALEWIDEMIX`=40, 0 non-phi readers,
+while 154 all-wide-source phis do have readers), and `removeUnusedVars`
+is now reachability from the quads live for their own effects, so a phi
+cycle with no outside reader dies: `STALEWIDEMIX`=0, gated in
+`regress.sh` (red 40 -> green 0). The narrow-type disagreement itself is
+still not narrowed, deliberately: REFERENCE vs INT is a GC-scan decision
+and there is no reader left to be wrong for.
+
 ## P14: `pruneDeadPhis` undefined-source drop
 
 Per sweep (`:1057-1058`): `def==null && !MethodArgument` sources are

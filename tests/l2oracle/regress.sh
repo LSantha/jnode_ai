@@ -423,6 +423,15 @@ if want census; then
     # the GC follows. Same reasoning as rangegap, so same treatment.
     sw=$(grep -c "^STALEWIDE " /tmp/census-'"$LABEL"'.stdout)
     echo "stalewide=$sw"
+    # ANCHOR-L2-220 (G3/P13): a wide phi home whose sources include a
+    # one-word value that is not the unanimous shape STALEWIDE covers --
+    # either a wide source mixed with narrow ones or narrow sources that
+    # disagree, so unanimousNarrowType bails and the result stays two
+    # words. Measured 40 live occurrences on the pre-fix tree, every one
+    # read only by other phis; removeUnusedVars taking phi-only cycles to
+    # dead is what makes this 0. Missing line counts as 1 (ANCHOR-L2-187).
+    sm=$(grep -c "^STALEWIDEMIX " /tmp/census-'"$LABEL"'.stdout)
+    echo "stalewidemix=$sm"
     # ANCHOR-L2-131 / C4: FAILED/RANGEGAP above only see the VALUE shape. A phi
     # copy dropped on the wrong predecessor edge still writes the home on every
     # path -- so the SSA verifier stays clean while the join still reads the
@@ -583,13 +592,14 @@ if want census; then
     else
       echo "probe census gate: CONSTREFFIELD==0 and FAILED==0 on the shape-carrying corpus"
     fi
-    if [ ! -s '"$BASE"'/census-failed.txt ] && [ "$n" -eq 0 ] && [ "$rg" -eq 0 ] && [ "$sw" -eq 0 ] && [ "${st:-1}" -eq 0 ] && [ "${p15r:-1}" -eq 0 ] && [ "${p15t:-1}" -eq 0 ] && [ "${p18:-1}" -eq 0 ] && [ "${cn:-1}" -eq 0 ] && [ "${dfl:-1}" -eq 0 ] && [ "${ccr:-1}" -eq 0 ] && [ "${cnr:-1}" -eq 0 ] && [ "$pc_missing" -eq 0 ]; then
-      echo "census gate: FAILED==0 and RANGEGAP==0 and STALEWIDE==0 and SSATAG==0 and P15==0 and P18==0 and CALLNOTCALLLIKE==0 and DEADFIELDLOAD==0 and CONSTCLASSREF==0 and CONSTNULLREF==0 as required"
+    if [ ! -s '"$BASE"'/census-failed.txt ] && [ "$n" -eq 0 ] && [ "$rg" -eq 0 ] && [ "$sw" -eq 0 ] && [ "${sm:-1}" -eq 0 ] && [ "${st:-1}" -eq 0 ] && [ "${p15r:-1}" -eq 0 ] && [ "${p15t:-1}" -eq 0 ] && [ "${p18:-1}" -eq 0 ] && [ "${cn:-1}" -eq 0 ] && [ "${dfl:-1}" -eq 0 ] && [ "${ccr:-1}" -eq 0 ] && [ "${cnr:-1}" -eq 0 ] && [ "$pc_missing" -eq 0 ]; then
+      echo "census gate: FAILED==0 and RANGEGAP==0 and STALEWIDE==0 and STALEWIDEMIX==0 and SSATAG==0 and P15==0 and P18==0 and CALLNOTCALLLIKE==0 and DEADFIELDLOAD==0 and CONSTCLASSREF==0 and CONSTNULLREF==0 as required"
     else
-      echo "REGRESSION: $n FAILED entries, $rg RANGEGAP entries, $sw STALEWIDE entries, ${st:-missing} SSATAG disagreements, p15=${p15r:-missing}/${p15t:-missing} p18=${p18:-missing} callnotcalllike=${cn:-missing} deadfieldload=${dfl:-missing} constclassref=${ccr:-missing} constnullref=${cnr:-missing}; first ones:"
+      echo "REGRESSION: $n FAILED entries, $rg RANGEGAP entries, $sw STALEWIDE entries, ${sm:-missing} STALEWIDEMIX entries, ${st:-missing} SSATAG disagreements, p15=${p15r:-missing}/${p15t:-missing} p18=${p18:-missing} callnotcalllike=${cn:-missing} deadfieldload=${dfl:-missing} constclassref=${ccr:-missing} constnullref=${cnr:-missing}; first ones:"
       head -n 10 /tmp/census-'"$LABEL"'.failed
       grep -E "^RANGEGAP " /tmp/census-'"$LABEL"'.stdout | head -n 10
       grep -E "^STALEWIDE " /tmp/census-'"$LABEL"'.stdout | head -n 10
+      grep -E "^STALEWIDEMIX " /tmp/census-'"$LABEL"'.stdout | head -n 10
       grep -E "^CALLNOTCALLLIKE " /tmp/census-'"$LABEL"'.stdout | head -n 10
       grep -E "^DEADFIELDLOAD " /tmp/census-'"$LABEL"'.stdout | head -n 10
       grep -E "^CONSTCLASSREF " /tmp/census-'"$LABEL"'.stdout | head -n 10

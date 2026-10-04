@@ -395,58 +395,99 @@ public class IRControlFlowGraph<T> implements Iterable<IRBasicBlock<T>> {
     }
 
     public void removeUnusedVars() {
-        Map<Variable, Integer> varUses = getVariableUsage();
-        boolean loop;
-        do {
-            loop = false;
-            for (Map.Entry<Variable, Integer> u : varUses.entrySet()) {
-                if (u.getValue() > 0 ||
-                    u.getKey() instanceof MethodArgument ||
-                    u.getKey() instanceof UndefinedVariable ||
-                    u.getKey().getAssignQuad().isDeadCode()) {
-
-                    continue;
+        // ANCHOR-L2-220 (G3/P13): liveness as reachability from the quads
+        // that are live for their own effects, instead of the pure
+        // use-count fixpoint this used to be. The count fixpoint cannot
+        // start inside a phi cycle: A's only reader is phi B and B's only
+        // reader is phi A, so both counts stay above zero forever and both
+        // keep a home. Measured 40 live wide phi homes whose sources
+        // include a one-word value (STALEWIDEMIX), every one of them read
+        // by nothing but other phis -- two frame words for a value nobody
+        // reads, and on a REFERENCE-typed home the half no edge writes is
+        // the one the GC would follow if anything ever did read it. A def
+        // is live here only when a LIVE quad reads it, seeded from the
+        // quads that cannot be dropped, so a cycle with no reader outside
+        // itself is dead and what it defined follows it down.
+        final List<Quad<T>> quads = new ArrayList<Quad<T>>();
+        for (IRBasicBlock<T> b : bblocks) {
+            for (Quad<T> q : b.getQuads()) {
+                if (!q.isDeadCode()) {
+                    quads.add(q);
                 }
-
-
-                AssignQuad dq = u.getKey().getAssignQuad();
-                // ANCHOR-L2-146: throwing defs are live for their effects.
-                // An apparently-unused arr[i] (bounds/NPE), arr.length (NPE)
-                // or idiv/irem/ldiv/lrem (ArithmeticException) inside a try
-                // must still trap; deleting it silently drops the precise
-                // exception (witness: deadThrowObserved compiled to bare
-                // `return 1`). MemLoad/MagicOp deliberately NOT kept: no
-                // trap-capable instance identified (revisit with evidence).
-                // ANCHOR-L2-217 (G9/P19): this was a second hand-kept list
-                // of that same question; P5 asked for one shared predicate
-                // and P19 delivers it -- isCallLike now answers for DCE, the
-                // always-executed reasoning, the allocator and the mirrors.
-                if (isCallLike(dq)) {
-                    //todo optimize it, could be transformed to CallQuad
-                    // (JsrQuad: control effects -- entering the subroutine.
-                    // ANCHOR-L2-079.)
-                    continue;
-                }
-
-                dq.setDeadCode(true);
-                Operand<T>[] refs = dq.getReferencedOps();
-                if (refs != null) {
-                    for (Operand<T> ref : refs) {
-                        if (ref instanceof Variable &&
-                            !(ref instanceof UndefinedVariable)) {
-                            Variable<T> r = (Variable<T>) ref;
-                            Integer c = varUses.get(r);
-                            if (c > 0) {
-                                c--;
-                            }
-                            varUses.put(r, c);
-                        }
-                    }
-                }
-                loop = true;
-                break;
             }
-        } while (loop);
+        }
+        // IdentityHashMap: PhiAssignQuad.equals is on getLHS(), so a plain
+        // HashMap would merge two distinct quads that define equal lhs.
+        final Map<Quad<T>, Boolean> live =
+            new IdentityHashMap<Quad<T>, Boolean>();
+        final List<Quad<T>> work = new ArrayList<Quad<T>>();
+        for (Quad<T> q : quads) {
+            if (keepForEffects(q)) {
+                live.put(q, Boolean.TRUE);
+                work.add(q);
+            }
+        }
+        for (int i = 0; i < work.size(); i++) {
+            final Operand<T>[] refs = work.get(i).getReferencedOps();
+            if (refs == null) {
+                continue;
+            }
+            for (Operand<T> ref : refs) {
+                if (!(ref instanceof Variable) ||
+                    ref instanceof UndefinedVariable) {
+                    continue;
+                }
+                final Quad<T> dq = ((Variable<T>) ref).getAssignQuad();
+                if (dq != null && !dq.isDeadCode() &&
+                    live.put(dq, Boolean.TRUE) == null) {
+                    work.add(dq);
+                }
+            }
+        }
+        for (Quad<T> q : quads) {
+            if (!live.containsKey(q)) {
+                q.setDeadCode(true);
+            }
+        }
+    }
+
+    /**
+     * ANCHOR-L2-220 (G3/P13): the seeds of the reachability in
+     * {@link #removeUnusedVars()} -- quads that stay live whatever the use
+     * counts say.
+     *
+     * @param q a not-yet-dead quad
+     * @return true when the quad must be kept
+     */
+    private boolean keepForEffects(Quad<T> q) {
+        final Operand<T> def = q.getDefinedOp();
+        if (!(def instanceof Variable)) {
+            // Branches and the other side-effecting quads define no
+            // variable, so the use-count loop never even considered them.
+            return true;
+        }
+        final Variable<T> v = (Variable<T>) def;
+        if (v instanceof MethodArgument || v instanceof UndefinedVariable) {
+            // Same two exemptions the use-count loop had.
+            return true;
+        }
+        if (v.getAssignQuad() != q) {
+            // Not the armed def of its own lhs: the use-count loop could
+            // only ever delete v.getAssignQuad(), so this one stays too.
+            return true;
+        }
+        // ANCHOR-L2-146: throwing defs are live for their effects.
+        // An apparently-unused arr[i] (bounds/NPE), arr.length (NPE)
+        // or idiv/irem/ldiv/lrem (ArithmeticException) inside a try
+        // must still trap; deleting it silently drops the precise
+        // exception (witness: deadThrowObserved compiled to bare
+        // `return 1`). MemLoad/MagicOp deliberately NOT kept: no
+        // trap-capable instance identified (revisit with evidence).
+        // ANCHOR-L2-217 (G9/P19): this was a second hand-kept list
+        // of that same question; P5 asked for one shared predicate
+        // and P19 delivers it -- isCallLike now answers for DCE, the
+        // always-executed reasoning, the allocator and the mirrors.
+        return isCallLike(q);
     }
 
     /**

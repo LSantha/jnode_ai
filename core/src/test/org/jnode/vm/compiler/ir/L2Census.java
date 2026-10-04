@@ -1185,33 +1185,55 @@ public class L2Census {
                     }
                     final List<Operand> sources =
                         ((PhiAssignQuad) q).getPhiOperand().getSources();
-                    int narrow = Operand.UNKNOWN;
-                    boolean usable = sources.size() > 0;
-                    for (int i = 0; i < sources.size() && usable; i++) {
+                    // ANCHOR-L2-220 (G3/P13): a wide home whose sources are
+                    // not all wide. Any one-word source means at least one
+                    // incoming edge writes a single word into the two-word
+                    // home, so the other half keeps whatever the frame held.
+                    // STALEWIDE below covers the unanimous one-word shape
+                    // (L2-199); STALEWIDEMIX covers the rest -- one-word
+                    // sources mixed with a wide one, or one-word sources
+                    // that disagree on narrow type so unanimousNarrowType
+                    // bails. Measured 40 live occurrences over the corpus,
+                    // every one of them read only by other phis; the DCE
+                    // fix in removeUnusedVars takes them to zero.
+                    boolean narrowSeen = false;
+                    boolean wideSeen = false;
+                    boolean disagree = false;
+                    int narrowType = Operand.UNKNOWN;
+                    boolean constantSeen = false;
+                    for (int i = 0; i < sources.size(); i++) {
                         final Operand s = sources.get(i);
                         if (!(s instanceof Variable)) {
-                            usable = false;
-                            break;
+                            constantSeen = true;
+                            continue;
                         }
                         final int st = ((Variable) s).getType();
                         if (st == Operand.UNKNOWN) {
                             continue;
                         }
                         if (st == Operand.LONG || st == Operand.DOUBLE) {
-                            usable = false;
-                            break;
+                            wideSeen = true;
+                            continue;
                         }
-                        if (narrow == Operand.UNKNOWN) {
-                            narrow = st;
-                        } else if (narrow != st) {
-                            usable = false;
+                        narrowSeen = true;
+                        if (narrowType == Operand.UNKNOWN) {
+                            narrowType = st;
+                        } else if (narrowType != st) {
+                            disagree = true;
                         }
                     }
-                    if (usable && narrow != Operand.UNKNOWN) {
+                    if (narrowSeen && (wideSeen || disagree || constantSeen)) {
+                        System.out.println("STALEWIDEMIX "
+                            + method.getDeclaringClass().getName() + "#"
+                            + method.getName() + " @" + q.getAddress()
+                            + " wide=" + lt + " narrow=" + narrowType
+                            + " wideSrc=" + wideSeen + " disagree="
+                            + disagree);
+                    } else if (narrowSeen) {
                         System.out.println("STALEWIDE "
                             + method.getDeclaringClass().getName() + "#"
-                            + method.getName() + " wide=" + lt + " narrow=" + narrow);
-                        return;
+                            + method.getName() + " @" + q.getAddress()
+                            + " wide=" + lt + " narrow=" + narrowType);
                     }
                 }
             }
