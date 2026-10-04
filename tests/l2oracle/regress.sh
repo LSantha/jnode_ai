@@ -500,6 +500,21 @@ if want census; then
     # missing report line fails too, same rule as SSATAG above.
     fm=$(grep -c "^FISTPMISMATCH " /tmp/census-'"$LABEL"'.stdout)
     echo "fistpmismatch=$fm"
+    # ANCHOR-L2-223 (B4): the last two census lints to leave the
+    # informational lints= union. NOYIELDPOINT marks a loop back-edge
+    # branch whose emission block has no $$yp poll (thread-switch/GC
+    # starvation, the B52 hang class -- the defect L2-158 fixed); it was
+    # measured 1954 -> 0 and gated by nobody. WIDTHMISMATCH marks a call
+    # quad whose emitted push count disagrees with the resolved
+    # signature (the stale-operand-width class L2-155 fixed, three
+    # pre-fix sites); its own comment claims "the gate is the census
+    # output diff", and no such diff exists in this script. Both are the
+    # FISTPMISMATCH shape ANCHOR-L2-222 just closed: printed, counted,
+    # never read. Missing report lines fail too, same rule as SSATAG.
+    ny=$(grep -c "^NOYIELDPOINT " /tmp/census-'"$LABEL"'.stdout)
+    wm=$(grep -c "^WIDTHMISMATCH " /tmp/census-'"$LABEL"'.stdout)
+    echo "noyieldpoint=$ny"
+    echo "widthmismatch=$wm"
     n=$(awk "/^--- FAILED \(/{f=1;next} /^--- /{f=0} f" /tmp/census-'"$LABEL"'.txt | wc -l)
     echo "FAILED=$n"
     awk "/^--- FAILED \(/{f=1;next} /^--- /{f=0} f" /tmp/census-'"$LABEL"'.txt | sort > /tmp/census-'"$LABEL"'.failed
@@ -603,10 +618,10 @@ if want census; then
     else
       echo "probe census gate: CONSTREFFIELD==0 and FAILED==0 on the shape-carrying corpus"
     fi
-    if [ ! -s '"$BASE"'/census-failed.txt ] && [ "$n" -eq 0 ] && [ "$rg" -eq 0 ] && [ "$sw" -eq 0 ] && [ "${sm:-1}" -eq 0 ] && [ "${st:-1}" -eq 0 ] && [ "${p15r:-1}" -eq 0 ] && [ "${p15t:-1}" -eq 0 ] && [ "${p18:-1}" -eq 0 ] && [ "${cn:-1}" -eq 0 ] && [ "${dfl:-1}" -eq 0 ] && [ "${ccr:-1}" -eq 0 ] && [ "${cnr:-1}" -eq 0 ] && [ "${fm:-1}" -eq 0 ] && [ "$pc_missing" -eq 0 ]; then
-      echo "census gate: FAILED==0 and RANGEGAP==0 and STALEWIDE==0 and STALEWIDEMIX==0 and SSATAG==0 and P15==0 and P18==0 and CALLNOTCALLLIKE==0 and DEADFIELDLOAD==0 and CONSTCLASSREF==0 and CONSTNULLREF==0 and FISTPMISMATCH==0 as required"
+    if [ ! -s '"$BASE"'/census-failed.txt ] && [ "$n" -eq 0 ] && [ "$rg" -eq 0 ] && [ "$sw" -eq 0 ] && [ "${sm:-1}" -eq 0 ] && [ "${st:-1}" -eq 0 ] && [ "${p15r:-1}" -eq 0 ] && [ "${p15t:-1}" -eq 0 ] && [ "${p18:-1}" -eq 0 ] && [ "${cn:-1}" -eq 0 ] && [ "${dfl:-1}" -eq 0 ] && [ "${ccr:-1}" -eq 0 ] && [ "${cnr:-1}" -eq 0 ] && [ "${fm:-1}" -eq 0 ] && [ "${ny:-1}" -eq 0 ] && [ "${wm:-1}" -eq 0 ] && [ "$pc_missing" -eq 0 ]; then
+      echo "census gate: FAILED==0 and RANGEGAP==0 and STALEWIDE==0 and STALEWIDEMIX==0 and SSATAG==0 and P15==0 and P18==0 and CALLNOTCALLLIKE==0 and DEADFIELDLOAD==0 and CONSTCLASSREF==0 and CONSTNULLREF==0 and FISTPMISMATCH==0 and NOYIELDPOINT==0 and WIDTHMISMATCH==0 as required"
     else
-      echo "REGRESSION: $n FAILED entries, $rg RANGEGAP entries, $sw STALEWIDE entries, ${sm:-missing} STALEWIDEMIX entries, ${st:-missing} SSATAG disagreements, p15=${p15r:-missing}/${p15t:-missing} p18=${p18:-missing} callnotcalllike=${cn:-missing} deadfieldload=${dfl:-missing} constclassref=${ccr:-missing} constnullref=${cnr:-missing} fistpmismatch=${fm:-missing}; first ones:"
+      echo "REGRESSION: $n FAILED entries, $rg RANGEGAP entries, $sw STALEWIDE entries, ${sm:-missing} STALEWIDEMIX entries, ${st:-missing} SSATAG disagreements, p15=${p15r:-missing}/${p15t:-missing} p18=${p18:-missing} callnotcalllike=${cn:-missing} deadfieldload=${dfl:-missing} constclassref=${ccr:-missing} constnullref=${cnr:-missing} fistpmismatch=${fm:-missing} noyieldpoint=${ny:-missing} widthmismatch=${wm:-missing}; first ones:"
       head -n 10 /tmp/census-'"$LABEL"'.failed
       grep -E "^RANGEGAP " /tmp/census-'"$LABEL"'.stdout | head -n 10
       grep -E "^STALEWIDE " /tmp/census-'"$LABEL"'.stdout | head -n 10
@@ -616,6 +631,8 @@ if want census; then
       grep -E "^CONSTCLASSREF " /tmp/census-'"$LABEL"'.stdout | head -n 10
       grep -E "^CONSTNULLREF " /tmp/census-'"$LABEL"'.stdout | head -n 10
       grep -E "^FISTPMISMATCH " /tmp/census-'"$LABEL"'.stdout | head -n 10
+      grep -E "^NOYIELDPOINT " /tmp/census-'"$LABEL"'.stdout | head -n 10
+      grep -E "^WIDTHMISMATCH " /tmp/census-'"$LABEL"'.stdout | head -n 10
       grep -E "^OK=" /tmp/census-'"$LABEL"'.txt
       exit 1
     fi

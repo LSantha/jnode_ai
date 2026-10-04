@@ -1180,8 +1180,9 @@ in gives `--label h4rerad census` FAIL with `fistpmismatch=9`
 every other verdict stayed 0 -- i.e. the new condition alone reddened
 it; restored, `--label h4regreen census` `fistpmismatch=0` PASS and the
 gate line now ends `and FISTPMISMATCH==0 as required`. Two sibling lints
-in the same `lints=` union remain print-only (`NOYIELDPOINT`,
-`WIDTHMISMATCH`); filed as **OPEN-BUGS B4**, not silently left.
+in the same `lints=` union (`NOYIELDPOINT`, `WIDTHMISMATCH`) were
+filed as **OPEN-BUGS B4** and gated the same day as **ANCHOR-L2-223** (both
+red-proven; proofs live in the B4 row).
 
 ## M3 (deep review): float-const CCE / FREM arm -- CLOSED as not-reproducible (2026-09-26)
 
