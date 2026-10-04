@@ -2526,6 +2526,167 @@ public class L2PipelineTest {
     }
 
     /**
+     * Load the hand-built Dup2Probe class through a child loader and return
+     * one of its methods.
+     *
+     * @param name the method name to find
+     * @return that method
+     */
+    private VmMethod findDup2Method(String name) throws Exception {
+        java.io.File dir = java.io.File.createTempFile("dup2probe", "");
+        dir.delete();
+        dir.mkdirs();
+        java.io.FileOutputStream fos = new java.io.FileOutputStream(
+            new java.io.File(dir, "Dup2Probe.class"));
+        fos.write(Dup2ProbeBuilder.build());
+        fos.close();
+        VmSystemClassLoader child = new VmSystemClassLoader(
+            classlibUrls(dir), loader.getArchitecture());
+        VmType type = child.loadClass("Dup2Probe", true);
+        VmMethod found = null;
+        for (int i = 0; i < type.getNoDeclaredMethods(); i++) {
+            VmMethod m = type.getDeclaredMethod(i);
+            if (name.equals(m.getName())) {
+                found = m;
+            }
+        }
+        assertNotNull(name + " not found", found);
+        return found;
+    }
+
+    /**
+     * G10/H6 (ANCHOR-L2-221): dup2_x1 / dup2_x2 FORM 1 rebuild the
+     * duplicated pair in the two slots below, and in both arms the last two
+     * copies read destinations that earlier copies already wrote -- so the
+     * sources must be ordered read-before-clobber, and they are cross-wired
+     * (source index vs index + 1), which leaves the rebuilt pair
+     * transposed: JVMS says [..., v2, v1, v3, v2, v1], the IR produced
+     * [..., v1, v2, v3, v2, v1]. Everything below the dup then computes
+     * c - b where the bytecode says b - c -- a silent miscompile with no
+     * corpus site at all, since javac only emits the form-2 shapes (hence
+     * the hand-built class, same reasoning as the jsr fixture).
+     *
+     * <p/>
+     * The guard replays the emitted copy quads in program order over the
+     * slot array -- that is the semantics, because SSA renaming resolves
+     * each read to the most recent write of that slot -- and compares the
+     * surviving layout with the JVMS one. It reads the IR right after
+     * BytecodeParser: copy propagation and DCE would replace the very
+     * quads being checked, and the defect is in the copy sequence itself.
+     */
+    @Test
+    public void testDup2Form1KeepsJvmPairOrder() throws Exception {
+        // name, nLocals, depth AFTER the dup, pc of the dup, JVMS layout as
+        // original slot indices for slots [nLocals, nLocals + depth).
+        assertDupForm1StackOrder("dup2x1F1", 3, 5, 3, new int[]{4, 5, 3, 4, 5});
+        assertDupForm1StackOrder("dup2x2F1", 4, 6, 4, new int[]{6, 7, 4, 5, 6, 7});
+        // The probe must stay an ordinary compilable method: run the whole
+        // pipeline on both shapes, verifiers included, so a "fix" that only
+        // moves the defect elsewhere cannot pass here.
+        String[] names = {"dup2x1F1", "dup2x2F1"};
+        for (int i = 0; i < names.length; i++) {
+            VmMethod m = findDup2Method(names[i]);
+            String text = compileToText(m);
+            assertTrue("no code emitted for " + names[i], text.length() > 0);
+            IRControlFlowGraph cfg = runToPostDce(m);
+            String v = SSAVerifier.verifyPreDessA(cfg);
+            if (v != null) {
+                fail("SSA violation (pre-deSSA) in " + names[i] + ": " + v);
+            }
+            X86Level2Compiler.deSSAAndFixup(cfg);
+            v = SSAVerifier.verifyPostDessA(cfg);
+            if (v != null) {
+                fail("SSA violation (post-deSSA) in " + names[i] + ": " + v);
+            }
+            v = SSAVerifier.verifyWidths(cfg);
+            if (v != null) {
+                fail("width violation in " + names[i] + ": " + v);
+            }
+        }
+    }
+
+    /**
+     * Replay one form-1 dup's copy quads (ANCHOR-L2-221): feed every
+     * VariableRefAssignQuad at the dup's pc, in block order, into the slot
+     * array and compare what is left of the operand stack with the JVMS
+     * layout.
+     *
+     * @param name the probe method
+     * @param nLocals local slots of the probe (== first stack slot)
+     * @param depth operand slots after the dup
+     * @param dupPc bytecode pc of the dup2 instruction
+     * @param expected contents of slots [nLocals, nLocals + depth) as
+     *        original slot indices, bottom of the rebuilt region first
+     */
+    private void assertDupForm1StackOrder(String name, int nLocals, int depth,
+                                          int dupPc, int[] expected) throws Exception {
+        VmMethod m = findDup2Method(name);
+        IRControlFlowGraph cfg = runToPostIRGen(m);
+        // One past the pre-dup top: form 1 grows the stack by exactly 2.
+        int index = nLocals + depth - 2;
+        int[] slot = new int[index + 3];
+        for (int i = 0; i < slot.length; i++) {
+            slot[i] = i;
+        }
+        int copies = 0;
+        for (Object mb0 : (Iterable<?>) cfg) {
+            IRBasicBlock b = (IRBasicBlock) mb0;
+            for (Object mq0 : b.getQuads()) {
+                Quad q = (Quad) mq0;
+                if (!(q instanceof VariableRefAssignQuad) || q.getAddress() != dupPc) {
+                    continue;
+                }
+                VariableRefAssignQuad vq = (VariableRefAssignQuad) q;
+                Operand rhs = vq.getRHS();
+                assertTrue(name + " dup source must be a plain slot, got " + rhs,
+                    rhs instanceof Variable);
+                slot[vq.getLHS().getIndex()] = slot[((Variable) rhs).getIndex()];
+                copies++;
+            }
+        }
+        assertEquals(name + ": the form-1 dup must emit its copies at pc " + dupPc
+            + " (the Dup2Probe layout changed)", expected.length, copies);
+        StringBuilder got = new StringBuilder();
+        StringBuilder want = new StringBuilder();
+        for (int i = 0; i < depth; i++) {
+            if (i > 0) {
+                got.append(", ");
+                want.append(", ");
+            }
+            got.append(slot[nLocals + i]);
+            want.append(expected[i]);
+        }
+        assertEquals(name + ": operand slots after the form-1 dup, as original"
+            + " slot indices bottom first (JVMS: pair first) -- a swap of the"
+            + " first two entries is the ANCHOR-L2-221 transposition",
+            want.toString(), got.toString());
+    }
+
+    /**
+     * Run the pipeline through bytecode translation only -- no SSA, no
+     * optimization, no DCE. The stage where a form-1 dup's copy quads are
+     * exactly what IRGenerator wrote; the ANCHOR-L2-221 guard reads them
+     * here, because constructSSA/copy propagation replaces them with the
+     * renamed values they define.
+     */
+    private static IRControlFlowGraph runToPostIRGen(VmMethod m) throws Exception {
+        VmByteCode code = m.getBytecode();
+        StringWriter sw = new StringWriter();
+        X86TextAssembler os = new X86TextAssembler(sw, cpuId, Mode.CODE32);
+        EntryPoints context = new EntryPoints(loader, VmUtils.getVm().getHeapManager(), 1);
+        X86CompilerHelper helper = new X86CompilerHelper(os, null, context, true);
+        helper.setMethod(m);
+        CompiledMethod cm = new CompiledMethod(1);
+        TypeSizeInfo typeSizeInfo = loader.getArchitecture().getTypeSizeInfo();
+        X86StackFrame stackFrame = new X86StackFrame(os, helper, m, context, cm);
+        IRControlFlowGraph cfg = new IRControlFlowGraph(code);
+        IRGenerator irg = new IRGenerator(cfg, typeSizeInfo, m.getDeclaringClass().getLoader());
+        BytecodeParser.parse(code, irg);
+        X86Level2Compiler.initMethodArguments(m, stackFrame, typeSizeInfo, irg);
+        return cfg;
+    }
+
+    /**
      * D1 hazard A: the subroutine entry sits BELOW its jsr (jsrDemoA has the
      * entry at pc 5 and the jsr at pc 11), so the address-ordered
      * translation reaches the entry first. Without the pre-translation

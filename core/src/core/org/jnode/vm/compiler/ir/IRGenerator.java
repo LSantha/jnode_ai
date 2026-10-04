@@ -749,8 +749,16 @@ public class IRGenerator<T> extends BytecodeVisitor {
             dupCopy(index, stackOffset - 1);
             dupCopy(index + 1, stackOffset);
             dupCopy(index - 1, stackOffset - 2);
-            dupCopy(index - 2, index);
-            dupCopy(index - 3, index + 1);
+            // ANCHOR-L2-221 (G10/H6): these two copies read slots the first
+            // three already wrote, so their sources are the parked copies
+            // and not the originals: slot index-2 takes the pair head from
+            // index + 1, slot index-3 the copy from index. The old wiring
+            // (index / index + 1) read the same two slots the wrong way
+            // round and rebuilt the pair transposed -- JVMS says
+            // [..., v2, v1, v3, v2, v1], the IR produced
+            // [..., v1, v2, v3, v2, v1].
+            dupCopy(index - 2, index + 1);
+            dupCopy(index - 3, index);
             stackOffset += 3;
         } else if (isCategory2(getVariables()[stackOffset - 1].getType()) &&
             isCategory2(getVariables()[stackOffset - 2].getType()) &&
@@ -815,8 +823,14 @@ public class IRGenerator<T> extends BytecodeVisitor {
             dupCopy(index + 1, stackOffset);
             dupCopy(index - 1, stackOffset - 2);
             dupCopy(index - 2, stackOffset - 3);
-            dupCopy(index - 3, index);
-            dupCopy(index - 4, index + 1);
+            // ANCHOR-L2-221 (G10/H6): same cross-wire as visit_dup2_x1, one
+            // slot deeper -- these two read slots the first four wrote, so
+            // they take the parked copies (index + 1 then index). The old
+            // wiring (index / index + 1) transposed the rebuilt pair: JVMS
+            // [..., v2, v1, v4, v3, v2, v1], the IR produced
+            // [..., v1, v2, v4, v3, v2, v1].
+            dupCopy(index - 3, index + 1);
+            dupCopy(index - 4, index);
             stackOffset += 3;
         } else if (!isCategory2(getVariables()[stackOffset - 4].getType()) &&
             !isCategory2(getVariables()[stackOffset - 3].getType()) &&

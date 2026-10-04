@@ -1468,7 +1468,7 @@ review (its section 3 entries for them are stale).
 | H1 | shift-ECX SAL slip (verified) | queued (2-word fix) |
 | H2 | LCMP RSC destroys spilled operand | queued |
 | H4 | F2L/D2I/D2L rounding via helpers | queued |
-| H6 | dup2 form-1 transposition | queued (hand-built test) |
+| H6 | dup2 form-1 transposition | **LANDED 2026-10-04 as ANCHOR-L2-221** (the "hand-built test" note was the whole cost): the last two copies in each form-1 arm of `visit_dup2_x1`/`visit_dup2_x2` read slots the earlier copies already wrote, wired the wrong way round (`index` / `index + 1`), which transposes the rebuilt pair -- JVMS `[..., v2, v1, ...]`, the IR produced `[..., v1, v2, ...]`. Fixed by swapping those two sources in both arms. Guard: `Dup2ProbeBuilder` (v49 fixture, the `JsrProbeBuilder` mould) + `L2PipelineTest#testDup2Form1KeepsJvmPairOrder`, red per half (`--label dup2red` `[4, 5] vs [5, 4]`, `--label dup2red2` `[6, 7] vs [7, 6]`, `Tests run: 54, Failures: 1`), green `--label dup2ship failures=0` with census `OK=11673 FAILED=0`. Full write-up in OPEN-BUGS G10 |
 | - | FAILED=169 attribution + terminator lint | queued (cheap gate) |
 | P18 | inter-block over-pop (instrument-first) | queued |
 | P11-P15 | edge explicitness, fixType, phi types, undef sources, loops | queued, repro-driven |
