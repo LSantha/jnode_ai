@@ -155,12 +155,10 @@ public class L2PipelineTest {
 
     /**
      * Run the full L2 pipeline for one corpus method and return the emitted
-     * x86 text. Stage order is literally {@code X86Level2Compiler.doCompile}:
-     * bytecode, CFG, IRGenerator, parse, initMethodArguments, constructSSA,
-     * optimize, removeUnusedVars, optimize, removeUnusedVars (closure),
-     * deconstrucSSA, removeDefUseChains, fixupAddresses, CodeGenerator,
-     * computeLiveVariables, getLiveRanges, allocate, generateCode.
-     * (Also mirrors {@code IRTest.generateCode}.)
+     * x86 text. Stage order is literally {@code X86Level2Compiler.doCompile}
+     * (ANCHOR-L2-230: codegen ctor BEFORE constructAndOptimize, helpers
+     * delegated, pin restored in a finally -- (Also mirrors
+     * {@code IRTest.generateCode}.)
      */
     private static String compileToText(VmMethod method) throws Exception {
         return compileMethod(method).text;
@@ -190,32 +188,69 @@ public class L2PipelineTest {
         IRGenerator irg = new IRGenerator(cfg, typeSizeInfo, method.getDeclaringClass().getLoader());
         BytecodeParser.parse(code, irg);
         X86Level2Compiler.initMethodArguments(method, stackFrame, typeSizeInfo, irg);
-        cfg.constructSSA();
-        cfg.optimize();
-        cfg.removeUnusedVars();
-        // Closure pair mirroring X86Level2Compiler.doCompile (ANCHOR-L2-060).
-        cfg.optimize();
-        cfg.removeUnusedVars();
-        X86Level2Compiler.deSSAAndFixup(cfg);
-        X86CodeGenerator x86cg = new X86CodeGenerator(method, os, code.getLength(), typeSizeInfo, stackFrame);
-        List liveVariables = cfg.computeLiveVariables();
-        LiveRange[] liveRanges = X86Level2Compiler.getLiveRanges(liveVariables);
-        LinearScanAllocator lsa = X86Level2Compiler.allocate(liveRanges,
-            X86Level2Compiler.forcedSpills(cfg, liveRanges));
-        X86Level2Compiler.generateCode(x86cg, cfg, irg, lsa);
-        // ANCHOR-L2-161: the same census doCompile() runs after endMethod().
-        // Read it HERE, while the generator is the one that just emitted.
-        final int unboundLabels = x86cg.countUnboundInstrLabels();
-        // X86TextAssembler buffers into an internal buffer: flush to the writer.
-        os.flush();
+        // ANCHOR-L2-230: production order (doCompile, ANCHOR-L2-119) and
+        // production helpers. The old harness inlined constructSSA/optimize
+        // and created the codegen AFTER deSSA, so every phi doPass2 ran
+        // against the previous compile's leftover pin, and
+        // MagicHelper.lowerMagicCalls (part of constructAndOptimize) never
+        // ran at all. The pin is saved/restored as doCompile does it
+        // (ANCHOR-L2-196): the finally is guarded by
+        // testPipelineHelpersRestoreCodeGeneratorPin.
+        final CodeGenerator prevCg = CodeGenerator.getInstance();
         CompileResult r = new CompileResult();
-        r.text = sw.toString();
-        r.cm = cm;
-        r.cfg = cfg;
-        r.liveRanges = liveRanges;
-        r.typeSizeInfo = typeSizeInfo;
-        r.unboundLabels = unboundLabels;
+        try {
+            X86CodeGenerator x86cg = new X86CodeGenerator(method, os, code.getLength(), typeSizeInfo, stackFrame);
+            X86Level2Compiler.constructAndOptimize(cfg);
+            // The closure pair of ANCHOR-L2-060: constructAndOptimize ran
+            // one optimize/DCE, this is the second.
+            X86Level2Compiler.optimizeOnce(cfg);
+            X86Level2Compiler.deSSAAndFixup(cfg);
+            // allocateRanges' body, inlined only because the audit asserts
+            // below need the LiveRange[] the helper would otherwise swallow.
+            List liveVariables = cfg.computeLiveVariables();
+            LiveRange[] liveRanges = X86Level2Compiler.getLiveRanges(liveVariables);
+            LinearScanAllocator lsa = X86Level2Compiler.allocate(liveRanges,
+                X86Level2Compiler.forcedSpills(cfg, liveRanges));
+            X86Level2Compiler.generateCode(x86cg, cfg, irg, lsa);
+            // ANCHOR-L2-161: the same census doCompile() runs after endMethod().
+            // Read it HERE, while the generator is the one that just emitted.
+            r.unboundLabels = x86cg.countUnboundInstrLabels();
+            // X86TextAssembler buffers into an internal buffer: flush to the writer.
+            os.flush();
+            r.text = sw.toString();
+            r.cm = cm;
+            r.cfg = cfg;
+            r.liveRanges = liveRanges;
+            r.typeSizeInfo = typeSizeInfo;
+        } finally {
+            CodeGenerator.setCodeGenerator(prevCg);
+        }
         return r;
+    }
+
+    /**
+     * ANCHOR-L2-230: compileMethod must restore the pin it entered with
+     * (doCompile's ANCHOR-L2-196 contract). Without the finally, its
+     * codegen stays published after it returns, so the NEXT compile's
+     * optimize phase runs against this method's generator -- the
+     * across-compiles sibling of the across-threads leak
+     * ANCHOR-L2-202 pins down.
+     */
+    @Test
+    public void testPipelineHelpersRestoreCodeGeneratorPin() throws Exception {
+        final CodeGenerator sentinel = CodeGenerator.getInstance();
+        compileMethod(findMethod("twice"));
+        assertSame("compileMethod must restore the pin it entered with",
+            sentinel, CodeGenerator.getInstance());
+        compileBinary(findMethod("twice"));
+        assertSame("compileBinary must restore the pin it entered with",
+            sentinel, CodeGenerator.getInstance());
+        runToPostDce(findMethod("twice"));
+        assertSame("runToPostDce must restore the pin it entered with",
+            sentinel, CodeGenerator.getInstance());
+        assertAllocationComplete("twice");
+        assertSame("assertAllocationComplete must restore the pin it entered with",
+            sentinel, CodeGenerator.getInstance());
     }
 
     // ---------------- ANCHOR-L2-202: the pin must not cross threads ----------
@@ -2453,18 +2488,21 @@ public class L2PipelineTest {
         IRGenerator irg = new IRGenerator(cfg, typeSizeInfo, method.getDeclaringClass().getLoader());
         BytecodeParser.parse(code, irg);
         X86Level2Compiler.initMethodArguments(method, stackFrame, typeSizeInfo, irg);
-        cfg.constructSSA();
-        cfg.optimize();
-        cfg.removeUnusedVars();
-        cfg.optimize();
-        cfg.removeUnusedVars();
-        X86Level2Compiler.deSSAAndFixup(cfg);
-        X86CodeGenerator x86cg = new X86CodeGenerator(method, os, code.getLength(), typeSizeInfo, stackFrame);
-        List liveVariables = cfg.computeLiveVariables();
-        LiveRange[] liveRanges = X86Level2Compiler.getLiveRanges(liveVariables);
-        LinearScanAllocator lsa = X86Level2Compiler.allocate(liveRanges,
-            X86Level2Compiler.forcedSpills(cfg, liveRanges));
-        X86Level2Compiler.generateCode(x86cg, cfg, irg, lsa);
+        // ANCHOR-L2-230: same production order as compileMethod (doCompile).
+        final CodeGenerator prevCg = CodeGenerator.getInstance();
+        try {
+            X86CodeGenerator x86cg = new X86CodeGenerator(method, os, code.getLength(), typeSizeInfo, stackFrame);
+            X86Level2Compiler.constructAndOptimize(cfg);
+            X86Level2Compiler.optimizeOnce(cfg);
+            X86Level2Compiler.deSSAAndFixup(cfg);
+            List liveVariables = cfg.computeLiveVariables();
+            LiveRange[] liveRanges = X86Level2Compiler.getLiveRanges(liveVariables);
+            LinearScanAllocator lsa = X86Level2Compiler.allocate(liveRanges,
+                X86Level2Compiler.forcedSpills(cfg, liveRanges));
+            X86Level2Compiler.generateCode(x86cg, cfg, irg, lsa);
+        } finally {
+            CodeGenerator.setCodeGenerator(prevCg);
+        }
         return cm;
     }
 
@@ -2858,21 +2896,25 @@ public class L2PipelineTest {
         IRGenerator irg = new IRGenerator(cfg, typeSizeInfo, m.getDeclaringClass().getLoader());
         BytecodeParser.parse(code, irg);
         X86Level2Compiler.initMethodArguments(m, stackFrame, typeSizeInfo, irg);
-        cfg.constructSSA();
-        cfg.optimize();
-        cfg.removeUnusedVars();
-        // Closure pair mirroring X86Level2Compiler.doCompile (ANCHOR-L2-060).
-        cfg.optimize();
-        cfg.removeUnusedVars();
-        X86Level2Compiler.deSSAAndFixup(cfg);
-        List liveVariables = cfg.computeLiveVariables();
-        LiveRange[] liveRanges = X86Level2Compiler.getLiveRanges(liveVariables);
-        X86Level2Compiler.allocate(liveRanges,
-            X86Level2Compiler.forcedSpills(cfg, liveRanges));
-        assertTrue("no live ranges for " + name, liveRanges.length > 0);
-        for (int i = 0; i < liveRanges.length; i++) {
-            assertNotNull("range without location: " + liveRanges[i] + " in " + name,
-                liveRanges[i].getLocation());
+        // ANCHOR-L2-230: publish a codegen while optimize runs (doCompile
+        // always has one, ANCHOR-L2-119) and restore the pin afterwards.
+        final CodeGenerator prevCg = CodeGenerator.getInstance();
+        try {
+            new X86CodeGenerator(m, os, code.getLength(), typeSizeInfo, stackFrame);
+            X86Level2Compiler.constructAndOptimize(cfg);
+            X86Level2Compiler.optimizeOnce(cfg);
+            X86Level2Compiler.deSSAAndFixup(cfg);
+            List liveVariables = cfg.computeLiveVariables();
+            LiveRange[] liveRanges = X86Level2Compiler.getLiveRanges(liveVariables);
+            X86Level2Compiler.allocate(liveRanges,
+                X86Level2Compiler.forcedSpills(cfg, liveRanges));
+            assertTrue("no live ranges for " + name, liveRanges.length > 0);
+            for (int i = 0; i < liveRanges.length; i++) {
+                assertNotNull("range without location: " + liveRanges[i] + " in " + name,
+                    liveRanges[i].getLocation());
+            }
+        } finally {
+            CodeGenerator.setCodeGenerator(prevCg);
         }
     }
 
@@ -2905,12 +2947,18 @@ public class L2PipelineTest {
         IRGenerator irg = new IRGenerator(cfg, typeSizeInfo, m.getDeclaringClass().getLoader());
         BytecodeParser.parse(code, irg);
         X86Level2Compiler.initMethodArguments(m, stackFrame, typeSizeInfo, irg);
-        cfg.constructSSA();
-        cfg.optimize();
-        cfg.removeUnusedVars();
-        // Closure pair mirroring X86Level2Compiler.doCompile (ANCHOR-L2-060).
-        cfg.optimize();
-        cfg.removeUnusedVars();
+        // ANCHOR-L2-230: publish a codegen while optimize runs (doCompile
+        // always has one, ANCHOR-L2-119) and restore the pin afterwards --
+        // phi doPass2 queries CodeGenerator.getInstance() and NPEs on null
+        // (BinaryQuad.getLHSLiveAddress -> supports3AddrOps).
+        final CodeGenerator prevCg = CodeGenerator.getInstance();
+        try {
+            new X86CodeGenerator(m, os, code.getLength(), typeSizeInfo, stackFrame);
+            X86Level2Compiler.constructAndOptimize(cfg);
+            X86Level2Compiler.optimizeOnce(cfg);
+        } finally {
+            CodeGenerator.setCodeGenerator(prevCg);
+        }
         return cfg;
     }
 
