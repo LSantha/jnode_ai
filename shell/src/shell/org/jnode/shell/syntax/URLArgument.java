@@ -28,8 +28,9 @@ import org.jnode.shell.CommandCompletions;
 import org.jnode.shell.CommandLine.Token;
 
 /**
- * This class implements URL-valued command line arguments.  At the moment, it performs
- * no special syntax checking and does no completion.
+ * This class implements URL-valued command line arguments.  It performs no special
+ * syntax checking.  Completion is done on the path component of "file:" URLs that
+ * have no authority or query component.
  * 
  * @author crawley@jnode.org
  */
@@ -72,8 +73,11 @@ public class URLArgument extends Argument<URL> {
                     (url.getQuery() == null || url.getQuery().length() == 0)) {
                 // Use a FileArgument to do the work of completing the pathname, 
                 // capturing the results using our own CompletionInfo object.
+                // Note that 'doComplete' must be called directly, rather than 'complete',
+                // because 'complete' requires an ArgumentBundle and this helper Argument
+                // is not bound to one.
                 CompletionInfo myCompletion = new CommandCompletions();
-                new FileArgument(null, getFlags()).complete(myCompletion, url.getPath(), flags);
+                new FileArgument(null, getFlags()).doComplete(myCompletion, url.getPath(), flags);
                 // Then turn the completions back into "file:" URLs
                 for (String c : myCompletion.getCompletions()) {
                     // (Kludge - the 'true' argument prevents an extra space
