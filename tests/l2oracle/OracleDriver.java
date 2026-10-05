@@ -261,6 +261,87 @@ public class OracleDriver {
         {"fConstLeft_f", "-0.5"},
         {"dConstLeft_d", "2.0"},
         {"staticFloatBits"},
+        // ANCHOR-L2-232: D2 grid holes (deep review section 6, wave D item
+        // 2). Signed zero: identity + arithmetic + array-barrier constants;
+        // IEEE requires -0.0 + 0.0 == +0.0 while -0.0 * 3.0 stays -0.0, so
+        // any sign loss or sign fabrication shows in the bits.
+        {"id_d", "-0.0"},
+        {"idf_f", "-0.0"},
+        {"idf_f", "0.0"},
+        {"add_ddd", "-0.0", "0.0"},
+        {"add_ddd", "-0.0", "-0.0"},
+        {"mul_ddd", "-0.0", "3.0"},
+        {"negZeroConst_d"},
+        {"negZeroConst_f"},
+        // ANCHOR-L2-232: LREM through the shared Java helper (ANCHOR-L2-080)
+        // against MIN/-1 -- the JLS result is 0, the raw idiv/#DE would be
+        // EX (the int trap is retired; the helper must not repeat it). The
+        // negative-divisor row pins the sign of a negative remainder.
+        {"rem_jjj", "-9223372036854775808", "-1"},
+        {"rem_jjj", "-7", "-3"},
+        // ANCHOR-L2-232: byte/char/short value bounds -- parameter reads
+        // (char must widen unsigned) and i2b/i2c/i2s truncations.
+        {"bRead_i", "-128"},
+        {"bRead_i", "127"},
+        {"bRead_i", "-1"},
+        {"bRead_i", "0"},
+        {"cRead_i", "0"},
+        {"cRead_i", "65535"},
+        {"cRead_i", "65534"},
+        {"cRead_i", "32768"},
+        {"sRead_i", "-32768"},
+        {"sRead_i", "32767"},
+        {"sRead_i", "-1"},
+        {"bTrunc_i", "127", "1"},
+        {"bTrunc_i", "-128", "-1"},
+        {"bTrunc_i", "64", "64"},
+        {"cTrunc_i", "65535", "1"},
+        {"cTrunc_i", "40000", "30000"},
+        {"sTrunc_i", "32767", "2"},
+        {"sTrunc_i", "-32768", "2"},
+        // ANCHOR-L2-232: looped successful checkcast (H5 shape x trip count).
+        {"loopCast_i", "1"},
+        {"loopCast_i", "5"},
+        {"loopCast_i", "100"},
+        // ANCHOR-L2-232: shift-count sweeps -- counts arrive in a register,
+        // unmasked, and JLS masks to 5 bits (int) / 6 bits (long) so 32 == 0,
+        // 64 == 0, -1 == 31 / 63. Arithmetic vs logical and negative
+        // dividends pin SAR vs SHR.
+        {"shl_iii", "1", "0"},
+        {"shl_iii", "1", "31"},
+        {"shl_iii", "1", "32"},
+        {"shl_iii", "1", "33"},
+        {"shl_iii", "-1", "32"},
+        {"shl_iii", "1", "-1"},
+        {"shr_iii", "-256", "1"},
+        {"shr_iii", "-1", "1"},
+        {"shr_iii", "-1", "31"},
+        {"shr_iii", "-1", "32"},
+        {"shr_iii", "-1", "33"},
+        {"shr_iii", "1024", "32"},
+        {"shr_iii", "-256", "0"},
+        {"shr_iii", "-256", "-1"},
+        {"ushr_iii", "-1", "1"},
+        {"ushr_iii", "-1", "31"},
+        {"ushr_iii", "-1", "32"},
+        {"ushr_iii", "-1", "33"},
+        {"ushr_iii", "-1", "0"},
+        {"ushr_iii", "-1", "-1"},
+        {"lshl_jji", "1", "0"},
+        {"lshl_jji", "1", "32"},
+        {"lshl_jji", "1", "63"},
+        {"lshl_jji", "1", "64"},
+        {"lshl_jji", "1", "65"},
+        {"lshl_jji", "-1", "63"},
+        {"lshr_jji", "-1", "1"},
+        {"lshr_jji", "-1", "63"},
+        {"lshr_jji", "-1", "64"},
+        {"lshr_jji", "-1", "65"},
+        {"lshr_jji", "-9223372036854775808", "1"},
+        {"lushr_jji", "-1", "1"},
+        {"lushr_jji", "-1", "63"},
+        {"lushr_jji", "-1", "64"},
+        {"lushr_jji", "-1", "0"},
     };
 
     /**
@@ -433,13 +514,43 @@ public class OracleDriver {
 
     static Object decode(Class<?> t, String s) {
         if (t == Integer.TYPE) {
-            return Integer.valueOf(Integer.decode(s).intValue());
+            try {
+                return Integer.valueOf(Integer.decode(s).intValue());
+            } catch (NumberFormatException e) {
+                // ANCHOR-L2-232: hex forms above 0x7fffffff (0xF0F0F0F0) are
+                // legal int bit patterns but Integer.decode rejects them as
+                // overflow -- which silently turned the wand/wor rows into
+                // DRIVER-EX on both sides, so those probes never executed.
+                long lv = Long.decode(s).longValue();
+                if (lv < Integer.MIN_VALUE || lv > 0xffffffffL) {
+                    throw e;
+                }
+                return Integer.valueOf((int) lv);
+            }
         } else if (t == Long.TYPE) {
             return Long.valueOf(Long.decode(s).longValue());
         } else if (t == Float.TYPE) {
             return Float.valueOf(Float.parseFloat(s));
         } else if (t == Double.TYPE) {
             return Double.valueOf(Double.parseDouble(s));
+        } else if (t == Byte.TYPE) {
+            int v = Integer.decode(s).intValue();
+            if (v < -128 || v > 127) {
+                throw new IllegalArgumentException("byte out of range " + s);
+            }
+            return Byte.valueOf((byte) v);
+        } else if (t == Short.TYPE) {
+            int v = Integer.decode(s).intValue();
+            if (v < -32768 || v > 32767) {
+                throw new IllegalArgumentException("short out of range " + s);
+            }
+            return Short.valueOf((short) v);
+        } else if (t == Character.TYPE) {
+            int v = Integer.decode(s).intValue();
+            if (v < 0 || v > 65535) {
+                throw new IllegalArgumentException("char out of range " + s);
+            }
+            return Character.valueOf((char) v);
         } else if (t == double[].class) {
             if (s.length() == 0) {
                 return new double[0];

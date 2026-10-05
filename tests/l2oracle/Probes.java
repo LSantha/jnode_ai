@@ -1158,4 +1158,107 @@ public class Probes {
         }
         return v;
     }
+
+    // ---------------------------------------------------------------------
+    // ANCHOR-L2-232: D2 value-grid holes (deep review section 6, wave D item
+    // 2). Coverage rows for shapes the grid never held: signed zero, narrow
+    // (byte/char/short) parameter reads and truncations, a looped successful
+    // checkcast (the H5 leak shape repeated across iterations), and
+    // variable-count shifts whose count arrives in a register. LREM
+    // MIN/-1 gets a CASES row against the shared Java helper (ANCHOR-L2-080;
+    // the int idiv trap is retired, the helper must not repeat it).
+    // ---------------------------------------------------------------------
+
+    /** Float identity: -0.0 param round-trip (sign-bit moves). */
+    public static float idf_f(float a) {
+        return a;
+    }
+
+    /** -0.0 constant through the array barrier: constant materialization. */
+    public static double negZeroConst_d() {
+        double[] w = new double[1];
+        w[0] = -0.0;
+        return w[0];
+    }
+
+    /** Float twin of {@link #negZeroConst_d}. */
+    public static float negZeroConst_f() {
+        float[] w = new float[1];
+        w[0] = -0.0f;
+        return w[0];
+    }
+
+    /** byte param read widened to int. */
+    public static int bRead_i(byte a) {
+        return a;
+    }
+
+    /** char param read widened to int (must be UNSIGNED). */
+    public static int cRead_i(char a) {
+        return a;
+    }
+
+    /** short param read widened to int. */
+    public static int sRead_i(short a) {
+        return a;
+    }
+
+    /** i2b after int arithmetic: (byte)(a + b), truncated and re-widened. */
+    public static int bTrunc_i(byte a, byte b) {
+        return (byte) (a + b);
+    }
+
+    /** i2c after int arithmetic: (char)(a + b). */
+    public static int cTrunc_i(char a, char b) {
+        return (char) (a + b);
+    }
+
+    /** i2s after int arithmetic: (short)(a * b). */
+    public static int sTrunc_i(short a, short b) {
+        return (short) (a * b);
+    }
+
+    /**
+     * Successful checkcast in a loop: the H5 shape repeated, so any
+     * per-iteration stack imbalance accumulates across the trip counter.
+     * Elements are constant strings; the sum forces String.length() calls
+     * between iterations. Host: 5 * n.
+     */
+    public static int loopCast_i(int n) {
+        Object[] a = new Object[n];
+        for (int i = 0; i < n; i++) {
+            a[i] = "abcde";
+        }
+        int sum = 0;
+        for (int i = 0; i < n; i++) {
+            String s = (String) a[i];
+            sum += s.length();
+        }
+        return sum;
+    }
+
+    /** Variable-count arithmetic right shift (bytecode ISHR). */
+    public static int shr_iii(int a, int b) {
+        return a >> b;
+    }
+
+    /** Variable-count logical right shift (bytecode IUSHR). */
+    public static int ushr_iii(int a, int b) {
+        return a >>> b;
+    }
+
+    /** Variable-count long left shift, int count. */
+    public static long lshl_jji(long a, int b) {
+        return a << b;
+    }
+
+    /** Variable-count long arithmetic right shift, int count. */
+    public static long lshr_jji(long a, int b) {
+        return a >> b;
+    }
+
+    /** Variable-count long logical right shift, int count. */
+    public static long lushr_jji(long a, int b) {
+        return a >>> b;
+    }
 }
