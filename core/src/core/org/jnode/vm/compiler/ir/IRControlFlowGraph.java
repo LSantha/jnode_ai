@@ -1397,6 +1397,20 @@ public class IRControlFlowGraph<T> implements Iterable<IRBasicBlock<T>> {
                 }
             }
             if (!progress) {
+                // ANCHOR-L2-226 (B3/3, report 2.4): live phi cycles fall back
+                // to the original order here. Measured 2026-10-05 on the core
+                // corpus: the fallback fires 97 times (stuck sets of 1..31
+                // phis) with FAILED=0 over 11,689 methods, and the ORDER is
+                // unobservable -- newPhiMove re-arms
+                // lhs.setAssignQuad(originalAssignQuad) after constructing
+                // every edge copy, so during this whole loop each phi's
+                // lhs.assignQuad is still the phi itself and source
+                // resolution (rhs.getAssignQuad()) is order-independent.
+                // The one mid-loop publish that does NOT re-arm,
+                // defineBottom's REFERENCE branch, was instrumented as
+                // B3ORDEROBS (a downstream phi resolving a bottom-defined
+                // producer) and fired 0 times. Sort and fallback therefore
+                // place identically wherever measured. See OPEN-BUGS B3.
                 for (int i = 0; i < phiQuads.size(); i++) {
                     if (!done.containsKey(phiQuads.get(i))) {
                         ordered.add(phiQuads.get(i));
