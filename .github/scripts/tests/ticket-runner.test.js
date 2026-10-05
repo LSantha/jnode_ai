@@ -447,15 +447,47 @@ test("merge safety gate helpers", async (t) => {
   });
 
   await t.test("isDiffSafe: allows large test-only diffs but not production diffs", async () => {
-    const hTest = makeHelpers({ files: [{ filename: "core/src/test/NumberUtilsTest.java", additions: 601 }] });
-    assert.strictEqual(await hTest.isDiffSafe(99), false);
-    const hTestOk = makeHelpers({ files: [{ filename: "core/src/test/NumberUtilsTest.java", additions: 600 }] });
-    assert.strictEqual(await hTestOk.isDiffSafe(99), true);
-    const hMixed = makeHelpers({ files: [
-      { filename: "core/src/test/NumberUtilsTest.java", additions: 200 },
-      { filename: "core/src/core/NumberUtils.java", additions: 1 }
+    const hTestBig = makeHelpers({ files: [{ filename: "core/src/test/NumberUtilsTest.java", additions: 2001 }] });
+    assert.strictEqual(await hTestBig.isDiffSafe(99), false, "test additions over budget rejected");
+    const hTestOk = makeHelpers({ files: [{ filename: "core/src/test/NumberUtilsTest.java", additions: 2000 }] });
+    assert.strictEqual(await hTestOk.isDiffSafe(99), true, "test additions within budget accepted");
+    const hProdBig = makeHelpers({ files: [{ filename: "core/src/core/NumberUtils.java", additions: 101 }] });
+    assert.strictEqual(await hProdBig.isDiffSafe(99), false, "production additions over budget rejected");
+  });
+
+  await t.test("isDiffSafe: budgets test and production additions independently", async () => {
+    // Regression: a 7-line production fix bundled with its own ~140-line
+    // regression test was rejected because the test counted against the
+    // 100-line production budget. See PRs #717/#721/#722, all blocked on this.
+    const hSmallFixWithTest = makeHelpers({ files: [
+      { filename: "shell/src/shell/org/jnode/shell/syntax/URLArgument.java", additions: 7 },
+      { filename: "shell/src/test/org/jnode/test/shell/syntax/HostArgumentTypesTest.java", additions: 138 },
+      { filename: "shell/src/test/org/jnode/test/shell/syntax/AllTests.java", additions: 1 }
     ] });
-    assert.strictEqual(await hMixed.isDiffSafe(99), false);
+    assert.strictEqual(await hSmallFixWithTest.isDiffSafe(99), true,
+      "small production fix + its own regression test must be allowed");
+
+    // ...but the production side is still capped independently.
+    const hBigFixWithTest = makeHelpers({ files: [
+      { filename: "shell/src/shell/org/jnode/shell/syntax/URLArgument.java", additions: 101 },
+      { filename: "shell/src/test/org/jnode/test/shell/syntax/HostArgumentTypesTest.java", additions: 138 }
+    ] });
+    assert.strictEqual(await hBigFixWithTest.isDiffSafe(99), false,
+      "production additions over 100 still rejected regardless of test volume");
+  });
+
+  await t.test("isDiffSafe: file-count budget applies per category", async () => {
+    // 7 test files previously tripped the flat 5-file cap before the diff
+    // could be classified as test-only (see PR #720).
+    const hSevenTests = makeHelpers({ files: [1, 2, 3, 4, 5, 6, 7].map(i => ({
+      filename: "shell/src/test/org/jnode/test/shell/syntax/S" + i + "Test.java", additions: 100
+    })) });
+    assert.strictEqual(await hSevenTests.isDiffSafe(99), true, "7 test files within the test budget");
+
+    const hSixProd = makeHelpers({ files: [1, 2, 3, 4, 5, 6].map(i => ({
+      filename: "shell/src/shell/org/jnode/shell/syntax/S" + i + ".java", additions: 1
+    })) });
+    assert.strictEqual(await hSixProd.isDiffSafe(99), false, "6 production files still rejected");
   });
 
   await t.test("isCIGreen: success, failure, none", async () => {
