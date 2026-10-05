@@ -69,6 +69,21 @@ public class VariableRefAssignQuad<T> extends AssignQuad<T> {
         return refs[0];
     }
 
+    /**
+     * ANCHOR-L2-224: an ExceptionArgument store pops the VM-pushed exception
+     * slot off the real machine stack (the handler prologue did a push eax).
+     * Dead-local elimination must not kill it: without the pop, every join on
+     * the exceptional path runs one stack slot deep (witness:
+     * VMProcess$ProcessThread#run InterruptedException handler at bci 204).
+     */
+    @Override
+    public void doPass3(java.util.Collection<Variable<T>> values) {
+        if (refs[0] instanceof ExceptionArgument) {
+            return;
+        }
+        super.doPass3(values);
+    }
+
     public Operand<T> propagate(Variable<T> operand) {
         if (!(refs[0] instanceof ExceptionArgument)) {
             boolean found = false;

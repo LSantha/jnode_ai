@@ -2773,4 +2773,19 @@ public abstract class X86Assembler extends NativeStream implements BootImageNati
             throw new IllegalArgumentException("Invalid register size " + size);
         }
     }
+
+    // ANCHOR-L2-224: ESP-depth tracking hooks; only X86TextAssembler
+    // (the census/debug emission) implements them.
+    public void noteCallArgs(int argSlots) {
+    }
+
+    public void markNextCallNoReturn() {
+    }
+
+    public void markRuntimeEntry(Object label, int entrySlots) {
+    }
+
+    public String[] getEspViolations() {
+        return new String[0];
+    }
 }

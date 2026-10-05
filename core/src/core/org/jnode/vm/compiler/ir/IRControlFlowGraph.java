@@ -487,6 +487,17 @@ public class IRControlFlowGraph<T> implements Iterable<IRBasicBlock<T>> {
         // of that same question; P5 asked for one shared predicate
         // and P19 delivers it -- isCallLike now answers for DCE, the
         // always-executed reasoning, the allocator and the mirrors.
+        if (q instanceof VariableRefAssignQuad
+            && ((VariableRefAssignQuad<?>) q).getRHS() instanceof
+                ExceptionArgument) {
+            // ANCHOR-L2-224: the handler prologue pushed the exception on
+            // the real machine stack; this store IS the pop. Deleting it
+            // because the catch local is never read leaves the exceptional
+            // path one stack slot deep at every join downstream (census
+            // witness: VMProcess$ProcessThread#run InterruptedException
+            // handler at bci 204, join __qb_65 0 vs 1).
+            return true;
+        }
         return isCallLike(q);
     }
 

@@ -430,6 +430,7 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
     private void callJavaMethod(VmMethod method) {
         final X86CompilerHelper helper = stackFrame.getHelper();
         final int offset = helper.getSharedStaticsOffset(method);
+        os.noteCallArgs(method.getArgSlotCount());
         os.writeCALL(helper.STATICS, offset);
     }
 
@@ -5937,6 +5938,7 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
         }
 //        }
 //        invokeJavaMethod(context.getThrowArrayOutOfBounds());
+        os.markNextCallNoReturn();
         stackFrame.getHelper().invokeJavaMethod(stackFrame.getEntryPoints().getThrowArrayOutOfBounds());
 
         final int slotSize = stackFrame.getHelper().SLOTSIZE;
@@ -6057,6 +6059,15 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
         final Label endLabel = new Label(curLabel + "cc_end");
         Operand ref = quad.getRef();
         writeInstanceTest(ref, clazz, resolvedType, curLabel, trueLabel, endLabel);
+        if (ref.getAddressingMode() == CONSTANT) {
+            // ANCHOR-L2-224: a CONSTANT ref is always null, so
+            // writeInstanceTest already emitted an unconditional jump to
+            // endLabel. The false-failure text below is unreachable; its
+            // intermediate labels would re-validate the depth tracker inside
+            // a dead region (spurious 0-vs--2 join). Nothing left to emit.
+            os.setObjectRef(endLabel);
+            return;
+        }
         // False fallthrough: restore temps, then fail (throw path: nothing live).
         os.writePOP(X86Register.EBX);
         os.writePOP(X86Register.ECX);
@@ -6070,6 +6081,7 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
         os.writePUSH(X86Register.EAX);
         writeResolveAndLoadClassToReg(clazz, X86Register.EDX, curLabel);
         os.writePUSH(X86Register.EDX);
+        os.markNextCallNoReturn();
         callJavaMethod(stackFrame.getEntryPoints().getClassCastFailedMethod());
         os.setObjectRef(trueLabel);
         // ANCHOR-L2-152: the success path jumped straight here from inside
@@ -6172,6 +6184,14 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
             throw new IllegalArgumentException();
         }
         writeInstanceTest(ref, clazz, resolvedType, currentLabel, trueLabel, endLabel);
+        if (ref.getAddressingMode() == CONSTANT) {
+            // ANCHOR-L2-224: null constant jumped straight to endLabel with
+            // result already cleared; the fallthrough below is unreachable
+            // and its labels must not re-validate the depth tracker mid-dead
+            // region (spurious join on the census lint).
+            os.setObjectRef(endLabel);
+            return;
+        }
         // False fallthrough.
         os.writePOP(X86Register.EBX);
         os.writePOP(X86Register.ECX);
@@ -8048,10 +8068,12 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
     private void writeParameters(Quad quad, VmConstMethodRef methodRef) {
         Operand<T>[] referencedOps = quad.getReferencedOps();
         VmType<?>[] argTypes = null;
+        VmMethod resolvedMethod = null;
         if (methodRef != null) {
             try {
                 methodRef.resolve(currentMethod.getDeclaringClass().getLoader());
                 final VmMethod rm = methodRef.getResolvedVmMethod();
+                resolvedMethod = rm;
                 final int argc = rm.getNoArguments();
                 // ANCHOR-L2-166: the gate must account for the receiver. A
                 // static call has none, so op0 is the FIRST ARGUMENT, not a
@@ -8129,6 +8151,10 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
             } else {
                 throw new IllegalArgumentException();
             }
+        }
+        // ANCHOR-L2-224: the callee pops exactly its own arg slots (ret n)
+        if (resolvedMethod != null) {
+            os.noteCallArgs(resolvedMethod.getArgSlotCount());
         }
     }
 }

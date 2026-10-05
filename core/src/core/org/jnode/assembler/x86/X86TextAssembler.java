@@ -24,7 +24,10 @@ import java.io.IOException;
 import java.io.OutputStream;
 import java.io.PrintWriter;
 import java.io.Writer;
+import java.util.ArrayList;
 import java.util.Collection;
+import java.util.HashMap;
+import java.util.HashSet;
 import org.jnode.assembler.Label;
 import org.jnode.assembler.NativeStream;
 import org.jnode.assembler.ObjectResolver;
@@ -187,6 +190,154 @@ public class X86TextAssembler extends X86Assembler implements X86Operation {
     final PrintWriter out;
 
     private final String stripPrefix;
+
+    // ANCHOR-L2-224: ESP-depth tracking over the emitted TEXT.
+    private int espDepth;
+    private boolean espValid = true;
+    private boolean espRel;
+    private int espRelK;
+    private int ebpDepth;
+    private int pendingCallArgs;
+    private boolean nextCallNoReturn;
+    private final HashMap<Object, Integer> espLabelDepth =
+        new HashMap<Object, Integer>();
+    private final HashMap<Object, Integer> espEntrySlots =
+        new HashMap<Object, Integer>();
+    private final HashSet<Integer> espJsrDepths = new HashSet<Integer>();
+    private final ArrayList<String> espViolations = new ArrayList<String>();
+    private final HashSet<String> espSeen = new HashSet<String>();
+    private final ArrayList<Integer> espRelRets = new ArrayList<Integer>();
+
+    /**
+     * ANCHOR-L2-224: the next non-label call pops this many argument slots
+     * (callee-cleanup {@code ret n}); the caller's own pushes are counted
+     * from the emitted text.
+     */
+    public void noteCallArgs(int argSlots) {
+        this.pendingCallArgs = argSlots;
+    }
+
+    /**
+     * ANCHOR-L2-224: the next non-label call never returns to its fall-through.
+     */
+    public void markNextCallNoReturn() {
+        this.nextCallNoReturn = true;
+    }
+
+    /**
+     * ANCHOR-L2-224: label entered from off-text (exception handler entry
+     * slots, jsr subroutines): fall-through into it is layout noise, and
+     * when no edge is known yet the frame starts with the given slots.
+     */
+    public void markRuntimeEntry(Object label, int entrySlots) {
+        if (!(label instanceof Label)) {
+            // ANCHOR-L2-224: only code labels anchor; see espAnchor.
+            return;
+        }
+        this.espEntrySlots.put(label, Integer.valueOf(entrySlots));
+    }
+
+    public String[] getEspViolations() {
+        // ANCHOR-L2-224: the footer is emitted before the header, so its
+        // lea-esp-relative returns resolve only once ebp is set.
+        for (int i = 0; i < espRelRets.size(); i++) {
+            final int d = ebpDepth - espRelRets.get(i).intValue();
+            if (d != 0 && !espJsrDepths.contains(Integer.valueOf(d))) {
+                espFlag("ret depth " + d);
+            }
+        }
+        return espViolations.toArray(new String[espViolations.size()]);
+    }
+
+    private int espValue() {
+        return espRel ? (ebpDepth - espRelK) : espDepth;
+    }
+
+    private void espBump(int delta) {
+        if (espRel) {
+            espRelK -= delta;
+        } else {
+            espDepth += delta;
+        }
+    }
+
+    private void espFlag(String msg) {
+        if (espSeen.add(msg)) {
+            espViolations.add(msg);
+        }
+    }
+
+    private void espExpect(Object lbl, int d) {
+        if (!(lbl instanceof Label) || !espValid) {
+            return;
+        }
+        final Integer prev = espLabelDepth.get(lbl);
+        if (prev == null) {
+            espLabelDepth.put(lbl, Integer.valueOf(d));
+        } else if (prev.intValue() != d) {
+            espFlag("join " + lbl + " depth " + prev + " vs " + d);
+        }
+    }
+
+    private void espAnchor(Object lbl) {
+        if (!(lbl instanceof Label)) {
+            // ANCHOR-L2-224: setObjectRef doubles as the boot-image DATA
+            // relocation path -- ObjectEmitter.emitObject passes the heap
+            // object being emitted (any Map included) -- and those keys are
+            // not code anchors. An AbstractMap key's equals() even reached
+            // a locked BootableHashMap.size() and killed the image build.
+            return;
+        }
+        final Integer exp = espLabelDepth.get(lbl);
+        final Integer slots = espEntrySlots.get(lbl);
+        if (!espValid) {
+            espRel = false;
+            if (exp != null) {
+                espDepth = exp.intValue();
+            } else {
+                espDepth = (slots != null) ? slots.intValue() : 0;
+            }
+            espValid = true;
+            return;
+        }
+        if (slots != null) {
+            espRel = false;
+            espDepth = (exp != null) ? exp.intValue() : slots.intValue();
+            return;
+        }
+        final int cur = espValue();
+        if (exp == null) {
+            espLabelDepth.put(lbl, Integer.valueOf(cur));
+        } else if (exp.intValue() != cur) {
+            espFlag("join " + lbl + " depth " + exp + " vs " + cur);
+        }
+    }
+
+    private void espCall() {
+        if (nextCallNoReturn) {
+            nextCallNoReturn = false;
+            pendingCallArgs = 0;
+            espValid = false;
+            return;
+        }
+        if (espValid) {
+            // retaddr push/pop cancel; the callee's ret n pops the args
+            espBump(-pendingCallArgs);
+        }
+        pendingCallArgs = 0;
+    }
+
+    private void espRet() {
+        if (espValid) {
+            if (espRel) {
+                espRelRets.add(Integer.valueOf(espRelK));
+            } else if (espDepth != 0
+                && !espJsrDepths.contains(Integer.valueOf(espDepth))) {
+                espFlag("ret depth " + espDepth);
+            }
+        }
+        espValid = false;
+    }
 
     /**
      * Initialize this instance
@@ -368,6 +519,7 @@ public class X86TextAssembler extends X86Assembler implements X86Operation {
     }
      
     public ObjectRef setObjectRef(Object label) {
+        espAnchor(label);
         println(label(label) + ':');
         return new ObjectRefImpl(label);
     }
@@ -463,6 +615,9 @@ public class X86TextAssembler extends X86Assembler implements X86Operation {
      * @param imm32
      */
     public void writeADD(GPR dstReg, int imm32) {
+        if (dstReg == X86Register.ESP) {
+            espBump(-imm32 / 4);
+        }
         println("\tadd " + dstReg + ",0x" + NumberUtils.hex(imm32));
     }
 
@@ -590,7 +745,18 @@ public class X86TextAssembler extends X86Assembler implements X86Operation {
     }
 
     public void writeCALL(Label label) {
-
+        // ANCHOR-L2-224: jsr-style call: the retaddr is on the stack at
+        // callee entry, but the caller's own depth is unchanged on return.
+        // ANCHOR-L2-224: jsr entry height is caller-relative (the callee
+        // is position independent), so call sites never join-compare; the
+        // first recorded entry wins and anchors adopt it.
+        final int entry = espValue() + 1;
+        final Integer prevEntry = espLabelDepth.get(label);
+        if (prevEntry == null) {
+            espLabelDepth.put(label, Integer.valueOf(entry));
+        }
+        espJsrDepths.add(Integer.valueOf(entry));
+        espEntrySlots.put(label, Integer.valueOf(1));
         println("\tcall " + label(label));
     }
 
@@ -604,10 +770,12 @@ public class X86TextAssembler extends X86Assembler implements X86Operation {
      */
     public void writeCALL(Object tablePtr, int offset, boolean rawAddress) {
         println("\tcall [" + tablePtr + disp(offset) + ']');
+        espCall();
     }
 
     public void writeCALL(GPR reg) {
         println("\tcall " + reg);
+        espCall();
     }
 
     /**
@@ -618,6 +786,7 @@ public class X86TextAssembler extends X86Assembler implements X86Operation {
      */
     public void writeCALL(GPR reg, int offset) {
         println("\tcall [" + reg + disp(offset) + ']');
+        espCall();
     }
 
     /**
@@ -633,10 +802,12 @@ public class X86TextAssembler extends X86Assembler implements X86Operation {
     public void writeCALL(GPR regBase, GPR regIndex, int scale, int disp) {
         println("\tcall [" + regBase + '+' + regIndex + '*' + scale
             + disp(disp) + ']');
+        espCall();
     }
 
     public void writeCALL(GPR regIndex, int scale, int disp) {
         println("\tcall [" + regIndex + '*' + scale + disp(disp) + ']');
+        espCall();
     }
 
     public void writeCDQ(int operandSize) {
@@ -1072,6 +1243,10 @@ public class X86TextAssembler extends X86Assembler implements X86Operation {
 
     public void writeINT(int vector) {
         println("\tint 0x" + NumberUtils.hex(vector, 2));
+        // ANCHOR-L2-224: a software interrupt does not fall through here
+        // for the stack-overflow trap; the yieldpoint path rejoins at its
+        // own done label, which has its edge recorded already.
+        espValid = false;
     }
 
     public void writeIRET() {
@@ -1083,14 +1258,18 @@ public class X86TextAssembler extends X86Assembler implements X86Operation {
     }
 
     public void writeJCC(Label label, int jumpOpcode) {
+        espExpect(label, espValue());
         println("\tj" + ccName(jumpOpcode) + ' ' + label(label));
     }
 
     public void writeJECXZ(Label label) {
+        espExpect(label, espValue());
         println("\tjecxz " + label(label));
     }
 
     public void writeJMP(Label label) {
+        espExpect(label, espValue());
+        espValid = false;
         println("\tjmp " + label(label));
     }
 
@@ -1106,6 +1285,7 @@ public class X86TextAssembler extends X86Assembler implements X86Operation {
         if (tablePtr == null)
             tablePtr = "null"; // workaround for a peculiar NPE in StringBuffer
         println("\tjmp [ left out in: TextX86Stream.writeJMP(Object tablePtr, int offset, boolean rawAddress)]");
+        espValid = false;
     }
 
     /**
@@ -1115,6 +1295,7 @@ public class X86TextAssembler extends X86Assembler implements X86Operation {
      */
     public void writeJMP(int operandSize, int seg, int disp) {
         println("\tjmp " + size(operandSize) + " 0x" + NumberUtils.hex(seg) + ":0x" + NumberUtils.hex(disp));
+        espValid = false;
     }
 
     /**
@@ -1126,10 +1307,12 @@ public class X86TextAssembler extends X86Assembler implements X86Operation {
      */
     public void writeJMP(Object tablePtr, GPR offsetReg) {
         println("\tjmp [" + tablePtr + '+' + offsetReg + ']');
+        espValid = false;
     }
 
     public void writeJMP(GPR reg32) {
         println("\tjmp " + reg32);
+        espValid = false;
     }
 
     /**
@@ -1139,6 +1322,7 @@ public class X86TextAssembler extends X86Assembler implements X86Operation {
      */
     public final void writeJMP(GPR reg32, int disp) {
         println("\tjmp [" + reg32 + disp(disp) + ']');
+        espValid = false;
     }
 
     public void writeLDMXCSR(GPR srcReg, int disp) {
@@ -1146,10 +1330,21 @@ public class X86TextAssembler extends X86Assembler implements X86Operation {
     }
 
     public void writeLEA(GPR dstReg, GPR srcReg, int disp) {
+        if (dstReg == X86Register.ESP) {
+            if (srcReg == X86Register.EBP) {
+                espRel = true;
+                espRelK = disp / 4;
+            } else {
+                espValid = false;
+            }
+        }
         println("\tlea " + dstReg + ",[" + srcReg + disp(disp) + ']');
     }
 
     public void writeLEA(X86Register.GPR dstReg, X86Register.GPR srcIdxReg, int scale, int disp) {
+        if (dstReg == X86Register.ESP) {
+            espValid = false;
+        }
         if (scale == 1)
             println("\tlea " + dstReg + ",[" + srcIdxReg + disp(disp) + ']');
         else
@@ -1165,6 +1360,9 @@ public class X86TextAssembler extends X86Assembler implements X86Operation {
     }
 
     public void writeLEA(GPR dstReg, GPR srcReg, GPR srcIdxReg, int scale, int disp) {
+        if (dstReg == X86Register.ESP) {
+            espValid = false;
+        }
         if (scale == 1)
             println("\tlea " + dstReg + ",[" + srcReg + '+' + srcIdxReg + disp(disp) + ']');
         else
@@ -1221,6 +1419,18 @@ public class X86TextAssembler extends X86Assembler implements X86Operation {
     }
 
     public void writeMOV(int operandSize, GPR dstReg, GPR srcReg) {
+        if (dstReg == X86Register.EBP && srcReg == X86Register.ESP) {
+            if (espValid) {
+                ebpDepth = espValue();
+            }
+        } else if (dstReg == X86Register.ESP) {
+            if (srcReg == X86Register.EBP) {
+                espRel = false;
+                espDepth = ebpDepth;
+            } else {
+                espValid = false;
+            }
+        }
         println("\tmov " + dstReg + ',' + size(operandSize) + ' ' + srcReg);
     }
 
@@ -1535,22 +1745,27 @@ public class X86TextAssembler extends X86Assembler implements X86Operation {
     }
 
     public void writePOP(GPR dstReg) {
+        espBump(-1);
         println("\tpop " + dstReg);
     }
 
     public void writePOP(SR dstReg) {
+        espBump(-1);
         println("\tpop " + dstReg);
     }
 
     public void writePOP(GPR dstReg, int dstDisp) {
+        espBump(-1);
         println("\tpop [" + dstReg + disp(dstDisp) + ']');
     }
 
     public void writePOPA() {
+        espBump(-(isCode64() ? 16 : 8));
         println("\tpopa");
     }
 
     public void writePOPF() {
+        espBump(-1);
         println("\tpopf");
     }
 
@@ -1592,6 +1807,7 @@ public class X86TextAssembler extends X86Assembler implements X86Operation {
      * @return The offset of the start of the instruction.
      */
     public int writePUSH(int imm32) {
+        espBump(1);
         return println("\tpush 0x" + NumberUtils.hex(imm32));
     }
 
@@ -1599,6 +1815,7 @@ public class X86TextAssembler extends X86Assembler implements X86Operation {
      * @return The offset of the start of the instruction.
      */
     public int writePUSH(GPR srcReg) {
+        espBump(1);
         return println("\tpush " + srcReg);
     }
 
@@ -1606,6 +1823,7 @@ public class X86TextAssembler extends X86Assembler implements X86Operation {
      * @return The offset of the start of the instruction.
      */
     public int writePUSH(SR srcReg) {
+        espBump(1);
         return println("\tpush " + srcReg);
     }
 
@@ -1613,6 +1831,7 @@ public class X86TextAssembler extends X86Assembler implements X86Operation {
      * @return The offset of the start of the instruction.
      */
     public int writePUSH(GPR srcReg, int srcDisp) {
+        espBump(1);
         return println("\tpush [" + srcReg + disp(srcDisp) + ']');
     }
 
@@ -1620,6 +1839,7 @@ public class X86TextAssembler extends X86Assembler implements X86Operation {
      * @return The offset of the start of the instruction.
      */
     public int writePUSH(SR srcReg, int srcDisp) {
+        espBump(1);
         return println("\tpush [" + srcReg + ':' + srcDisp + ']');
     }
 
@@ -1628,6 +1848,7 @@ public class X86TextAssembler extends X86Assembler implements X86Operation {
      */
     public int writePUSH(GPR srcBaseReg, GPR srcIndexReg, int srcScale,
                          int srcDisp) {
+        espBump(1);
         return println("\tpush [" + srcBaseReg + disp(srcDisp) + '+'
             + srcIndexReg + '*' + srcScale + ']');
     }
@@ -1637,14 +1858,17 @@ public class X86TextAssembler extends X86Assembler implements X86Operation {
      * @return The offset of the start of the instruction.
      */
     public int writePUSH_Const(Object objRef) {
+        espBump(1);
         return println("\tpush " + objRef);
     }
 
     public void writePUSHA() {
+        espBump(isCode64() ? 16 : 8);
         println("\tpusha");
     }
 
     public void writePUSHF() {
+        espDepth++;
         println("\tpushf");
     }
 
@@ -1667,10 +1891,12 @@ public class X86TextAssembler extends X86Assembler implements X86Operation {
 
     public void writeRET() {
         println("\tret");
+        espRet();
     }
 
     public void writeRET(int imm16) {
         println("\tret " + imm16);
+        espRet();
     }
 
     public void writeSAHF() {

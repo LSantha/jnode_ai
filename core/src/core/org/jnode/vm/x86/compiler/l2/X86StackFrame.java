@@ -135,6 +135,13 @@ public final class X86StackFrame {
             os.writeBreakPoint();
         }
 
+        // ANCHOR-L2-224: mark handler entry labels before the body emits
+        // them, so their body fall-in is never committed as an edge.
+        final int ehCount = method.getBytecode().getNoExceptionHandlers();
+        for (int i = 0; i < ehCount; i++) {
+            os.markRuntimeEntry(helper.getInstrLabel(method.getBytecode()
+                .getExceptionHandler(i).getHandlerPC()), 1);
+        }
         // Jump to init code
         os.writeJMP(initLabel);
         // Set startCode label
@@ -263,6 +270,9 @@ public final class X86StackFrame {
             final VmInterpretedExceptionHandler eh = bc.getExceptionHandler(i);
             final Label handlerLabel = helper.genLabel("$$ex_handler" + i);
 
+            // ANCHOR-L2-224: handler entries arrive with one exception
+            // slot pushed; body fall-in into them is layout noise.
+            os.markRuntimeEntry(helper.getInstrLabel(eh.getHandlerPC()), 1);
             final ObjectRef handlerRef = os.setObjectRef(handlerLabel);
 
             /** Clear the calculation stack (only locals are left) */

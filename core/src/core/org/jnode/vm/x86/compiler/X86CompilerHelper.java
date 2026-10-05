@@ -250,6 +250,11 @@ public class X86CompilerHelper {
             index *= 2;
         }
         final int offset = (VmArray.DATA_OFFSET * SLOTSIZE) + (index << 2);
+        // ANCHOR-L2-224: athrow transfers to the handler dispatch, never
+        // back to this fall-through.
+        if (index == X86JumpTable.VM_ATHROW_IDX) {
+            os.markNextCallNoReturn();
+        }
         os.writeCALL(STATICS, offset);
     }
 
@@ -309,6 +314,7 @@ public class X86CompilerHelper {
      */
     public final void invokeJavaMethod(VmMethod method) {
         final int offset = getSharedStaticsOffset(method);
+        os.noteCallArgs(method.getArgSlotCount());
         os.writeCALL(STATICS, offset);
         pushReturnValue(method.getSignature());
     }

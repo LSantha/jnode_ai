@@ -1286,6 +1286,8 @@ public class L2Census {
         LinearScanAllocator lsa = X86Level2Compiler.allocateRanges(cfg);
         X86Level2Compiler.generateCode(x86cg, cfg, irg, lsa);
         os.flush();
+        // ANCHOR-L2-224: per-edge ESP depth consistency of the emission
+        checkEspDepth(method, os);
         lastCfg = cfg;
         // 104: tables are emitted now; a count mismatch means entries were
         // lost -- fail loud into FAIL_OTHER instead of going silent.
@@ -1296,6 +1298,26 @@ public class L2Census {
                 + (table == null ? -1 : table.length) + ", want " + wantTables);
         }
         return sw.toString();
+    }
+
+    /**
+     * ANCHOR-L2-224 corpus lint: two control transfers landing on the same
+     * label at different ESP depths leave the stack frame shifted by one
+     * side's pushes or pops (the H5 class: checkcast/instanceof leaked
+     * ECX+EBX per successful test until L2-152). One ESPDEPTH line per
+     * disagreeing label or off-frame return.
+     */
+    static void checkEspDepth(VmMethod method, X86TextAssembler os) {
+        try {
+            final String[] v = os.getEspViolations();
+            for (int i = 0; i < v.length; i++) {
+                System.out.println("ESPDEPTH "
+                    + method.getDeclaringClass().getName() + "#"
+                    + method.getName() + " " + v[i]);
+            }
+        } catch (Throwable t) {
+            // lint only
+        }
     }
     /**
      * ANCHOR-L2-163 census lint: the arraylength emission must not load a
