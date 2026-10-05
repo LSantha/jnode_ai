@@ -968,6 +968,50 @@ public class L2PipelineTest {
     }
 
     /**
+     * ANCHOR-L2-228 (B/D/E Wave B1): verifyWidths now runs over every
+     * corpus census method (FAILED==0 gates it), so pin the DETECTION
+     * half here -- a check that cannot fail reads exactly like a clean
+     * corpus (the FISTPMISMATCH lesson, ANCHOR-L2-222). Corrupt a live
+     * copy's lhs wide-ness behind the verifier's back; it must report
+     * the disagreement it exists for.
+     */
+    @Test
+    public void testWidthVerifierCatchesMismatch() throws Exception {
+        CompileResult r = compileMethod(findMethod("const1"));
+        boolean corrupted = false;
+        for (Object b0 : (Iterable<?>) r.cfg) {
+            final IRBasicBlock b = (IRBasicBlock) b0;
+            for (Object q0 : (List<?>) b.getQuads()) {
+                final Quad q = (Quad) q0;
+                if (q.isDeadCode() || !(q instanceof VariableRefAssignQuad)) {
+                    continue;
+                }
+                final Operand lhs = ((AssignQuad) q).getLHS();
+                final Operand[] refs = q.getReferencedOps();
+                if (refs == null || refs.length == 0) {
+                    continue;
+                }
+                final int l = lhs.getType();
+                final int t = refs[0].getType();
+                final boolean lw = (l == Operand.LONG || l == Operand.DOUBLE);
+                final boolean rw = (t == Operand.LONG || t == Operand.DOUBLE);
+                if (lw != rw) {
+                    fail("fixture already disagrees: " + q);
+                }
+                lhs.setType(lw ? Operand.INT : Operand.LONG);
+                corrupted = true;
+                break;
+            }
+            if (corrupted) {
+                break;
+            }
+        }
+        assertTrue("fixture produced no live copy to corrupt", corrupted);
+        final String v = SSAVerifier.verifyWidths(r.cfg);
+        assertNotNull("verifyWidths missed a lhs/rhs wide-ness disagreement", v);
+    }
+
+    /**
      * 107: no register-held value may span a call-like quad (callers
      * preserve nothing: saveRegisters is a no-op in every x86 frame) or
      * end inside a handler block (the native unwinder preserves nothing).

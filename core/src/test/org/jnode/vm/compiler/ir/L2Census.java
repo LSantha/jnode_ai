@@ -1283,6 +1283,20 @@ public class L2Census {
         if (vpost != null) {
             throw new IllegalStateException("SSA-POST: " + vpost);
         }
+        // ANCHOR-L2-228 (B/D/E Wave B1, widths half): the copy-width
+        // invariant over EVERY corpus method, not just T1's synthetic
+        // fixtures. A VariableRefAssignQuad whose lhs/rhs wide-ness
+        // disagrees silently drops the high half at codegen and the result
+        // is later used as a pointer (the ANCHOR-L2-082 class), and census
+        // WIDTHMISMATCH only sees call-push widths, not copies. Violation ->
+        // IllegalStateException -> per-method FAILED entry, so FAILED==0
+        // gates it; measured 0 over 11,689 methods (--label wmeasure). The
+        // detection half is pinned by L2PipelineTest#testWidthVerifier-
+        // CatchesMismatch: a check that cannot fail reads like a clean corpus.
+        final String vw = SSAVerifier.verifyWidths(cfg);
+        if (vw != null) {
+            throw new IllegalStateException("WIDTHS: " + vw);
+        }
         LinearScanAllocator lsa = X86Level2Compiler.allocateRanges(cfg);
         X86Level2Compiler.generateCode(x86cg, cfg, irg, lsa);
         os.flush();
