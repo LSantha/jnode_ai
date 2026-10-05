@@ -41,7 +41,7 @@ public class PluginDescriptorModelTest {
     public void setUp() throws PluginException {
         XMLElement element = new XMLElement();
         element.parseString("<?xml version=\"1.0\" encoding=\"UTF-8\"?><!DOCTYPE plugin SYSTEM \"jnode.dtd\">" +
-        "<plugin id=\"model1\" name=\"model1 name\" version=\"version\" provider-name=\"provider\" license-name=" +
+        "<plugin id=\"model1\" name=\"model1 name\" version=\"1.2.3\" provider-name=\"provider\" license-name=" +
         "\"lgpl\"><requires><import plugin=\"plug1\"/><import plugin=\"plug2\"/></requires><runtime><library " +
         "name=\"plugin.jar\"><export name=\"content.*\"/></library></runtime><extension point=\"extension\">" +
         "<alias name=\"alias\" class=\"class\"/></extension></plugin>");
@@ -60,7 +60,9 @@ public class PluginDescriptorModelTest {
 
     @Test
     public void testGetVersion() {
-        assertEquals("version", model.getVersion());
+        // a42d3de16 changed the field from String to Version; Version has
+        // no equals, so compare its canonical toString.
+        assertEquals("1.2.3", model.getVersion().toString());
     }
 
     @Test
@@ -129,7 +131,7 @@ public class PluginDescriptorModelTest {
     public void testGetPluginReference() {
         PluginReference reference = model.getPluginReference();
         assertEquals("model1", reference.getId());
-        assertEquals("version", reference.getVersion());
+        assertEquals("1.2.3", reference.getVersion().toString());
     }
 }
 

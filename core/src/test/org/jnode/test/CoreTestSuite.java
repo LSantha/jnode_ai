@@ -20,12 +20,14 @@
  
 package org.jnode.test;
 
+import org.jnode.plugin.model.PluginDescriptorModelTest;
 import org.jnode.test.threads.ThreadingTestJUnit4;
 import org.jnode.test.util.NumberUtilsTest;
 import org.jnode.test.util.VersionTest;
 import org.jnode.vm.compiler.ir.L2HostTest;
 import org.jnode.vm.compiler.ir.L2ModeMatrixTest;
 import org.jnode.vm.compiler.ir.L2PipelineTest;
+import org.jnode.vm.x86.CompilerUnionPolicyTest;
 import org.jnode.vm.x86.compiler.l1a.X86RegisterPoolTest;
 import org.junit.runner.RunWith;
 import org.junit.runners.Suite;
@@ -49,6 +51,9 @@ import org.junit.runners.Suite.SuiteClasses;
     L2HostTest.class,
     L2ModeMatrixTest.class,
     L2PipelineTest.class,
+    CoreTestSuiteMembershipTest.class,
+    CompilerUnionPolicyTest.class,
+    PluginDescriptorModelTest.class,
 }
 )
 public class CoreTestSuite {
