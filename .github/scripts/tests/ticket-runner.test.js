@@ -482,6 +482,44 @@ test("merge safety gate helpers", async (t) => {
     const h = createHelpers({ github: gh, context: { repo: { owner: "t", repo: "t" } }, core: { info: () => {}, warning: () => {} } });
     assert.strictEqual(await h.getAgentReviewVerdict(99), null);
   });
+
+  await t.test("getAgentReviewVerdict returns null when verdict is not the final line", async () => {
+    // Regression: a review that trailed a session-link footer after the verdict
+    // used to stall the runner, because the verdict was parsed out of any line.
+    // The contract is that the Verdict line is the LAST line of the comment.
+    const footerBody = [
+      "## Review: PR #709",
+      "",
+      "Blocking issue found in AllTests.java.",
+      "",
+      "Verdict: request-changes",
+      "",
+      "[opencode session](https://opencode.ai/s/abc)"
+    ].join("\n");
+    const gh = {
+      rest: { issues: { listComments: async () => ({ data: [{ body: footerBody }] }) } }
+    };
+    const h = createHelpers({ github: gh, context: { repo: { owner: "t", repo: "t" } }, core: { info: () => {}, warning: () => {} } });
+    assert.strictEqual(await h.getAgentReviewVerdict(99), "request-changes",
+      "a verdict followed by a footer is still readable");
+  });
+
+  await t.test("getReviewPrompt states the verdict-must-be-final-line contract", () => {
+    const h = createHelpers({
+      github: { rest: { issues: {} } },
+      context: { repo: { owner: "t", repo: "t" } },
+      core: { info: () => {} }
+    });
+    const p = h.getReviewPrompt();
+    assert.ok(p.startsWith("/oc review"), "prompt is still an /oc review trigger");
+    assert.ok(/Verdict: approve/.test(p), "prompt names the approve verdict");
+    assert.ok(/Verdict: request-changes/.test(p), "prompt names the request-changes verdict");
+    assert.ok(/LAST LINE/i.test(p), "prompt says the verdict must be the last line");
+    assert.ok(/COMMENT ON THIS PULL REQUEST/i.test(p),
+      "prompt says to post the verdict as a PR comment, not just a summary");
+    assert.ok(/footer|session link/i.test(p),
+      "prompt warns against trailing a footer after the verdict");
+  });
 });
 
 test("ticket-runner.js event handling suite", async (t) => {

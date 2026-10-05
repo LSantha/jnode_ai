@@ -44,7 +44,20 @@ module.exports = function createHelpers({ github, context, core }) {
 
   /** Build the standard review prompt that the runner/orchestrator posts on PRs. */
   function getReviewPrompt() {
-    return "/oc review\n\nYou are reviewing a pull request for the automated pipeline. Your final line must be exactly one of:\nVerdict: approve\nVerdict: request-changes\n\nUse \"Verdict: request-changes\" if the PR needs code changes. Use \"Verdict: approve\" only if the PR is correct and ready for the next phase.";
+    return "/oc review\n\nYou are reviewing a pull request for the automated pipeline.\n\n" +
+      "OUTPUT CONTRACT (the runner parses this mechanically -- follow it exactly):\n\n" +
+      "1. POST your review as a COMMENT ON THIS PULL REQUEST. A summary that only\n" +
+      "   says \"review posted\" without the verdict in the comment body is a FAILURE.\n" +
+      "2. The LAST LINE of that comment must be exactly one of these two lines,\n" +
+      "   with no markdown decoration, no trailing punctuation, and no text after it:\n" +
+      "   Verdict: approve\n" +
+      "   Verdict: request-changes\n" +
+      "3. Do NOT end the comment with a session link, footer, signature, or any other\n" +
+      "   line after the Verdict line. The Verdict line must be the final line.\n\n" +
+      "Use \"Verdict: request-changes\" if the PR needs code changes. Use \"Verdict: approve\"\n" +
+      "only if the PR is correct and ready for the next phase. If your review found a real\n" +
+      "blocking problem, say so in the body AND use \"Verdict: request-changes\" -- do not\n" +
+      "leave the verdict implied.";
   }
 
   /** Scan comments on a PR for the latest Verdict line. Returns 'approve', 'request-changes', or null. */
