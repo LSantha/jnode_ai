@@ -1015,12 +1015,23 @@ public class L2PipelineTest {
             if (!(lr.getLocation() instanceof RegisterLocation)) {
                 continue;
             }
+            // Mirror forcedSpills' MethodArgument skip: incoming arguments
+            // are never register-allocated (LinearScanAllocator homes them),
+            // so the register-only loop above already excludes them -- kept
+            // explicit so this audit stays a faithful copy of production.
+            if (lr.getVariable() instanceof MethodArgument) {
+                continue;
+            }
             final int def = lr.getAssignAddress();
             final int last = lr.getLastUseAddress();
             for (Integer c : callAddrs) {
                 final int call = c.intValue();
+                // ANCHOR-L2-227: both sides inclusive, exactly as
+                // X86Level2Compiler.forcedSpills. The old strict `call < last`
+                // pinned a boundary no production change could violate --
+                // reverting the production high side back to `<` passed here.
                 assertFalse(name + ": register " + lr + " spans call @" + call,
-                    def <= call && call < last);
+                    def <= call && call <= last);
             }
             for (int[] h : handlerRanges) {
                 assertFalse(name + ": register " + lr + " reaches handler",
