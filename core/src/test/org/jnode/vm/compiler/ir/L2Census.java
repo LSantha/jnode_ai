@@ -1297,6 +1297,36 @@ public class L2Census {
         if (vw != null) {
             throw new IllegalStateException("WIDTHS: " + vw);
         }
+        // ANCHOR-L2-229 (B/D/E Wave B3): no live quad may FOLLOW a
+        // terminator inside a block -- a copy appended there never executes
+        // (the ANCHOR-L2-145 class; isTerminator itself is L2-145's, and
+        // JsrQuad is deliberately not one because jsr returns). Blocks with
+        // NO terminator are normal (implicit fall-through; 2,613 corpus
+        // methods have such a block), so only trailing quads count:
+        // measured 0 over 11,689 methods. One TERMTRAILING line per
+        // violation; gated in regress.sh with the missing-line-fails rule
+        // (ANCHOR-L2-187).
+        for (Object b0 : (Iterable<?>) cfg) {
+            IRBasicBlock b = (IRBasicBlock) b0;
+            final List qs = b.getQuads();
+            int firstTerm = -1;
+            int after = 0;
+            for (int i = 0; i < qs.size(); i++) {
+                final Quad q = (Quad) qs.get(i);
+                if (q.isDeadCode()) {
+                    continue;
+                }
+                if (firstTerm < 0 && IRBasicBlock.isTerminator(q)) {
+                    firstTerm = i;
+                } else if (firstTerm >= 0) {
+                    after++;
+                }
+            }
+            if (after > 0) {
+                System.out.println("TERMTRAILING " + method.getDeclaringClass().getName()
+                    + "#" + method.getName() + " blk@" + b.getStartPC() + " n=" + after);
+            }
+        }
         LinearScanAllocator lsa = X86Level2Compiler.allocateRanges(cfg);
         X86Level2Compiler.generateCode(x86cg, cfg, irg, lsa);
         os.flush();
