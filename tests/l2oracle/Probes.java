@@ -234,6 +234,28 @@ public class Probes {
         return ((NField) null).g;
     }
 
+    /**
+     * ANCHOR-L2-225 (B5): `arr.length` through a constant-null array ref.
+     * ArrayLengthAssignQuad.doPass2 simplify()s its ref, so a sole
+     * aconst_null def propagates NULL_CONSTANT (IntConstant(0)) and the
+     * emission's getRef() cast -- Variable -- threw ClassCastException at
+     * compile time: `IntConstant cannot be cast to Variable`. This is the
+     * L2-078 arm ArrayAssignQuad and ArrayStoreQuad already carried and
+     * ArrayLengthAssignQuad never got; reachable from plain javac
+     * (`Object[] a = null; a.length`), so the shape had to be planted here
+     * -- nothing in the corpus reuses a null-past-arrayref.
+     *
+     * Guard: the probe census compiles every method of this class and
+     * requires FAILED==0, so reverting the fix turns this method into a
+     * failure (as the NullArr/NullLen reproducers do on the bare census).
+     * Runtime: both sides throw NullPointerException (trap-model load at
+     * 0+LENGTH_OFFSET, same as nullFieldRead), so the oracle row is a
+     * no-divergence check, not a value check.
+     */
+    public static int nullArrayLength() {
+        Object[] a = null;
+        return a.length;
+    }
 
     /**
      * ANCHOR-L2-182: C6 reproducer. `Address.attempt(int, int, Offset)` is a

@@ -125,6 +125,9 @@ public class OracleDriver {
         // no-divergence check; the CONSTREFFIELD census lint is the proof)
         {"nullFieldRead"},
         {"nullFieldWrite", "7"},
+        // ANCHOR-L2-225: constant-null arraylength (both sides throw NPE --
+        // no-divergence check; the probe-census FAILED==0 gate is the red)
+        {"nullArrayLength"},
         // ANCHOR-L2-171: pushed-operand-live-across-iinc (Properties.loadConvert)
         {"postIncrRead_aii", "10,20,30,40", "1"},
         {"postIncrLoop_aii", "10,20,30,40", "3"},

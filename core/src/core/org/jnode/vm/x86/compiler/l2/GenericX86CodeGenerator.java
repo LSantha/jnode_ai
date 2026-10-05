@@ -5277,6 +5277,30 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
         Variable lhs = quad.getLHS();
         final int slotSize = stackFrame.getHelper().SLOTSIZE;
         int arrayLengthOffset = VmArray.LENGTH_OFFSET * slotSize;
+        if (quad.getReferencedOps()[0].getAddressingMode() == CONSTANT) {
+            // ANCHOR-L2-225 (B5): only null reaches here -- a sole
+            // aconst_null def propagates through ArrayLengthAssignQuad.doPass2
+            // simplify (NULL_CONSTANT is IntConstant(0)), and getRef() would
+            // CCE on the constant: the L2-078 arm ArrayAssignQuad and
+            // ArrayStoreQuad already carry and this quad never got. Fault
+            // exactly like L1A's trap model (load at 0+LENGTH_OFFSET).
+            Operand rawRef = quad.getReferencedOps()[0];
+            if (!(rawRef instanceof IntConstant)) {
+                throw new IllegalArgumentException("Non-null constant array ref: " + rawRef);
+            }
+            os.writeMOV_Const(SR1, ((IntConstant) rawRef).getValue());
+            if (lhs.getAddressingMode() == REGISTER) {
+                GPR dstReg = (GPR) ((RegisterLocation) lhs.getLocation()).getRegister();
+                os.writeMOV(INTSIZE, dstReg, SR1, arrayLengthOffset);
+            } else if (lhs.getAddressingMode() == STACK) {
+                os.writeMOV(INTSIZE, SR1, SR1, arrayLengthOffset);
+                os.writeMOV(BITS32, X86Register.EBP,
+                    ((StackLocation) lhs.getLocation()).getDisplacement(), SR1);
+            } else {
+                throw new IllegalArgumentException();
+            }
+            return;
+        }
         if (lhs.getAddressingMode() == REGISTER) {
             GPR dstReg = (GPR) ((RegisterLocation) lhs.getLocation()).getRegister();
             Variable ref = quad.getRef();
