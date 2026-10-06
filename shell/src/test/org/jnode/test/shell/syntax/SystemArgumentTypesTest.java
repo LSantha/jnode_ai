@@ -42,10 +42,28 @@ import org.jnode.shell.syntax.Log4jLevelArgument;
 import org.jnode.shell.syntax.Log4jLoggerArgument;
 import org.jnode.shell.syntax.PropertyNameArgument;
 import org.jnode.shell.syntax.ShellPropertyNameArgument;
+import org.jnode.emu.naming.BasicNameSpace;
+import org.jnode.naming.InitialNaming;
 import org.junit.Assert;
+import org.junit.BeforeClass;
 import org.junit.Test;
 
 public class SystemArgumentTypesTest {
+
+    /**
+     * Some argument types (for example ShellPropertyNameArgument.doComplete) reach
+     * InitialNaming, which NPEs on the host JDK until a name space is installed.
+     * The shell suite only worked because HostArgumentTypesTest initialised it
+     * earlier in the same JVM, so this class failed when run on its own.
+     */
+    @BeforeClass
+    public static void setUpInitialNaming() {
+        try {
+            InitialNaming.nameSet();
+        } catch (NullPointerException ex) {
+            InitialNaming.setNameSpace(new BasicNameSpace());
+        }
+    }
 
     private static final String ALIAS = "command";
 
