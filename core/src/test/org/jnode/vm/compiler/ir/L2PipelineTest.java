@@ -1125,8 +1125,8 @@ public class L2PipelineTest {
      * ordinary Java method and nothing preserves the caller-saved registers
      * (`saveRegisters` is a no-op in every x86 frame), so the allocator's
      * pooled EBX/ESI die across it -- and `writeFieldBarrier`/
-     * `writeStaticBarrier` save only ECX plus the never-allocated EAX/EDX
-     * scratch. `forcedSpills` is driven by `isCallLike`, so a missing entry
+     * `writeStaticBarrier` save no registers since ANCHOR-L2-235 (EAX/EDX are never
+     * allocated, ECX has no caller-side preserve anymore). `forcedSpills` is driven by `isCallLike`, so a missing entry
      * leaves a live value in a register across that call.
      * <p/>
      * The barrier call is conditional on `needsWriteBarrier()`, which every
@@ -1859,12 +1859,13 @@ public class L2PipelineTest {
     }
 
     /**
-     * ANCHOR-L2-152: the checkcast success path must restore EBX+ECX.
-     * Pre-fix `cc_true` jumped out of the type test with both registers
-     * still pushed (the POPs were on the false fallthrough only), leaking
-     * 8 bytes of stack per successful cast. The null path jumps to
-     * `cc_end` BEFORE the pushes and needs no restore; only `cc_true`
-     * does. Emission pin on the `cc_true` block.
+     * ANCHOR-L2-152 (history) + ANCHOR-L2-235: the checkcast success path
+     * used to jump out of `cc_true` with EBX+ECX still pushed (pops only on
+     * the false fallthrough), leaking 8 bytes per successful cast. The
+     * preserve discipline is gone -- writeInstanceTest pushes nothing
+     * anymore -- so `cc_true` must have ZERO pops. A reintroduced push/pop
+     * pair fails here; a reintroduced push without its pop fails census
+     * ESPDEPTH (depth join at `cc_true`). Emission pin on `cc_true`.
      */
     @Test
     public void testCheckcastSuccessRestoresTemps() throws Exception {
@@ -1886,8 +1887,9 @@ public class L2PipelineTest {
                 pops++;
             }
         }
-        assertTrue("checkcast cc_true does not restore EBX+ECX (8-byte "
-            + "stack leak per successful cast):\n" + text, pops == 2);
+        assertTrue("checkcast cc_true must have no pops (the type test no "
+            + "longer pushes ECX/EBX; a pop here means a reintroduced "
+            + "preserve or an unbalanced stack):\n" + text, pops == 0);
     }
 
     /**
@@ -2062,8 +2064,8 @@ public class L2PipelineTest {
      *
      * Builds a StaticCallAssignQuad for a harvested real static method with a
      * one-slot primitive argument, types that argument's slot LONG, and
-     * asserts the emission pushes it as ONE slot (plus the preserved ECX),
-     * not as a long pair.
+     * asserts the emission pushes it as ONE slot (and nothing else -- the
+     * ECX preserve is gone, ANCHOR-L2-235), not as a long pair.
      */
     @Test
     public void testStaleArgTypeOnStaticCallUsesSignatureWidth() throws Exception {
@@ -2081,7 +2083,7 @@ public class L2PipelineTest {
         final int[] offs = new int[argc];
         vars[0] = new TypedVar(Operand.INT);            // lhs (result slot)
         vars[0].setLocation(new StackLocation(-8));
-        int pushed = 1;
+        int pushed = 0;
         for (int i = 0; i < argc; i++) {
             final Variable v = (i == 0)
                 ? new TypedVar(Operand.LONG) : new TypedVar(Operand.INT);
@@ -2116,8 +2118,9 @@ public class L2PipelineTest {
                 actual += 1;
             }
         }
-        assertEquals("static call must push ECX plus one slot per argument "
-            + "slot per the signature, not per the stale LONG type: " + text,
+        assertEquals("static call must push one slot per argument slot per "
+            + "the signature (no ECX preserve: ANCHOR-L2-235), not per the "
+            + "stale LONG type: " + text,
             pushed, actual);
     }
 

@@ -425,6 +425,14 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
      * stack manager, so the shared method NPE'd on every non-void call
      * (ANCHOR-L2-072, CG-4b/B18). Void calls are unaffected either way.
      *
+     * ANCHOR-L2-235: push arguments and call with NO register preserve
+     * around the call. Every quad that reaches a call here is call-like
+     * (isCallLike covers every emission-level CALL, guarded by census
+     * CALLNOTCALLLIKE), so X86Level2Compiler.forcedSpills stack-homes every
+     * register live across the call address (inclusive both sides,
+     * ANCHOR-L2-227); arguments are never register-allocated. Census lint
+     * REGSPANSCALL audits this corpus-wide.
+     *
      * @param method the runtime helper to call
      */
     private void callJavaMethod(VmMethod method) {
@@ -4120,15 +4128,14 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
                 // ANCHOR-L2-080: 64-bit division via the shared Java helper
                 // (the same one L1A calls: exact JVM edge semantics, including
                 // divide-by-zero and MIN_VALUE/-1).
-                // The ECX preserve goes BELOW the arguments: the callee pops
-                // its own 16 arg bytes and reads them EBP-relative, so a word
-                // pushed between args and return address shifts every slot
-                // (oracle: MIN/-1 came back -1, x/0 came back garbage with no
-                // throw). Push-args-call-pop preserves and rebalances.
-                os.writePUSH(X86Register.ECX);
+                // ANCHOR-L2-235: no ECX preserve around this call (the quad
+                // is call-like, so forcedSpills homes any spanning value).
+                // Frame shape still matters: the callee pops its own 16 arg
+                // bytes and reads them EBP-relative, so never push a word
+                // between args and the return address (oracle: MIN/-1 came
+                // back -1, x/0 came back garbage with no throw).
                 writeParameters(quad);
                 callJavaMethod(stackFrame.getEntryPoints().getLdivMethod());
-                os.writePOP(X86Register.ECX);
                 os.writeMOV(BITS32, X86Register.EBP, disp1 - stackFrame.getHelper().SLOTSIZE,
                     X86Register.EAX);
                 os.writeMOV(BITS32, X86Register.EBP, disp1, X86Register.EDX);
@@ -4187,11 +4194,9 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
             }
             case LREM: {
                 // ANCHOR-L2-080: 64-bit remainder via the shared Java helper
-                // (same one L1A calls). Preserve-below-args, same as LDIV.
-                os.writePUSH(X86Register.ECX);
+                // (same one L1A calls). No preserve, same as LDIV (L2-235).
                 writeParameters(quad);
                 callJavaMethod(stackFrame.getEntryPoints().getLremMethod());
-                os.writePOP(X86Register.ECX);
                 os.writeMOV(BITS32, X86Register.EBP, disp1 - stackFrame.getHelper().SLOTSIZE,
                     X86Register.EAX);
                 os.writeMOV(BITS32, X86Register.EBP, disp1, X86Register.EDX);
@@ -5129,13 +5134,12 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
         checkLabel(quad.getAddress()); // ANCHOR-L2-00C: position this quad's label
         // Setup a call to SoftByteCodes.allocArray
         X86CompilerHelper helper = stackFrame.getHelper();
-        // ANCHOR-L2-074 (CG-4c): ECX is caller-saved (L1A pool marks EBX/ESI
-        // callee-saved, ECX not); a live ECX-allocated value would not survive
-        // the call, so preserve it. EBX/ESI need nothing (JNode convention).
-        // The preserve goes BELOW the arguments: the callee pops its own arg
-        // bytes and reads them EBP-relative (oracle: newarray got the length
-        // as its type, "Unknown type N").
-        os.writePUSH(X86Register.ECX);
+        // ANCHOR-L2-235: no ECX preserve (was L2-074's push/pop): the quad
+        // is call-like, so forcedSpills stack-homes every value that would
+        // span this call. Callee frame shape still matters: it pops its own
+        // arg bytes and reads them EBP-relative (oracle: newarray got the
+        // length as its type, "Unknown type N") -- pushing nothing cannot
+        // shift those slots.
         helper.writePushStaticsEntry(getInstrLabel(quad.getAddress()),
             helper.getMethod().getDeclaringClass()); /* currentClass */
         os.writePUSH(quad.getType()); /* type */
@@ -5152,11 +5156,10 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
             throw new IllegalArgumentException();
         }
 
-        // ANCHOR-L2-074 (CG-4c): ECX is caller-saved (L1A pool marks EBX/ESI
-        // callee-saved, ECX not); a live ECX-allocated value would not survive
-        // the call, so preserve it. EBX/ESI need nothing (JNode convention).
+        // ANCHOR-L2-235: no ECX preserve (was L2-074's push/pop): the quad is
+        // call-like, so forcedSpills stack-homes every value that would span
+        // this call (EBX/ESI need nothing anyway: JNode convention).
         callJavaMethod(stackFrame.getEntryPoints().getAllocPrimitiveArrayMethod());
-        os.writePOP(X86Register.ECX);
         Variable lhs = quad.getLHS();
         if (lhs.getAddressingMode() == REGISTER) {
             os.writeMOV(BITS32, (GPR) ((RegisterLocation) lhs.getLocation()).getRegister(), X86Register.EAX);
@@ -5177,7 +5180,6 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
         writeResolveAndLoadClassToReg(clazz, SR1, label);
         // ANCHOR-L2-074 (CG-4c): preserve caller-saved ECX across the call,
         // below the arguments (same frame-shift reason as above).
-        os.writePUSH(X86Register.ECX);
         os.writePUSH(SR1);
         Operand sizeOp = quad.getSize();
         if (sizeOp.getAddressingMode() == CONSTANT) {
@@ -5189,9 +5191,8 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
         } else {
             throw new IllegalArgumentException();
         }
-        // ANCHOR-L2-074 (CG-4c): preserve caller-saved ECX across the call.
+        // ANCHOR-L2-235: no ECX preserve (forcedSpills homes spanning values).
         callJavaMethod(stackFrame.getEntryPoints().getAnewarrayMethod());
-        os.writePOP(X86Register.ECX);
         Variable lhs = quad.getLHS();
         if (lhs.getAddressingMode() == REGISTER) {
             os.writeMOV(BITS32, (GPR) ((RegisterLocation) lhs.getLocation()).getRegister(), X86Register.EAX);
@@ -5210,15 +5211,12 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
         Operand[] sizes = quad.getSizes();
         Label label = getInstrLabel(quad.getAddress());
         X86CompilerHelper helper = stackFrame.getHelper();
-        // ANCHOR-L2-074 (CG-4c): ECX is caller-saved (L1A pool marks EBX/ESI
-        // callee-saved, ECX not); a live ECX-allocated value would not survive
-        // the call, so preserve it below the arguments (frame-shift reason).
-        os.writePUSH(X86Register.ECX);
+        // ANCHOR-L2-235: no ECX preserve below the arguments (was L2-074);
+        // the quad is call-like, so forcedSpills homes spanning values.
         helper.writePushStaticsEntry(label, currentMethod.getDeclaringClass()); /* currentClass */
         os.writePUSH(10); /* type=int */
         os.writePUSH(sizes.length); /* elements */
         callJavaMethod(stackFrame.getEntryPoints().getAllocPrimitiveArrayMethod());
-        os.writePOP(X86Register.ECX);
         final GPR dimsr = SR1;
         if (SR1 != X86Register.EAX) {
             os.writeMOV(BITS32, SR1, X86Register.EAX);
@@ -5249,7 +5247,6 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
         }
         // Preserve caller-saved ECX below the call arguments (the XCHG
         // juggling above assumes the dims word on top; ECX goes under it).
-        os.writePUSH(X86Register.ECX);
         os.writePUSH(dimsr);
         VmConstClass clazz = quad.getComponentType();
         // Resolve the array class
@@ -5257,9 +5254,8 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
         // Now call the multianewarrayhelper
         os.writeXCHG(X86Register.ESP, 0, dimsr);
         os.writePUSH(dimsr); // dimensions[]
-        // ANCHOR-L2-074 (CG-4c): preserve caller-saved ECX across the call.
+        // ANCHOR-L2-235: no ECX preserve (forcedSpills homes spanning values).
         callJavaMethod(stackFrame.getEntryPoints().getAllocMultiArrayMethod());
-        os.writePOP(X86Register.ECX);
         Variable lhs = quad.getLHS();
         if (lhs.getAddressingMode() == REGISTER) {
             os.writeMOV(BITS32, (GPR) ((RegisterLocation) lhs.getLocation()).getRegister(), X86Register.EAX);
@@ -6031,13 +6027,11 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
         // Resolve the class
         Label label = getInstrLabel(quad.getAddress());
         writeResolveAndLoadClassToReg(clazz, SR1, label);
-        // Call SoftByteCodes#getClassForVmType (preserve ECX below the arg).
-        os.writePUSH(X86Register.ECX);
+        // Call SoftByteCodes#getClassForVmType (no preserve: ANCHOR-L2-235).
         os.writePUSH(SR1);
-        // ANCHOR-L2-074 (CG-4c): EAX-result model + preserve caller-saved ECX
-        // (shared invokeJavaMethod NPEs with L2's null stackMgr, B18).
+        // ANCHOR-L2-074 (CG-4c): EAX-result model (shared invokeJavaMethod
+        // NPEs with L2's null stackMgr, B18). No ECX preserve: L2-235.
         callJavaMethod(stackFrame.getEntryPoints().getGetClassForVmTypeMethod());
-        os.writePOP(X86Register.ECX);
         Variable lhs = quad.getLHS();
         if (lhs.getAddressingMode() == REGISTER) {
             os.writeMOV(BITS32, (GPR) ((RegisterLocation) lhs.getLocation()).getRegister(), X86Register.EAX);
@@ -6092,9 +6086,7 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
             os.setObjectRef(endLabel);
             return;
         }
-        // False fallthrough: restore temps, then fail (throw path: nothing live).
-        os.writePOP(X86Register.EBX);
-        os.writePOP(X86Register.ECX);
+        // False fallthrough: fail (throw path: nothing live).
         if (ref.getAddressingMode() == REGISTER) {
             GPR origReg = (GPR) ((RegisterLocation) ((Variable) ref).getLocation()).getRegister();
             os.writeMOV(BITS32, X86Register.EAX, origReg);
@@ -6108,15 +6100,12 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
         os.markNextCallNoReturn();
         callJavaMethod(stackFrame.getEntryPoints().getClassCastFailedMethod());
         os.setObjectRef(trueLabel);
-        // ANCHOR-L2-152: the success path jumped straight here from inside
-        // writeInstanceTest with EBX+ECX still pushed (the POPs above are
-        // on the false fallthrough only), leaking 8 bytes of stack per
-        // successful checkcast -- masked by EBP-relative locals until it
-        // corrupts ESP-relative addressing or overflows in a loop. Same
-        // shape as the instanceof twin. The null path jumps to endLabel
-        // BEFORE the pushes, so it needs no restore.
-        os.writePOP(X86Register.EBX);
-        os.writePOP(X86Register.ECX);
+        // ANCHOR-L2-152: the success path used to jump straight here with
+        // EBX+ECX still pushed (pops only on the false fallthrough), leaking
+        // 8 bytes of stack per successful checkcast. The pushes/pops are
+        // gone with ANCHOR-L2-235 -- the type test pushes nothing anymore --
+        // so nothing can leak; kept as history in case a push is ever
+        // reintroduced around this test (then it MUST be restored here).
         os.setObjectRef(endLabel);
     }
 
@@ -6129,13 +6118,14 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
      * initializes internally) or the interface/array loop ({@code instanceOf},
      * with explicit resolve + init emitted after the null test so a null
      * reference never runs the target's {@code <clinit>}).
-     * Jumps to {@code trueLabel} on success, falls through on failure with
-     * ECX + EBX pushed (caller pops on both paths).
+     * Jumps to {@code trueLabel} on success, falls through on failure; since
+     * ANCHOR-L2-235 nothing is pushed for the caller to pop on either path.
      * <p/>
-     * Register discipline: EAX/EDX are never allocated (free scratch); EBX is
-     * PUSHed for the loop counter; ECX is PUSHed (the helpers and the init
-     * call destroy it); EBX/ESI values survive via the JNode callee-saved
-     * convention (same model as L1A's pool: EBX/ESI not caller-saved).
+     * Register discipline: EAX/EDX are never allocated (free scratch); EBX
+     * is the loop counter and the init call destroys ECX -- both safe
+     * because the quad is call-like and forcedSpills has homed every value
+     * spanning those calls. EBX/ESI values also survive via the JNode
+     * callee-saved convention (same model as L1A's pool).
      */
     private void writeInstanceTest(Operand ref, VmConstClass clazz, VmType<?> resolvedType,
                                    Label curLabel, Label trueLabel, Label nullLabel) {
@@ -6159,8 +6149,6 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
         }
         os.writeTEST(refr, refr);
         os.writeJCC(nullLabel, X86Constants.JZ);
-        os.writePUSH(X86Register.ECX);
-        os.writePUSH(X86Register.EBX);
         if (resolvedType.isInterface() || resolvedType.isArray()) {
             // D2(4): resolve + init belong to the non-null path only. Emitted
             // before the TEST above, `null instanceof Iface` ran the target's
@@ -6217,12 +6205,8 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
             return;
         }
         // False fallthrough.
-        os.writePOP(X86Register.EBX);
-        os.writePOP(X86Register.ECX);
         os.writeJMP(endLabel);
         os.setObjectRef(trueLabel);
-        os.writePOP(X86Register.EBX);
-        os.writePOP(X86Register.ECX);
         if (lhs.getAddressingMode() == REGISTER) {
             GPR resultr = (GPR) ((RegisterLocation) lhs.getLocation()).getRegister();
             os.writeMOV_Const(resultr, 1);
@@ -6564,8 +6548,7 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
     public void generateCodeFor(MonitorenterQuad<T> quad) {
         checkLabel(quad.getAddress()); // ANCHOR-L2-00C: position this quad's label
         Operand op = quad.getOperand();
-        // Preserve ECX below the monitor argument (frame-shift reason).
-        os.writePUSH(X86Register.ECX);
+        // ANCHOR-L2-235: no ECX preserve below the monitor argument.
         if (op.getAddressingMode() == REGISTER) {
             os.writePUSH((GPR) ((RegisterLocation) ((Variable) op).getLocation()).getRegister());
         } else if (op.getAddressingMode() == STACK) {
@@ -6573,19 +6556,17 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
         } else {
             throw new IllegalArgumentException();
         }
-        // ANCHOR-L2-077 (CG-4f): EAX-result model + ECX preserved (monitor
-        // calls return normally; shared invokeJavaMethod happens to work for
-        // void, but the uniform L2 shape is used).
+        // ANCHOR-L2-077 (CG-4f): EAX-result model (monitor calls return
+        // normally; shared invokeJavaMethod happens to work for void, but
+        // the uniform L2 shape is used). No ECX preserve: L2-235.
         callJavaMethod(stackFrame.getEntryPoints().getMonitorEnterMethod());
-        os.writePOP(X86Register.ECX);
     }
 
     @Override
     public void generateCodeFor(MonitorexitQuad<T> quad) {
         checkLabel(quad.getAddress()); // ANCHOR-L2-00C: position this quad's label
         Operand op = quad.getOperand();
-        // Preserve ECX below the monitor argument (frame-shift reason).
-        os.writePUSH(X86Register.ECX);
+        // ANCHOR-L2-235: no ECX preserve below the monitor argument.
         if (op.getAddressingMode() == REGISTER) {
             os.writePUSH((GPR) ((RegisterLocation) ((Variable) op).getLocation()).getRegister());
         } else if (op.getAddressingMode() == STACK) {
@@ -6595,7 +6576,6 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
         }
         // ANCHOR-L2-077 (CG-4f): see MonitorenterQuad above.
         callJavaMethod(stackFrame.getEntryPoints().getMonitorExitMethod());
-        os.writePOP(X86Register.ECX);
     }
 
     @Override
@@ -6604,14 +6584,12 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
         VmConstClass clazz = quad.getType();
         Label label = getInstrLabel(quad.getAddress());
         writeResolveAndLoadClassToReg(clazz, SR1, label);
-        /* Setup a call to SoftByteCodes.allocObject (preserve ECX below args). */
-        os.writePUSH(X86Register.ECX);
+        /* Setup a call to SoftByteCodes.allocObject (no preserve: L2-235). */
         os.writePUSH(SR1); /* vmClass */
         os.writePUSH(-1); /* Size */
-        // ANCHOR-L2-074 (CG-4c): EAX-result model + preserve caller-saved ECX
-        // (shared invokeJavaMethod NPEs with L2's null stackMgr, B18).
+        // ANCHOR-L2-074 (CG-4c): EAX-result model (shared invokeJavaMethod
+        // NPEs with L2's null stackMgr, B18). No ECX preserve: L2-235.
         callJavaMethod(stackFrame.getEntryPoints().getAllocObjectMethod());
-        os.writePOP(X86Register.ECX);
         Variable lhs = quad.getLHS();
         if (lhs.getAddressingMode() == REGISTER) {
             os.writeMOV(BITS32, (GPR) ((RegisterLocation) lhs.getLocation()).getRegister(), X86Register.EAX);
@@ -6799,8 +6777,9 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
      * Mirror of {@code X86CompilerHelper.writePutfieldWriteBarrier}, which
      * cannot be reused (L1-model invokeJavaMethod, B18). No-op unless the
      * active GC provides a barrier (same conditions as L1A). Values are
-     * materialized to EAX/EDX (never allocated); ECX is preserved across the
-     * barrier call (caller-saved).
+     * materialized to EAX/EDX (never allocated); no register is preserved
+     * around the barrier call (ANCHOR-L2-235: ref putfield/putstatic are
+     * call-like, ANCHOR-L2-204, so forcedSpills homes spanning values).
      */
     private void writeFieldBarrier(VmInstanceField field, Operand ref, Operand val) {
         X86CompilerHelper helper = stackFrame.getHelper();
@@ -6809,20 +6788,18 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
         }
         loadBarrierOperand(ref, X86Register.EAX);
         loadBarrierOperand(val, X86Register.EDX);
-        os.writePUSH(X86Register.ECX);
         os.writeMOV_Const(X86Register.ECX, stackFrame.getEntryPoints().getWriteBarrier());
         os.writePUSH(X86Register.ECX);
         os.writePUSH(X86Register.EAX);
         os.writePUSH(field.getOffset());
         os.writePUSH(X86Register.EDX);
         callJavaMethod(stackFrame.getEntryPoints().getPutfieldWriteBarrier());
-        os.writePOP(X86Register.ECX);
     }
 
     /**
      * GC write barrier after a putstatic of a reference (ANCHOR-L2-075, CG-4d).
      * Mirror of {@code X86CompilerHelper.writePutstaticWriteBarrier} (same
-     * five pushes: wb, shared-flag, statics index, value).
+     * four pushes: wb, shared-flag, statics index, value).
      */
     private void writeStaticBarrier(VmStaticField field, Operand val) {
         X86CompilerHelper helper = stackFrame.getHelper();
@@ -6830,7 +6807,6 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
             return;
         }
         loadBarrierOperand(val, X86Register.EDX);
-        os.writePUSH(X86Register.ECX);
         os.writeMOV_Const(X86Register.ECX, stackFrame.getEntryPoints().getWriteBarrier());
         os.writePUSH(X86Register.ECX);
         if (field.isShared()) {
@@ -6842,7 +6818,6 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
         }
         os.writePUSH(X86Register.EDX);
         callJavaMethod(stackFrame.getEntryPoints().getPutstaticWriteBarrier());
-        os.writePOP(X86Register.ECX);
     }
 
     /**
@@ -6854,8 +6829,6 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
         if (!helper.needsWriteBarrier()) {
             return;
         }
-        os.writePUSH(X86Register.ECX);
-        os.writePUSH(X86Register.EBX);
         loadBarrierOperand(ref, X86Register.EAX);
         loadBarrierOperand(index, X86Register.EDX);
         loadBarrierOperand(val, X86Register.EBX);
@@ -6865,8 +6838,6 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
         os.writePUSH(X86Register.EDX);
         os.writePUSH(X86Register.EBX);
         callJavaMethod(stackFrame.getEntryPoints().getArrayStoreWriteBarrier());
-        os.writePOP(X86Register.EBX);
-        os.writePOP(X86Register.ECX);
     }
 
     /**
@@ -6899,11 +6870,9 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
         final int type = JvmType.SignatureToType(fieldRef.getSignature());
         final VmStaticField sf = (VmStaticField) fieldRef.getResolvedVmField();
 
-        // Initialize if needed (JLS 12.4; slow path CALLs: preserve ECX).
+        // Initialize if needed (JLS 12.4; slow path CALLs; no preserve: L2-235).
         if (!sf.getDeclaringClass().isAlwaysInitialized()) {
-            os.writePUSH(X86Register.ECX);
             writeInitializeClass(fieldRef, curInstrLabel);
-            os.writePOP(X86Register.ECX);
         }
 
         // Get static field object
@@ -6989,11 +6958,9 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
         final int type = JvmType.SignatureToType(fieldRef.getSignature());
         final VmStaticField sf = (VmStaticField) fieldRef.getResolvedVmField();
 
-        // Initialize if needed (JLS 12.4; slow path CALLs: preserve ECX).
+        // Initialize if needed (JLS 12.4; slow path CALLs; no preserve: L2-235).
         if (!sf.getDeclaringClass().isAlwaysInitialized()) {
-            os.writePUSH(X86Register.ECX);
             writeInitializeClass(fieldRef, curInstrLabel);
-            os.writePOP(X86Register.ECX);
         }
 
         if (!fieldRef.isWide()) {
@@ -7786,13 +7753,10 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
             // virtual/static/interface dispatch on magic types.
 
             //dropParameters(sm, true);
-            // Preserve ECX below the arguments (frame-shift reason).
-            os.writePUSH(X86Register.ECX);
             writeParameters(quad, methodRef);
-            // Call the methods code from the statics table (EAX-result model;
-            // ECX is caller-saved, ANCHOR-L2-076).
+            // Call the methods code from the statics table (EAX-result model,
+            // ANCHOR-L2-076; no ECX preserve: ANCHOR-L2-235).
             callJavaMethod(sm);
-            os.writePOP(X86Register.ECX);
             // Result is already on the stack.
         } catch (ClassCastException ex) {
             BootLogInstance.get().error(methodRef.getResolvedVmMethod().getClass().getName() + '#' +
@@ -7813,12 +7777,9 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
             // M0: no magic check on invokespecial (L1a+L1b parity, see above).
 
             //dropParameters(sm, true);
-            // Preserve ECX below the arguments (frame-shift reason).
-            os.writePUSH(X86Register.ECX);
             writeParameters(quad, methodRef);
-            // Call the methods code from the statics table (ECX preserved).
+            // Call the methods code from the statics table (L2-235: no preserve).
             callJavaMethod(sm);
-            os.writePOP(X86Register.ECX);
             // Result is already on the stack.
         } catch (ClassCastException ex) {
 //            BootLogInstance.get().error(methodRef.getResolvedVmMethod().getClass().getName() + '#' +
@@ -7848,11 +7809,9 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
             // TODO: port to ORP style (http://orp.sourceforge.net/)
 //            vstack.push(eContext);
 
-            // ANCHOR-L2-101: ECX goes BELOW the arguments (like the
-            // static/special paths), so the callee frame matches the
-            // convention. The receiver fetch stays: pushes above ECX are
-            // exactly the writeParameters words.
-            os.writePUSH(X86Register.ECX);
+            // ANCHOR-L2-101: the receiver fetch below measures the
+            // writeParameters words from ESP; ANCHOR-L2-235 removed the ECX
+            // that used to sit above them (the fetch never reached it).
             writeParameters(quad, methodRef);
 //            dropParameters(mts, true);
 
@@ -7861,7 +7820,6 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
 //                counters.getCounter("virtual-final").inc();
 
                 // Call the methods native code from the statics table.
-                // ECX is caller-saved across the call (ANCHOR-L2-076).
                 callJavaMethod(method);
                 // Result is already on the stack.
             } else {
@@ -7891,7 +7849,6 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
 //                stackFrame.getHelper().pushReturnValue(methodRef.getSignature());
                 // Result is already on the stack.
             }
-            os.writePOP(X86Register.ECX);
         }
 
 
@@ -7920,8 +7877,6 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
             // TODO: port to ORP style (http://orp.sourceforge.net/)
 //            vstack.push(eContext);
 
-            // ANCHOR-L2-101: ECX below the arguments (see VirtualCallAssign).
-            os.writePUSH(X86Register.ECX);
             writeParameters(quad, methodRef);
 //            dropParameters(mts, true);
 
@@ -7930,7 +7885,6 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
 //                counters.getCounter("virtual-final").inc();
 
                 // Call the methods native code from the statics table.
-                // ECX is caller-saved across the call (ANCHOR-L2-076).
                 callJavaMethod(method);
                 // Result is already on the stack.
             } else {
@@ -7960,7 +7914,6 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
 //                stackFrame.getHelper().pushReturnValue(methodRef.getSignature());
                 // Result is already on the stack.
             }
-            os.writePOP(X86Register.ECX);
         }
     }
 
@@ -7974,14 +7927,10 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
             // ANCHOR-L2-076 (CG-4e): fail loud, never silently skip.
             throw new IllegalArgumentException("L2 magic not implemented: " + methodRef.getName());
         } else {
-            // Preserve ECX below the arguments (frame-shift reason).
-            os.writePUSH(X86Register.ECX);
             writeParameters(quad, methodRef);
             //todo handle return types
             final int offset = stackFrame.getHelper().getSharedStaticsOffset(method);
-            // ECX is caller-saved across the call (ANCHOR-L2-076).
             os.writeCALL(stackFrame.getHelper().STATICS, offset);
-            os.writePOP(X86Register.ECX);
             Variable lhs = quad.getLHS();
             storeCallResult(lhs);
         }
@@ -7997,13 +7946,9 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
             // ANCHOR-L2-076 (CG-4e): fail loud, never silently skip.
             throw new IllegalArgumentException("L2 magic not implemented: " + methodRef.getName());
         } else {
-            // Preserve ECX below the arguments (frame-shift reason).
-            os.writePUSH(X86Register.ECX);
             writeParameters(quad, methodRef);
             final int offset = stackFrame.getHelper().getSharedStaticsOffset(method);
-            // ECX is caller-saved across the call (ANCHOR-L2-076).
             os.writeCALL(stackFrame.getHelper().STATICS, offset);
-            os.writePOP(X86Register.ECX);
         }
     }
 
@@ -8017,15 +7962,12 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
         // undercounts wide args: one Variable can occupy two slots, so the
         // receiver fetch below read the wrong slot). Matches VirtualCall.
         final int argSlotCount = Signature.getArgSlotCount(typeSizeInfo, methodRef.getSignature());
-        // ANCHOR-L2-101: ECX below the arguments (see VirtualCallAssign).
-        os.writePUSH(X86Register.ECX);
         writeParameters(quad, methodRef);
-        // Get objectref -> EAX (ECX already below: SP math holds).
+        // Get objectref -> EAX (fetch = writeParameters words: L2-235).
         // emitInvokeInterface takes EAX and uses no SP math itself.
         X86CompilerHelper helper = stackFrame.getHelper();
         os.writeMOV(helper.ADDRSIZE, helper.AAX, helper.SP, argSlotCount * helper.SLOTSIZE);
         X86IMTCompiler32.emitInvokeInterface(os, method);
-        os.writePOP(X86Register.ECX);
 
         Variable lhs = quad.getLHS();
         storeCallResult(lhs);
@@ -8043,10 +7985,8 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
         final int argSlotCount = Signature.getArgSlotCount(typeSizeInfo, methodRef.getSignature());
 
         // remove parameters from vstack
-        // ANCHOR-L2-101: ECX below the arguments (see VirtualCallAssign).
-        os.writePUSH(X86Register.ECX);
         writeParameters(quad, methodRef);
-        // Get objectref -> EAX (ECX already below: SP math holds).
+        // Get objectref -> EAX (fetch = writeParameters words: L2-235).
         X86CompilerHelper helper = stackFrame.getHelper();
         os.writeMOV(helper.ADDRSIZE, helper.AAX, helper.SP, argSlotCount * helper.SLOTSIZE);
         // Write the actual invokeinterface
@@ -8055,7 +7995,6 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
 //        } else {
 //            X86IMTCompiler64.emitInvokeInterface(os, method);
 //        }
-        os.writePOP(X86Register.ECX);
         // Test the stack alignment
         //stackFrame.writeStackAlignmentTest(getInstrLabel(quad.getAddress()));
     }

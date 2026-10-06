@@ -400,9 +400,9 @@ public class X86Level2Compiler extends AbstractX86Compiler {
     }
 
     /**
-     * 107: values held in caller-saved registers (EBX/ESI; ECX is saved
-     * around calls by the emitters but spilling it too is harmless) do not
-     * survive calls -- nothing preserves them, saveRegisters is a no-op in
+     * 107: values held in caller-saved registers (EBX/ESI/ECX -- since
+     * ANCHOR-L2-235 the emitters save none of them around calls either)
+     * do not survive calls -- nothing preserves them, saveRegisters is a no-op in
      * every x86 stack frame -- and nothing survives the native unwinder.
      * Returns the ranges that must take stack homes: any range with a
      * call-like quad at an address the range is live at (arguments
