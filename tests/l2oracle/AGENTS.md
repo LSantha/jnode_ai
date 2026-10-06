@@ -124,7 +124,7 @@ a wrong conclusion.
 |------|------|
 | `Probes.java` | Corpus: ~20 pure static methods (int/long/double/array). Guest + host. |
 | `OracleDriver.java` | Harness: forces L2 (`VmType.compileRuntime(...,0,true)`), invokes cases reflectively, writes `method\|args\|hex-or-EX:Class` lines to a file. Same source runs on host (forcing auto-skips). |
-| `compare.sh` | Scoreboard: strips serial CR, drops `force\|` proof, reduces `EX:Class:msg` to `EX:Class`, diffs. |
+| `compare.sh` | Scoreboard: strips serial CR, reduces `EX:Class:msg` to `EX:Class`, then (ANCHOR-L2-233) runs the per-method forcedness proof -- every `caseset\|` name must carry `forceone\|name\|n` with n>=1, every `nestedset\|` class a `forcetype\|class\|n` with n>=1 -- and the repeat stability check -- every `repeat\|i\|<row>` must equal pass 1, non-vacuous (a batch file with zero repeat rows fails). Any gap prints `forceproof\|...` / `repeatcheck\|...` and exits 2; exit 1 is a case-row diff, judged against the retired set by `regress.sh`. Red proofs (2026-10-06): a pre-D3 guest file -> `forceproof\|NO-CASESET` + `repeatcheck\|NONE` rc=2; doctored files -> `forceproof\|MISSING\|ZERO`, `repeatcheck\|MISMATCH\|MISSING-BASE`; end-to-end `--label d3red` (one method silently not compiled) -> `forceproof\|ZERO:add_iii:0`, gate failures=1 while the value diff stayed clean (unforced = correct L1 values). |
 | `run_oracle.sh` | One-command end-to-end run (see below). |
 | `regress.sh` | The gate: host phases, `bootl2`, live legs; a phase's exit status is its verdict. |
 | `boot-l2.sh` | Boots a pure L2/L2 ISO to an agent shell, GCs 4x (each must print collection stats), then scores the serial log against `Exception\|CompileError\|Error in compilation\|panic\|FATAL` -- 0 hits is the pass condition. `--scan LOG` scores an already-captured log; red proof: `--scan baselines/l2202-compile-error.txt` exits 1. Three guards run before any boot: a `stop_qemu` self-test against a process whose comm name is `qemu-system-x86` (red proof: put `qemu-system-x86_64` back in the `pgrep -x` and it exits 2 without booting), an ANCHOR-L2-205 pre-boot scan that names any persistent holder of `/tmp/jnode.serial2` (red proof: run `python3 /tmp/.../serial_mux.py` in the background, it exits 2 with that PID and boots nothing), and an ANCHOR-L2-205 runtime check, run right after the serial console comes up, that resolves a foreign client on the endpoint to its PID via the `ss -xp` peer inode (red proof: force its `ESTAB` test to `:`, it exits 2 after the serial line). A one-shot restart under `-accel tcg` follows when QEMU reports `KVM: entry failed` (see the host-KVM gotcha). It also exports `JNODE_AGENT_OUTPUT_TIMEOUT`, because a TCG `gc` prints nothing for longer than the agent's 10s default and the empty result is indistinguishable from a no-op. The agent-shell wait reports wall-clock seconds: each attempt also spends up to ~34s inside the agent's prompt handshake, so the old `i*5` figure called a ~20 minute wait "150s". |
@@ -305,7 +305,7 @@ the 4 pre-existing divergences.
 ## Driver modes
 
 `java OracleDriver <out> [mode]`:
-- (none) — per-item force (CASES methods + nested callee classes) with L2, run all cases + FALLBACK_CASES (L1 fallback, value coverage)
+- (none) — per-item force (CASES methods + nested callee classes) with L2, writing `force|N`, `mode|batch`, `caseset|`, `nestedset|`, `forceone|name|n`, `forcetype|class|n` proof rows (ANCHOR-L2-233); runs the case set `REPEAT_K=3` times — pass 1 plain rows (the host diff), passes 2..K as `repeat|i|<row>` for the re-seed check; the five stateful probes in `REPEAT_SKIP` (statics accumulators + nestedClinit) run in pass 1 only, measured 2026-10-06; FALLBACK_CASES run L1 (value coverage)
 - `noforce` — L1 baseline (also the host mode)
 - `one <method>` — force + run a single method (bisect hangs)
 - `forceonly <method>` — force, don't invoke (isolates compile vs run)
@@ -317,7 +317,7 @@ the 4 pre-existing divergences.
 
 - `mkdir -p /tmp/oracle` FIRST — `compare.sh` writes temp files there;
 without it the CR-strip fails silently and diffs vanish (false PASS).
-- `force|N` first line, N > 0 on JNode = forcing worked (count includes one extra slot; `-1` host, `-2` forcing threw).
+- `force|N` first line, N > 0 on JNode = forcing worked (count includes one extra slot; `-1` host, `-2` forcing threw). Since ANCHOR-L2-233 the scoreboard does not trust that count: a `mode|batch` file must also prove per-method forcedness (`caseset|` vs `forceone|...|n>=1`, `nestedset|` vs `forcetype|...|n>=1`) and repeat stability (>=1 `repeat|` row, every one byte-identical to its pass-1 base). Failures print `forceproof|` / `repeatcheck|` and exit 2; `regress.sh` fails the oracle phase on rc>=2 (without that clause an aborted scoreboard printed no diff lines and the gate stayed green).
 - Known pre-existing divergences (NOT L2 bugs): int `MIN/-1` → `EX` (x86 `#DE` mapped by the runtime) and `parseDouble` 1-ULP (library).
 - The **L1 vs host** section (the `noforce` baseline) can show rows that never
   appear in the L2 diff. Measured 2026-10-01: `fArith_f|3.5,1.25` and

@@ -793,6 +793,14 @@ if want oracle; then
     bash tests/l2oracle/compare.sh /tmp/l2oracle-ref/out-host.txt \
       /tmp/oracle-$LABEL.txt > /tmp/oracle-cmp-$LABEL.txt 2>&1
     cmp_rc=$?
+    # ANCHOR-L2-233 (D3): compare.sh exits 2 when the scoreboard aborts
+    # (forcing threw, the per-method force proof is incomplete, or a repeat
+    # row disagrees with pass 1). The retired-set judge below only reads
+    # "< " / "> " lines, so without this clause an aborted scoreboard --
+    # which prints no diff lines at all -- left the oracle gate green.
+    if [ "$cmp_rc" -ge 2 ]; then
+      fail "LIVE  oracle: SCOREBOARD ABORTED rc=$cmp_rc: $(grep -E "^(forceproof|repeatcheck|FAIL|FATAL|SCOREBOARD)" /tmp/oracle-cmp-$LABEL.txt | tr '\n' ' ' | cut -c1-240)"
+    fi
     host_only=$(grep -c "^< " /tmp/oracle-cmp-$LABEL.txt)
     guest_only=$(grep -c "^> " /tmp/oracle-cmp-$LABEL.txt)
     say "ORACLE DIFF rc=$cmp_rc host_only=$host_only guest_only=$guest_only first: $(grep -E "^[<>] |ORACLE PASS" /tmp/oracle-cmp-$LABEL.txt | head -n 4 | tr '\n' ' ' | cut -c1-240)"

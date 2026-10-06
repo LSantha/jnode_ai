@@ -439,7 +439,36 @@ public class OracleDriver {
         return ((Integer) r).intValue();
     }
 
-    static int forceL2(boolean want, String onlyMethod) {
+    // ANCHOR-L2-233 (D3): batch runs the whole case set this many times;
+    // repeats 2..K are written as repeat|i|<row> and the scoreboard requires
+    // them byte-identical to pass 1 (re-seeding sensitivity).
+    static final int REPEAT_K = 3;
+
+    /**
+     * Probes that run in pass 1 only. Measured 2026-10-06 on the first
+     * repeat run: staticsOwn_i/staticsNested_i/staticsArray_i/staticsMixed_j
+     * are accumulators by design (counter += bump, nestedInt += bump,
+     * nestedArray[0] += i, nestedLong += i), and nestedClinit_i|0 must
+     * observe an untouched world, so their values CANNOT reproduce on a
+     * second pass -- every mismatch was in exactly these five names. Their
+     * guard stays the single-pass host diff. A future probe that reddens
+     * repeatcheck belongs here only after its semantics are read.
+     */
+    static final String[] REPEAT_SKIP = {
+        "staticsOwn_i", "staticsNested_i", "staticsArray_i",
+        "staticsMixed_j", "nestedClinit_i",
+    };
+
+    /**
+     * ANCHOR-L2-233 (D3): per-method forcedness proof. `proof` collects
+     * caseset| (distinct CASES names, from the table itself), nestedset|,
+     * forceone|name|n and forcetype|class|n rows, emitted after the force|
+     * header so head -n 1 stays the count line. A silent per-method compile
+     * failure used to be invisible: unforced methods still produce correct
+     * Java values, so the grid could pass while measuring nothing. The
+     * scoreboard now requires every caseset name to carry forceone with n>=1.
+     */
+    static int forceL2(boolean want, String onlyMethod, java.util.List<String> proof) {
         if (!want) {
             return -1;
         }
@@ -450,7 +479,10 @@ public class OracleDriver {
             if (onlyMethod != null) {
                 Method cr1 = vmType.getMethod("compileRuntime", String.class, int.class, boolean.class);
                 Object n = cr1.invoke(type, onlyMethod, Integer.valueOf(0), Boolean.TRUE);
-                return ((Integer) n).intValue();
+                int ni = ((Integer) n).intValue();
+                proof.add("caseset|" + onlyMethod);
+                proof.add("forceone|" + onlyMethod + "|" + ni);
+                return ni;
             }
             // Per-item forcing: every CASES method plus the nested callee
             // classes. Whole-class forcing can't exclude FALLBACK methods
@@ -460,16 +492,43 @@ public class OracleDriver {
             Method cr = vmType.getMethod("compileRuntime", int.class, boolean.class);
             int total = 0;
             java.util.HashSet done = new java.util.HashSet();
+            // caseset from the table, a separate pass from the force loop
+            // below, so a skipped iteration shows up as MISSING in the
+            // scoreboard instead of vanishing with its own header.
+            StringBuffer set = new StringBuffer();
+            java.util.HashSet seen = new java.util.HashSet();
+            for (int c = 0; c < CASES.length; c++) {
+                String name = CASES[c][0];
+                if (seen.add(name)) {
+                    if (set.length() > 0) {
+                        set.append(',');
+                    }
+                    set.append(name);
+                }
+            }
+            proof.add("caseset|" + set);
+            StringBuffer nested = new StringBuffer();
+            for (int k = 0; k < FORCE_NESTED.length; k++) {
+                if (nested.length() > 0) {
+                    nested.append(',');
+                }
+                nested.append(FORCE_NESTED[k]);
+            }
+            proof.add("nestedset|" + nested);
             for (int c = 0; c < CASES.length; c++) {
                 String name = CASES[c][0];
                 if (done.add(name)) {
-                    total += forceOne(type, cr1, name);
+                    int n = forceOne(type, cr1, name);
+                    total += n;
+                    proof.add("forceone|" + name + "|" + n);
                 }
             }
             for (int k = 0; k < FORCE_NESTED.length; k++) {
                 Object ntype = fromClass.invoke(null, Class.forName(FORCE_NESTED[k]));
                 Object n = cr.invoke(ntype, Integer.valueOf(0), Boolean.TRUE);
-                total += ((Integer) n).intValue();
+                int ni = ((Integer) n).intValue();
+                total += ni;
+                proof.add("forcetype|" + FORCE_NESTED[k] + "|" + ni);
             }
             return total;
         } catch (ClassNotFoundException e) {
@@ -603,6 +662,15 @@ public class OracleDriver {
         throw new IllegalArgumentException("bad return type " + t);
     }
 
+    static boolean isRepeatSkipped(String name) {
+        for (int i = 0; i < REPEAT_SKIP.length; i++) {
+            if (REPEAT_SKIP[i].equals(name)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     static String flat(String[] a, int from) {
         StringBuffer sb = new StringBuffer();
         for (int i = from; i < a.length; i++) {
@@ -642,8 +710,18 @@ public class OracleDriver {
         }
         PrintWriter out = new PrintWriter(new FileWriter(outPath), true);
         try {
-            int forced = forceL2(wantForce, onlyMethod);
+            java.util.List<String> proof = new java.util.ArrayList<String>();
+            int forced = forceL2(wantForce, onlyMethod, proof);
             out.println("force|" + forced + (onlyMethod == null ? "" : "|" + onlyMethod));
+            // ANCHOR-L2-233: the file self-describes its mode, so the
+            // scoreboard knows which strict checks a batch run owes.
+            out.println("mode|"
+                + (forceOnly ? "forceonly"
+                    : (onlyMethod != null ? "one"
+                        : (wantForce ? "batch" : "noforce"))));
+            for (int i = 0; i < proof.size(); i++) {
+                out.println((String) proof.get(i));
+            }
             out.flush();
             if (forceOnly) {
                 out.println("done");
@@ -653,11 +731,21 @@ public class OracleDriver {
             final boolean mark = (onlyMethod != null);
             Method[] ms = Probes.class.getDeclaredMethods();
             String[][][] sections = new String[][][]{CASES, FALLBACK_CASES};
+            // ANCHOR-L2-233: batch re-runs the whole case set REPEAT_K times;
+            // pass 1 writes plain rows (the host diff), passes 2..K write
+            // repeat|i|<row> for the scoreboard re-seed check. Forced only:
+            // the host reference stays a single-pass file.
+            final int passes = (wantForce && onlyMethod == null) ? REPEAT_K : 1;
+            for (int pass = 0; pass < passes; pass++) {
+            final String tag = (pass == 0) ? "" : ("repeat|" + (pass + 1) + "|");
             for (int s = 0; s < sections.length; s++) {
             for (int c = 0; c < sections[s].length; c++) {
                 String[] cs = sections[s][c];
                 String name = cs[0];
                 if (onlyMethod != null && !onlyMethod.equals(name)) {
+                    continue;
+                }
+                if (pass > 0 && isRepeatSkipped(name)) {
                     continue;
                 }
                 String line;
@@ -699,7 +787,8 @@ public class OracleDriver {
                 } catch (Throwable t) {
                     line = name + "|" + flat(cs, 1) + "|DRIVER-EX:" + t;
                 }
-                out.println(line);
+                out.println(tag + line);
+            }
             }
             }
             out.println("done");
