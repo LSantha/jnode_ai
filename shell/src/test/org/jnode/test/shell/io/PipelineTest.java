@@ -106,6 +106,34 @@ public class PipelineTest {
     }
 
     @Test
+    public void testInputStreamReadByteArrayOffsetLen() throws IOException {
+        Pipeline p = new Pipeline();
+        InputStream is = p.createSink();
+        OutputStream os = p.createSource();
+        p.activate();
+        os.write("hello world".getBytes());
+        byte[] buffer = new byte[32];
+        Assert.assertEquals(7, is.read(buffer, 2, 7));
+        Assert.assertEquals("hello w", new String(buffer, 2, 7));
+        Assert.assertEquals(0, buffer[0]);
+        Assert.assertEquals(0, buffer[1]);
+        Assert.assertEquals(0, buffer[9]);
+    }
+
+    @Test
+    public void testOutputStreamWriteByteArrayOffsetLen() throws IOException {
+        Pipeline p = new Pipeline();
+        InputStream is = p.createSink();
+        OutputStream os = p.createSource();
+        p.activate();
+        os.write("xxxmiddleyyy".getBytes(), 3, 6);
+        Assert.assertEquals(6, is.available());
+        byte[] buffer = new byte[32];
+        Assert.assertEquals(6, is.read(buffer, 0, 6));
+        Assert.assertEquals("middle", new String(buffer, 0, 6));
+    }
+
+    @Test
     public void testTwo1_One1() throws Throwable {
         Pipeline p = new Pipeline();
         InputStream is = p.createSink();
