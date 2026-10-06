@@ -174,12 +174,27 @@ public class SyntaxSpecLoaderTest {
         Assert.assertEquals("true", bundle.getSyntaxes()[0].toXML().getStringAttribute("eager"));
     }
 
+    /**
+     * Regression for #710: getFlag() returned true for both "true" and "false",
+     * so every explicit eager='false' in a plugin descriptor was parsed as
+     * eager. This test previously asserted that broken behaviour.
+     */
     @Test
-    public void testEagerFalseFlagCurrentlyBehavesLikeTrue() {
+    public void testEagerFalseFlagIsHonoured() {
         SyntaxBundle bundle = load("<syntax alias='foo'>"
                                    + "<powerset eager='false'><symbol symbol='a'/>"
                                    + "</powerset></syntax>");
-        Assert.assertEquals("true", bundle.getSyntaxes()[0].toXML().getStringAttribute("eager"));
+        // PowersetSyntax.toXML() only emits 'eager' when it is true, so a
+        // correctly-parsed eager='false' round-trips as an absent attribute.
+        Assert.assertNull(bundle.getSyntaxes()[0].toXML().getStringAttribute("eager"));
+    }
+
+    @Test
+    public void testEagerFlagIsCaseInsensitive() {
+        SyntaxBundle bundle = load("<syntax alias='foo'>"
+                                   + "<powerset eager='FaLsE'><symbol symbol='a'/>"
+                                   + "</powerset></syntax>");
+        Assert.assertNull(bundle.getSyntaxes()[0].toXML().getStringAttribute("eager"));
     }
 
     @Test
