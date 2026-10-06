@@ -496,6 +496,14 @@ module.exports = async ({ github, context, core }) => {
     }
 
     if (!state) {
+      // A run title matching "Issue #N" names an ISSUE, not a PR, so
+      // findIssueByPR(runIssueNumber) above is only meaningful when the trigger
+      // was a PR run. When it maps an issue back to itself with a null state we
+      // still have a candidate ticket: recover its lost block before falling
+      // through to auto-start, whose autoStartGuards refuse on agent/done and
+      // would strand a ticket that already has a merge-ready PR.
+      var recovered = await recoverLostState(runIssueNumber, conclusion);
+      if (recovered) return;
       await maybeAutoStartAfterTriage(runIssueNumber);
       return;
     }
@@ -864,6 +872,72 @@ module.exports = async ({ github, context, core }) => {
     } catch (err) {
       core.warning("Failed to add " + label + " to #" + issueNumber + ": " + err.message);
     }
+  }
+
+  /**
+   * Rebuild a TICKET_RUNNER_STATE block that was lost to an external issue-body
+   * edit. Returns true when a block was written (or already present).
+   *
+   * Only acts when a PR on an opencode/issueN- branch exists for the issue, so
+   * it cannot resurrect a ticket that never reached DEV. The block is written
+   * with phase REVIEW and review_in_progress false, which sends the ticket
+   * straight back to the review step rather than re-running DEV and risking a
+   * duplicate PR.
+   */
+  async function recoverLostState(issueNumber, conclusion) {
+    var issueData;
+    try {
+      issueData = await github.rest.issues.get({ owner, repo, issue_number: issueNumber });
+    } catch (err) {
+      core.warning("recoverLostState: cannot read #" + issueNumber + ": " + err.message);
+      return false;
+    }
+    if (issueData.data.pull_request) return false;
+    var body = issueData.data.body || "";
+    if (parseState(body)) return false;
+
+    // h.findPRForIssue matches on the opencode/issueN- branch prefix, so a
+    // same-numbered PR from an unrelated issue cannot be picked up here.
+    var found;
+    try {
+      found = await h.findPRForIssue(issueNumber);
+    } catch (err) {
+      core.warning("recoverLostState: findPRForIssue failed for #" + issueNumber + ": " + err.message);
+      return false;
+    }
+    if (!found) return false;
+
+    core.info("Ticket runner: #" + issueNumber + " lost its runner state but PR #" + found
+      + " exists; rebuilding block at REVIEW.");
+    var st = initState(3);
+    st.phase = "REVIEW";
+    st.pr = found;
+    st.review_in_progress = false;
+    st.started = new Date().toISOString();
+    st.history.push({
+      event: "state_recovered",
+      reason: "runner state block missing; rebuilt from existing PR #" + found,
+      pr: found,
+      timestamp: new Date().toISOString()
+    });
+    var newBody = replaceOrAppendStatus(body, st, issueNumber);
+    try {
+      await github.rest.issues.update({ owner, repo, issue_number: issueNumber, body: newBody });
+    } catch (err) {
+      core.warning("recoverLostState: body update failed for #" + issueNumber + ": " + err.message);
+      return false;
+    }
+
+    // A failed workflow_run is a DEV failure; let the normal retry path own it
+    // rather than starting a review on a broken branch.
+    if (conclusion !== "success") {
+      await retryOrFail(issueNumber, st);
+      return true;
+    }
+    await h.triggerTask(found, h.getReviewPrompt());
+    core.info("Ticket runner: #" + issueNumber + " recovered -> REVIEW (requesting review of PR #"
+      + found + ")");
+    return true;
   }
 
   /** Search open issues for one whose TICKET_RUNNER_STATE.pr matches the given PR number. */
