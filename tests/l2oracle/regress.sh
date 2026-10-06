@@ -24,6 +24,12 @@
 #              pipe stays quiet. Use --boots N to repeat it.
 #   isobuild   oracle ISO (local/mk-ox-iso.sh, boots the tests entry)
 #   oracle     oracle force vs host reference, in its own boot
+#   aotoracle  F4 (ANCHOR-L2-234): pure L2/L2 tests ISO with ox/ staged
+#              (mk-ox-iso OX_* knobs -- never touches the live L1A path),
+#              guest runs OracleDriver in `aot` mode (never force-compiles)
+#              so values are read back from the bootimage-AOT code, scored
+#              against the same host reference. OPT-IN (full ISO build +
+#              one QEMU boot); not part of any group.
 #   mauve [n]  mauve subsets (default 1; --full = 1..5), one boot per mode
 # Groups: host = build anchors t0 t3 t1 alljunit census
 #         live = bootl2 isobuild oracle mauve
@@ -752,7 +758,7 @@ if want isobuild; then
   fi
   say "ARTIFACT $(grep -c 'X86-L1A compilers' "$LOG" 2>/dev/null | sed 's/^0$/NO-L1A-MARKER/') $(grep -o 'L2 compilers' "$LOG" | tail -n 1 | sed 's/^/also-saw:/') iso=$(ls -l all/build/cdroms/*.iso 2>/dev/null | awk '{print $5" bytes "$6" "$7" "$8}' | head -n 1)"
 fi
-if { want oracle || want mauve; } && { [ ! -f /tmp/l2oracle-ref/OracleDriver.class ] \
+if { want oracle || want mauve || want aotoracle; } && { [ ! -f /tmp/l2oracle-ref/OracleDriver.class ] \
      || [ tests/l2oracle/Probes.java -nt /tmp/l2oracle-ref/out-host.txt ] \
      || [ tests/l2oracle/OracleDriver.java -nt /tmp/l2oracle-ref/out-host.txt ]; }; then
   say "HOSTREF regenerating (missing or older than the probe sources)"
@@ -817,6 +823,65 @@ if want oracle; then
     fi
   else
     fail "LIVE  oracle: BOOT FAILED"
+  fi
+fi
+# ------------------------------ AOT ORACLE (F4) ----------------------------
+# ANCHOR-L2-234: first value differential over an L2 AOT bootimage. Build a
+# PURE L2/L2 tests ISO with ox/ staged (mk-ox-iso driven through its OX_*
+# knobs, so the live L1A ISO path and stamp are never touched), assert the
+# image policy (AOT = L2, JIT = L2), boot it under QEMU via boot-l2.sh
+# --aot-out (guest javac + OracleDriver aot: NOTHING is force-compiled),
+# then score the fetched file through the same compare.sh machinery as the
+# oracle leg (aotproof + the retired-set judge). OPT-IN: a full ISO build
+# plus one QEMU boot per run; not part of any group.
+if want aotoracle; then
+  AOT_ISO="$ROOT/core/build/l2-aot-oracle.iso"
+  AOT_OUT="/tmp/oracle-aot-$LABEL.txt"
+  rm -f "$AOT_ISO" "$AOT_ISO.artifact" "$AOT_OUT"
+  # conf-x86 (full.jgz entry): the probe run needs no test plugins, and the
+  # tests entry's intermittent boot exceptions (OPEN row: NNF on every L1A
+  # boot, NPE/IAE on ~2/3 of L2 boots) would make this leg's serial-log score
+  # flaky for reasons unrelated to AOT values.
+  run aotiso env OX_COMPILER_FLAGS="-Djnode.compiler=L2 -Djnode.jit.compiler=L2" \
+    OX_CONF_DIR="$ROOT/local/l2oracle/conf-x86" \
+    OX_ISO_OUT="$AOT_ISO" sh local/mk-ox-iso.sh
+  run aotpolicy policy_union "X86-Stub X86-L2" "X86-Stub and X86-L2"
+  if [ -f "$AOT_ISO" ] && [ -f "$AOT_ISO.artifact" ]; then
+    say "AOTORACLE iso=$(stat -c %s "$AOT_ISO" 2>/dev/null) bytes flags=$(sed -n 's/^compiler_flags=//p' "$AOT_ISO.artifact")"
+    run aotboot sh "$SELF_DIR/boot-l2.sh" --aot-out "$AOT_OUT" "$AOT_ISO"
+    if [ -s "$AOT_OUT" ]; then
+      # ANCHOR-L2-187/234: the marker must be PRESENT -- a file without
+      # mode|aot (stale driver, wrong mode) would otherwise sail through
+      # compare.sh as a legacy unforced file and read like a clean run.
+      if ! grep -q "^mode|aot" "$AOT_OUT"; then
+        fail "AOTORACLE: result has no mode|aot marker (head: $(head -n 1 "$AOT_OUT"))"
+      elif ! grep -q "^force|-1" "$AOT_OUT"; then
+        fail "AOTORACLE: result header is not force|-1 (head: $(head -n 1 "$AOT_OUT"))"
+      else
+        say "AOTORACLE rows=$(grep -c '|' "$AOT_OUT") head=$(head -n 1 "$AOT_OUT")"
+        bash tests/l2oracle/compare.sh /tmp/l2oracle-ref/out-host.txt \
+          "$AOT_OUT" > "/tmp/oracle-aot-cmp-$LABEL.txt" 2>&1
+        cmp_rc=$?
+        if [ "$cmp_rc" -ge 2 ]; then
+          fail "AOTORACLE: SCOREBOARD ABORTED rc=$cmp_rc: $(grep -E "^(aotproof|forceproof|repeatcheck|FAIL|FATAL|SCOREBOARD)" "/tmp/oracle-aot-cmp-$LABEL.txt" | tr '\n' ' ' | cut -c1-240)"
+        fi
+        host_only=$(grep -c "^< " "/tmp/oracle-aot-cmp-$LABEL.txt")
+        guest_only=$(grep -c "^> " "/tmp/oracle-aot-cmp-$LABEL.txt")
+        say "AOTORACLE DIFF rc=$cmp_rc host_only=$host_only guest_only=$guest_only first: $(grep -E "^[<>] |ORACLE PASS|aotproof" "/tmp/oracle-aot-cmp-$LABEL.txt" | head -n 4 | tr '\n' ' ' | cut -c1-240)"
+        # Same accepted set as the oracle leg: div_iii MIN/-1 -> #DE and
+        # classLiteral_i|4/|5 (JNode classlib semantics) are retired.
+        unexpected=$(grep -E "^[<>] " "/tmp/oracle-aot-cmp-$LABEL.txt" | grep -vE "^[<>] (div_iii\\|-2147483648,-1|classLiteral_i\\|(4|5))" || true)
+        if [ -n "$unexpected" ]; then
+          fail "AOTORACLE: UNEXPECTED diff rows: $(printf '%s' "$unexpected" | tr '\n' ' ' | cut -c1-240)"
+        else
+          say "AOTORACLE GATE retired-set only (host_only=$host_only guest_only=$guest_only)"
+        fi
+      fi
+    else
+      fail "AOTORACLE: no result file at $AOT_OUT (boot/run failed)"
+    fi
+  else
+    fail "AOTORACLE: ISO missing after aotiso phase"
   fi
 fi
 if want mauve; then

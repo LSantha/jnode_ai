@@ -9,10 +9,16 @@
 # run `gc` BOOT_GC_TIMES times, and fail on any exception anywhere in the
 # boot log.
 #
-#   usage: boot-l2.sh [--scan LOG] [ISO]
+#   usage: boot-l2.sh [--scan LOG] [--aot-out FILE] [ISO]
 #
 # --scan LOG  score an already-captured log instead of booting (used to prove
 #             this gate can fail: feed it the recorded L2-202 CompileError).
+# --aot-out F F4 (ANCHOR-L2-234): instead of the gc rounds, javac the staged
+#             ox/ probes in the guest and run `java OracleDriver ... aot`
+#             (never force-compile anything), then fetch the result file to
+#             F on the host. Values therefore come from the code the L2
+#             bootimage already carries (classlib/VM AOT-L2 + JIT-L2 for the
+#             guest-javac'd probes); the serial log is still scored.
 # ISO         defaults to core/build/l2-l2-gate.iso
 #
 # Exit status is the verdict; never infer it from what was printed last.
@@ -60,10 +66,12 @@ scan_log() {
 
 MODE=boot
 ISO=""
+AOT_OUT=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --scan) MODE=scan; shift
             scan_log "${1:-}"; exit $? ;;
+    --aot-out) AOT_OUT=$2; MODE=aot; shift 2 ;;
     -*)     echo "boot-l2: unknown option $1"; exit 2 ;;
     *)      ISO=$1; shift ;;
   esac
@@ -259,8 +267,59 @@ if [ "$ready" -ne 1 ]; then
 fi
 echo "boot-l2: agent shell up after ${agent_secs}s"
 
+# F4 / ANCHOR-L2-234 (aot mode): read values back from the bootimage.
+# Replace the gc rounds with the oracle run -- the run IS the workload here
+# -- while keeping the serial-log score below. Each guest call gets a long
+# silence window: javac and the driver print nothing for a while (minutes
+# under TCG) and the default 90s would kill them mid-flight.
+if [ "$MODE" = aot ]; then
+  aot_rc=0
+  aot_run() { # aot_run <capture-file> <single guest command>
+    _cap=$1; shift
+    JNODE_AGENT_OUTPUT_TIMEOUT=${BOOTL2_AOT_TIMEOUT:-600} \
+      python3 "$SKILL/jnode_agent_cmd.py" "$@" > "$_cap" 2>&1
+  }
+  aot_run /tmp/bootl2-aot-mkdir.out "mkdir -p /jnode/tmp/ox" ||
+    { echo "boot-l2: aot mkdir FAILED"; tail -n 4 /tmp/bootl2-aot-mkdir.out; aot_rc=1; }
+  aot_run /tmp/bootl2-aot-javac.out \
+    "javac -d /jnode/tmp/ox /devices/sg0/ox/Probes.java /devices/sg0/ox/OracleDriver.java" ||
+    { echo "boot-l2: aot javac client FAILED"; tail -n 4 /tmp/bootl2-aot-javac.out; aot_rc=1; }
+  if ! aot_run /tmp/bootl2-aot-ls.out "ls /jnode/tmp/ox" ||
+     ! grep -qa "OracleDriver.class" /tmp/bootl2-aot-ls.out ||
+     ! grep -qa "Probes.class" /tmp/bootl2-aot-ls.out; then
+    echo "boot-l2: aot probes did not compile:"
+    tail -n 8 /tmp/bootl2-aot-javac.out 2>/dev/null
+    tail -n 8 /tmp/bootl2-aot-ls.out 2>/dev/null
+    aot_rc=1
+  fi
+  if [ "$aot_rc" -eq 0 ]; then
+    # The shell on the serial console is a singleton, so the cd persists
+    # into the java call; the result file is then read by absolute path.
+    aot_run /tmp/bootl2-aot-cd.out "cd /jnode/tmp/ox" ||
+      { echo "boot-l2: aot cd FAILED"; aot_rc=1; }
+    aot_run /tmp/bootl2-aot-run.out "java OracleDriver out-aot.txt aot" ||
+      { echo "boot-l2: aot oracle run client FAILED"; tail -n 6 /tmp/bootl2-aot-run.out; aot_rc=1; }
+    if aot_run /tmp/bootl2-aot-cat.out "cat /jnode/tmp/ox/out-aot.txt"; then
+      grep -avE '^\[batch|still running' /tmp/bootl2-aot-cat.out | tr -d '\r' > "$AOT_OUT"
+      if ! grep -qa '^mode|aot' "$AOT_OUT" || ! grep -qa '^force|-1' "$AOT_OUT"; then
+        echo "boot-l2: aot result lacks mode|aot / force|-1 markers:"
+        head -n 5 "$AOT_OUT"
+        aot_rc=1
+      else
+        echo "boot-l2: aot oracle rows=$(grep -c '|' "$AOT_OUT" 2>/dev/null) file=$AOT_OUT"
+      fi
+    else
+      echo "boot-l2: aot cat FAILED"; tail -n 4 /tmp/bootl2-aot-cat.out; aot_rc=1
+    fi
+  fi
+  [ "$aot_rc" -eq 0 ] || rc=1
+fi
+
 # 3. GC repeatedly. Each round re-enters the allocator; a compile that only
-#    breaks under a warm heap is the bug class this gate is for.
+#    breaks under a warm heap is the bug class this gate is for. Skipped in
+#    aot mode: there the oracle run above is the workload (and the longer
+#    it runs, the more of the AOT image it walks).
+if [ "$MODE" != aot ]; then
 g=1
 gc_failed=0
 while [ "$g" -le "$BOOT_GC_TIMES" ]; do
@@ -281,13 +340,18 @@ while [ "$g" -le "$BOOT_GC_TIMES" ]; do
   g=$((g + 1))
 done
 [ "$gc_failed" -eq 0 ] || rc=1
+fi
 
 # 4. the log, not the exit code of the last command, is what a miscompile
 #    leaves behind.
 scan_log "$LOG" || rc=1
 
 if [ "$rc" -eq 0 ]; then
-  echo "boot-l2: PASS -- shell + $BOOT_GC_TIMES gc rounds, exception-free"
+  if [ "$MODE" = aot ]; then
+    echo "boot-l2: PASS -- shell + aot oracle run, exception-free"
+  else
+    echo "boot-l2: PASS -- shell + $BOOT_GC_TIMES gc rounds, exception-free"
+  fi
 else
   echo "boot-l2: FAILED -- see above"
 fi

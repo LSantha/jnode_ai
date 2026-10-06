@@ -25,23 +25,39 @@ echo "host force lines: $hf  jnode force lines: $jf"
 echo "host: $(head -n 1 "$H")   jnode: $(head -n 1 "$J")"
 rc=0
 jhead=$(head -n 1 "$J")
-case "$jhead" in
-  "force|-1") echo "WARN: jnode ran WITHOUT forcing (host mode?)";;
-  "force|-2") echo "FAIL: forcing threw on jnode"; exit 2;;
-esac
-# ANCHOR-L2-233 (D3): per-method forcedness proof + repeat stability.
-# Strictness is keyed on mode| (the file self-describes): batch owes both
-# checks, forceonly/one owe the force proof, noforce owes neither. A FORCED
-# file with no mode line is a legacy/pre-D3 file and is treated as batch:
-# absence of the mode line must never switch the proof off (ANCHOR-L2-187,
-# a check that cannot fail reads like a check that found nothing).
+# ANCHOR-L2-234 (F4): parse the self-describing mode FIRST, so the aot
+# leg is not warned about for the very property it exists to prove.
 mode=$(grep -m1 "^mode|" "$J" | cut -d'|' -f2)
 if [ -z "$mode" ]; then
   case "$jhead" in
-    force\|-*) ;;    # force|-1 host (and -2, already exited above)
+    force\|-*) ;;    # force|-1 host (and -2, already exited below)
     force\|*) mode=batch;;
   esac
 fi
+case "$jhead" in
+  "force|-1")
+    if [ "$mode" != "aot" ]; then
+      echo "WARN: jnode ran WITHOUT forcing (host mode?)"
+    fi;;
+  "force|-2") echo "FAIL: forcing threw on jnode"; exit 2;;
+esac
+if [ "$mode" = "aot" ]; then
+  # F4: a leg that claims to read values back from the bootimage must
+  # prove NOTHING was force-compiled at runtime -- force|-1 is that
+  # proof (forceL2 never ran: want=false), and any other header means
+  # the file was produced by a forcing run wearing the aot label.
+  case "$jhead" in
+    "force|-1") echo "aotproof|ok: mode|aot with force|-1 (no runtime force)";;
+    *) echo "aotproof|MISMATCH: mode|aot but header is [$jhead]"; rc=2;;
+  esac
+fi
+# ANCHOR-L2-233 (D3): per-method forcedness proof + repeat stability.
+# Strictness is keyed on mode| (the file self-describes): batch owes both
+# checks, forceonly/one owe the force proof, noforce and aot owe neither
+# (aot owes its own force|-1 proof above). A FORCED file with no mode line
+# is a legacy/pre-D3 file and is treated as batch: absence of the mode line
+# must never switch the proof off (ANCHOR-L2-187, a check that cannot fail
+# reads like a check that found nothing).
 if [ "$mode" = "batch" ] || [ "$mode" = "forceonly" ] || [ "$mode" = "one" ]; then
   cs=$(grep -m1 "^caseset|" "$J")
   if [ -z "$cs" ]; then

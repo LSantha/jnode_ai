@@ -29,7 +29,10 @@ import java.lang.reflect.Method;
  * table reflectively, and writes one line per case to the output file:
  * {@code method|args|result} where result is a hex bit pattern
  * (I:/J:/F:/D:) or {@code EX:class} (message stripped: texts differ per VM).
- * Usage: java OracleDriver <out.txt> [noforce]
+ * Usage: java OracleDriver <out.txt> [noforce|aot]
+ * <p>aot = noforce with a {@code mode|aot} label (F4): nothing is ever
+ * force-compiled, so results are read back from the code the bootimage
+ * already carries; the scoreboard requires the {@code force|-1} header.
  */
 public class OracleDriver {
 
@@ -687,10 +690,18 @@ public class OracleDriver {
         boolean wantForce = true;
         String onlyMethod = null;
         boolean forceOnly = false;
-        // Usage: java OracleDriver <out.txt> [noforce|one <method>|forceonly <method>|disasm <method>|forceall]
+        boolean aotMode = false;
+        // Usage: java OracleDriver <out.txt> [noforce|aot|one <method>|forceonly <method>|disasm <method>|forceall]
         for (int i = 1; i < args.length; i++) {
             if (args[i].equals("noforce")) {
                 wantForce = false;
+            } else if (args[i].equals("aot")) {
+                // F4 (ANCHOR-L2-234): read values back from the code the
+                // image already carries -- never force-compile anything.
+                // Distinguished from noforce by the mode|aot label only,
+                // so the scoreboard can require force|-1 for this leg.
+                wantForce = false;
+                aotMode = true;
             } else if (args[i].equals("one") && i + 1 < args.length) {
                 onlyMethod = args[++i];
             } else if (args[i].equals("forceonly") && i + 1 < args.length) {
@@ -715,10 +726,14 @@ public class OracleDriver {
             out.println("force|" + forced + (onlyMethod == null ? "" : "|" + onlyMethod));
             // ANCHOR-L2-233: the file self-describes its mode, so the
             // scoreboard knows which strict checks a batch run owes.
+            // ANCHOR-L2-234 (F4): `aot` is noforce with its own label --
+            // never force, so the values flow through whatever code the
+            // image already carries (the whole point of the aotoracle leg).
             out.println("mode|"
                 + (forceOnly ? "forceonly"
                     : (onlyMethod != null ? "one"
-                        : (wantForce ? "batch" : "noforce"))));
+                        : (wantForce ? "batch"
+                            : (aotMode ? "aot" : "noforce")))));
             for (int i = 0; i < proof.size(); i++) {
                 out.println((String) proof.get(i));
             }
