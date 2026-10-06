@@ -308,6 +308,7 @@ public class L2Census {
                     checkConstantClassTypes(m);
                     checkAconstNullTypes(m);
                     checkRangeCoverage(m);
+                    checkNoRegisterSpansCall(m);
                     ok++;
                     if (hasHandlers && handlerExamples.size() < 20) {
                         handlerExamples.add(full);
@@ -443,6 +444,9 @@ public class L2Census {
         // the def executed on that edge and the pre-try value is wrong.
         // Instrumentation only -- must stay 0 until a hit earns the fix.
         out.println("P18 interBlock=" + IRControlFlowGraph.p18InterBlock);
+        // ANCHOR-L2-235 (G13): always written so a lint that never ran
+        // cannot read as a clean corpus (ANCHOR-L2-187).
+        out.println("REGSPANSCALL violations=" + regSpanCallViolations);
         out.flush();
         if (out != null && args.length > 1) {
             out.close();
@@ -801,6 +805,14 @@ public class L2Census {
     }
 
     private static IRControlFlowGraph lastCfg;
+    /**
+     * ANCHOR-L2-235: the ranges allocation produced for lastCfg, captured
+     * at the same point so the REGSPANSCALL lint audits exactly the ranges
+     * the production allocator homed (null until the first successful
+     * compileToText; both fields are always set together).
+     */
+    private static LiveRange[] lastRanges;
+    private static int regSpanCallViolations;
 
     /**
      * ANCHOR-L2-181 census lint: CONSTREFFIELD -- a getfield/putfield through
@@ -1333,6 +1345,7 @@ public class L2Census {
         // ANCHOR-L2-224: per-edge ESP depth consistency of the emission
         checkEspDepth(method, os);
         lastCfg = cfg;
+        lastRanges = lsa.getLiveRanges();
         // 104: tables are emitted now; a count mismatch means entries were
         // lost -- fail loud into FAIL_OTHER instead of going silent.
         CompiledExceptionHandler[] table = cm.getExceptionHandlers();
@@ -1518,6 +1531,86 @@ public class L2Census {
         } catch (Throwable t) {
             // lint only
         }
+    }
+
+    /**
+     * ANCHOR-L2-235 (G13) corpus lint: no register-held value may span a
+     * call-like quad address or end inside a handler block. The emitters
+     * keep ZERO call-preserves since ANCHOR-L2-235 (nothing in the x86
+     * frames is callee-saved -- saveRegisters is a no-op everywhere), so
+     * this invariant, enforced at allocation time by
+     * X86Level2Compiler.forcedSpills stack homes (inclusive both ends,
+     * ANCHOR-L2-227), is the only thing keeping pooled register values
+     * alive across calls. Corpus-wide mirror of
+     * L2PipelineTest#testNoRegisterSpansCall over exactly forcedSpills'
+     * address arithmetic: the fixture pins the mechanism, this pins every
+     * real method. One REGSPANSCALL line per violating range on stdout;
+     * the report always carries REGSPANSCALL violations=<n>, so a lint
+     * that never ran cannot read as a clean corpus (ANCHOR-L2-187).
+     */
+    static void checkNoRegisterSpansCall(VmMethod method) {
+        try {
+            final IRControlFlowGraph cfg = lastCfg;
+            final LiveRange[] ranges = lastRanges;
+            if (cfg == null || ranges == null) {
+                throw new IllegalStateException("cfg=" + (cfg != null)
+                    + " ranges=" + (ranges != null));
+            }
+            final ArrayList callAddrs = new ArrayList();
+            final ArrayList handlerRanges = new ArrayList();
+            for (Object b0 : (Iterable<?>) cfg) {
+                final IRBasicBlock b = (IRBasicBlock) b0;
+                if (b.isStartOfExceptionHandler()) {
+                    handlerRanges.add(new int[]{b.getStartPC(), b.getEndPC()});
+                }
+                for (Object q0 : (List<?>) b.getQuads()) {
+                    final Quad q = (Quad) q0;
+                    if (IRControlFlowGraph.isCallLike(q)) {
+                        callAddrs.add(Integer.valueOf(q.getAddress()));
+                    }
+                }
+            }
+            for (int i = 0; i < ranges.length; i++) {
+                final LiveRange lr = ranges[i];
+                if (!(lr.getLocation() instanceof RegisterLocation)) {
+                    continue;
+                }
+                // Mirror forcedSpills' MethodArgument skip: incoming
+                // arguments are never register-allocated, but the skip is
+                // kept explicit so the audit stays a faithful copy of
+                // production (same reason as the fixture test).
+                if (lr.getVariable() instanceof MethodArgument) {
+                    continue;
+                }
+                final int def = lr.getAssignAddress();
+                final int last = lr.getLastUseAddress();
+                for (int ci = 0; ci < callAddrs.size(); ci++) {
+                    final int call = ((Integer) callAddrs.get(ci)).intValue();
+                    if (def <= call && call <= last) {
+                        reportRegSpanCall(method, "register " + lr
+                            + " spans call @" + call);
+                    }
+                }
+                for (int hi = 0; hi < handlerRanges.size(); hi++) {
+                    final int[] h = (int[]) handlerRanges.get(hi);
+                    if (h[0] <= last && last < h[1]) {
+                        reportRegSpanCall(method, "register " + lr
+                            + " reaches handler [" + h[0] + "," + h[1] + ")");
+                    }
+                }
+            }
+        } catch (Throwable t) {
+            // A lint that cannot run must not read as a clean corpus
+            // (ANCHOR-L2-187): count the failure.
+            reportRegSpanCall(method, "ERROR " + t);
+        }
+    }
+
+    private static void reportRegSpanCall(VmMethod method, String detail) {
+        regSpanCallViolations++;
+        System.out.println("REGSPANSCALL "
+            + method.getDeclaringClass().getName() + "#"
+            + method.getName() + " " + detail);
     }
 
     /**

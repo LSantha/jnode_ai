@@ -127,6 +127,15 @@ public class LinearScanAllocator<T> {
     }
 
     /**
+     * ANCHOR-L2-235: the ranges this allocator placed. Read back by the
+     * census REGSPANSCALL lint so the corpus-wide audit sees exactly the
+     * locations production assigned, stack homes included.
+     */
+    public LiveRange<T>[] getLiveRanges() {
+        return liveRanges;
+    }
+
+    /**
      * @param lr
      */
     private void expireOldRange(LiveRange<T> lr) {
