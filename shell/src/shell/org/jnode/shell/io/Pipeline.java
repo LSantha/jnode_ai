@@ -201,8 +201,9 @@ public class Pipeline {
 
     synchronized int read(byte[] b, int off, int len) throws IOException {
         checkState(ACTIVE | CLOSED | SHUTDOWN, "read");
+        final int end = off + len;
         int startOff = off;
-        while (off < len && state <= CLOSED) {
+        while (off < end && state <= CLOSED) {
             while (pos == lim && state == ACTIVE) {
                 try {
                     this.wait();
@@ -213,7 +214,7 @@ public class Pipeline {
             if (pos == lim) {
                 break;
             }
-            while (off < len && pos < lim) {
+            while (off < end && pos < lim) {
                 b[off++] = buffer[pos++];
             }
             if (pos == lim) {
@@ -241,13 +242,14 @@ public class Pipeline {
             }
             long count = Math.min(lim - pos, n - off);
             pos += count;
+            off += count;
             if (pos == lim) {
                 pos = 0;
                 lim = 0;
             }
             this.notifyAll();
         }
-        return off == 0 ? -1 : off;
+        return (off == 0) ? -1 : off;
     }
     
     synchronized void flush() throws IOException {
@@ -257,7 +259,8 @@ public class Pipeline {
 
     synchronized void write(byte[] b, int off, int len) throws IOException {
         checkState(ACTIVE, "write");
-        while (off < len) {
+        final int end = off + len;
+        while (off < end) {
             while (lim == buffer.length) {
                 try {
                     this.wait();
@@ -266,7 +269,7 @@ public class Pipeline {
                     throw new InterruptedIOException();
                 }
             }
-            while (off < len && lim < buffer.length) {
+            while (off < end && lim < buffer.length) {
                 buffer[lim++] = b[off++];
             }
             this.notifyAll();
