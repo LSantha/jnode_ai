@@ -291,6 +291,9 @@ When handling review feedback on an existing PR:
 - [ ] No debug `System.out.println` / `System.err.println` / `printStackTrace()` left behind.
 - [ ] No change to `jnode.properties`, `all/build.xml`, `all/conf/*-plugin-list.xml`, or `core/src/native/x86/*.asm` unless the bug clearly requires it.
 - [ ] At least one unit test added/updated for every behavioral change.
+- [ ] **No test asserts a known-bad behaviour** (see S8 in Anti-patterns). If the work uncovered a
+      defect in the code under test, the test must assert the CORRECT contract, or be left out
+      entirely - never the current broken behaviour. See S8.
 - [ ] Focused test suite passes: `cd <subproject> && ant test`.
 - [ ] ISO still builds if `core/` changed: `sh build.sh cd-x86-lite`.
 - [ ] No secrets, tokens, or absolute paths in the diff.
@@ -320,6 +323,14 @@ These are **hard walls**. If a request matches any of them, follow §2.5 (pre-fl
 - ❌ **Reimplementing existing skills** — never reimplement `filesystem-debug` / `jnode-interact` / `update-wiki` inline. Load them on demand.
 - ❌ **Speculative optimization** — never optimize based on "I think this is slow" or "this could be faster". Require a profile, a benchmark, or a stack trace pointing at the bottleneck.
 - ❌ Rerun the full `sh build.sh tests` when a focused `cd <subproject> && ant test` would do.
+- ❌ **Locking a bug into a test** (S8) - never write a test that asserts known-broken behaviour, even when
+  the defect is real, out of scope, or has been filed as a follow-up issue. Observed three times in one
+  batch: `testChildLabelsDoesNotIncludeLeafLabels` (Javadoc: *"a labelled leaf Syntax reports an empty
+  label set"*), `testToXMLRoundTripFailsOnArgNameAttribute`, and
+  `testEagerFalseFlagCurrentlyBehavesLikeTrue`. Each shipped a green test that cemented the defect, so the
+  eventual fix had to rewrite the test. If a defect blocks the assertion, fix it, assert the correct
+  contract, or do not write the test. (This rule is S8: the eighth item above, mirroring the
+  `s8` self-check reference.)
 
 ## 9. Orchestrator awareness
 
