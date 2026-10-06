@@ -127,4 +127,29 @@ public class VerbSyntaxTest {
         MuSyntax root = new MuSequence("root", mu, new MuBackReference("v"));
         root.resolveBackReferences();
     }
+
+    @org.junit.Test
+    public void testToXMLEmitsAllAttributes() {
+        XMLElement element = new VerbSyntax("verb", "run", "flagArg", null, "desc").toXML();
+        Assert.assertEquals("verb", element.getName());
+        Assert.assertEquals("run", element.getStringAttribute("symbol"));
+        Assert.assertEquals("flagArg", element.getStringAttribute("argLabel"));
+        Assert.assertEquals("verb", element.getStringAttribute("label"));
+        Assert.assertEquals("desc", element.getStringAttribute("description"));
+        Assert.assertEquals(0, element.getChildren().size());
+    }
+
+    /**
+     * Regression for #718: VerbSyntax.toXML() used to emit "argName", but
+     * SyntaxSpecLoader reads "argLabel" for &lt;verb&gt; elements, so a
+     * serialize/re-parse round trip threw SyntaxFailureException.
+     */
+    @org.junit.Test
+    public void testToXMLRoundTripSucceeds() {
+        Syntax reparsed = TestSyntaxRoundTrip.roundTrip(new VerbSyntax("verb", "run", "flagArg",
+            null, "desc"));
+        Assert.assertNotNull(reparsed);
+        Assert.assertEquals("run", reparsed.toXML().getStringAttribute("symbol"));
+        Assert.assertEquals("flagArg", reparsed.toXML().getStringAttribute("argLabel"));
+    }
 }
