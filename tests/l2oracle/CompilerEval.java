@@ -1814,6 +1814,12 @@ public class CompilerEval {
             System.err.println("compiler-eval: skipping " + className
                 + " (not on the classpath; use --classpath to add its build dir)");
             return out;
+        } catch (Throwable t) {
+            // Record and skip: one unpreparable class (missing dependency,
+            // prepare-time error) must not abort a whole-corpus discovery run.
+            System.err.println("compiler-eval: skipping " + className
+                + " (load failed: " + t + ")");
+            return out;
         }
         int n = type.getNoDeclaredMethods();
         for (int i = 0; i < n; i++) {
