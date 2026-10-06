@@ -95,7 +95,7 @@ public class DeviceArgument extends Argument<Device> {
 
     @Override
     protected String state() {
-        return super.state() + ",apiClass=" + apiClass.getName();
+        return super.state() + ",apiClass=" + ((apiClass == null) ? "null" : apiClass.getName());
     }
 
     @Override
