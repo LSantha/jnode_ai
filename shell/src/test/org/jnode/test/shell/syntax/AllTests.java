@@ -20,17 +20,22 @@
  
 package org.jnode.test.shell.syntax;
 
+import org.jnode.shell.syntax.SharedStackTest;
 import org.junit.runner.RunWith;
 import org.junit.runners.Suite;
 
 @RunWith(Suite.class)
-@Suite.SuiteClasses({ArgumentTypesTest.class, ArgumentBundleTest.class, DefaultTokenizerTest.class,
+@Suite.SuiteClasses({ArgumentTypesTest.class, HostArgumentTypesTest.class, ArgumentBundleTest.class,
+    DefaultTokenizerTest.class,
     DefaultInterpreterSequenceTest.class,
-    MuSyntaxTest.class, MuParserTest.class, MuParserTest2.class, ArgumentMultiplicityTest.class,
+    MuSyntaxTest.class, MuParserTest.class, MuParserTest2.class, MuPresetTest.class,
+    SharedStackTest.class, ArgumentMultiplicityTest.class,
     CommandLineTest.class, RepeatSyntaxTest.class, SequenceSyntaxTest.class,
     OptionSyntaxTest.class, PowersetSyntaxTest.class, OptionSetSyntaxTest.class,
     AlternativesSyntaxTest.class, VerbSyntaxTest.class, GroupSyntaxTest.class,
-    OptionalSyntaxTest.class, SymbolSyntaxTest.class, EmptySyntaxTest.class })
+    OptionalSyntaxTest.class, SymbolSyntaxTest.class, EmptySyntaxTest.class,
+    DefaultSyntaxManagerTest.class, SyntaxSpecLoaderTest.class,
+    XMLSyntaxSpecAdapterTest.class, PluginSyntaxSpecAdapterTest.class })
 public class AllTests {
 
 }
