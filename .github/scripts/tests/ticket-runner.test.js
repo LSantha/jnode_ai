@@ -56,6 +56,7 @@ function createMocks(eventName, {
 
   let commentsOnPR = [];
   let commentsOnIssue = [];
+  let prListOverride = null;
   let prFiles = [{ filename: "fs/src/fs/org/jnode/fs/jfat/FatChain.java", additions: 10 }];
   let checkRuns = [{ name: "test", status: "completed", conclusion: "success" }];
   let masterIssues = [...orchestratorMasters];
@@ -139,6 +140,7 @@ function createMocks(eventName, {
       },
       pulls: {
         list: async () => {
+          if (prListOverride) return { data: prListOverride };
           return {
             data: [
               {
@@ -241,6 +243,7 @@ function createMocks(eventName, {
     setCommentsOnPR: (c) => { commentsOnPR = c; },
     setIssueComments: (c) => { commentsOnIssue = c; },
     setPRFiles: (f) => { prFiles = f; },
+    setPRList: (l) => { prListOverride = l; },
     setCheckRuns: (r) => { checkRuns = r; },
     setPRMerged: (m) => { currentPRMerged = m; },
     getIssueBody: () => currentIssueBody
@@ -1088,6 +1091,7 @@ test("ticket-runner.js event handling suite", async (t) => {
       issueBody: "Bug description",
       issueLabels: [{ name: "kind/bug" }]
     });
+    mocks.setPRList([]);
     mocks.setIssueComments([
       { body: "## Triage\n\n- [x] **Repro:** 1. boot\n- [x] **Suggested next:** fix" }
     ]);
@@ -1115,11 +1119,63 @@ test("ticket-runner.js event handling suite", async (t) => {
     assert.ok(mocks.calls.createComment.some(c => c.body.includes("/oc Please proceed")));
   });
 
+  await t.test("workflow_run with a lost state block and an existing PR self-heals to REVIEW", async () => {
+    // The state block was destroyed by an external issue-body edit while the PR
+    // stayed open, and the post-step had set agent/done. autoStartGuards refuses
+    // on agent/done, so before this change the ticket stalled at "no state"
+    // forever with a mergeable PR and no review.
+    const mocks = createMocks("workflow_run", {
+      issueBody: "Bug description (body was rewritten, state block gone)",
+      issueLabels: [{ name: "agent/done" }, { name: "kind/bug" }],
+      runDisplayTitle: "Issue #42 - Fix bug",
+      prHeadRef: "opencode/issue42-fix",
+      prBody: "Closes #42"
+    });
+    await runTicketRunner(mocks);
+
+    const state = _parseState(mocks.getIssueBody());
+    assert.ok(state, "a state block was rebuilt");
+    assert.strictEqual(state.phase, "REVIEW");
+    assert.strictEqual(state.pr, 99);
+    assert.strictEqual(state.review_in_progress, false);
+    assert.ok(
+      state.history.some(h => h.event === "state_recovered"),
+      "history records the recovery"
+    );
+    assert.ok(
+      mocks.calls.createComment.some(c => c.issue_number === 99 && c.body.includes("/oc review")),
+      "review was requested on the existing PR, not a new DEV run"
+    );
+    assert.ok(
+      !mocks.calls.createComment.some(c => c.body.includes("/oc Please proceed")),
+      "DEV was not re-triggered"
+    );
+  });
+
+  await t.test("lost state with no PR still waits instead of faking REVIEW", async () => {
+    // Guards against the recovery being too eager: no PR means DEV has not
+    // produced anything, so this must fall through to the normal auto-start path.
+    const mocks = createMocks("workflow_run", {
+      issueBody: "Bug description",
+      issueLabels: [{ name: "kind/bug" }],
+      runDisplayTitle: "Issue #42 - Fix bug",
+      prBody: "",
+      prHeadRef: "some-other-branch"
+    });
+    mocks.setPRList([]);
+    await runTicketRunner(mocks);
+
+    const state = _parseState(mocks.getIssueBody());
+    assert.ok(!state || state.phase !== "REVIEW",
+      "no REVIEW phase was fabricated without a PR");
+  });
+
   await t.test("workflow_run with no state and no triage waits", async () => {
     const mocks = createMocks("workflow_run", {
       issueBody: "Bug description",
       issueLabels: [{ name: "kind/bug" }]
     });
+    mocks.setPRList([]);
     await runTicketRunner(mocks);
 
     assert.strictEqual(_parseState(mocks.getIssueBody()), null);
