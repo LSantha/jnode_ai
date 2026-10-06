@@ -338,16 +338,11 @@ public class HostArgumentTypesTest {
         File dir = new File(System.getProperty("java.io.tmpdir"));
         Assert.assertTrue(dir.isDirectory());
         String prefix = "file:" + dir.getPath() + File.separatorChar;
-        Argument<?> arg = new URLArgument("arg1", 0, "a url");
-        ArgumentBundle bundle = new ArgumentBundle(arg);
-        bundle.setStatus(ArgumentBundle.PARSE_SUCCEEDED);
-        RawCompletions completions = new RawCompletions();
-        try {
-            arg.complete(completions, prefix, 0);
-            Assert.fail("completion didn't fail");
-        } catch (SyntaxFailureException ex) {
-            Assert.assertEquals("This Argument is not associated with an ArgumentBundle",
-                ex.getMessage());
+        SortedSet<String> fileCompletions =
+            complete(new URLArgument("arg1", 0, "a url"), prefix);
+        Assert.assertFalse("file: URL completion must not fail", fileCompletions.isEmpty());
+        for (String completion : fileCompletions) {
+            Assert.assertTrue(completion, completion.startsWith("file:"));
         }
 
         SortedSet<String> httpCompletions =
