@@ -76,6 +76,7 @@ public class FanoutWriter extends Writer {
                         tmp[j] = writers[j + 1];
                     }
                 }
+                writers = tmp;
                 return true;
             }
         }
