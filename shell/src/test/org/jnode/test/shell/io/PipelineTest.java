@@ -106,6 +106,47 @@ public class PipelineTest {
     }
 
     @Test
+    public void testSkipReturnsSkippedCountAndLeavesRest() throws IOException {
+        Pipeline p = new Pipeline();
+        InputStream is = p.createSink();
+        OutputStream os = p.createSource();
+        p.activate();
+        os.write("abcdef".getBytes());
+        os.close();
+        Assert.assertEquals(2, is.skip(2));
+        byte[] buffer = new byte[10];
+        Assert.assertEquals(4, is.read(buffer, 0, buffer.length));
+        Assert.assertEquals("cdef", new String(buffer, 0, 4));
+        Assert.assertEquals(-1, is.read());
+    }
+
+    @Test
+    public void testSkipMoreThanAvailableStopsAtEnd() throws IOException {
+        Pipeline p = new Pipeline();
+        InputStream is = p.createSink();
+        OutputStream os = p.createSource();
+        p.activate();
+        os.write("abcdef".getBytes());
+        os.close();
+        Assert.assertEquals(6, is.skip(100));
+        Assert.assertEquals(-1, is.read());
+    }
+
+    @Test
+    public void testSkipZeroReturnsMinusOne() throws IOException {
+        Pipeline p = new Pipeline();
+        InputStream is = p.createSink();
+        OutputStream os = p.createSource();
+        p.activate();
+        os.write("abcdef".getBytes());
+        os.close();
+        Assert.assertEquals(-1, is.skip(0));
+        byte[] buffer = new byte[10];
+        Assert.assertEquals(6, is.read(buffer, 0, buffer.length));
+        Assert.assertEquals("abcdef", new String(buffer, 0, 6));
+    }
+
+    @Test
     public void testTwo1_One1() throws Throwable {
         Pipeline p = new Pipeline();
         InputStream is = p.createSink();

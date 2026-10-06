@@ -241,6 +241,7 @@ public class Pipeline {
             }
             long count = Math.min(lim - pos, n - off);
             pos += count;
+            off += count;
             if (pos == lim) {
                 pos = 0;
                 lim = 0;
