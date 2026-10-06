@@ -56,6 +56,7 @@ public class VerbSyntax extends ArgumentSyntax {
     public MuSyntax prepare(ArgumentBundle bundle) {
         Argument<?> arg = bundle.getArgument(this);
         return new MuSequence(
+                label,
                 new MuSymbol(symbol), 
                 new MuPreset(arg.getLabel(), "true"));
     }
@@ -64,7 +65,7 @@ public class VerbSyntax extends ArgumentSyntax {
     public XMLElement toXML() {
         XMLElement element = basicElement("verb");
         element.setAttribute("symbol", symbol);
-        element.setAttribute("argName", argName);
+        element.setAttribute("argLabel", argName);
         return element;
     }
 

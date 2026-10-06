@@ -313,8 +313,10 @@ public class SyntaxSpecLoaderTest {
 
     @Test
     public void testVerbElementWithoutArgLabelIsAFailure() {
+        // #722 changed this message from "<argument>" to "<verb>": the element
+        // being parsed is a <verb>, so naming it <argument> was misleading.
         loadFailure("<syntax alias='foo'><verb symbol='go'/></syntax>",
-                    "<argument> element has no 'argLabel' attribute");
+                    "<verb> element has no 'argLabel' attribute");
     }
 
     @Test

@@ -136,7 +136,6 @@ public class SyntaxSpecLoader {
             String argLabel = syntaxElement.getAttribute("argLabel");
             String flags = syntaxElement.getAttribute("flags");
             if (argLabel == null) {
-                System.out.println(syntaxElement);
                 throw new SyntaxFailureException("<argument> element has no 'argLabel' attribute");
             }
             return new ArgumentSyntax(label, argLabel, flags, description);
@@ -147,8 +146,10 @@ public class SyntaxSpecLoader {
             }
             String argLabel = syntaxElement.getAttribute("argLabel");
             if (argLabel == null) {
-                System.out.println(syntaxElement);
-                throw new SyntaxFailureException("<argument> element has no 'argLabel' attribute");
+                argLabel = syntaxElement.getAttribute("argName");
+            }
+            if (argLabel == null) {
+                throw new SyntaxFailureException("<verb> element has no 'argLabel' attribute");
             }
             String flags = syntaxElement.getAttribute("flags");
             return new VerbSyntax(label, symbol, argLabel, flags, description);
