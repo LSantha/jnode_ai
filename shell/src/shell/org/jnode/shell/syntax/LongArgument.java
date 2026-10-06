@@ -75,7 +75,6 @@ public class LongArgument extends Argument<Long> {
         if (max - min >= 0 && max - min < COMPLETION_THRESHOLD) {
             for (long i = min; i <= max; i++) {
                 String candidate = Long.toString(i);
-                System.err.println("Testing completion '" + candidate + "'");
                 if (candidate.startsWith(partial)) {
                     completions.addCompletion(candidate);
                 }
