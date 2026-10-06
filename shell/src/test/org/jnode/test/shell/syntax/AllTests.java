@@ -32,7 +32,9 @@ import org.junit.runners.Suite;
     SharedStackTest.class, ArgumentMultiplicityTest.class,
     CommandLineTest.class, RepeatSyntaxTest.class, SequenceSyntaxTest.class,
     OptionSyntaxTest.class, PowersetSyntaxTest.class, OptionSetSyntaxTest.class,
-    AlternativesSyntaxTest.class, DefaultSyntaxManagerTest.class, SyntaxSpecLoaderTest.class,
+    AlternativesSyntaxTest.class, VerbSyntaxTest.class, GroupSyntaxTest.class,
+    OptionalSyntaxTest.class, SymbolSyntaxTest.class, EmptySyntaxTest.class,
+    DefaultSyntaxManagerTest.class, SyntaxSpecLoaderTest.class,
     XMLSyntaxSpecAdapterTest.class, PluginSyntaxSpecAdapterTest.class })
 public class AllTests {
 
