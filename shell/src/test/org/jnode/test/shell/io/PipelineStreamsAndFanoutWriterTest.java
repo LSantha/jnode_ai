@@ -123,10 +123,8 @@ public class PipelineStreamsAndFanoutWriterTest {
     }
 
     /**
-     * Asserts current behavior, which is a bug: <code>len</code> is treated as an
-     * end index rather than a count, so <code>read(b, 2, 7)</code> transfers 5
-     * bytes and <code>b[7]</code> is left untouched.  This violates the
-     * <code>InputStream</code> contract.  See issue #733.
+     * <code>len</code> is a byte count, not an end index: <code>read(b, 2, 7)</code>
+     * must transfer 7 bytes starting at index 2.
      */
     @Test
     public void testInputStreamReadByteArrayOffsetLen() throws IOException {
@@ -134,10 +132,11 @@ public class PipelineStreamsAndFanoutWriterTest {
         source.write(bytes("hello world"));
         byte[] buffer = new byte[32];
         Arrays.fill(buffer, (byte) '.');
-        Assert.assertEquals(5, sink.read(buffer, 2, 7));
-        assertContent("hello", buffer, 2, 5);
+        Assert.assertEquals(7, sink.read(buffer, 2, 7));
+        assertContent("hello w", buffer, 2, 7);
         Assert.assertEquals(".", new String(buffer, 0, 1));
-        Assert.assertEquals(".", new String(buffer, 7, 1));
+        Assert.assertEquals(".", new String(buffer, 1, 1));
+        Assert.assertEquals(".", new String(buffer, 9, 1));
         sink.close();
         source.close();
     }
@@ -186,19 +185,28 @@ public class PipelineStreamsAndFanoutWriterTest {
     }
 
     /**
-     * Asserts current behavior, which is a bug: <code>Pipeline.skip()</code> never
-     * increments its <code>off</code> counter, so it drains the whole buffer and
-     * always returns <code>-1</code>.  The <code>InputStream</code> contract
-     * requires the number of bytes skipped.  See issue #732.
+     * <code>skip(n)</code> discards up to n bytes and returns how many it
+     * actually skipped, leaving the rest readable.
      */
     @Test
-    public void testInputStreamSkipConsumesBufferAndReturnsMinusOne() throws IOException {
+    public void testInputStreamSkipReturnsCountAndPreservesRemainder() throws IOException {
         setUpActive();
         source.write(bytes("abcdef"));
         source.close();
-        Assert.assertEquals(-1, sink.skip(2));
-        Assert.assertEquals(-1, sink.read());
-        Assert.assertEquals(-1, sink.read(new byte[8]));
+        Assert.assertEquals(2, sink.skip(2));
+        byte[] rest = new byte[8];
+        Assert.assertEquals(4, sink.read(rest));
+        Assert.assertEquals("cdef", new String(rest, 0, 4));
+        sink.close();
+    }
+
+    @Test
+    public void testInputStreamSkipReturnsMinusOneAtEof() throws IOException {
+        setUpActive();
+        source.write(bytes("ab"));
+        source.close();
+        Assert.assertEquals(2, sink.skip(8));
+        Assert.assertEquals(-1, sink.skip(1));
         sink.close();
     }
 
@@ -314,20 +322,17 @@ public class PipelineStreamsAndFanoutWriterTest {
     }
 
     /**
-     * Asserts current behavior, which is a bug: <code>len</code> is treated as an
-     * end index rather than a count, so <code>write(b, 3, 9)</code> transfers
-     * <code>b[3..8]</code> instead of the 9 bytes <code>b[3..11]</code> the
-     * <code>OutputStream</code> contract requires; only "middle" reaches the
-     * sink.  See issue #733.
+     * <code>len</code> is a byte count, not an end index: <code>write(b, 3, 9)</code>
+     * must transfer the 9 bytes <code>b[3..11]</code>.
      */
     @Test
     public void testOutputStreamWriteByteArrayOffsetLen() throws IOException {
         setUpActive();
-        source.write(bytes("xxxmiddleyyy"), 3, 9);
+        source.write(bytes("xxxmiddleABBB"), 3, 9);
         source.close();
-        byte[] buffer = new byte[6];
-        Assert.assertEquals(6, sink.read(buffer));
-        assertContent("middle", buffer, 0, 6);
+        byte[] buffer = new byte[9];
+        Assert.assertEquals(9, sink.read(buffer));
+        Assert.assertEquals("middleABB", new String(buffer, 0, 9));
         sink.close();
     }
 
@@ -449,12 +454,11 @@ public class PipelineStreamsAndFanoutWriterTest {
     }
 
     /**
-     * Asserts current behavior, which is a bug: <code>removeStream</code> builds the
-     * shortened array but never assigns it back to <code>writers</code>, so the
-     * removed target still receives every subsequent write.  See issue #734.
+     * <code>removeStream</code> must actually detach the target: writes after
+     * the removal reach only the remaining writers.
      */
     @Test
-    public void testFanoutWriterRemoveStreamDoesNotDetachTarget() throws IOException {
+    public void testFanoutWriterRemoveStreamDetachesTarget() throws IOException {
         StringWriter w1 = new StringWriter();
         StringWriter w2 = new StringWriter();
         FanoutWriter fanout = new FanoutWriter(true, w1, w2);
@@ -462,7 +466,7 @@ public class PipelineStreamsAndFanoutWriterTest {
         fanout.write('k');
         fanout.close();
         Assert.assertEquals("k", w1.toString());
-        Assert.assertEquals("k", w2.toString());
+        Assert.assertEquals("", w2.toString());
     }
 
     @Test
