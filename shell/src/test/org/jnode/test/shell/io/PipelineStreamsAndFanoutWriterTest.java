@@ -122,6 +122,12 @@ public class PipelineStreamsAndFanoutWriterTest {
         sink.close();
     }
 
+    /**
+     * Asserts current behavior, which is a bug: <code>len</code> is treated as an
+     * end index rather than a count, so <code>read(b, 2, 7)</code> transfers 5
+     * bytes and <code>b[7]</code> is left untouched.  This violates the
+     * <code>InputStream</code> contract.  See issue #733.
+     */
     @Test
     public void testInputStreamReadByteArrayOffsetLen() throws IOException {
         setUpActive();
@@ -179,6 +185,12 @@ public class PipelineStreamsAndFanoutWriterTest {
         source.close();
     }
 
+    /**
+     * Asserts current behavior, which is a bug: <code>Pipeline.skip()</code> never
+     * increments its <code>off</code> counter, so it drains the whole buffer and
+     * always returns <code>-1</code>.  The <code>InputStream</code> contract
+     * requires the number of bytes skipped.  See issue #732.
+     */
     @Test
     public void testInputStreamSkipConsumesBufferAndReturnsMinusOne() throws IOException {
         setUpActive();
@@ -301,6 +313,13 @@ public class PipelineStreamsAndFanoutWriterTest {
         source.close();
     }
 
+    /**
+     * Asserts current behavior, which is a bug: <code>len</code> is treated as an
+     * end index rather than a count, so <code>write(b, 3, 9)</code> transfers
+     * <code>b[3..8]</code> instead of the 9 bytes <code>b[3..11]</code> the
+     * <code>OutputStream</code> contract requires; only "middle" reaches the
+     * sink.  See issue #733.
+     */
     @Test
     public void testOutputStreamWriteByteArrayOffsetLen() throws IOException {
         setUpActive();
@@ -429,6 +448,11 @@ public class PipelineStreamsAndFanoutWriterTest {
         fanout.close();
     }
 
+    /**
+     * Asserts current behavior, which is a bug: <code>removeStream</code> builds the
+     * shortened array but never assigns it back to <code>writers</code>, so the
+     * removed target still receives every subsequent write.  See issue #734.
+     */
     @Test
     public void testFanoutWriterRemoveStreamDoesNotDetachTarget() throws IOException {
         StringWriter w1 = new StringWriter();
@@ -494,21 +518,29 @@ public class PipelineStreamsAndFanoutWriterTest {
         Assert.assertEquals(3, w2.getFlushCount());
     }
 
+    /**
+     * Large-payload fan-out integrity: 25,600 chars written from a producer thread
+     * must arrive complete and identical in every target.
+     * <p>
+     * This is not a concurrency test.  <code>FanoutWriter.write(char[],int,int)</code>,
+     * <code>write(int)</code> and <code>flush()</code> are not synchronized (only
+     * <code>addStream</code>, <code>removeStream</code> and <code>close</code> are),
+     * so a second writer thread would race on the targets rather than test anything
+     * the writer promises.
+     */
     @Test
-    public void testFanoutWriterConcurrentProducer() throws Throwable {
+    public void testFanoutWriterLargePayloadFanout() throws Throwable {
         final StringWriter w1 = new StringWriter();
         final StringWriter w2 = new StringWriter();
         final FanoutWriter fanout = new FanoutWriter(true, w1, w2);
         final char[] chunk = new char[256];
         Arrays.fill(chunk, 'z');
         final int chunkCount = 100;
-        final CountDownLatch ready = new CountDownLatch(1);
         final CountDownLatch done = new CountDownLatch(1);
         final List<Throwable> exceptions = Collections.synchronizedList(new ArrayList<Throwable>());
         Thread producer = new Thread(new Runnable() {
             public void run() {
                 try {
-                    ready.await();
                     for (int i = 0; i < chunkCount; i++) {
                         fanout.write(chunk, 0, chunk.length);
                     }
@@ -521,7 +553,6 @@ public class PipelineStreamsAndFanoutWriterTest {
             }
         });
         producer.start();
-        ready.countDown();
         Assert.assertTrue("producer thread did not finish", done.await(60, TimeUnit.SECONDS));
         producer.join();
         if (!exceptions.isEmpty()) {
