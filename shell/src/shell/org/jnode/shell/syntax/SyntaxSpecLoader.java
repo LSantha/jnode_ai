@@ -184,7 +184,7 @@ public class SyntaxSpecLoader {
         } else if (tmp.equalsIgnoreCase("true")) {
             return true;
         } else if (tmp.equalsIgnoreCase("false")) {
-            return true;
+            return false;
         } else {
             throw new SyntaxFailureException("'" + name + "' attribute is not 'true' or 'false'");
         }
