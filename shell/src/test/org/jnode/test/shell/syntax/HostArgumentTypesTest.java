@@ -434,4 +434,21 @@ public class HostArgumentTypesTest {
         CommandInfo cmdInfo = cl.parseCommandLine(shell);
         return cmdInfo.createCommandInstance();
     }
+
+    /**
+     * Regression for #715: DeviceArgument.state() dereferenced apiClass
+     * unconditionally, so Argument.toString() threw NullPointerException for
+     * every constructor that does not take an API filter.
+     */
+    @Test
+    public void testDeviceArgumentToStringWithoutApiClass() {
+        String str = new DeviceArgument("arg1", 0).toString();
+        Assert.assertTrue(str, str.contains("apiClass=null"));
+    }
+
+    @Test
+    public void testDeviceArgumentToStringWithApiClass() {
+        String str = new DeviceArgument("arg1", 0, "desc", DeviceInfoAPI.class).toString();
+        Assert.assertTrue(str, str.contains("apiClass=" + DeviceInfoAPI.class.getName()));
+    }
 }
