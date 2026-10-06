@@ -26,7 +26,7 @@ import org.junit.runners.Suite;
 
 @RunWith(Suite.class)
 @Suite.SuiteClasses({ArgumentTypesTest.class, NumericArgumentTypesTest.class,
-    HostArgumentTypesTest.class, ArgumentBundleTest.class,
+    HostArgumentTypesTest.class, SystemArgumentTypesTest.class, ArgumentBundleTest.class,
     DefaultTokenizerTest.class,
     DefaultInterpreterSequenceTest.class,
     MuSyntaxTest.class, MuParserTest.class, MuParserTest2.class, MuPresetTest.class,
