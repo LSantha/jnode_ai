@@ -38,6 +38,8 @@ public class X86CodeGenerator extends GenericX86CodeGenerator<X86Register> imple
      */
     public X86CodeGenerator(VmMethod method, X86Assembler os, int length, TypeSizeInfo typeSizeInfo,
                             X86StackFrame stackFrame) {
-        super(os, new X86RegisterPool(), length, typeSizeInfo, stackFrame, method);
+        // ANCHOR-L2-236: the frame's bytecode scan decides whether EDI may
+        // join the pool for this method; both sides read the same flag.
+        super(os, new X86RegisterPool(stackFrame.isEdiPooled()), length, typeSizeInfo, stackFrame, method);
     }
 }

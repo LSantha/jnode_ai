@@ -69,6 +69,7 @@ import org.jnode.vm.x86.X86CpuID;
 import org.jnode.vm.x86.compiler.X86CompilerHelper;
 import org.jnode.vm.x86.compiler.l2.X86CodeGenerator;
 import org.jnode.vm.x86.compiler.l2.X86Level2Compiler;
+import org.jnode.vm.x86.compiler.l2.X86RegisterPool;
 import org.jnode.vm.x86.compiler.l2.X86StackFrame;
 
 /**
@@ -136,6 +137,15 @@ public class L2Census {
     }
 
     public static void main(String[] args) throws Exception {
+        // ANCHOR-L2-236: the EDI guard counts statically over the whole
+        // corpus, so it starts at zero here and is reported next to
+        // REGSPANSCALL below. -Dl2.edi.forcepool=true forces every method
+        // to pool EDI: that run must report violations > 0, which is the
+        // red proof that the guard sees the statics readers.
+        X86RegisterPool.resetEdiGuard();
+        if (Boolean.getBoolean("l2.edi.forcepool")) {
+            X86RegisterPool.ediForcePoolForTests = true;
+        }
         String root = System.getProperty("jnode.root", ".");
         String classDir = args[0];
         PrintWriter out = (args.length > 1)
@@ -447,6 +457,10 @@ public class L2Census {
         // ANCHOR-L2-235 (G13): always written so a lint that never ran
         // cannot read as a clean corpus (ANCHOR-L2-187).
         out.println("REGSPANSCALL violations=" + regSpanCallViolations);
+        // ANCHOR-L2-236 (conditional EDI pool): emission-time count of
+        // statics readers reached inside pooled bodies. Always written so
+        // a lint that never ran cannot read as a clean corpus (ANCHOR-L2-187).
+        out.println("EDIPOOL violations=" + X86RegisterPool.getEdiGuardViolations());
         out.flush();
         if (out != null && args.length > 1) {
             out.close();

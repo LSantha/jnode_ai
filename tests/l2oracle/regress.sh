@@ -415,7 +415,7 @@ if want census; then
     '"$HJ"' -Djnode.root=. -cp '"$CP"' org.jnode.vm.compiler.ir.L2Census core/build/classes /tmp/census-'"$LABEL"'.txt \
       core/lib/mmtk/mmtk.jar core/lib/log4j-1.2.8.jar core/lib/junit-4.5.jar core/lib/jmock-1.0.1.jar \
       > /tmp/census-'"$LABEL"'.stdout 2> /tmp/census-'"$LABEL"'.stderr
-    echo "lints=$(grep -cE "^(ESPDEPTH|NOYIELDPOINT|WIDTHMISMATCH|FISTPMISMATCH|RANGEGAP|STALEWIDE|TERMTRAILING|REGSPANSCALL) " /tmp/census-'"$LABEL"'.stdout)"
+    echo "lints=$(grep -cE "^(ESPDEPTH|NOYIELDPOINT|WIDTHMISMATCH|FISTPMISMATCH|RANGEGAP|STALEWIDE|TERMTRAILING|REGSPANSCALL|EDIPOOL) " /tmp/census-'"$LABEL"'.stdout)"
     echo "labelcensus=$(grep -c "L2 label census" /tmp/census-'"$LABEL"'.stderr)"
     # ANCHOR-L2-178: a use outside its own live range is a silent
     # miscompile that no other gate sees (the IR and the frame are both
@@ -546,6 +546,13 @@ if want census; then
     rsc=$(grep -c "^REGSPANSCALL " /tmp/census-'"$LABEL"'.stdout)
     rsv=$(sed -n "s/^REGSPANSCALL violations=\([0-9]*\).*/\1/p" /tmp/census-'"$LABEL"'.txt | head -n 1)
     echo "regspancall=${rsv:-missing} (hits=$rsc)"
+    # ANCHOR-L2-236: emission-time EDI guard for the conditional EDI pool.
+    # Zero in every gated run; the hit lines are printed by the guard
+    # itself when a pooled body emits a statics reader. A missing report
+    # line fails the gate too (ANCHOR-L2-187).
+    edh=$(grep -c "^EDIPOOL " /tmp/census-'"$LABEL"'.stdout)
+    edv=$(sed -n "s/^EDIPOOL violations=\([0-9]*\).*/\1/p" /tmp/census-'"$LABEL"'.txt | head -n 1)
+    echo "edipool=${edv:-missing} (hits=$edh)"
     n=$(awk "/^--- FAILED \(/{f=1;next} /^--- /{f=0} f" /tmp/census-'"$LABEL"'.txt | wc -l)
     echo "FAILED=$n"
     awk "/^--- FAILED \(/{f=1;next} /^--- /{f=0} f" /tmp/census-'"$LABEL"'.txt | sort > /tmp/census-'"$LABEL"'.failed
@@ -649,10 +656,10 @@ if want census; then
     else
       echo "probe census gate: CONSTREFFIELD==0 and FAILED==0 on the shape-carrying corpus"
     fi
-    if [ ! -s '"$BASE"'/census-failed.txt ] && [ "$n" -eq 0 ] && [ "$rg" -eq 0 ] && [ "$sw" -eq 0 ] && [ "${sm:-1}" -eq 0 ] && [ "${st:-1}" -eq 0 ] && [ "${p15r:-1}" -eq 0 ] && [ "${p15t:-1}" -eq 0 ] && [ "${p18:-1}" -eq 0 ] && [ "${cn:-1}" -eq 0 ] && [ "${dfl:-1}" -eq 0 ] && [ "${ccr:-1}" -eq 0 ] && [ "${cnr:-1}" -eq 0 ] && [ "${fm:-1}" -eq 0 ] && [ "${ny:-1}" -eq 0 ] && [ "${wm:-1}" -eq 0 ] && [ "${ed:-1}" -eq 0 ] && [ "${tl:-1}" -eq 0 ] && [ "${rsv:-1}" -eq 0 ] && [ "$pc_missing" -eq 0 ]; then
-      echo "census gate: FAILED==0 and RANGEGAP==0 and STALEWIDE==0 and STALEWIDEMIX==0 and SSATAG==0 and P15==0 and P18==0 and CALLNOTCALLLIKE==0 and DEADFIELDLOAD==0 and CONSTCLASSREF==0 and CONSTNULLREF==0 and FISTPMISMATCH==0 and NOYIELDPOINT==0 and WIDTHMISMATCH==0 and ESPDEPTH==0 and TERMTRAILING==0 and REGSPANSCALL==0 as required"
+    if [ ! -s '"$BASE"'/census-failed.txt ] && [ "$n" -eq 0 ] && [ "$rg" -eq 0 ] && [ "$sw" -eq 0 ] && [ "${sm:-1}" -eq 0 ] && [ "${st:-1}" -eq 0 ] && [ "${p15r:-1}" -eq 0 ] && [ "${p15t:-1}" -eq 0 ] && [ "${p18:-1}" -eq 0 ] && [ "${cn:-1}" -eq 0 ] && [ "${dfl:-1}" -eq 0 ] && [ "${ccr:-1}" -eq 0 ] && [ "${cnr:-1}" -eq 0 ] && [ "${fm:-1}" -eq 0 ] && [ "${ny:-1}" -eq 0 ] && [ "${wm:-1}" -eq 0 ] && [ "${ed:-1}" -eq 0 ] && [ "${tl:-1}" -eq 0 ] && [ "${rsv:-1}" -eq 0 ] && [ "${edv:-1}" -eq 0 ] && [ "$pc_missing" -eq 0 ]; then
+      echo "census gate: FAILED==0 and RANGEGAP==0 and STALEWIDE==0 and STALEWIDEMIX==0 and SSATAG==0 and P15==0 and P18==0 and CALLNOTCALLLIKE==0 and DEADFIELDLOAD==0 and CONSTCLASSREF==0 and CONSTNULLREF==0 and FISTPMISMATCH==0 and NOYIELDPOINT==0 and WIDTHMISMATCH==0 and ESPDEPTH==0 and TERMTRAILING==0 and REGSPANSCALL==0 and EDIPOOL==0 as required"
     else
-      echo "REGRESSION: $n FAILED entries, $rg RANGEGAP entries, $sw STALEWIDE entries, ${sm:-missing} STALEWIDEMIX entries, ${st:-missing} SSATAG disagreements, p15=${p15r:-missing}/${p15t:-missing} p18=${p18:-missing} callnotcalllike=${cn:-missing} deadfieldload=${dfl:-missing} constclassref=${ccr:-missing} constnullref=${cnr:-missing} fistpmismatch=${fm:-missing} noyieldpoint=${ny:-missing} widthmismatch=${wm:-missing} espdepth=${ed:-missing} termtrailing=${tl:-missing} regspancall=${rsv:-missing}; first ones:"
+      echo "REGRESSION: $n FAILED entries, $rg RANGEGAP entries, $sw STALEWIDE entries, ${sm:-missing} STALEWIDEMIX entries, ${st:-missing} SSATAG disagreements, p15=${p15r:-missing}/${p15t:-missing} p18=${p18:-missing} callnotcalllike=${cn:-missing} deadfieldload=${dfl:-missing} constclassref=${ccr:-missing} constnullref=${cnr:-missing} fistpmismatch=${fm:-missing} noyieldpoint=${ny:-missing} widthmismatch=${wm:-missing} espdepth=${ed:-missing} termtrailing=${tl:-missing} regspancall=${rsv:-missing} edipool=${edv:-missing}; first ones:"
       head -n 10 /tmp/census-'"$LABEL"'.failed
       grep -E "^RANGEGAP " /tmp/census-'"$LABEL"'.stdout | head -n 10
       grep -E "^STALEWIDE " /tmp/census-'"$LABEL"'.stdout | head -n 10
@@ -667,6 +674,7 @@ if want census; then
       grep -E "^ESPDEPTH " /tmp/census-'"$LABEL"'.stdout | head -n 10
       grep -E "^TERMTRAILING " /tmp/census-'"$LABEL"'.stdout | head -n 10
       grep -E "^REGSPANSCALL " /tmp/census-'"$LABEL"'.stdout | head -n 10
+      grep -E "^EDIPOOL " /tmp/census-'"$LABEL"'.stdout | head -n 10
       grep -E "^OK=" /tmp/census-'"$LABEL"'.txt
       exit 1
     fi
@@ -676,7 +684,7 @@ fi
 
 # ------------------------------- BOOT ----------------------------------
 if want boot; then
-  run bootimage sh -c 'cd '"$ROOT"' && rm -rf all/build/x86/cdrom-lite/ox && touch core/src/core/org/jnode/vm/x86/compiler/l2/*.java core/src/core/org/jnode/vm/compiler/ir/*.java core/src/core/org/jnode/vm/compiler/ir/quad/*.java core/src/core/org/jnode/vm/classmgr/VmType.java && sh build.sh -Djnode.compiler=L2 -Djnode.jit.compiler=L1A "-Dmy-conf.dir=$PWD/local/l2oracle/conf-x86" cd-x86-lite 2>&1 | grep -E "Compiling using|Runtime JIT|Compiler union|BUILD"'
+  run bootimage sh -c 'cd '"$ROOT"' && rm -rf all/build/x86/cdrom-lite/ox && touch core/src/core/org/jnode/vm/x86/compiler/l2/*.java core/src/core/org/jnode/vm/x86/compiler/X86CompilerHelper.java core/src/core/org/jnode/vm/compiler/ir/*.java core/src/core/org/jnode/vm/compiler/ir/quad/*.java core/src/core/org/jnode/vm/classmgr/VmType.java core/src/native/x86/vm.asm && sh build.sh -Djnode.compiler=L2 -Djnode.jit.compiler=L1A "-Dmy-conf.dir=$PWD/local/l2oracle/conf-x86" cd-x86-lite 2>&1 | grep -E "Compiling using|Runtime JIT|Compiler union|BUILD"'
   # ANCHOR-L2-195: same rule as the build phase -- an explicitly named JIT is
   # honoured verbatim in the image that is about to be booted.
   run policy policy_union "X86-Stub X86-L2 X86-L1A" "X86-Stub and X86-L2"

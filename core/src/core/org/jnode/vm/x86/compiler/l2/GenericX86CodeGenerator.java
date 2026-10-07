@@ -437,6 +437,7 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
      */
     private void callJavaMethod(VmMethod method) {
         final X86CompilerHelper helper = stackFrame.getHelper();
+        helper.ediGuard("callJavaMethod " + method.getName());
         final int offset = helper.getSharedStaticsOffset(method);
         os.noteCallArgs(method.getArgSlotCount());
         os.writeCALL(helper.STATICS, offset);
@@ -4147,6 +4148,7 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
                 // 4-MUL computation). EBX/ECX/ESI may hold live values
                 // (PUSH/POP); EDI doubles as v1hi and the statics base is
                 // reloaded after, exactly like L1A.
+                stackFrame.getHelper().ediGuard("lmul");
                 final Label curInstrLabel = getInstrLabel(quad.getAddress());
                 final Label tmp1 = new Label(curInstrLabel + "$tmp1");
                 final Label tmp2 = new Label(curInstrLabel + "$tmp2");
@@ -6273,6 +6275,7 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
         // Get superClassesArray[depth] -> objectr
         os.writeMOV(asize, tmpr, tmpr, arrayDataOffset + (depth * slotSize));
         // Compare objectr with classtype
+        helper.ediGuard("instanceofCMP");
         os.writeCMP(helper.STATICS, staticsOfs, tmpr);
         if (resultr != null) {
             os.writeSETCC(resultr, X86Constants.JE);
@@ -7930,6 +7933,7 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
             writeParameters(quad, methodRef);
             //todo handle return types
             final int offset = stackFrame.getHelper().getSharedStaticsOffset(method);
+            stackFrame.getHelper().ediGuard("staticCall");
             os.writeCALL(stackFrame.getHelper().STATICS, offset);
             Variable lhs = quad.getLHS();
             storeCallResult(lhs);
@@ -7948,6 +7952,7 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
         } else {
             writeParameters(quad, methodRef);
             final int offset = stackFrame.getHelper().getSharedStaticsOffset(method);
+            stackFrame.getHelper().ediGuard("staticCall");
             os.writeCALL(stackFrame.getHelper().STATICS, offset);
         }
     }

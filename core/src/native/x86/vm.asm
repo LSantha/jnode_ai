@@ -17,6 +17,11 @@
 ;   eax  Exception to throw
 ; -----------------------------------------------
 GLABEL vm_athrow
+	; ANCHOR-L2-236: the frame that got here may pool EDI (conditional
+	; EDI pool), so the statics invariant cannot be assumed to arrive
+	; with the register. Reload it before the handler search below and
+	; before anything returns into Java.
+	mov ADI,STATICSTABLE
 	%if TRACE_ATHROW
 		push AAX
 		push ABX
@@ -39,6 +44,9 @@ GLABEL vm_athrow
 	%endif
 	
 GLABEL vm_athrow_notrace
+	; ANCHOR-L2-236: direct entries (jump table, interrupt rethrow) get
+	; the same reload; it is idempotent when EDI already holds statics.
+	mov ADI,STATICSTABLE
 	%if TRACE_ATHROW
 		; Show location of exception
 		PRINT_WORD [ASP+SLOT_SIZE]

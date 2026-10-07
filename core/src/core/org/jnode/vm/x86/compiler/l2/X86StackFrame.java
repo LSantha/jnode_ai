@@ -60,6 +60,17 @@ public final class X86StackFrame {
     private final VmByteCode bc;
 
     /**
+     * ANCHOR-L2-236 (conditional EDI pool): true when this method's body
+     * may allocate EDI. Computed once here from the bytecode eligibility
+     * scan and published to both the helper (emission-time guard) and the
+     * register pool. Pooled frames push the incoming statics register into
+     * a slot below the locals ([EBP-4N-4]); the header positions of the
+     * CompiledCode id, previous EBP and return address that every stack
+     * reader and the exception machinery walk are untouched.
+     */
+    private final boolean ediPool;
+
+    /**
      * Label of the footer
      */
     private final Label footerLabel;
@@ -114,6 +125,15 @@ public final class X86StackFrame {
         this.footerLabel = helper.genLabel("$$footer");
         this.slotSize = os.isCode32() ? 4 : 8;
         this.EbpFrameRefOffset = 1 * slotSize;
+        this.ediPool = X86RegisterPool.canPoolEdi(method);
+        helper.setEdiPool(this.ediPool);
+    }
+
+    /**
+     * ANCHOR-L2-236: does this frame save and pool EDI?
+     */
+    public boolean isEdiPooled() {
+        return ediPool;
     }
 
     /**
@@ -147,6 +167,10 @@ public final class X86StackFrame {
         // Set startCode label
         os.setObjectRef(startCodeLabel);
 
+        // ANCHOR-L2-236: the quad emission that follows runs the body of a
+        // pooled method; arm the reader guard for that window only.
+        helper.setEdiBody(ediPool);
+
         return rc;
     }
 
@@ -176,7 +200,12 @@ public final class X86StackFrame {
      * @param maxLocals
      */
     public void emitTrailer(TypeSizeInfo typeSizeInfo, int maxLocals) {
+        // ANCHOR-L2-236: everything emitted below (footer, entry loads,
+        // class-init, handler stubs) runs with EDI holding the statics
+        // table, so the pooled-body guard window is closed first.
+        helper.setEdiBody(false);
         final int argSlotCount = method.getArgSlotCount();
+        final int noLocalVars = maxLocals - argSlotCount;
         final Label stackOverflowLabel = helper.genLabel("$$stack_overflow");
         final GPR asp = helper.SP;
         final GPR abp = helper.BP;
@@ -189,6 +218,11 @@ public final class X86StackFrame {
 
         /* Go restore the previous current frame */
         emitSynchronizationCode(typeSizeInfo, entryPoints.getMonitorExitMethod());
+        if (ediPool) {
+            // ANCHOR-L2-236: pop the saved statics register while EBP is
+            // still valid; it sits below the locals ([EBP-4N-4]).
+            restoreEdiRegister(asp, abp, noLocalVars);
+        }
         os.writeLEA(asp, abp, EbpFrameRefOffset);
         os.writePOP(abp);
         restoreRegisters();
@@ -231,13 +265,11 @@ public final class X86StackFrame {
         //helper.writeIncInvocationCount(aax); (NOT USED for now, aax is also invalid now)
 
         // Fixed framelayout
-        saveRegisters();
         os.writePUSH(abp);
         os.writePUSH(cm.getCompiledCodeId());
         os.writeMOV(size, abp, asp);
 
         // Emit the code to create the locals
-        final int noLocalVars = maxLocals - argSlotCount;
         // Create and clear all local variables
         if (noLocalVars > 0) {
             os.writeXOR(aax, aax);
@@ -245,6 +277,11 @@ public final class X86StackFrame {
                 os.writePUSH(aax);
             }
         }
+
+        // ANCHOR-L2-236: save the incoming statics register below the
+        // locals so the local offsets and the frame header layout every
+        // stack reader walks stay exactly where they were.
+        saveRegisters();
 
         // Create the synchronization enter code
         emitSynchronizationCode(typeSizeInfo, entryPoints.getMonitorEnterMethod());
@@ -279,7 +316,10 @@ public final class X86StackFrame {
             if (noLocalVars < 0) {
                 System.out.println("@#@#@#@# noLocalVars = " + noLocalVars);
             }
-            final int ofs = Math.max(0, noLocalVars) * slotSize;
+            // ANCHOR-L2-236: a pooled frame parks its saved EDI right below
+            // the locals, so the exception slot must clear that slot too.
+            final int ofs = Math.max(0, noLocalVars) * slotSize
+                + (ediPool ? slotSize : 0);
             os.writeLEA(asp, abp, -ofs);
             /** Push the exception in EAX */
             os.writePUSH(aax);
@@ -300,6 +340,11 @@ public final class X86StackFrame {
         Label handlerLabel = helper.genLabel("$$def_ex_handler");
         cm.setDefExceptionHandler(os.setObjectRef(handlerLabel));
         emitSynchronizationCode(typeSizeInfo, entryPoints.getMonitorExitMethod());
+        if (ediPool) {
+            // ANCHOR-L2-236: restore before the frame pointer goes away;
+            // the jump-table rethrow below then reads a correct EDI again.
+            restoreEdiRegister(asp, abp, noLocalVars);
+        }
         os.writeLEA(asp, abp, EbpFrameRefOffset);
         os.writePOP(abp);
         restoreRegisters();
@@ -396,8 +441,24 @@ public final class X86StackFrame {
      */
     private void saveRegisters() {
         //os.writePUSH(Register.EBX);
-        //os.writePUSH(Register.EDI);
         //os.writePUSH(Register.ESI);
+        if (ediPool) {
+            // ANCHOR-L2-236: the statics register the caller left behind;
+            // parked below the locals ([EBP-4N-4]) after the locals loop.
+            os.writePUSH(helper.STATICS);
+        }
+    }
+
+    /**
+     * ANCHOR-L2-236: pop the saved statics register back. Emitted while
+     * EBP is still valid and before the frame pointer is popped, so both
+     * the normal footer and the default exception handler end every path
+     * through a pooled frame with EDI exactly as they found it.
+     */
+    private void restoreEdiRegister(GPR asp, GPR abp, int noLocalVars) {
+        final int ofs = Math.max(0, noLocalVars) * slotSize + slotSize;
+        os.writeLEA(asp, abp, -ofs);
+        os.writePOP(helper.STATICS);
     }
 
     /**

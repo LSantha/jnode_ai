@@ -43,6 +43,7 @@ import org.jnode.vm.facade.VmUtils;
 import org.jnode.vm.facade.VmWriteBarrier;
 import org.jnode.vm.scheduler.VmProcessor;
 import org.jnode.vm.x86.X86CpuID;
+import org.jnode.vm.x86.compiler.l2.X86RegisterPool;
 
 import static org.jnode.vm.x86.compiler.X86CompilerConstants.BITS32;
 import static org.jnode.vm.x86.compiler.X86CompilerConstants.BITS64;
@@ -125,6 +126,15 @@ public class X86CompilerHelper {
     private final Map<VmType<?>, Label> classInitLabels = new HashMap<VmType<?>, Label>();
 
     /**
+     * ANCHOR-L2-236 (conditional EDI pool): armed by the L2 stack frame for
+     * a method whose body may allocate EDI. While ediBody is set, every
+     * statics reader the emitter can produce is counted as a violation.
+     */
+    private boolean ediPool;
+
+    private boolean ediBody;
+
+    /**
      * Create a new instance
      *
      * @param entryPoints
@@ -163,6 +173,8 @@ public class X86CompilerHelper {
     public void reset(X86Assembler x86Assembler, EntryPoints entryPoints) {
         this.os = x86Assembler;
         this.entryPoints = entryPoints;
+        this.ediPool = false;
+        this.ediBody = false;
     }
 
     /**
@@ -171,6 +183,36 @@ public class X86CompilerHelper {
     public final void reset() {
         classInitLabels.clear();
         debugLabelCounter = 0;
+        this.ediPool = false;
+        this.ediBody = false;
+    }
+
+    /**
+     * ANCHOR-L2-236: declare that the method being compiled pools EDI.
+     */
+    public final void setEdiPool(boolean ediPool) {
+        this.ediPool = ediPool;
+    }
+
+    /**
+     * ANCHOR-L2-236: arm/disarm the emission-time EDI reader guard. The L2
+     * frame arms it after emitHeader (the body region) and disarms it as
+     * the first line of emitTrailer (footer, entry loads, class-init and
+     * handler code all run with EDI holding the statics table).
+     */
+    public final void setEdiBody(boolean ediBody) {
+        this.ediBody = ediBody;
+    }
+
+    /**
+     * ANCHOR-L2-236: count a statics-register access emitted inside a
+     * pooled body. No-op unless the frame armed both flags, so the L1A,
+     * L1B and stub compilers sharing this helper are unaffected.
+     */
+    public final void ediGuard(String where) {
+        if (ediPool && ediBody) {
+            X86RegisterPool.noteEdiViolation(method, where);
+        }
     }
 
     /**
@@ -246,6 +288,7 @@ public class X86CompilerHelper {
      * @see X86JumpTable
      */
     public final void writeJumpTableCALL(int index) {
+        ediGuard("jumpTableCALL " + index);
         if (os.isCode64()) {
             index *= 2;
         }
@@ -266,6 +309,7 @@ public class X86CompilerHelper {
      * @see X86JumpTable
      */
     public final void writeJumpTableJMP(int index) {
+        ediGuard("jumpTableJMP " + index);
         if (os.isCode64()) {
             index *= 2;
         }
@@ -313,6 +357,7 @@ public class X86CompilerHelper {
      * @param method
      */
     public final void invokeJavaMethod(VmMethod method) {
+        ediGuard("invokeJavaMethod " + method.getName());
         final int offset = getSharedStaticsOffset(method);
         os.noteCallArgs(method.getArgSlotCount());
         os.writeCALL(STATICS, offset);
@@ -538,6 +583,7 @@ public class X86CompilerHelper {
      */
     public final void writeLoadSTATICS(Label curInstrLabel, String labelPrefix,
                                        boolean isTestOnly) {
+        ediGuard("loadSTATICS " + labelPrefix);
         final int offset = entryPoints.getVmProcessorSharedStaticsTable()
             .getOffset();
         if (isTestOnly) {
