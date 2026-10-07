@@ -91,6 +91,17 @@ module.exports = function createHelpers({ github, context, core }) {
 
   /** Forbidden diff paths: ASM, build config, plugin lists. Mirrors the resolver skill self-check. */
   var FORBIDDEN_DIFF_RE = /(^|\/)(core\/src\/native\/x86\/|jnode\.properties$|all\/build\.xml$|all\/conf\/)/;
+  var TEST_PATH_RE = /(^|\/)(src\/test\/|tests\/)/;
+
+  // Diff-size budgets. Production additions stay tightly capped because they
+  // are what can change runtime behaviour. Test additions get a much larger
+  // budget: a regression test for a small fix routinely exceeds the
+  // production budget on its own, and counting the test against the
+  // production cap rejected 7-line fixes for carrying their own tests.
+  var MAX_PROD_ADDITIONS = 100;
+  var MAX_TEST_ADDITIONS = 2000;
+  var MAX_PROD_FILES = 5;
+  var MAX_TEST_FILES = 20;
 
   /** True when the PR diff is small and touches no forbidden path. */
   async function isDiffSafe(prNumber) {
@@ -105,13 +116,27 @@ module.exports = function createHelpers({ github, context, core }) {
     }
     var list = files.data || [];
     if (list.length === 0 || list.length >= 100) return false;
-    if (list.length > 5) return false;
-    var additions = 0;
+
+    var prodAdditions = 0;
+    var testAdditions = 0;
+    var prodFiles = 0;
+    var testFiles = 0;
     for (var i = 0; i < list.length; i++) {
-      additions += list[i].additions || 0;
-      if (FORBIDDEN_DIFF_RE.test(list[i].filename || "")) return false;
+      var filename = list[i].filename || "";
+      if (FORBIDDEN_DIFF_RE.test(filename)) return false;
+      var additions = list[i].additions || 0;
+      if (TEST_PATH_RE.test(filename)) {
+        testAdditions += additions;
+        testFiles += 1;
+      } else {
+        prodAdditions += additions;
+        prodFiles += 1;
+      }
     }
-    return additions <= 100;
+    return prodAdditions <= MAX_PROD_ADDITIONS &&
+           testAdditions <= MAX_TEST_ADDITIONS &&
+           prodFiles <= MAX_PROD_FILES &&
+           testFiles <= MAX_TEST_FILES;
   }
 
   /** True when CI check runs on the PR head SHA show success and no failure. */

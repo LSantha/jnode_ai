@@ -8,16 +8,16 @@
  * by the Free Software Foundation; either version 2.1 of the License, or
  * (at your option) any later version.
  *
- * This library is distributed in the hope that it will be useful, but 
+ * This library is distributed in the hope that it will be useful, but
  * WITHOUT ANY WARRANTY; without even the implied warranty of MERCHANTABILITY
- * or FITNESS FOR A PARTICULAR PURPOSE. See the GNU Lesser General Public 
+ * or FITNESS FOR A PARTICULAR PURPOSE. See the GNU Lesser General Public
  * License for more details.
  *
  * You should have received a copy of the GNU Lesser General Public License
- * along with this library; If not, write to the Free Software Foundation, Inc., 
+ * along with this library; If not, write to the Free Software Foundation, Inc.,
  * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
  */
- 
+
 package org.jnode.test;
 
 import org.jnode.plugin.model.PluginDescriptorModelTest;
@@ -41,13 +41,19 @@ import org.junit.runners.Suite.SuiteClasses;
 @RunWith(Suite.class)
 @SuiteClasses({
     NumberUtilsTest.class,
+    ResourceTest.class,
     SignatureTest.class,
     VersionTest.class,
     TryFinallyTest.class,
     VarArgsTest.class,
+    ForEachTest.class,
+    ViewMethodTest.class,
+    DoubleTest.class,
+    WaitTest.class,
     JavaCommandParserTest.class,
     ThreadingTestJUnit4.class,
     X86RegisterPoolTest.class,
+    X86StreamTest.class,
     L2HostTest.class,
     L2ModeMatrixTest.class,
     L2PipelineTest.class,
