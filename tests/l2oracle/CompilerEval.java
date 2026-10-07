@@ -1786,6 +1786,7 @@ public class CompilerEval {
                     bos.setResolver(new NullResolver());
                     c.compileBootstrap(method, bos, level);
                     size = bos.getLength();
+                    dumpBinaryIfWanted(c.getName(), method, bos.getBytes(), size);
                 } catch (Throwable t) {
                     size = 0;
                 }
@@ -1803,6 +1804,47 @@ public class CompilerEval {
             r.metrics.tags = "failed";
         }
         return r;
+    }
+
+    /**
+     * Property-gated binary dump for byte-level A/B diffs: when
+     * -Dceval.dump.spec=cls#name[,cls#name...] is set, every matching
+     * method's assembled bytes go to -Dceval.dump.dir/-Dceval.dump.tag.
+     * No effect unless the properties are present.
+     */
+    static void dumpBinaryIfWanted(String compiler, VmMethod method,
+        byte[] bytes, int size) {
+        final String spec = System.getProperty("ceval.dump.spec");
+        if (spec == null) {
+            return;
+        }
+        final String cls = method.getDeclaringClass().getName();
+        final String key = cls + "#" + method.getMangledName();
+        final String plain = cls + "#" + method.getName();
+        boolean hit = false;
+        final String[] parts = spec.split(",");
+        for (int i = 0; i < parts.length; i++) {
+            if (parts[i].length() > 0 && plain.contains(parts[i])) {
+                hit = true;
+                break;
+            }
+        }
+        if (!hit) {
+            return;
+        }
+        try {
+            final String dir = System.getProperty("ceval.dump.dir",
+                "/tmp/opencode/dumps");
+            final String tag = System.getProperty("ceval.dump.tag", "x");
+            new java.io.File(dir).mkdirs();
+            final String safe = key.replaceAll("[^A-Za-z0-9#]", "_");
+            final java.io.FileOutputStream fos = new java.io.FileOutputStream(
+                dir + "/" + tag + "-" + safe + "-" + compiler + ".bin");
+            fos.write(bytes, 0, size);
+            fos.close();
+        } catch (java.io.IOException t) {
+            System.err.println("ceval.dump failed for " + key + ": " + t);
+        }
     }
 
     static List<VmMethod> collectMethods(String className) throws Exception {
