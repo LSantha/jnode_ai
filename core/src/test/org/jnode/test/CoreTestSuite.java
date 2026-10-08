@@ -48,8 +48,8 @@ import org.junit.runners.Suite.SuiteClasses;
     WaitTest.class,
     JavaCommandParserTest.class,
     ThreadingTestJUnit4.class,
-    X86RegisterPoolTest.class,
     X86Level1ACompilerVisitorTest.class,
+    X86RegisterPoolTest.class,
     X86StreamTest.class,
 }
 )
