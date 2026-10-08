@@ -84,13 +84,23 @@ public final class X86Level1ACompiler extends AbstractX86Compiler {
     /**
      * Should this compiler try to inline methods?
      */
-    private final boolean inlineMethods = true;
+    private final boolean inlineMethods;
     private final VmIsolateLocal<MagicHelper> magicHelperHolder = new VmIsolateLocal<MagicHelper>();
 
     /**
      * Initialize this instance.
      */
     public X86Level1ACompiler() {
+        this(true);
+    }
+
+    /**
+     * Initialize this instance.
+     *
+     * @param inlineMethods should this compiler try to inline methods?
+     */
+    X86Level1ACompiler(boolean inlineMethods) {
+        this.inlineMethods = inlineMethods;
     }
 
     private final ThreadLocal<X86BytecodeVisitor> byteCodeVisitorHolder = new ThreadLocal<X86BytecodeVisitor>();
@@ -129,13 +139,10 @@ public final class X86Level1ACompiler extends AbstractX86Compiler {
 
     @Override
     protected synchronized void releaseBytecodeVisitor(CompilerBytecodeVisitor visitor) {
-        X86BytecodeVisitor bv;
-        if (inlineMethods) {
-            bv = (X86BytecodeVisitor) ((OptimizingBytecodeVisitor) visitor).getDelegate();
-        } else {
-            bv = (X86BytecodeVisitor) visitor;
+        final X86BytecodeVisitor bv = unwrapBytecodeVisitor(visitor);
+        if (bv != null) {
+            byteCodeVisitorHolder.set(bv);
         }
-        byteCodeVisitorHolder.set(bv);
     }
 
     @Override
