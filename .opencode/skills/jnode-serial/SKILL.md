@@ -100,6 +100,29 @@ the guest into job-control key events (same as VGA). The mux also replugs
 the pipe server itself if a batch is in flight but zero bytes arrive for
 180s (silent VBox UART freeze) — check the mux log for `replugging pipe`.
 
+## Bounded retries and abandon
+
+A command is re-sent when its marker echo is lost, when the link
+reconnects, or after a wedge replug. Every re-send goes through one
+bounded funnel, so a dead client or an unrecoverable command dies in
+seconds instead of being replayed until the 1200s request timeout (an
+unbounded replay storm ran the same failing command ~10x/s on the guest
+and OOM-ed the JNode heap, one proclet per execution — #749):
+
+| Guard | Value | Behaviour when hit |
+|---|---|---|
+| `MAX_RESENDS_PER_CMD` | 3 | `ERROR resend limit exceeded (3)` + ETX |
+| `MIN_RESEND_INTERVAL` | 2.0s | resend deferred, never faster |
+| client liveness | request `pid` checked via `os.kill(pid, 0)` | `ERROR client <pid> died` + ETX |
+| `MAX_CAPTURE_BYTES` | 512 KiB | `ERROR output overflow (> 524288 bytes)` + ETX |
+
+An abandon always sends ETX so the guest stops the stuck command, and the
+mux stays attached for the next batch. In the log:
+`batch <reqid> abandoned: <reason>` followed by `sent ETX on abandon`.
+
+Resend tests (fake guest shell, no VM needed):
+`python3 -m unittest discover -s .opencode/skills/jnode-serial/tests`
+
 ## Usage examples
 
 ```bash
@@ -122,6 +145,8 @@ python3 $S/serial_cmd.py "javac /jnode/tmp/ox/Hi.java" "java -cp /jnode/tmp/ox H
 - `scripts/serial_mux.py` — persistent single-client proxy daemon (auto-started by the client; command queue, prompt framing, reconnect + VBox replug recovery)
 - `scripts/serial_cmd.py` — agent CLI client (same UX as the legacy script, plus `--write`, `--timeout`, `--status`, `--stop`, `--restart`)
 - `scripts/jnode_agent_cmd.py` — LEGACY one-shot script (one connection per call). Kept for compatibility (other skills reference it). Prefer `serial_cmd.py`: every legacy call cycles the pipe and risks the VBox stall above.
+- `tests/test_serial_mux.py` — unit tests for the resend/abandon gate (`resend_gate`, `client_alive`)
+- `tests/test_serial_mux_live.py` — replay tests: boots the real mux against a fake guest shell on a unix socket and drives the incident modes (dead client, resend cap, output flood, link survival)
 
 ## Multi-line file writes
 
@@ -183,6 +208,7 @@ It reports the expected size and runs `wc -c` to verify. Use this for large or q
 3. **State persists in the shell** - The JNode shell is one persistent process; `cd` and `classpath --add` survive across calls (verified). Commands don't: there is no `&&`, send multiple commands as separate arguments of one batch.
 4. **JNode shell has no `&&`** - use separate commands
 5. **No silence timeout** - the mux waits for the prompt however long the command takes (up to `--timeout`, default 1200s). Silent multi-minute `javac` runs are fine.
+6. **Bounded output** - a single command whose output exceeds 512 KiB is abandoned with ETX (`ERROR output overflow`). Never `cat` a multi-MB file; use `wc -c`, `ls -l`, or copy the file out with `--write`-style single-line commands instead.
 
 ## Boot entry selection
 

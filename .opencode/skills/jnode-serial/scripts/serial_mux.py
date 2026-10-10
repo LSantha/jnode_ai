@@ -29,6 +29,13 @@ The guest agent console does not echo input, so the capture is exactly
 the command's output. No silence timeout: a command completes on
 END-marker + prompt, however long that takes (up to the request timeout).
 
+Bounded retries: every re-send of an in-flight command goes through one
+funnel (MAX_RESENDS_PER_CMD + MIN_RESEND_INTERVAL) and requires a live
+client pid, and a command whose output exceeds MAX_CAPTURE_BYTES is
+abandoned. A dead client or an unrecoverable command must die in
+seconds, not be replayed until the request timeout (that replay storm
+spawned a guest proclet per execution and OOM-ed the JNode heap).
+
 Self-healing: on FIN/RST/EPIPE the mux reconnects with backoff. If new
 attaches are FINed immediately (the VBox stuck signature), it resets the
 pipe server at runtime (no power cycle):
@@ -68,12 +75,25 @@ REPLUG_AFTER_FINS = 3
 # arrives for this long. The guest always answers a fresh command with the
 # BEGIN-marker echo within seconds, so total RX silence means the VBox UART
 # itself wedged (observed with no log line at all). Replug is harmless to a
-# healthy guest; the in-flight command is resent afterwards (it may run
-# twice -- documented caveat, same as reconnect-resend).
+# healthy guest; the in-flight command is resent afterwards, bounded by
+# MAX_RESENDS_PER_CMD like every other re-send.
 WEDGE_SILENCE = 180.0
 # Replug at most this often (seconds) to avoid hammering VBox.
 REPLUG_MIN_INTERVAL = 15.0
 DEFAULT_REQ_TIMEOUT = 1200.0
+# Re-send an in-flight command at most this many times (per command).
+# Every resend may execute the command again on the guest, so the count
+# is hard-capped; exceeding it abandons the request with ETX.
+MAX_RESENDS_PER_CMD = 3
+# Minimum delay (seconds) between two sends of the same command.
+MIN_RESEND_INTERVAL = 2.0
+# Capture cap per command. An error flood (or a large `cat`) can drown
+# the END marker, so the command can never complete and the mux used to
+# re-send it forever. Overflow abandons the request with ETX.
+MAX_CAPTURE_BYTES = 512 * 1024
+# Idle RX buffer cap: after an abandon the guest keeps emitting the stuck
+# command's output while no request is in flight.
+IDLE_BUF_LIMIT = 4096
 
 
 def log(msg):
@@ -227,6 +247,36 @@ class Link(object):
         return False
 
 
+def client_alive(pid):
+    """True if the submitting client is still running (no pid = unknown)."""
+    if not pid:
+        return True
+    try:
+        os.kill(int(pid), 0)
+    except (OSError, ValueError, TypeError):
+        return False
+    return True
+
+
+def resend_gate(sends, last_send, pid, now):
+    """Gate every (re)send of an in-flight command.
+
+    Returns (action, status):
+      ("send", None)    -- go ahead
+      ("defer", None)   -- rate limit not elapsed, retry on a later tick
+      ("abandon", why)  -- give up on the request, never resend again
+    """
+    if sends <= 0:
+        return ("send", None)
+    if not client_alive(pid):
+        return ("abandon", "client %s died" % pid)
+    if sends > MAX_RESENDS_PER_CMD:
+        return ("abandon", "resend limit exceeded (%d)" % MAX_RESENDS_PER_CMD)
+    if now - last_send < MIN_RESEND_INTERVAL:
+        return ("defer", None)
+    return ("send", None)
+
+
 def prune_respdir():
     now = time.time()
     try:
@@ -289,7 +339,9 @@ def main():
             timeout = float(data.get("timeout", DEFAULT_REQ_TIMEOUT))
             return {"reqid": reqid, "cmds": list(cmds),
                     "timeout": timeout, "start": time.time(),
+                    "pid": data.get("pid"),
                     "idx": 0, "phase": "idle", "lines": b"",
+                    "sends": 0, "last_send": 0.0, "captured": 0,
                     "out": open(os.path.join(RESPDIR, reqid + ".out"),
                                 "ab", buffering=0)}
         except Exception as e:
@@ -318,8 +370,43 @@ def main():
         except OSError:
             pass
 
+    def abandon(req, status):
+        """Give up on req: ETX the stuck command, drop its buffers, report.
+
+        The caller must set cur = None afterwards.
+        """
+        log("batch %s abandoned: %s" % (req["reqid"], status))
+        try:
+            link.send_blob(b"\x03")
+            log("sent ETX on abandon")
+        except (IOError, OSError) as e:
+            log("abandon ETX failed: %s" % e)
+        link.buf = b""
+        req["lines"] = b""
+        finish_request(req, "ERROR " + status)
+
     def start_next_cmd(req):
-        """Send BEGIN + command + END lines for req cmds[req idx]."""
+        """Send BEGIN + command + END lines for req cmds[req idx].
+
+        Single funnel for the initial send and every resend (prompt
+        without marker, reconnect resync, wedge-replug resync). Resends
+        are capped and rate limited, and require a live client, so a dead
+        client or an unrecoverable command is abandoned in seconds
+        instead of being replayed until the request timeout.
+
+        Returns True when the command is on the wire, None when the rate
+        limit defers the send to the next loop iteration, and False when
+        the request was abandoned.
+        """
+        sent = req["sends"]
+        action, status = resend_gate(sent, req["last_send"], req["pid"],
+                                     time.time())
+        if action == "abandon":
+            abandon(req, status)
+            return False
+        if action == "defer":
+            req["phase"] = "wait_send"
+            return None
         cid = "%s_%02d" % (req["reqid"], req["idx"])
         req["cid"] = cid
         req["bmark"] = ("__JSM_B_" + cid + "__").encode("ascii")
@@ -330,7 +417,10 @@ def main():
         blob = ("echo __JSM_B_" + cid + "__\r\n" + cmd + "\r\n"
                 + "echo __JSM_E_" + cid + "__\r\n").encode("utf-8",
                                                           "replace")
+        req["sends"] = sent + 1
+        req["last_send"] = time.time()
         link.send_blob(blob)
+        return True
 
     def emit(req, data, flush=False):
         """Write complete, meaningful lines to the response file.
@@ -354,7 +444,11 @@ def main():
                                                       "replace"))
 
     def process_stream(req):
-        """Consume link.buf; returns True when current command is done."""
+        """Consume link.buf.
+
+        Returns "done" when the current command is complete, "gone" when
+        the request was abandoned, "more" otherwise.
+        """
         bmark = req["bmark"]
         emark = req["emark"]
         if req["phase"] == "wait_begin":
@@ -364,11 +458,12 @@ def main():
                 if len(link.buf) > 256:
                     link.buf = link.buf[-256:]
                 # Prompt without marker: shell ready but echo lost;
-                # re-send markers rather than hang.
+                # re-send markers rather than hang (resend-bounded).
                 if PROMPT in link.buf:
                     link.buf = b""
-                    start_next_cmd(req)
-                return False
+                    if start_next_cmd(req) is False:
+                        return "gone"
+                return "more"
             link.buf = link.buf[i + len(bmark):]
             req["phase"] = "capture"
         if req["phase"] == "capture":
@@ -380,17 +475,17 @@ def main():
                 if len(link.buf) > keep:
                     emit(req, link.buf[:-keep].replace(b"\r", b""))
                     link.buf = link.buf[-keep:]
-                return False
+                return "more"
             emit(req, link.buf[:j].replace(b"\r", b""), flush=True)
             link.buf = link.buf[j + len(emark):]
             req["phase"] = "wait_prompt"
         if req["phase"] == "wait_prompt":
             k = link.buf.find(PROMPT)
             if k < 0:
-                return False
+                return "more"
             link.buf = link.buf[k + len(PROMPT):]
-            return True
-        return False
+            return "done"
+        return "more"
 
     link_up = False
     pending_sig = None
@@ -470,6 +565,21 @@ def main():
             else:
                 link.buf += d
                 last_rx = time.time()
+                if cur is None:
+                    # Idle: a stuck command abandoned earlier may still
+                    # spew output; never grow the buffer without a request.
+                    if len(link.buf) > IDLE_BUF_LIMIT:
+                        link.buf = link.buf[-IDLE_BUF_LIMIT:]
+                else:
+                    # Flood guard: an error flood (or a large cat) can
+                    # drown the END marker, so the command can never
+                    # complete and every resend repeats the flood.
+                    cur["captured"] += len(d)
+                    if cur["captured"] > MAX_CAPTURE_BYTES:
+                        abandon(cur, "output overflow (> %d bytes)"
+                                % MAX_CAPTURE_BYTES)
+                        cur = None
+                        continue
 
         if link.sock is None:
             if link_up:
@@ -524,10 +634,13 @@ def main():
                         continue
                 if cur is not None:
                     # Resync: fresh prompt then (re)send current command.
+                    # start_next_cmd may abandon the request (dead client
+                    # / resend cap), so re-check cur afterwards.
                     cur["phase"] = "idle"
                     link.buf = b""
                     try:
-                        start_next_cmd(cur)
+                        if start_next_cmd(cur) is False:
+                            cur = None
                     except (IOError, OSError) as e:
                         log("resend failed after link up: %s" % e)
                         link.close()
@@ -582,19 +695,27 @@ def main():
                 link.buf = b""
                 continue
             try:
-                if cur["phase"] == "idle":
-                    start_next_cmd(cur)
-                elif process_stream(cur):
-                    cur["idx"] += 1
-                    cmd_count += 1
-                    last_rx = time.time()
-                    write_status(pid, "up", cmd_count)
-                    if cur["idx"] >= len(cur["cmds"]):
-                        finish_request(cur, "OK %d" % len(cur["cmds"]))
-                        log("batch %s done" % cur["reqid"])
+                if cur["phase"] in ("idle", "wait_send"):
+                    # False = abandoned, None = rate-limit deferred.
+                    if start_next_cmd(cur) is False:
                         cur = None
-                    else:
-                        cur["phase"] = "idle"
+                else:
+                    st = process_stream(cur)
+                    if st == "gone":
+                        cur = None
+                    elif st == "done":
+                        cur["idx"] += 1
+                        cmd_count += 1
+                        last_rx = time.time()
+                        write_status(pid, "up", cmd_count)
+                        if cur["idx"] >= len(cur["cmds"]):
+                            finish_request(cur, "OK %d" % len(cur["cmds"]))
+                            log("batch %s done" % cur["reqid"])
+                            cur = None
+                        else:
+                            cur["phase"] = "idle"
+                            cur["sends"] = 0
+                            cur["captured"] = 0
             except (IOError, OSError) as e:
                 log("link lost during batch %s: %s" % (cur["reqid"], e))
                 link.close()

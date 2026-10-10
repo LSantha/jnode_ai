@@ -11,6 +11,10 @@ Same UX as the legacy jnode_agent_cmd.py, but commands run through
 serial_mux.py (one persistent pipe client): no per-command connects,
 no silence timeout, multi-minute compiles just work. The mux is started
 automatically if it is not running.
+
+The submitting pid is recorded in the request json so the mux can tell
+a live client from a dead one and stop re-sending an in-flight command
+into a guest that has nobody left to answer it.
 """
 
 import json
@@ -167,7 +171,8 @@ def submit(cmds, timeout):
     reqid = "%x%x" % (time.time_ns(), random.getrandbits(32))
     reqpath = os.path.join(REQDIR, reqid + ".json")
     with open(reqpath, "w") as f:
-        json.dump({"cmds": cmds, "timeout": timeout}, f)
+        json.dump({"cmds": cmds, "timeout": timeout,
+                   "pid": os.getpid()}, f)
     # Wake the mux (non-blocking; it also polls, so a full fifo is fine).
     try:
         fd = os.open(FIFO, os.O_WRONLY | os.O_NONBLOCK)
