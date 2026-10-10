@@ -20,6 +20,8 @@
  
 package org.jnode.vm.compiler.ir;
 
+import java.util.ArrayList;
+import java.util.Iterator;
 import java.util.List;
 import org.jnode.vm.compiler.ir.quad.BranchQuad;
 import org.jnode.vm.compiler.ir.quad.LookupswitchQuad;
@@ -156,6 +158,17 @@ public class IRBasicBlock<T> {
     }
 
     /**
+     * ANCHOR-L2-237: the raw array without the lazy idominator-inherit.
+     * MethodInliner inspects callee CFGs whose dominance has not been
+     * computed, where the inherit would dereference a null idominator.
+     *
+     * @return the array, or null when this block has none yet
+     */
+    Variable<T>[] rawVariables() {
+        return variables;
+    }
+
+    /**
      * @param variables new variables for the basic block
      */
     public void setVariables(Variable<T>[] variables) {
@@ -275,13 +288,44 @@ public class IRBasicBlock<T> {
         quads.add(at, q);
     }
 
-    private void addDef(Quad<T> q) {
+    /**
+     * ANCHOR-L2-237: package-visible so a block split (method inlining)
+     * can rebuild a def list after tail quads move out; add/insertQuadAt
+     * keep calling it as before.
+     *
+     * @param q the quad
+     */
+    void addDef(Quad<T> q) {
         Operand<T> def = q.getDefinedOp();
         if (def instanceof Variable &&
             !defList.contains(def)) {
 
             defList.add(def);
         }
+    }
+
+    /**
+     * ANCHOR-L2-237: true for a block spliced in from a callee by
+     * MethodInliner. placePhiFunctions uses it to keep a shifted
+     * (callee-domain) variable's phi inside the grafted run: a callee
+     * variable is never read by caller quads, so a phi for it outside the
+     * run would be born dead on a caller block whose variables array does
+     * not reach that index.
+     */
+    private boolean inlinedBody;
+
+    /**
+     * @return true if this block came from an inlined callee (L2-237)
+     */
+    public boolean isInlinedBody() {
+        return inlinedBody;
+    }
+
+    /**
+     * @param inlined true if this block came from an inlined callee
+     */
+    public void setInlinedBody(boolean inlined) {
+        this.inlinedBody = inlined;
     }
 
     /**
@@ -353,15 +397,59 @@ public class IRBasicBlock<T> {
         postOrderNumber = i;
     }
 
+    /**
+     * ANCHOR-L2-238: append every block reachable from {@code this} to
+     * {@code list} in post-order, numbering blocks as they are finished.
+     *
+     * <p>This used to recurse once per CFG edge on the CALLER's thread
+     * stack. Every guest thread stack is only
+     * {@code VmThread.DEFAULT_STACK_SLOTS} = 16K slots = 64KB on 32-bit,
+     * while the L2 pipeline routinely builds methods with 1000+ blocks
+     * (measured in the census: GenericX86CodeGenerator.generateBinaryOP
+     * 1810, Thinlet.paint 1750, generateCodeFor 1391 -- Thinlet is AWT's
+     * toolkit, so the all-plugins boot compiles them while the shell is
+     * coming up). On such a method the recursive walk threw
+     * StackOverflowError from the middle of a JIT compile; observed
+     * 2026-10-09 booting the L2/L2 all-plugins image: a caught
+     * StackOverflowError whose trace showed computePostOrder all the way
+     * down, immediately followed by {@code Fatal stack overflow ... Real
+     * panic: int_die_halt!}. The census and every host-side build pass
+     * only because the host JVM's stack is an order of magnitude larger.
+     *
+     * <p>The explicit stack below is a line-for-line translation of the
+     * recursive form: mark-on-push is the old {@code
+     * setPostOrderNumber(0)} entry mark (so a successor edge back to an
+     * in-progress block is still skipped by the {@code < 0} test), and
+     * finish-on-pop runs the old {@code postOrderCounter++} epilogue.
+     * The visit order, the numbering and the emitted list are therefore
+     * identical to the recursive version; only the stack frame is gone.
+     *
+     * @param list receives the blocks in post-order
+     */
     public void computePostOrder(List<IRBasicBlock<T>> list) {
+        final ArrayList<IRBasicBlock<T>> path = new ArrayList<IRBasicBlock<T>>();
+        final ArrayList<Iterator<IRBasicBlock<T>>> cursors =
+            new ArrayList<Iterator<IRBasicBlock<T>>>();
         setPostOrderNumber(0);
-        for (IRBasicBlock<T> b : successors) {
-            if (b.getPostOrderNumber() < 0) {
-                b.computePostOrder(list);
+        path.add(this);
+        cursors.add(successors.iterator());
+        while (!path.isEmpty()) {
+            final int top = path.size() - 1;
+            final Iterator<IRBasicBlock<T>> cursor = cursors.get(top);
+            if (cursor.hasNext()) {
+                final IRBasicBlock<T> b = cursor.next();
+                if (b.getPostOrderNumber() < 0) {
+                    b.setPostOrderNumber(0);
+                    path.add(b);
+                    cursors.add(b.successors.iterator());
+                }
+            } else {
+                final IRBasicBlock<T> done = path.remove(top);
+                cursors.remove(top);
+                done.setPostOrderNumber(postOrderCounter++);
+                list.add(done);
             }
         }
-        setPostOrderNumber(postOrderCounter++);
-        list.add(this);
     }
 
     public void printDomTree() {

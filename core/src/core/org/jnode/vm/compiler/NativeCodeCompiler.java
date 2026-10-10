@@ -50,13 +50,15 @@ import org.vmmagic.unboxed.Address;
 public abstract class NativeCodeCompiler extends VmSystemObject {
 
     /**
-     * ANCHOR-L2-129: boot-image crash attribution aid. When this system
-     * property is set (host build JVM), compileBootstrap logs one
+     * ANCHOR-L2-129: boot-image crash attribution aid. When this build flag
+     * is set (-Djnode.dump.methodmap=true), compileBootstrap logs one
      * [methodmap] line per compiled method with its final boot-image
      * address, giving a complete EIP->method map for KDB crash logs.
+     * Generated CompilerFlags constant: safe against the preInit nested
+     * read window (see org.jnode.vm.compiler.EarlyFlags).
      */
     public static final boolean DUMP_METHOD_MAP =
-        Boolean.getBoolean("jnode.dump.methodmap");
+        "true".equalsIgnoreCase(CompilerFlags.L2_DUMP_METHODMAP);
 
     /**
      * Compile the given method during bootstrapping

@@ -154,6 +154,13 @@
           tofile="${my-gen.dir}/org/jnode/security/JNodeSecurityManagerSettings.java">
         <token name="@jnode.security.enabled@" value="${jnode.security.enabled}"/>
     </template>
+    <template file="${my-src.dir}/template/org/jnode/vm/compiler/CompilerFlags.java"
+          tofile="${my-gen.dir}/org/jnode/vm/compiler/CompilerFlags.java">
+        <token name="@jnode.l2.inline@" value="${jnode.l2.inline}"/>
+        <token name="@jnode.l2.inline.dump@" value="${jnode.l2.inline.dump}"/>
+        <token name="@jnode.l2.ssatag@" value="${jnode.l2.ssatag}"/>
+        <token name="@jnode.dump.methodmap@" value="${jnode.dump.methodmap}"/>
+    </template>
   </target>
 
   <!-- Compile all subproject java files -->

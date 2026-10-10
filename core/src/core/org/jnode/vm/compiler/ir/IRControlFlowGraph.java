@@ -32,6 +32,7 @@ import org.jnode.util.ObjectArrayIterator;
 import org.jnode.vm.bytecode.BytecodeParser;
 import org.jnode.vm.classmgr.VmByteCode;
 import org.jnode.vm.classmgr.VmInterpretedExceptionHandler;
+import org.jnode.vm.compiler.CompilerFlags;
 import org.jnode.vm.compiler.ir.quad.ArrayAssignQuad;
 import org.jnode.vm.compiler.ir.quad.ArrayLengthAssignQuad;
 import org.jnode.vm.compiler.ir.quad.ArrayStoreQuad;
@@ -97,7 +98,13 @@ public class IRControlFlowGraph<T> implements Iterable<IRBasicBlock<T>> {
     // dominance frontier had already phi-covered are excluded by the check).
     public static int p18InterBlock = 0;
     public static String p18First = "";
-    static final boolean SSATAG_LOG = Boolean.getBoolean("jnode.l2.ssatag");
+    // Generated CompilerFlags constant, not Boolean.getBoolean and not an
+    // EarlyFlags read: this clinit is the one that can run FIRST at boot
+    // (the l237c chain, ANCHOR-L2-237) and also the one a nested preInit
+    // compile can reach second -- a build-substituted literal needs no
+    // properties table at all, in either the bake or the guest.
+    static final boolean SSATAG_LOG =
+        "true".equalsIgnoreCase(CompilerFlags.L2_SSATAG);
 
     private SSAStack<T>[] renumberArray;
     private IRBasicBlock<T>[] bblocks;
@@ -136,6 +143,36 @@ public class IRControlFlowGraph<T> implements Iterable<IRBasicBlock<T>> {
      */
     private Map<Quad<T>, Integer> bcQuadAddresses;
     private int nextSyntheticBlockPC = Integer.MIN_VALUE;
+    /**
+     * ANCHOR-L2-237: the first slot index owned by inlined-callee
+     * variables (MethodInliner shifts them past the caller's space).
+     * Integer.MAX_VALUE when nothing has been inlined, which makes the
+     * placePhiFunctions domain guard inert.
+     */
+    private int inlinedVarBase = Integer.MAX_VALUE;
+
+    /**
+     * ANCHOR-L2-237: a fresh synthetic pre-fixup address, unique among
+     * blocks and quads because the inliner, the entry preheader and the
+     * critical-edge split all draw from this one counter. Pre-fixup only:
+     * {@link #fixupAddresses()} renumbers everything densely afterwards.
+     *
+     * @return the next synthetic address
+     */
+    public int newSyntheticPC() {
+        return nextSyntheticBlockPC++;
+    }
+
+    /**
+     * ANCHOR-L2-237: tell the phi placer where the callee slot domain
+     * starts, so a shifted definition cannot merge outside the grafted
+     * run. Call after splicing, before constructSSA.
+     *
+     * @param base the first callee-domain slot index
+     */
+    public void setInlinedVarBase(int base) {
+        this.inlinedVarBase = base;
+    }
 
     /**
      * Create a new instance
@@ -678,6 +715,19 @@ public class IRControlFlowGraph<T> implements Iterable<IRBasicBlock<T>> {
 
     public void computeDominance(VmByteCode bytecode) {
         postOrderList = new BootableArrayList<IRBasicBlock<T>>();
+        // ANCHOR-L2-237: computePostOrder marks blocks by postOrderNumber
+        // and only descends into successors still at -1, so without this
+        // reset a SECOND computeDominance call (MethodInliner recomputes
+        // after splicing) would visit only the start block, the fixpoint
+        // would run on a one-element list, and every idom would silently
+        // stay at its pre-splice value: the graft would hang off the null
+        // idom fallback and the handler blocks (stale children of an early
+        // block) would rename before the continuation -- their never-popped
+        // ExceptionArgument then poisons the shared slot for every use the
+        // splice moved behind them.
+        for (IRBasicBlock<T> b : bblocks) {
+            b.setPostOrderNumber(-1);
+        }
         startBlock.computePostOrder(postOrderList);
         doComputeDominance(bytecode);
         computeDominanceFrontier();
@@ -702,6 +752,13 @@ public class IRControlFlowGraph<T> implements Iterable<IRBasicBlock<T>> {
      */
     private void doComputeDominance(VmByteCode bytecode) {
         // This is critical, must be done in reverse postorder
+        // ANCHOR-L2-237: drop stale idoms from a previous run (the splice
+        // changes the graph), so the fixpoint rebuilds the tree instead of
+        // intersecting against pre-splice parent chains. computeDominance
+        // rebuilds the dominated lists afterwards.
+        for (IRBasicBlock<T> b : bblocks) {
+            b.setIDominator(null);
+        }
         startBlock.setIDominator(startBlock);
         boolean changed = true;
         while (changed) {
@@ -840,9 +897,21 @@ public class IRControlFlowGraph<T> implements Iterable<IRBasicBlock<T>> {
     public void constructSSA() {
         Variable<T>[] vars = startBlock.getVariables();
         int nvars = vars.length;
+        // ANCHOR-L2-237: an inlined callee contributes variables whose slot
+        // indices were shifted past the caller's array (MethodInliner), so
+        // the version array must cover every block's slot space, not just
+        // the entry array's. Every definition and read resolves through
+        // renumberArray[getIndex()]; a callee local beyond vars.length used
+        // to mean an ArrayIndexOutOfBoundsException at rename time.
+        for (IRBasicBlock<T> b : bblocks) {
+            Variable<T>[] bv = b.getVariables();
+            if (bv != null && bv.length > nvars) {
+                nvars = bv.length;
+            }
+        }
         renumberArray = new SSAStack[nvars];
         // Push method arguments on the stack since they are not assigned
-        for (int i = 0; i < nvars; i += 1) {
+        for (int i = 0; i < vars.length; i += 1) {
             Variable<T> vi = vars[i];
             SSAStack<T> st = getStack(vi);
             if (vi instanceof MethodArgument) {
@@ -1150,16 +1219,38 @@ public class IRControlFlowGraph<T> implements Iterable<IRBasicBlock<T>> {
     }
 
     /**
+     * ANCHOR-L2-237: package-visible now; MethodInliner needs the layout
+     * index of the split block to place the grafted run.
+     *
      * @param block a block of {@code bblocks}
      * @return its position in {@code bblocks}
      */
-    private int blockIndexOf(IRBasicBlock<T> block) {
+    int blockIndexOf(IRBasicBlock<T> block) {
         for (int i = 0; i < bblocks.length; i++) {
             if (bblocks[i] == block) {
                 return i;
             }
         }
         throw new AssertionError("block not in bblocks: " + block);
+    }
+
+    /**
+     * ANCHOR-L2-237: splice a whole run of blocks (an inlined callee plus
+     * its continuation block) into the layout at {@code index}. Same
+     * array discipline as insertBasicBlock, bulk form.
+     *
+     * @param index the position to insert at
+     * @param run the blocks, in layout order
+     */
+    void graftBlocks(int index, IRBasicBlock<T>[] run) {
+        final int n = run.length;
+        IRBasicBlock<T>[] expanded =
+            (IRBasicBlock<T>[]) new IRBasicBlock[bblocks.length + n];
+        System.arraycopy(bblocks, 0, expanded, 0, index);
+        System.arraycopy(run, 0, expanded, index, n);
+        System.arraycopy(bblocks, index, expanded, index + n,
+            bblocks.length - index);
+        bblocks = expanded;
     }
 
     /**
@@ -2498,6 +2589,16 @@ public class IRControlFlowGraph<T> implements Iterable<IRBasicBlock<T>> {
                     && def.getIndex() >= dfb.getStackOffset()) {
                     continue;
                 }
+                // ANCHOR-L2-237: a shifted (callee-domain) definition may
+                // only merge inside the grafted run. Callee variables are
+                // never read by caller quads, so a phi for one at a caller
+                // join would be born dead -- and cannot even be built: a
+                // caller block's variables array does not reach the shifted
+                // index (newPhiVariable clones from it).
+                if (def.getIndex() >= inlinedVarBase
+                    && !dfb.isInlinedBody()) {
+                    continue;
+                }
                 Variable<T> phiVariable =
                     newPhiVariable(dfb, def.getIndex(), hasPhi);
                 if (phiVariable == null) {
@@ -2540,22 +2641,134 @@ public class IRControlFlowGraph<T> implements Iterable<IRBasicBlock<T>> {
     }
 
     /**
-     * @param block
+     * ANCHOR-L2-238: iterative dominator-tree rename walk.
+     *
+     * <p>This used to recurse once per DOMINATOR-TREE depth on the caller's
+     * thread stack. The dominator tree of a 1000+-block method (census:
+     * GenericX86CodeGenerator.generateBinaryOP 1810 blocks, Thinlet.paint
+     * 1750) is that deep in the worst case, and every guest thread stack is
+     * only {@code VmThread.DEFAULT_STACK_SLOTS} = 64KB on 32-bit: observed
+     * 2026-10-09 booting the L2/L2 all-plugins image, a caught
+     * StackOverflowError whose trace showed renameVariables all the way
+     * down, immediately followed by {@code Fatal stack overflow ... Real
+     * panic: int_die_halt!} -- the same panic shape as the recursive
+     * computePostOrder (also ANCHOR-L2-238), one pipeline stage later.
+     * Host-side census and AOT builds never see it because the host JVM
+     * stack is an order of magnitude larger.
+     *
+     * <p>The explicit stack below keeps the original order EXACTLY: frame
+     * state 0 runs the original entry code (handler-entry restore,
+     * doRenameVariables, rewritePhiParams on every successor, then -- for
+     * the root only -- descends into the orphan blocks first); state 1
+     * walks {@code getDominatedBlocks()} in list order, one child at a
+     * time; state 2 runs the original exit code ({@code popVariables} then
+     * the handlerPopped push-back). The shared {@code renumberArray} slot
+     * stacks are therefore mutated in the same order as under the
+     * recursion, child list included.
+     *
+     * @param block the dominator-tree root to start from
      */
     private void renameVariables(IRBasicBlock<T> block) {
-        // ANCHOR-L2-125: handler-entry local restore. On the exceptional
-        // edge into a handler, JVM locals hold their PRE-try values (the
-        // in-try astore never executed when the throwing call fired), but
-        // the SSA stack here reflects the normal path. Versions defined
-        // inside the try (def block is an exceptional pred of this handler)
-        // would be read after the handler from homes that are never written
-        // on that path (prolog-zeroed -> NULL; guest: b6 = b6.append(...) in
-        // try, always throws, post-catch append read NULL receiver ->
-        // monitorEnter NPE -> unwind monitorExit(null) NPE -> SOE in trace
-        // alloc -> panic). Pop those versions now; the handler body then
-        // renames against the pre-try tops, and the popped versions are
-        // pushed back AFTER popVariables (ANCHOR-L2-129) so sibling scopes
-        // renamed later see the pre-try values, not the handler's defs.
+        final java.util.ArrayList<RenameFrame> work =
+            new java.util.ArrayList<RenameFrame>();
+        work.add(new RenameFrame(block));
+        while (!work.isEmpty()) {
+            final RenameFrame frame = work.get(work.size() - 1);
+            if (!frame.entered) {
+                frame.entered = true;
+                frame.handlerPopped = enterRenameVariables(frame.block);
+                // ANCHOR-L2-193: the entry edge into a first-block loop
+                // header is a real block now (insertEntryPreheader), so its
+                // phi sources are bound by the successor loop below exactly
+                // like every other predecessor's.
+                doRenameVariables(frame.block);
+                for (IRBasicBlock<T> s : frame.block.getSuccessors()) {
+                    // ANCHOR-L2-131: pass the predecessor (the block being
+                    // renamed) so each source is tagged with the edge it
+                    // arrived on.
+                    rewritePhiParams(s, frame.block);
+                }
+                if (frame.block == startBlock) {
+                    // Orphans (no idom) are fully renamed BEFORE the
+                    // dominated children, exactly as in the recursive form,
+                    // and in bblocks order: the list is pushed reversed so
+                    // LIFO pops it forward, and the state-1 children cursor
+                    // only starts once this frame is resumed, i.e. after
+                    // every orphan subtree has completed.
+                    final java.util.ArrayList<IRBasicBlock<T>> orphans =
+                        new java.util.ArrayList<IRBasicBlock<T>>();
+                    for (IRBasicBlock<T> b : bblocks) {
+                        if (b.getIDominator() == null && b != startBlock) {
+                            orphans.add(b);
+                        }
+                    }
+                    for (int i = orphans.size() - 1; i >= 0; i--) {
+                        work.add(new RenameFrame(orphans.get(i)));
+                    }
+                }
+            } else if (frame.dominatedIndex < frame.block.getDominatedBlocks()
+                .size()) {
+                final IRBasicBlock<T> child = frame.block.getDominatedBlocks()
+                    .get(frame.dominatedIndex++);
+                if (child != frame.block) {
+                    work.add(new RenameFrame(child));
+                }
+            } else {
+                work.remove(work.size() - 1);
+                popVariables(frame.block);
+                if (frame.handlerPopped != null) {
+                    // ANCHOR-L2-129: restore the saved pre-try versions AFTER
+                    // the handler's own defs are popped (was: before the
+                    // recursion).
+                    // The old order pushed the pre-try versions ON TOP of the
+                    // handler's defs, so popVariables removed the restored
+                    // entries and the handler's def versions leaked onto the
+                    // slot stacks; any sibling scope renamed later (second
+                    // catch block reading a shared local) bound the leaked
+                    // version and read a never-written home at runtime
+                    // (0/null via prologue zeroing).
+                    for (int k = frame.handlerPopped.size() - 1; k >= 0; k--) {
+                        getStack(frame.handlerPopped.get(k)).push(
+                            frame.handlerPopped.get(k));
+                    }
+                }
+            }
+        }
+    }
+
+    /** One frame of the iterative rename walk; see renameVariables. */
+    private final class RenameFrame {
+        final IRBasicBlock<T> block;
+        java.util.ArrayList<Variable<T>> handlerPopped;
+        boolean entered;
+        int dominatedIndex;
+
+        RenameFrame(IRBasicBlock<T> block) {
+            this.block = block;
+        }
+    }
+
+    /**
+     * ANCHOR-L2-125: handler-entry local restore. On the exceptional
+     * edge into a handler, JVM locals hold their PRE-try values (the
+     * in-try astore never executed when the throwing call fired), but
+     * the SSA stack here reflects the normal path. Versions defined
+     * inside the try (def block is an exceptional pred of this handler)
+     * would be read after the handler from homes that are never written
+     * on that path (prolog-zeroed -> NULL; guest: b6 = b6.append(...) in
+     * try, always throws, post-catch append read NULL receiver ->
+     * monitorEnter NPE -> unwind monitorExit(null) NPE -> SOE in trace
+     * alloc -> panic). Pop those versions now; the handler body then
+     * renames against the pre-try tops, and the popped versions are
+     * pushed back AFTER popVariables (ANCHOR-L2-129) so sibling scopes
+     * renamed later see the pre-try values, not the handler's defs.
+     *
+     * @param block the handler-entry block being entered
+     * @return the popped pre-try versions to restore after the rename, or
+     *         null when the block is not a handler entry
+     */
+    private java.util.ArrayList<Variable<T>> enterRenameVariables(
+        IRBasicBlock<T> block) {
         java.util.ArrayList<Variable<T>> handlerPopped = null;
         if (block.isStartOfExceptionHandler()) {
             handlerPopped = new java.util.ArrayList<Variable<T>>();
@@ -2618,42 +2831,7 @@ public class IRControlFlowGraph<T> implements Iterable<IRBasicBlock<T>> {
                     new ExceptionArgument(Operand.REFERENCE, excSlot));
             }
         }
-        // ANCHOR-L2-193: the entry edge into a first-block loop header is a
-        // real block now (insertEntryPreheader), so its phi sources are bound
-        // by the successor loop below exactly like every other predecessor's.
-        doRenameVariables(block);
-        for (IRBasicBlock<T> b : block.getSuccessors()) {
-            // ANCHOR-L2-131: pass the predecessor (the block being renamed)
-            // so each source is tagged with the edge it arrived on.
-            rewritePhiParams(b, block);
-        }
-        if (block == startBlock) {
-            for (IRBasicBlock b : bblocks) {
-                if (b.getIDominator() == null && b != startBlock) {
-                    renameVariables(b);
-                }
-            }
-        }
-
-        for (IRBasicBlock<T> b : block.getDominatedBlocks()) {
-            if (b != block) {
-                renameVariables(b);
-            }
-        }
-        popVariables(block);
-        if (handlerPopped != null) {
-            // ANCHOR-L2-129: restore the saved pre-try versions AFTER the
-            // handler's own defs are popped (was: before the recursion).
-            // The old order pushed the pre-try versions ON TOP of the
-            // handler's defs, so popVariables removed the restored entries
-            // and the handler's def versions leaked onto the slot stacks;
-            // any sibling scope renamed later (second catch block reading
-            // a shared local) bound the leaked version and read a
-            // never-written home at runtime (0/null via prologue zeroing).
-            for (int k = handlerPopped.size() - 1; k >= 0; k--) {
-                getStack(handlerPopped.get(k)).push(handlerPopped.get(k));
-            }
-        }
+        return handlerPopped;
     }
 
     /**

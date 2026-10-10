@@ -1802,6 +1802,11 @@ public class CompilerEval {
             r.metrics.ok = false;
             r.metrics.failure = t.getClass().getSimpleName() + ": " + t.getMessage();
             r.metrics.tags = "failed";
+            if (System.getProperty("ceval.tracefail") != null) {
+                System.err.println("ceval.tracefail " + c.getName() + " "
+                    + method.getDeclaringClass().getName() + "." + method.getName());
+                t.printStackTrace(System.err);
+            }
         }
         return r;
     }

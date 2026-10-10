@@ -568,9 +568,19 @@ if want census; then
     # mode this session kept rediscovering.
     # NB: HJ is `java`, not `javac` -- compiling needs javac. The magic stubs
     # (/tmp/mghost/classes) are built by the hostref phase, which a host-only
-    # run does not execute, so build them here if they are missing.
-    if [ ! -d /tmp/mghost/classes ]; then
-      mkdir -p /tmp/mghost/classes
+    # run does not execute, so build them here if they are missing. Measured
+    # 2026-10-08: two gaps made this block look like it had run when it had
+    # not. The stub SOURCES in /tmp/mghost/src are written by hostref only,
+    # so without it Address.java failed on the missing org.jnode.vm package
+    # into /dev/null; and the guard keyed on the directory, which the failed
+    # run had already created, so the next run skipped the build forever.
+    # The verdict is now a real class file, and the stub sources are created
+    # here too (same two files hostref writes), so the census phase stands
+    # alone on a machine whose /tmp was wiped.
+    if [ ! -f /tmp/mghost/classes/org/vmmagic/unboxed/Word.class ]; then
+      mkdir -p /tmp/mghost/src/org/jnode/vm/classmgr /tmp/mghost/classes
+      printf "package org.jnode.vm;\npublic class VmAddress {\n}\n" > /tmp/mghost/src/org/jnode/vm/VmAddress.java
+      printf "package org.jnode.vm.classmgr;\npublic class VmType {\n}\n" > /tmp/mghost/src/org/jnode/vm/classmgr/VmType.java
       /home/levente/ext/prg/java/bin/javac -d /tmp/mghost/classes \
         -sourcepath core/src/vmmagic:core/src/classlib:/tmp/mghost/src \
         core/src/vmmagic/org/vmmagic/unboxed/Word.java \
@@ -585,11 +595,16 @@ if want census; then
         > /dev/null 2>&1
     fi
     rm -rf /tmp/probeclasses && mkdir -p /tmp/probeclasses
+    # The javac output is kept (not /dev/null): when it fails, the ONLY
+    # symptom used to be a bare PROBE CENSUS FAILED line from the
+    # Probes.class check below -- measured 2026-10-08, which said nothing
+    # about what was missing (ANCHOR-L2-187: a silent compile failure read
+    # as a lint verdict).
     /home/levente/ext/prg/java/bin/javac -nowarn -d /tmp/probeclasses \
       -cp /tmp/mghost/classes \
       -sourcepath core/src/vmmagic:core/src/classlib:/tmp/mghost/src \
       tests/l2oracle/Probes.java core/src/classlib/org/jnode/annotation/*.java \
-      > /dev/null 2>&1
+      > /tmp/probes-compile-'"$LABEL"'.log 2>&1
     pc_missing=0
     # ANCHOR-L2-194: add the one shape javac cannot emit -- a handler whose
     # FIRST instruction is athrow (ProxyGenerator rethrow fast path). The
@@ -605,6 +620,8 @@ if want census; then
       pc_missing=1
     fi
     if [ ! -f /tmp/probeclasses/Probes.class ]; then
+      echo "PROBE SHAPE COMPILE FAILED: Probes.class was not produced; javac said:"
+      tail -n 8 /tmp/probes-compile-'"$LABEL"'.log 2>/dev/null
       pc_missing=1
     else
       # ANCHOR-L2-187: this block read a variable the child sh never had.

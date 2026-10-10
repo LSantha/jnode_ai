@@ -46,6 +46,7 @@ import org.jnode.vm.compiler.ir.IRGenerator;
 import org.jnode.vm.compiler.ir.LinearScanAllocator;
 import org.jnode.vm.compiler.ir.LiveRange;
 import org.jnode.vm.compiler.ir.MethodArgument;
+import org.jnode.vm.compiler.ir.MethodInliner;
 import org.jnode.vm.compiler.ir.StackLocation;
 import org.jnode.vm.compiler.ir.Variable;
 import org.jnode.vm.compiler.ir.quad.AssignQuad;
@@ -153,6 +154,22 @@ public class X86Level2Compiler extends AbstractX86Compiler {
         }
         final X86CompilerHelper helper = x86cg.getHelper();
         final java.util.Map bcAddrs = cfg.getBcQuadAddresses();
+        // ANCHOR-L2-241: build the (method, bci, inlineDepth) address map
+        // as code is emitted, the way L1's startInstruction does. Without
+        // it every L2 frame resolves via pc 0, i.e. the method's first
+        // line (NpeTest: h1@3 instead of h1@4), and inlined bodies have
+        // no entries at all, so VmStackFrameEnumerator cannot attribute
+        // them or walk back to the call site. byteCodeAddress is the
+        // original bci for caller AND grafted callee quads; synthetic
+        // quads carry a negative pc (Integer.MIN_VALUE counter) and are
+        // skipped, so their range falls back to the preceding entry.
+        final CompiledMethod cm = x86cg.stackFrame.getCm();
+        final VmMethod topMethod = x86cg.getCurrentMethod();
+        final int codeStartOffset = x86cg.startOffset;
+        boolean anyEntry = false;
+        VmMethod lastEntryMethod = null;
+        int lastEntryBci = 0;
+        int lastEntryDepth = 0;
         for (IRBasicBlock b : ((Iterable<? extends IRBasicBlock>) cfg)) {
 //            System.out.println();
 //            System.out.println(b);
@@ -164,6 +181,17 @@ public class X86Level2Compiler extends AbstractX86Compiler {
                     }
                 }
                 if (!q.isDeadCode()) {
+                    final int bci = q.getByteCodeAddress();
+                    if (bci >= 0) {
+                        final VmMethod origin = q.getInlineOrigin();
+                        lastEntryMethod = (origin != null) ? origin : topMethod;
+                        lastEntryBci = bci;
+                        lastEntryDepth = (origin != null) ? 1 : 0;
+                        cm.add(lastEntryMethod, lastEntryBci,
+                            x86cg.os.getLength() - codeStartOffset,
+                            lastEntryDepth);
+                        anyEntry = true;
+                    }
                     q.generateCode(cg);
                 }
             }
@@ -173,6 +201,14 @@ public class X86Level2Compiler extends AbstractX86Compiler {
         // over-coverage is inert.
         for (Integer pc : pendingBounds) {
             x86cg.os.setObjectRef(helper.getInstrLabel(pc.intValue()));
+        }
+        // ANCHOR-L2-241: sentinel covering the footer (def-ex handler,
+        // epilogue): VmAddressMap.getIndexForOffset returns -1 for an
+        // offset at/after the last entry, which would send the lookup
+        // back to pc 0. Repeats the last body position.
+        if (anyEntry) {
+            cm.add(lastEntryMethod, lastEntryBci,
+                x86cg.os.getLength() - codeStartOffset, lastEntryDepth);
         }
         x86cg.endMethod();
         // ANCHOR-L2-161 census: any dense label that was handed to a jmp/jcc
@@ -257,6 +293,13 @@ public class X86Level2Compiler extends AbstractX86Compiler {
                 BytecodeParser.parse(bytecode, irg);
 
                 initMethodArguments(method, stackFrame, typeSizeInfo, irg);
+
+                // ANCHOR-L2-237: IR-level method inlining. After parse and
+                // argument setup, before the codegen ctor and SSA: the
+                // splice only touches the graph, and constructSSA must see
+                // the merged blocks (its version array now sizes from every
+                // block's slot space, not just the entry array's).
+                MethodInliner.inlineCallSites(cfg, method, typeSizeInfo);
 
                 // ANCHOR-L2-119: create the codegen BEFORE optimize, not
                 // after. Phi doPass2 queries CodeGenerator.getInstance()

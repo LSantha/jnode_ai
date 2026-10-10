@@ -5115,17 +5115,32 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
         return targetAddress < address;
     }
 
+    /**
+     * ANCHOR-L2-238: iterative successor reachability. The recursive form
+     * walked as deep as the CFG's longest path on the caller's thread stack
+     * -- the same depth that already overflowed the 64KB guest stack in
+     * computePostOrder and renameVariables during L2 compiles of 1000+-block
+     * methods (see IRBasicBlock.computePostOrder), and this runs later in
+     * the very same compiles, on the very same CFGs. The {@code seen} guard
+     * is carried over unchanged; reachability is a boolean, so visit order
+     * is irrelevant.
+     */
     private boolean reaches(org.jnode.vm.compiler.ir.IRBasicBlock from,
         org.jnode.vm.compiler.ir.IRBasicBlock to, java.util.HashSet seen) {
-        if (from == to) {
-            return true;
-        }
-        if (!seen.add(from)) {
-            return false;
-        }
-        for (Object so : (Iterable<?>) from.getSuccessors()) {
-            if (reaches((org.jnode.vm.compiler.ir.IRBasicBlock) so, to, seen)) {
+        java.util.ArrayList<org.jnode.vm.compiler.ir.IRBasicBlock> work =
+            new java.util.ArrayList<org.jnode.vm.compiler.ir.IRBasicBlock>();
+        work.add(from);
+        while (!work.isEmpty()) {
+            final org.jnode.vm.compiler.ir.IRBasicBlock b = work.remove(
+                work.size() - 1);
+            if (b == to) {
                 return true;
+            }
+            if (!seen.add(b)) {
+                continue;
+            }
+            for (Object so : (Iterable<?>) b.getSuccessors()) {
+                work.add((org.jnode.vm.compiler.ir.IRBasicBlock) so);
             }
         }
         return false;

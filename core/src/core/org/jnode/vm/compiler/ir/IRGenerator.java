@@ -1470,6 +1470,11 @@ public class IRGenerator<T> extends BytecodeVisitor {
 
     public void visit_invokestatic(VmConstMethodRef methodRef) {
         methodRef.resolve(vmClassLoader);
+        // ANCHOR-L2-237: the depth on entry to the instruction, before the
+        // argument pop below runs. MethodInliner splices this call away and
+        // needs the depth to give the continuation block; the post-pop
+        // stackOffset alone cannot reconstruct it for a no-argument call.
+        final int entryDepth = stackOffset;
         // ANCHOR-L2-197: descriptor types, no resolveTypes()/loadClass.
         final int[] argJvmTypes = descriptorArgumentJvmTypes(methodRef.getSignature());
         int nrArguments = argJvmTypes.length;
@@ -1483,9 +1488,14 @@ public class IRGenerator<T> extends BytecodeVisitor {
         }
         int returnType = JvmType.getReturnType(methodRef.getSignature());
         if (JvmType.VOID == returnType) {
-            currentBlock.add(new StaticCallQuad(address, currentBlock, methodRef, varOffs));
+            final StaticCallQuad call = new StaticCallQuad(address, currentBlock, methodRef, varOffs);
+            call.setEntryStackDepth(entryDepth);
+            currentBlock.add(call);
         } else {
-            currentBlock.add(new StaticCallAssignQuad(address, currentBlock, stackOffset, methodRef, varOffs));
+            final StaticCallAssignQuad call =
+                new StaticCallAssignQuad(address, currentBlock, stackOffset, methodRef, varOffs);
+            call.setEntryStackDepth(entryDepth);
+            currentBlock.add(call);
             // ANCHOR-L2-078: type both halves of a wide result (base slot may
             // still carry an operand type; dup conditions read categories).
             // ANCHOR-L2-207: type EVERY non-void result slot, not just the

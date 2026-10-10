@@ -30,6 +30,13 @@ import org.jnode.vm.compiler.ir.Operand;
 public abstract class CallQuad<T> extends Quad<T> {
     protected VmConstMethodRef methodRef;
     protected Operand<T>[] refs;
+    /**
+     * ANCHOR-L2-237: the operand-stack depth on entry to this call
+     * instruction, recorded by IRGenerator before it pops the arguments.
+     * MethodInliner needs it to give the continuation block its entry
+     * depth after the call is spliced away; -1 when not recorded.
+     */
+    private int entryStackDepth = -1;
 
     protected CallQuad(int address, IRBasicBlock<T> block,
                        VmConstMethodRef methodRef, int[] offs) {
@@ -39,6 +46,20 @@ public abstract class CallQuad<T> extends Quad<T> {
         for (int i = 0; i < offs.length; i++) {
             refs[i] = getOperand(offs[i]);
         }
+    }
+
+    /**
+     * @return the stack depth at the call instruction, or -1 if unknown
+     */
+    public int getEntryStackDepth() {
+        return entryStackDepth;
+    }
+
+    /**
+     * @param depth the stack depth at the call instruction
+     */
+    public void setEntryStackDepth(int depth) {
+        this.entryStackDepth = depth;
     }
 
     @Override

@@ -61,6 +61,20 @@ public abstract class Variable<T> extends Operand<T> implements Cloneable {
     }
 
     /**
+     * ANCHOR-L2-237: re-base this variable's slot index. Method inlining
+     * shifts every callee variable past the caller's slot space so the
+     * slot-indexed SSA rename (renumberArray[getIndex()]) cannot confuse a
+     * callee local with a caller local of the same number. Only legal
+     * before SSA construction; quads capture the Variable object, never a
+     * copied index, so the move is transparent to existing refs.
+     *
+     * @param index the new slot index
+     */
+    void setIndex(int index) {
+        this.index = index;
+    }
+
+    /**
      * @return the variable's SSA value
      */
     public int getSSAValue() {

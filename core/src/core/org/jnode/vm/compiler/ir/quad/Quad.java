@@ -23,6 +23,7 @@ package org.jnode.vm.compiler.ir.quad;
 import java.util.Collection;
 import java.util.List;
 
+import org.jnode.vm.classmgr.VmMethod;
 import org.jnode.vm.compiler.ir.CodeGenerator;
 import org.jnode.vm.compiler.ir.IRBasicBlock;
 import org.jnode.vm.compiler.ir.Operand;
@@ -39,6 +40,15 @@ public abstract class Quad<T> {
     private final int byteCodeAddress;
     private boolean deadCode;
     private IRBasicBlock<T> basicBlock;
+    /**
+     * ANCHOR-L2-241: the method this quad was inlined FROM, or null for
+     * quads of the method being compiled. MethodInliner stamps every
+     * grafted callee quad; code generation uses it to record
+     * (method, bci, inlineDepth) address-map entries so the stack-trace
+     * walker (VmStackFrameEnumerator) can attribute inlined machine code
+     * to the original method/line and walk back to the call site.
+     */
+    private VmMethod inlineOrigin;
 
     public Quad(int address, IRBasicBlock<T> block) {
         this.address = address;
@@ -76,6 +86,24 @@ public abstract class Quad<T> {
 
     public int getByteCodeAddress() {
         return byteCodeAddress;
+    }
+
+    /**
+     * ANCHOR-L2-241: gets the method this quad was inlined from.
+     *
+     * @return the inlined-from method, or null for the compiled method's own quads
+     */
+    public VmMethod getInlineOrigin() {
+        return inlineOrigin;
+    }
+
+    /**
+     * ANCHOR-L2-241: mark this quad as grafted from {@code origin}'s body.
+     *
+     * @param origin the method the quad was inlined from
+     */
+    public void setInlineOrigin(VmMethod origin) {
+        this.inlineOrigin = origin;
     }
 
     /**
@@ -121,6 +149,18 @@ public abstract class Quad<T> {
      */
     public IRBasicBlock<T> getBasicBlock() {
         return basicBlock;
+    }
+
+    /**
+     * ANCHOR-L2-237: reparent a quad when a block split moves it (method
+     * inlining splices the tail of the call site's block into a fresh
+     * continuation block). Identity semantics: the caller must keep the
+     * quad lists and the block pointer in step.
+     *
+     * @param block the block that now owns this quad
+     */
+    public void setBasicBlock(IRBasicBlock<T> block) {
+        this.basicBlock = block;
     }
 
     public void computeLiveness(List<Variable<?>> liveVariables) {

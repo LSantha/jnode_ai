@@ -33,6 +33,11 @@ import org.jnode.vm.compiler.ir.Variable;
 public abstract class CallAssignQuad<T> extends AssignQuad<T> {
     protected VmConstMethodRef methodRef;
     protected Operand<T>[] refs;
+    /**
+     * ANCHOR-L2-237: see {@link CallQuad#getEntryStackDepth()}; the
+     * operand-stack depth at the call, recorded before the argument pop.
+     */
+    private int entryStackDepth = -1;
 
     protected CallAssignQuad(int address, IRBasicBlock<T> block, int lhsIndex, VmConstMethodRef methodRef, int[] offs) {
         super(address, block, lhsIndex);
@@ -42,6 +47,20 @@ public abstract class CallAssignQuad<T> extends AssignQuad<T> {
             refs[i] = getOperand(offs[i]);
         }
         getLHS().setTypeFromJvmType(JvmType.getReturnType(methodRef.getSignature()));
+    }
+
+    /**
+     * @return the stack depth at the call instruction, or -1 if unknown
+     */
+    public int getEntryStackDepth() {
+        return entryStackDepth;
+    }
+
+    /**
+     * @param depth the stack depth at the call instruction
+     */
+    public void setEntryStackDepth(int depth) {
+        this.entryStackDepth = depth;
     }
 
     public VmConstMethodRef getMethodRef() {
