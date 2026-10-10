@@ -24,6 +24,7 @@ import java.util.Collection;
 import java.util.Collections;
 import java.util.Comparator;
 import java.util.HashMap;
+import java.util.IdentityHashMap;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
@@ -32,6 +33,8 @@ import org.jnode.vm.bytecode.BytecodeParser;
 import org.jnode.vm.classmgr.VmByteCode;
 import org.jnode.vm.classmgr.VmInterpretedExceptionHandler;
 import org.jnode.vm.compiler.ir.quad.AssignQuad;
+import org.jnode.vm.compiler.ir.quad.BinaryOperation;
+import org.jnode.vm.compiler.ir.quad.BinaryQuad;
 import org.jnode.vm.compiler.ir.quad.CallAssignQuad;
 import org.jnode.vm.compiler.ir.quad.NewAssignQuad;
 import org.jnode.vm.compiler.ir.quad.NewMultiArrayAssignQuad;
@@ -66,6 +69,16 @@ public class IRControlFlowGraph<T> implements Iterable<IRBasicBlock<T>> {
         this.bblocks = bbf.createBasicBlocks();
         startBlock = bblocks[0];
         computeDominance(bytecode);
+    }
+
+    /**
+     * Wraps an already built set of basic blocks. Only the local optimization
+     * passes may be run on such a graph; the dominance based passes need the
+     * data {@link VmByteCode} drives {@link #computeDominance}.
+     */
+    IRControlFlowGraph(IRBasicBlock<T>[] bblocks) {
+        this.bblocks = bblocks;
+        startBlock = bblocks[0];
     }
 
     //todo use set
@@ -393,6 +406,402 @@ public class IRControlFlowGraph<T> implements Iterable<IRBasicBlock<T>> {
                     q.doPass3(values);
                 }
             }
+        }
+    }
+
+    /**
+     * Rewrites integer binary quads that compute an identity into a copy of one
+     * of their operands, and prunes the now unused definition.
+     * <p/>
+     * Only exact, always-true integer identities are applied. IEEE-754
+     * identities (<code>x * 1.0</code>, <code>x + 0.0</code> against -0.0 and
+     * NaN) are deliberately not handled, and neither is constant folding.
+     */
+    public void simplifyAlgebraicExpressions() {
+        for (IRBasicBlock<T> b : bblocks) {
+            for (Quad<T> q : b.getQuads()) {
+                if (!q.isDeadCode() && q instanceof BinaryQuad) {
+                    simplifyBinaryQuad((BinaryQuad<T>) q);
+                }
+            }
+        }
+    }
+
+    private void simplifyBinaryQuad(BinaryQuad<T> quad) {
+        BinaryOperation op = quad.getOperation();
+        if (!isIntegerOperation(op)) {
+            return;
+        }
+        Variable<T> lhs = quad.getLHS();
+        Operand<T> op1 = (Operand<T>) quad.getOperand1();
+        Operand<T> op2 = (Operand<T>) quad.getOperand2();
+
+        // x OP x. Constants are interned, so an unguarded x == x test would
+        // happily match two unrelated equal constants and the (Variable) cast
+        // further down would blow up.
+        if (op1 instanceof Variable && op1 == op2) {
+            Operand<T> replacement = selfIdentity(op, lhs);
+            if (replacement != null) {
+                replaceQuadByOperand(quad, lhs, replacement);
+            }
+            return;
+        }
+        Operand<T> replacement = simplifyWithConstantOnRight(op, op1, op2);
+        if (replacement == null && isCommutative(op)) {
+            replacement = simplifyWithConstantOnRight(op, op2, op1);
+        }
+        if (replacement != null) {
+            replaceQuadByOperand(quad, lhs, replacement);
+        }
+    }
+
+    /**
+     * @return the value of <code>x OP x</code>, or null when the operation has
+     *         no identity for it
+     */
+    private static <T> Operand<T> selfIdentity(BinaryOperation op, Variable<T> lhs) {
+        switch (op) {
+            case IXOR:
+            case LXOR:
+            case ISUB:
+            case LSUB:
+                return isLongOperation(op) ? Constant.<T>getInstance(0L) : Constant.<T>getInstance(0);
+            case IAND:
+            case LAND:
+            case IOR:
+            case LOR:
+                return lhs;
+            default:
+                return null;
+        }
+    }
+
+    /**
+     * Applies <code>x OP c</code> identities where <code>c</code> is the neutral
+     * element of <code>op</code>.
+     *
+     * @return the value of the expression, or null when no identity applies
+     */
+    private static <T> Operand<T> simplifyWithConstantOnRight(BinaryOperation op, Operand<T> x, Operand<T> c) {
+        // x must be a real value. A constant/constant quad is constant folding
+        // territory, and propagating a copy of the constant would produce a
+        // variable whose only use is the copy.
+        if (!(x instanceof Variable) || !(c instanceof Constant)) {
+            return null;
+        }
+        if (isLongOperation(op)) {
+            Long value = longValueOf((Constant<T>) c);
+            if (value == null) {
+                return null;
+            }
+            long v = value.longValue();
+            switch (op) {
+                case LADD:
+                case LSUB:
+                case LOR:
+                case LXOR:
+                case LSHL:
+                case LSHR:
+                case LUSHR:
+                    return v == 0L ? x : null;
+                case LMUL:
+                    return v == 1L ? x : null;
+                case LAND:
+                    return v == -1L ? x : null;
+                default:
+                    return null;
+            }
+        }
+        Integer value = intValueOf((Constant<T>) c);
+        if (value == null) {
+            return null;
+        }
+        int v = value.intValue();
+        switch (op) {
+            case IADD:
+            case ISUB:
+            case IOR:
+            case IXOR:
+            case ISHL:
+            case ISHR:
+            case IUSHR:
+                return v == 0 ? x : null;
+            case IMUL:
+                return v == 1 ? x : null;
+            case IAND:
+                return v == -1 ? x : null;
+            default:
+                return null;
+        }
+    }
+
+    private void replaceQuadByOperand(Quad<T> quad, Variable<T> lhs, Operand<T> replacement) {
+        if (replacement == lhs) {
+            quad.setDeadCode(true);
+            return;
+        }
+        if (!replaceAllUses(lhs, replacement)) {
+            return;
+        }
+        quad.setDeadCode(true);
+    }
+
+    /**
+     * Replaces the common subexpressions of every basic block by the value
+     * computed earlier in the same block.
+     * <p/>
+     * The scope is deliberately narrow: a definition is only reused when it is
+     * known to dominate the use, and only side effect free integer operations
+     * take part. Division and remainder are excluded even though they are
+     * pure, because they may trap.
+     */
+    public void eliminateCommonSubexpressions() {
+        for (IRBasicBlock<T> b : bblocks) {
+            final List<Quad<T>> quads = b.getQuads();
+            // PhiAssignQuad overrides equals(), so the quad positions have to be
+            // keyed by identity.
+            final Map<Quad<T>, Integer> positions = new IdentityHashMap<Quad<T>, Integer>();
+            for (int i = 0, n = quads.size(); i < n; i += 1) {
+                positions.put(quads.get(i), Integer.valueOf(i));
+            }
+            final Map<CSEKey, Variable<T>> definitions = new HashMap<CSEKey, Variable<T>>();
+            for (int i = 0, n = quads.size(); i < n; i += 1) {
+                Quad<T> q = quads.get(i);
+                if (q.isDeadCode() || !(q instanceof BinaryQuad)) {
+                    continue;
+                }
+                BinaryQuad<T> binary = (BinaryQuad<T>) q;
+                if (!isPureOperation(binary.getOperation())) {
+                    continue;
+                }
+                Operand<T> op1 = (Operand<T>) binary.getOperand1();
+                Operand<T> op2 = (Operand<T>) binary.getOperand2();
+                if (!isDefinedBefore(op1, b, i, positions) || !isDefinedBefore(op2, b, i, positions)) {
+                    continue;
+                }
+                CSEKey key = new CSEKey(binary.getOperation(), op1, op2);
+                Variable<T> previous = definitions.get(key);
+                if (previous == null) {
+                    definitions.put(key, binary.getLHS());
+                } else {
+                    replaceAllUses(binary.getLHS(), previous);
+                    binary.setDeadCode(true);
+                }
+            }
+        }
+    }
+
+    /**
+     * @return true when the value of <code>op</code> is available at position
+     *         <code>index</code> of block <code>b</code>
+     */
+    private static <T> boolean isDefinedBefore(Operand<T> op, IRBasicBlock<T> b, int index,
+                                               Map<Quad<T>, Integer> positions) {
+        if (!(op instanceof Variable)) {
+            return true;
+        }
+        AssignQuad<T> def = ((Variable<T>) op).getAssignQuad();
+        if (def == null) {
+            return op instanceof MethodArgument;
+        }
+        if (def.isDeadCode() || def.getBasicBlock() != b) {
+            return false;
+        }
+        Integer position = positions.get(def);
+        return position != null && position.intValue() < index;
+    }
+
+    /**
+     * Renames every use of <code>oldVar</code> to <code>newOp</code>.
+     * <p/>
+     * Phi sources are renamed through {@link PhiAssignQuad#replaceSource} since
+     * <code>getReferencedOps()</code> only returns a throwaway copy of them;
+     * writing into that copy would silently drop the rename and leave the phi
+     * reading a dead definition.
+     *
+     * @return false when <code>newOp</code> cannot be renamed into a phi, in
+     *         which case nothing has been changed
+     */
+    private boolean replaceAllUses(Variable<T> oldVar, Operand<T> newOp) {
+        if (!(newOp instanceof Variable)) {
+            for (IRBasicBlock<T> b : bblocks) {
+                for (Quad<T> q : b.getQuads()) {
+                    if (q instanceof PhiAssignQuad
+                        && !((PhiAssignQuad<T>) q).replaceSource(oldVar, newOp)) {
+                        return false;
+                    }
+                }
+            }
+        }
+        for (IRBasicBlock<T> b : bblocks) {
+            for (Quad<T> q : b.getQuads()) {
+                if (q instanceof PhiAssignQuad) {
+                    ((PhiAssignQuad<T>) q).replaceSource(oldVar, newOp);
+                    continue;
+                }
+                Operand<T>[] refs = q.getReferencedOps();
+                if (refs == null) {
+                    continue;
+                }
+                for (int i = 0, n = refs.length; i < n; i += 1) {
+                    if (isSameVariable(refs[i], oldVar)) {
+                        refs[i] = newOp;
+                    }
+                }
+            }
+        }
+        return true;
+    }
+
+    private static <T> boolean isSameVariable(Operand<T> op, Variable<T> var) {
+        if (op == var) {
+            return true;
+        }
+        return op instanceof Variable && op.equals(var);
+    }
+
+    private static boolean isIntegerOperation(BinaryOperation op) {
+        switch (op) {
+            case IADD:
+            case ISUB:
+            case IMUL:
+            case IAND:
+            case IOR:
+            case IXOR:
+            case ISHL:
+            case ISHR:
+            case IUSHR:
+            case LADD:
+            case LSUB:
+            case LMUL:
+            case LAND:
+            case LOR:
+            case LXOR:
+            case LSHL:
+            case LSHR:
+            case LUSHR:
+                return true;
+            default:
+                return false;
+        }
+    }
+
+    private static boolean isPureOperation(BinaryOperation op) {
+        switch (op) {
+            case IDIV:
+            case IREM:
+            case LDIV:
+            case LREM:
+                return false;
+            default:
+                return isIntegerOperation(op);
+        }
+    }
+
+    private static boolean isLongOperation(BinaryOperation op) {
+        switch (op) {
+            case LADD:
+            case LSUB:
+            case LMUL:
+            case LAND:
+            case LOR:
+            case LXOR:
+            case LSHL:
+            case LSHR:
+            case LUSHR:
+            case LDIV:
+            case LREM:
+                return true;
+            default:
+                return false;
+        }
+    }
+
+    private static boolean isCommutative(BinaryOperation op) {
+        switch (op) {
+            case IADD:
+            case IMUL:
+            case LADD:
+            case LMUL:
+            case IAND:
+            case LAND:
+            case IOR:
+            case LOR:
+            case IXOR:
+            case LXOR:
+                return true;
+            default:
+                return false;
+        }
+    }
+
+    private static Integer intValueOf(Constant<?> c) {
+        if (c instanceof IntConstant) {
+            return Integer.valueOf(((IntConstant<?>) c).getValue());
+        }
+        return null;
+    }
+
+    private static Long longValueOf(Constant<?> c) {
+        if (c instanceof LongConstant) {
+            return Long.valueOf(((LongConstant<?>) c).getValue());
+        }
+        return null;
+    }
+
+    /**
+     * Key identifying a side effect free integer expression. Operands of a
+     * commutative operation are normalized so that <code>x + y</code> and
+     * <code>y + x</code> share a key; operands of a non-commutative operation
+     * are kept in their exact order.
+     */
+    private static final class CSEKey {
+        private final BinaryOperation operation;
+        private final Operand<?> operand1;
+        private final Operand<?> operand2;
+        private final int hash;
+
+        CSEKey(BinaryOperation operation, Operand<?> operand1, Operand<?> operand2) {
+            this.operation = operation;
+            if (isCommutative(operation) && operandHash(operand1) > operandHash(operand2)) {
+                this.operand1 = operand2;
+                this.operand2 = operand1;
+            } else {
+                this.operand1 = operand1;
+                this.operand2 = operand2;
+            }
+            int h = operation.hashCode();
+            h = h * 31 + operandHash(this.operand1);
+            this.hash = h * 31 + operandHash(this.operand2);
+        }
+
+        private static int operandHash(Operand<?> op) {
+            if (op instanceof Variable) {
+                return System.identityHashCode(op) * 2;
+            }
+            return op.toString().hashCode() * 2 + 1;
+        }
+
+        private static boolean sameOperand(Operand<?> op1, Operand<?> op2) {
+            if (op1 == op2) {
+                return true;
+            }
+            return op1 instanceof Constant && op2 instanceof Constant
+                && op1.getClass() == op2.getClass() && op1.toString().equals(op2.toString());
+        }
+
+        public int hashCode() {
+            return hash;
+        }
+
+        public boolean equals(Object obj) {
+            if (!(obj instanceof CSEKey)) {
+                return false;
+            }
+            CSEKey other = (CSEKey) obj;
+            return operation == other.operation
+                && sameOperand(operand1, other.operand1)
+                && sameOperand(operand2, other.operand2);
         }
     }
 

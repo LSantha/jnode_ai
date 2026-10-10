@@ -187,6 +187,8 @@ public class X86Level2Compiler extends AbstractX86Compiler {
 
                 cfg.constructSSA();
                 cfg.optimize();
+                cfg.simplifyAlgebraicExpressions();
+                cfg.eliminateCommonSubexpressions();
                 cfg.removeUnusedVars();
                 cfg.deconstrucSSA();
                 cfg.removeDefUseChains();
