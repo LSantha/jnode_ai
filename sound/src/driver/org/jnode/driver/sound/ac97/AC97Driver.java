@@ -177,4 +177,12 @@ public class AC97Driver extends Driver implements AC97API, AC97Constants {
         }
         return c.getQueuedFrames();
     }
+
+    public int getPosition() {
+        final AC97Core c = core;
+        if (c == null) {
+            return 0;
+        }
+        return c.getPosition();
+    }
 }

@@ -98,11 +98,13 @@ public final class AC97Utils {
                 }
                 api.write(chunk, 0, count * AC97Constants.PCM_FRAME_SIZE);
             } while (generator.getRemainingFrames() > 0);
-            // Let the DMA engine play the last sample. getQueuedFrames() only
-            // counts whole descriptors, so the remaining playback time is
-            // computed from the frame count instead of polling the queue.
-            Thread.sleep((generator.getTotalFrames() * 1000L / api.getSampleRate())
-                + 30);
+            // Wait until the DAC has actually played every frame we wrote.
+            // getPosition() is sample accurate, so this neither truncates the
+            // tone nor waits longer than the remaining audio.
+            final int target = generator.getTotalFrames();
+            while (api.getPosition() < target) {
+                Thread.sleep(5);
+            }
         } catch (IllegalArgumentException ex) {
             log.error("Invalid tone", ex);
         } catch (InterruptedException ex) {

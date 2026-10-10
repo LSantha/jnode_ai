@@ -196,6 +196,21 @@ public final class AC97Core implements AC97Constants, IRQHandler {
     private long lastProgress;
 
     /**
+     * Number of stereo frames queued through {@link #write} since the last
+     * {@link #open}. Together with the frames still to be played it gives
+     * the playback position.
+     */
+    private long totalQueuedFrames;
+
+    /**
+     * Sample count of every descriptor of the playback ring, indexed by
+     * descriptor. The hardware only exposes the count of the descriptor it
+     * is currently playing (PICB), so the driver has to remember the rest
+     * to be able to compute a sample accurate position.
+     */
+    private final int[] descriptorSamples = new int[DEFAULT_ENTRY_COUNT];
+
+    /**
      * Create a new core and initialize the hardware. All resources are
      * claimed here and released again when any step fails.
      *
@@ -378,6 +393,10 @@ public final class AC97Core implements AC97Constants, IRQHandler {
             lastValidIndex = 0;
             currentIndex = 0;
             lastProgress = System.currentTimeMillis();
+            totalQueuedFrames = 0;
+            for (int i = 0; i < descriptorSamples.length; i++) {
+                descriptorSamples[i] = 0;
+            }
             playing = true;
             running = false;
         }
@@ -435,11 +454,14 @@ public final class AC97Core implements AC97Constants, IRQHandler {
                 // descriptor is filled in and the last valid index advanced,
                 // so this ordering is safe even while the DMA engine is
                 // prefetching the next descriptor.
-                bdl.setDescriptor(index,
-                    BufferDescriptorList.samplesForFrames(chunk / PCM_FRAME_SIZE), true);
+                final int samples = BufferDescriptorList.samplesForFrames(chunk
+                    / PCM_FRAME_SIZE);
+                bdl.setDescriptor(index, samples, true);
                 // The sample buffer and the descriptor stores must have left
                 // the CPU before the descriptor is published through LVI.
                 readBarrier();
+                descriptorSamples[index] = samples;
+                totalQueuedFrames += chunk / PCM_FRAME_SIZE;
                 lastValidIndex = index;
                 touchProgress();
                 outNabmByte(PCM_OUT_LVI, index);
@@ -532,22 +554,50 @@ public final class AC97Core implements AC97Constants, IRQHandler {
     }
 
     /**
+    /**
      * Gets the number of stereo frames that are queued in the ring but not
-     * yet played by the DMA engine. This value only changes under the
-     * playback lock of this core.
+     * yet played by the DMA engine. The value is sample accurate, because
+     * it is derived from the controller position (CIV and PICB) rather than
+     * from whole descriptors.
      */
     public final int getQueuedFrames() {
         synchronized (playbackLock) {
-            if (bdl == null) {
+            if (!playing) {
                 return 0;
             }
-            if (bdl == null) {
-                return 0;
-            }
-            final int count = bdl.getEntryCount();
-            final int filled = inFlightCount(lastValidIndex, currentIndex, count);
-            return filled * bdl.getFramesPerBuffer();
+            return (int) remainingFrames();
         }
+    }
+
+    /**
+     * Gets the number of stereo frames that the DAC has played since the
+     * last {@link #open}. This is the playback position: it is derived from
+     * the frames queued so far and the frames still to be played, so it
+     * never decreases and never runs past the queued data. It is sample
+     * accurate up to the interval between the two register reads it is
+     * computed from, which is at most one buffer.
+     */
+    public final int getPosition() {
+        synchronized (playbackLock) {
+            if (!playing) {
+                return (int) totalQueuedFrames;
+            }
+            return (int) Math.max(0, totalQueuedFrames - remainingFrames());
+        }
+    }
+
+    /**
+     * Gets the number of stereo frames the controller still has to play,
+     * read from CIV and PICB plus the remembered descriptor sample counts.
+     * Must be called with the playback lock held.
+     */
+    private long remainingFrames() {
+        final int count = bdl.getEntryCount();
+        final int civ = maskEngineIndex(inNabmByte(PCM_OUT_CIV));
+        final int picb = inNabmWord(PCM_OUT_PICB);
+        final long samples = remainingSamples(descriptorSamples, count, civ,
+            lastValidIndex, picb);
+        return samples / PCM_CHANNELS;
     }
 
     // ------------------------------------------------------------------
@@ -717,6 +767,38 @@ public final class AC97Core implements AC97Constants, IRQHandler {
     public static int inFlightCount(int lastValidIndex, int currentIndex,
         int entryCount) {
         return (((lastValidIndex - currentIndex) + entryCount) % entryCount) + 1;
+    }
+
+    /**
+     * Gets the number of 16-bit samples the controller still has to play,
+     * derived from its position.
+     * <p>
+     * The controller reports the descriptor it is currently playing (CIV)
+     * and how many samples are left in that one (PICB); the descriptors
+     * after it up to LVI are still to come untouched. Static so that the
+     * arithmetic can be unit tested without hardware.
+     *
+     * @param descriptorSamples samples per descriptor of the ring
+     * @param entryCount        number of descriptors in the ring
+     * @param currentIndex      current value of CIV
+     * @param lastValidIndex    current value of LVI
+     * @param picb              samples remaining in the current descriptor
+     */
+    public static long remainingSamples(int[] descriptorSamples, int entryCount,
+        int currentIndex, int lastValidIndex, int picb) {
+        if (currentIndex == lastValidIndex) {
+            // Only one descriptor is in flight; PICB is its remainder.
+            return picb;
+        }
+        // PICB is the remainder of the descriptor being played, everything
+        // after it up to and including LVI is untouched.
+        long samples = picb;
+        int index = nextIndex(currentIndex, entryCount);
+        while (index != nextIndex(lastValidIndex, entryCount)) {
+            samples += descriptorSamples[index];
+            index = nextIndex(index, entryCount);
+        }
+        return samples;
     }
 
     /**

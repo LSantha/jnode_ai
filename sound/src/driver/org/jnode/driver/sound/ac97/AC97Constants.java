@@ -167,6 +167,32 @@ public interface AC97Constants extends PCIConstants {
     public static final int NAM_PCM_FRONT_DAC_RATE = 0x2C;
 
     /**
+     * Sample rate of the left/right ADC register (the capture path).
+     */
+    public static final int NAM_PCM_LR_ADC_RATE = 0x32;
+
+    /**
+     * Record gain of the dedicated microphone input register.
+     */
+    public static final int NAM_RECORD_GAIN_MIC = 0x1E;
+
+    /**
+     * Record select value that routes the dedicated microphone input to the
+     * ADC. Both channels of the register carry the same 3 bit source.
+     */
+    public static final int RECORD_SELECT_MIC = 0x0000;
+
+    /**
+     * Record select value that routes the line input to the ADC.
+     */
+    public static final int RECORD_SELECT_LINE = 0x0404;
+
+    /**
+     * Record gain of 0 dB, both channels, unmuted.
+     */
+    public static final int RECORD_GAIN_0DB = 0x0000;
+
+    /**
      * First vendor identification register.
      */
     public static final int NAM_VENDOR_ID1 = 0x7C;
@@ -259,6 +285,49 @@ public interface AC97Constants extends PCIConstants {
      * Control register (PCM out).
      */
     public static final int PCM_OUT_CR = 0x1B;
+
+    /**
+     * Offset of the PCM in (capture) DMA register box relative to the
+     * NABMBAR. It is the exact mirror of the PCM out box: base address,
+     * current index, last valid index, status, position, prefetched index
+     * and control register in the same order.
+     */
+    public static final int PCM_IN_BOX = 0x00;
+
+    /**
+     * Buffer descriptor list base address register (PCM in).
+     */
+    public static final int PCM_IN_BDBAR = 0x00;
+
+    /**
+     * Current index value register (PCM in), read-only.
+     */
+    public static final int PCM_IN_CIV = 0x04;
+
+    /**
+     * Last valid index register (PCM in).
+     */
+    public static final int PCM_IN_LVI = 0x05;
+
+    /**
+     * Status register (PCM in).
+     */
+    public static final int PCM_IN_SR = 0x06;
+
+    /**
+     * Position in current buffer register (PCM in), read-only.
+     */
+    public static final int PCM_IN_PICB = 0x08;
+
+    /**
+     * Prefetched index value register (PCM in), read-only.
+     */
+    public static final int PCM_IN_PIV = 0x0A;
+
+    /**
+     * Control register (PCM in).
+     */
+    public static final int PCM_IN_CR = 0x0B;
 
     /**
      * Global control register, 32-bit.
@@ -401,6 +470,11 @@ public interface AC97Constants extends PCIConstants {
      * Playback (PCM out) interrupt status.
      */
     public static final int GLOB_STA_POINT = 0x00000040;
+
+    /**
+     * Capture (PCM in) interrupt status.
+     */
+    public static final int GLOB_STA_PIINT = 0x00000020;
 
     /**
      * Codec access semaphore busy bit.

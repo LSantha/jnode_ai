@@ -102,6 +102,70 @@ public class AC97CoreTest {
     }
 
     @Test
+    public void testRemainingSamplesEmptyRing() {
+        // Nothing written yet: CIV equals LVI and PICB is zero, so nothing
+        // is left to play. This is also the state after the controller has
+        // finished the last descriptor.
+        final int[] samples = new int[ENTRIES];
+        assertEquals(0, AC97Core.remainingSamples(samples, ENTRIES, 0, 0, 0));
+        assertEquals(0, AC97Core.remainingSamples(samples, ENTRIES, 5, 5, 0));
+        // A partially played last descriptor reports PICB as the remainder.
+        assertEquals(1234, AC97Core.remainingSamples(samples, ENTRIES, 5, 5, 1234));
+    }
+
+    @Test
+    public void testRemainingSamplesWithinOnePeriodOfTheRing() {
+        // Descriptors 0..4 of 1024 frames each, the controller playing
+        // descriptor 2 with 800 samples left in it.
+        final int[] samples = samples(ENTRIES);
+        assertEquals(800 + (2048 * 2), AC97Core.remainingSamples(samples,
+            ENTRIES, 2, 4, 800));
+        // Straight after the fill: the controller has not started yet, so
+        // all five descriptors including the current one are to be played.
+        assertEquals(2048 * 5, AC97Core.remainingSamples(samples, ENTRIES, 0, 4, 2048));
+        // The current one is nearly done, but 3 and 4 are still untouched.
+        assertEquals(1 + (2048 * 2), AC97Core.remainingSamples(samples, ENTRIES, 2, 4, 1));
+    }
+
+    @Test
+    public void testRemainingSamplesAcrossTheWrap() {
+        // The ring wrapped: descriptors 30, 31, 0 and 1 are valid, the
+        // controller is playing 31 with 400 samples left.
+        final int[] samples = samples(ENTRIES);
+        assertEquals(400 + 2048 + 2048, AC97Core.remainingSamples(samples,
+            ENTRIES, 31, 1, 400));
+        // A partially filled last descriptor counts only its real samples.
+        samples[1] = 440;
+        assertEquals(400 + 2048 + 440, AC97Core.remainingSamples(samples,
+            ENTRIES, 31, 1, 400));
+    }
+
+    @Test
+    public void testPositionDerivedFromQueueAndRemainder() {
+        // The position is what was queued minus what is still to be played,
+        // which is how getPosition() recovers the played frame count from
+        // the hardware registers.
+        final int[] samples = samples(ENTRIES);
+        final long queued = 1024L * 1024;   // just over 21s of audio
+        final long remaining = AC97Core.remainingSamples(samples, ENTRIES, 7, 9,
+            1024);
+        assertEquals(queued - remaining / AC97Constants.PCM_CHANNELS,
+            queued - remaining / AC97Constants.PCM_CHANNELS);
+        // 1024 samples of the current descriptor plus descriptors 8 and 9.
+        assertEquals(1024 + (2048 * 2), remaining);
+        assertEquals(1024 * 1024L - (remaining / AC97Constants.PCM_CHANNELS),
+            queued - remaining / AC97Constants.PCM_CHANNELS);
+    }
+
+    private static int[] samples(int entryCount) {
+        final int[] samples = new int[entryCount];
+        for (int i = 0; i < entryCount; i++) {
+            samples[i] = BufferDescriptorList.samplesForFrames(1024);
+        }
+        return samples;
+    }
+
+    @Test
     public void testProducerCatchesUpAfterWrap() {
         // Play back a ring wrap: the producer queues descriptors 0..4,
         // the controller consumes them one by one, and the producer must

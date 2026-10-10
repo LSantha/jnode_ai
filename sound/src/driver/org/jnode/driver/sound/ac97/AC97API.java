@@ -109,8 +109,14 @@ public interface AC97API extends DeviceAPI {
 
     /**
      * Gets the number of stereo frames that are queued in the internal ring
-     * but not yet played. Useful to implement echo cancellation or a
-     * progress bar.
+     * but not yet played. The value is sample accurate.
      */
     public int getQueuedFrames();
+
+    /**
+     * Gets the number of stereo frames the DAC has played since
+     * {@link #open}. This is the playback position; it never decreases and
+     * never runs past the data queued with {@link #write}.
+     */
+    public int getPosition();
 }
