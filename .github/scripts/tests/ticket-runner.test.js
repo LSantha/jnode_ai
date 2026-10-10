@@ -1374,7 +1374,7 @@ test("ticket-runner.js event handling suite", async (t) => {
     );
   });
 
-  await t.test("REVIEW approve defers when diff touches ASM", async () => {
+  await t.test("REVIEW approve routes an ASM-touching diff to HUMAN_REVIEW", async () => {
     const initialBody = _replaceOrAppendStatus("Task", {
       phase: "REVIEW",
       pr: 99,
@@ -1396,8 +1396,119 @@ test("ticket-runner.js event handling suite", async (t) => {
     await runTicketRunner(mocks);
 
     const state = _parseState(mocks.getIssueBody());
+    assert.strictEqual(state.phase, "HUMAN_REVIEW");
+    assert.strictEqual(mocks.calls.mergePR.length, 0);
+    assert.ok(
+      mocks.calls.createComment.some(c => c.issue_number === 99 && c.body.includes("exceeds the auto-merge safety budget")),
+      "The comment names the actual cause: the diff budget"
+    );
+    assert.ok(
+      !mocks.calls.createComment.some(c => c.body.includes("Will retry when CI completes")),
+      "No phantom CI promise for a diff-budget block"
+    );
+  });
+
+  await t.test("REVIEW approve defers with an honest CI message when CI is red", async () => {
+    const initialBody = _replaceOrAppendStatus("Task", {
+      phase: "REVIEW",
+      pr: 99,
+      turn: 0,
+      max_turns: 3,
+      retries: 0,
+      started: new Date().toISOString(),
+      history: []
+    }, 42);
+
+    const mocks = createMocks("workflow_run", {
+      issueBody: initialBody,
+      runDisplayTitle: "Issue #99 - PR",
+      issueLabels: [{ name: "kind/bug" }, { name: "auto-merge" }]
+    });
+    mocks.setCommentsOnPR([{ body: "Verdict: approve" }]);
+    mocks.setPRFiles([{ filename: "fs/a.java", additions: 5 }]);
+    mocks.setCheckRuns([{ name: "test", status: "completed", conclusion: "failure" }]);
+
+    await runTicketRunner(mocks);
+
+    const state = _parseState(mocks.getIssueBody());
     assert.strictEqual(state.phase, "REVIEW");
     assert.strictEqual(mocks.calls.mergePR.length, 0);
+    assert.ok(
+      mocks.calls.createComment.some(c => c.issue_number === 99 && c.body.includes("Java CI is not green yet")),
+      "The comment blames CI, and CI is genuinely red"
+    );
+  });
+
+  await t.test("DEV completion waits for green CI before requesting review", async () => {
+    const initialBody = _replaceOrAppendStatus("Task", {
+      phase: "DEV",
+      pr: null,
+      turn: 0,
+      max_turns: 3,
+      retries: 0,
+      started: new Date().toISOString(),
+      history: []
+    }, 42);
+
+    const mocks = createMocks("workflow_run", {
+      issueBody: initialBody,
+      issueLabels: [{ name: "agent/done" }, { name: "kind/bug" }]
+    });
+    mocks.setCheckRuns([{ name: "test", status: "in_progress", conclusion: null }]);
+
+    await runTicketRunner(mocks);
+
+    const state = _parseState(mocks.getIssueBody());
+    assert.strictEqual(state.phase, "REVIEW");
+    assert.strictEqual(state.pr, 99);
+    assert.strictEqual(state.review_in_progress, false, "Review is not armed while CI runs");
+    assert.ok(
+      !mocks.calls.createComment.some(c => c.body.includes("/oc review")),
+      "No review prompt before CI is green"
+    );
+    assert.ok(state.history.some(h => h.event === "review_pending_ci"));
+
+    // CI turns green: the Java CI wakeup must request the review.
+    const ciMocks = createMocks("workflow_run", {
+      issueBody: mocks.getIssueBody(),
+      issueLabels: [{ name: "kind/bug" }],
+      runName: "Java CI",
+      runConclusion: "success"
+    });
+    await runTicketRunner(ciMocks);
+
+    const state2 = _parseState(ciMocks.getIssueBody());
+    assert.strictEqual(state2.review_in_progress, true, "Wakeup arms the review");
+    assert.ok(
+      ciMocks.calls.createComment.some(c => c.issue_number === 99 && c.body.includes("/oc review")),
+      "Wakeup posts the review prompt"
+    );
+  });
+
+  await t.test("FEEDBACK completion waits for green CI before re-review", async () => {
+    const initialBody = _replaceOrAppendStatus("Task", {
+      phase: "FEEDBACK",
+      pr: 99,
+      turn: 1,
+      max_turns: 3,
+      retries: 0,
+      started: new Date().toISOString(),
+      history: []
+    }, 42);
+
+    const mocks = createMocks("workflow_run", {
+      issueBody: initialBody,
+      runDisplayTitle: "Issue #99 - Fix feedback",
+      issueLabels: [{ name: "kind/bug" }]
+    });
+    mocks.setCheckRuns([{ name: "test", status: "in_progress", conclusion: null }]);
+
+    await runTicketRunner(mocks);
+
+    const state = _parseState(mocks.getIssueBody());
+    assert.strictEqual(state.phase, "REVIEW");
+    assert.strictEqual(state.review_in_progress, false);
+    assert.ok(!mocks.calls.createComment.some(c => c.body.includes("/oc review")));
   });
 
   await t.test("Java CI success re-reviews deferred REVIEW", async () => {

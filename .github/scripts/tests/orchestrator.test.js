@@ -15,7 +15,7 @@ function createMocks(eventName = 'issue_comment', commentBody = '/orchestrate') 
   const updateIssueDetails = [];
   let masterIssueBody = `- [ ] #2\n- [ ] #3`;
   let currentTaskData = { labels: [], state: 'open' };
-  let prData = { labels: [], state: 'open', merged: true, head: { ref: 'opencode/issue2-fix' } };
+  let prData = { labels: [], state: 'open', merged: true, head: { ref: 'opencode/issue2-fix', sha: 'abc' } };
 
   const github = {
     rest: {
@@ -54,6 +54,14 @@ function createMocks(eventName = 'issue_comment', commentBody = '/orchestrate') 
         },
         merge: async ({ pull_number }) => {
           calls.mergePR.push(pull_number);
+        },
+        listFiles: async () => {
+          return { data: [{ filename: 'fs/a.java', additions: 5 }] };
+        }
+      },
+      checks: {
+        listForRef: async () => {
+          return { data: { check_runs: [{ status: 'completed', conclusion: 'success' }] } };
         }
       },
       git: {

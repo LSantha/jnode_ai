@@ -500,8 +500,14 @@ module.exports = async ({ github, context, core }) => {
                 task.pr = foundPr;
                 task.phase = 'REVIEW';
                 task.retries = 0;
-                task.review_in_progress = true;
-                await triggerTask(task.pr, getReviewPrompt());
+                if (await h.isCIGreen(foundPr)) {
+                  task.review_in_progress = true;
+                  await triggerTask(task.pr, getReviewPrompt());
+                } else {
+                  task.review_in_progress = false;
+                  state.history.push({ event: 'review_pending_ci', task: task.issue, timestamp: new Date().toISOString() });
+                  core.info(`#${task.issue}: review waits for CI on PR #${foundPr}`);
+                }
               } else if (SHORT_CIRCUIT_LABELS.some(l => labels.includes(l))) {
                 // Short-circuit completion
                 state.completed.push(task.issue);
@@ -541,17 +547,28 @@ module.exports = async ({ github, context, core }) => {
                       owner: context.repo.owner, repo: context.repo.repo, issue_number: task.pr,
                       body: "Agent review passed. Awaiting human approval via native GitHub PR Review UI."
                     });
-                  } else if (await h.isDiffSafe(task.pr) && await h.isCIGreen(task.pr)) {
-                    task.phase = 'MERGE';
-                    await mergePR(task.pr);
-                    state.completed.push(task.issue);
-                    isDone = true;
                   } else {
-                    task.retries = 0;
-                    await github.rest.issues.createComment({
-                      owner: context.repo.owner, repo: context.repo.repo, issue_number: task.pr,
-                      body: "Agent review passed but auto-merge deferred (diff not safe or CI not green). Will retry when CI completes."
-                    });
+                    const diffSafe = await h.isDiffSafe(task.pr);
+                    const ciGreen = await h.isCIGreen(task.pr);
+                    if (diffSafe && ciGreen) {
+                      task.phase = 'MERGE';
+                      await mergePR(task.pr);
+                      state.completed.push(task.issue);
+                      isDone = true;
+                    } else if (!diffSafe) {
+                      task.phase = 'HUMAN_REVIEW';
+                      task.retries = 0;
+                      await github.rest.issues.createComment({
+                        owner: context.repo.owner, repo: context.repo.repo, issue_number: task.pr,
+                        body: "Agent review passed but the diff exceeds the auto-merge safety budget (isDiffSafe). Routing to HUMAN_REVIEW - approve via the GitHub PR Review UI to merge."
+                      });
+                    } else {
+                      task.retries = 0;
+                      await github.rest.issues.createComment({
+                        owner: context.repo.owner, repo: context.repo.repo, issue_number: task.pr,
+                        body: "Agent review passed but auto-merge deferred: Java CI is not green yet. Will re-check when CI completes."
+                      });
+                    }
                   }
                 } else if (verdict === 'request-changes') {
                   task.turn += 1;
@@ -583,8 +600,14 @@ module.exports = async ({ github, context, core }) => {
               } else {
                 task.phase = 'REVIEW';
                 task.retries = 0;
-                task.review_in_progress = true;
-                await triggerTask(task.pr, getReviewPrompt());
+                if (await h.isCIGreen(task.pr)) {
+                  task.review_in_progress = true;
+                  await triggerTask(task.pr, getReviewPrompt());
+                } else {
+                  task.review_in_progress = false;
+                  state.history.push({ event: 'review_pending_ci', task: task.issue, timestamp: new Date().toISOString() });
+                  core.info(`#${task.issue}: review after feedback waits for CI on PR #${task.pr}`);
+                }
               }
             }
             break;

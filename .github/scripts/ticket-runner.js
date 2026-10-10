@@ -635,11 +635,20 @@ module.exports = async ({ github, context, core }) => {
       state.pr = prNumber;
       state.phase = "REVIEW";
       state.retries = 0;
-      state.review_in_progress = true;
       state.history.push({ event: "dev_done", pr: prNumber, timestamp: new Date().toISOString() });
-      await updateIssueState(issueNumber, state);
-      await h.triggerTask(prNumber, h.getReviewPrompt());
-      core.info("Ticket runner: #" + issueNumber + " -> REVIEW on PR #" + prNumber);
+      var ciGreen = await h.isCIGreen(prNumber);
+      if (ciGreen) {
+        state.review_in_progress = true;
+        await updateIssueState(issueNumber, state);
+        await h.triggerTask(prNumber, h.getReviewPrompt());
+        core.info("Ticket runner: #" + issueNumber + " -> REVIEW on PR #" + prNumber);
+      } else {
+        state.review_in_progress = false;
+        state.history.push({ event: "review_pending_ci", timestamp: new Date().toISOString() });
+        await updateIssueState(issueNumber, state);
+        core.info("Ticket runner: #" + issueNumber + " -> REVIEW on PR #" + prNumber
+          + ", review waits for CI (Java CI wakeup will request it)");
+      }
       return;
     }
 
@@ -714,33 +723,47 @@ module.exports = async ({ github, context, core }) => {
           body: "Agent review passed. Awaiting human approval via native GitHub PR Review UI."
         });
         core.info("Ticket runner: #" + issueNumber + " -> HUMAN_REVIEW");
-      } else if (await h.isDiffSafe(state.pr) && await h.isCIGreen(state.pr)) {
-        state.phase = "MERGE";
-        state.history.push({ event: "review_approved", next: "MERGE", timestamp: new Date().toISOString() });
-        try {
-          await h.mergePR(state.pr);
-          state.phase = "DONE";
-          state.history.push({ event: "merged", pr: state.pr, timestamp: new Date().toISOString() });
-          await updateIssueState(issueNumber, state);
-          await closeIssueWithLabel(issueNumber);
-          core.info("Ticket runner: #" + issueNumber + " merged and closed.");
-        } catch (err) {
-          core.error("Failed to merge PR #" + state.pr + ": " + err.message);
-          state.history.push({ event: "merge_failed", error: err.message, timestamp: new Date().toISOString() });
+      } else {
+        var diffSafe = await h.isDiffSafe(state.pr);
+        var ciGreen = await h.isCIGreen(state.pr);
+        if (diffSafe && ciGreen) {
+          state.phase = "MERGE";
+          state.history.push({ event: "review_approved", next: "MERGE", timestamp: new Date().toISOString() });
+          try {
+            await h.mergePR(state.pr);
+            state.phase = "DONE";
+            state.history.push({ event: "merged", pr: state.pr, timestamp: new Date().toISOString() });
+            await updateIssueState(issueNumber, state);
+            await closeIssueWithLabel(issueNumber);
+            core.info("Ticket runner: #" + issueNumber + " merged and closed.");
+          } catch (err) {
+            core.error("Failed to merge PR #" + state.pr + ": " + err.message);
+            state.history.push({ event: "merge_failed", error: err.message, timestamp: new Date().toISOString() });
+            await updateIssueState(issueNumber, state);
+            await github.rest.issues.createComment({
+              owner, repo, issue_number: state.pr,
+              body: "\u26a0\ufe0f Ticket runner: failed to auto-merge PR #" + state.pr + ": " + err.message
+            });
+          }
+        } else if (!diffSafe) {
+          state.phase = "HUMAN_REVIEW";
+          state.retries = 0;
+          state.history.push({ event: "merge_blocked_diff_unsafe", next: "HUMAN_REVIEW", timestamp: new Date().toISOString() });
           await updateIssueState(issueNumber, state);
           await github.rest.issues.createComment({
             owner, repo, issue_number: state.pr,
-            body: "\u26a0\ufe0f Ticket runner: failed to auto-merge PR #" + state.pr + ": " + err.message
+            body: "Agent review passed but the diff exceeds the auto-merge safety budget (isDiffSafe). Routing to HUMAN_REVIEW - approve via the GitHub PR Review UI to merge."
           });
+          core.info("Ticket runner: #" + issueNumber + " -> HUMAN_REVIEW (diff over auto-merge budget)");
+        } else {
+          state.history.push({ event: "merge_deferred", timestamp: new Date().toISOString() });
+          await updateIssueState(issueNumber, state);
+          await github.rest.issues.createComment({
+            owner, repo, issue_number: state.pr,
+            body: "Agent review passed but auto-merge deferred: Java CI is not green yet. Will re-check when CI completes."
+          });
+          core.info("Ticket runner: #" + issueNumber + " merge deferred, CI not green");
         }
-      } else {
-        state.history.push({ event: "merge_deferred", timestamp: new Date().toISOString() });
-        await updateIssueState(issueNumber, state);
-        await github.rest.issues.createComment({
-          owner, repo, issue_number: state.pr,
-          body: "Agent review passed but auto-merge deferred (diff not safe or CI not green). Will retry when CI completes."
-        });
-        core.info("Ticket runner: #" + issueNumber + " merge deferred, staying in REVIEW");
       }
     } else if (verdict === "request-changes") {
       state.turn += 1;
@@ -792,11 +815,19 @@ module.exports = async ({ github, context, core }) => {
     // After feedback, go back to REVIEW
     state.phase = "REVIEW";
     state.retries = 0;
-    state.review_in_progress = true;
     state.history.push({ event: "feedback_done", timestamp: new Date().toISOString() });
-    await updateIssueState(issueNumber, state);
-    await h.triggerTask(state.pr, h.getReviewPrompt());
-    core.info("Ticket runner: #" + issueNumber + " -> REVIEW (after feedback)");
+    var ciGreen = await h.isCIGreen(state.pr);
+    if (ciGreen) {
+      state.review_in_progress = true;
+      await updateIssueState(issueNumber, state);
+      await h.triggerTask(state.pr, h.getReviewPrompt());
+      core.info("Ticket runner: #" + issueNumber + " -> REVIEW (after feedback)");
+    } else {
+      state.review_in_progress = false;
+      state.history.push({ event: "review_pending_ci", timestamp: new Date().toISOString() });
+      await updateIssueState(issueNumber, state);
+      core.info("Ticket runner: #" + issueNumber + " -> REVIEW (after feedback), review waits for CI");
+    }
   }
 
   // ================================================================
@@ -929,6 +960,16 @@ module.exports = async ({ github, context, core }) => {
     // rather than starting a review on a broken branch.
     if (conclusion !== "success") {
       await retryOrFail(issueNumber, st);
+      return true;
+    }
+    var ciGreen = await h.isCIGreen(found);
+    if (!ciGreen) {
+      st.history.push({ event: "review_pending_ci", timestamp: new Date().toISOString() });
+      try {
+        await github.rest.issues.update({ owner, repo, issue_number: issueNumber, body: replaceOrAppendStatus(body, st, issueNumber) });
+      } catch (_) { /* state already rebuilt above; wakeup will re-read */ }
+      core.info("Ticket runner: #" + issueNumber + " recovered -> REVIEW on PR #" + found
+        + ", review waits for CI (Java CI wakeup will request it)");
       return true;
     }
     await h.triggerTask(found, h.getReviewPrompt());
