@@ -20,6 +20,10 @@
 -->
 <project name="JNode-Core-Tests" default="all" basedir=".">
 
+	<!-- all/build.xml resolves build.dir against this file's basedir (core/), but the
+	     builder task jar that core's prepare needs is produced under all/build. -->
+	<property name="build.dir" value="${basedir}/../all/build"/>
+
 	<import file="${basedir}/../all/build.xml"/>
 
 	<target name="help" description="output target descriptions">
@@ -31,7 +35,12 @@ help         Output these messages
 		</echo>
 	</target>
 
-	<target name="all-junit">
+	<target name="compile" depends="prepare">
+		<ant target="pre-compile" dir="${root.dir}/builder" inheritall="on" inheritrefs="on"/>
+		<ant target="compile" dir="${basedir}" inheritall="on" inheritrefs="on"/>
+	</target>
+
+	<target name="all-junit" depends="compile">
 		<delete dir="${basedir}/build/reports/junit"/>
 		<mkdir dir="${basedir}/build/reports/junit"/>
 		<junit showoutput="off" printsummary="on" fork="on" haltonfailure="on">

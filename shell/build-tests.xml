@@ -37,7 +37,7 @@ help         Output these messages
 	     For a start, we need to be able to set the blackbox options (-E, -F, -v, -d, etc) 
 	     once in an Ant property. -->
 
-	<target name="bjorne">
+	<target name="bjorne" depends="compile">
 		<java classpathref="cp-test" classname="org.jnode.test.shell.harness.TestHarness">
 			<arg value="-E"/>
 			<arg value="-v"/>
@@ -48,7 +48,11 @@ help         Output these messages
 		</java>
 	</target>
 
-	<target name="all-blackbox">
+	<target name="compile" depends="prepare">
+		<ant target="compile" dir="${basedir}" inheritall="on" inheritrefs="on"/>
+	</target>
+
+	<target name="all-blackbox" depends="compile">
 		<java classpathref="cp-test" classname="org.jnode.test.shell.harness.TestHarness">
 			<arg value="-E" />
 			<arg value="-F" />
@@ -59,7 +63,7 @@ help         Output these messages
 		</java>
 	</target>
 
-	<target name="all-junit">
+	<target name="all-junit" depends="compile">
 		<delete dir="${basedir}/build/reports/junit"/>
 		<mkdir dir="${basedir}/build/reports/junit"/>
 		<junit showoutput="off" printsummary="on" fork="on" haltonfailure="on">

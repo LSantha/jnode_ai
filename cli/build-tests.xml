@@ -34,7 +34,11 @@ help            Output these messages
 		</echo>
 	</target>
 	
-	<target name="all-junit">
+	<target name="compile" depends="prepare">
+		<ant target="compile" dir="${basedir}" inheritall="on" inheritrefs="on"/>
+	</target>
+
+	<target name="all-junit" depends="compile">
 	    <!-- 
 		<delete dir="${basedir}/build/reports/junit"/>
 		<mkdir dir="${basedir}/build/reports/junit"/>
@@ -46,7 +50,7 @@ help            Output these messages
 		-->
 	</target>
 	
-	<target name="blackbox-common">
+	<target name="blackbox-common" depends="compile">
 	    <java classpathref="cp-test" classname="org.jnode.test.shell.harness.TestHarness">
 	        <arg value="-E"/>
 	        <arg value="-F"/>
@@ -56,7 +60,7 @@ help            Output these messages
 	    </java>
 	</target>
 	
-	<target name="blackbox-file">
+	<target name="blackbox-file" depends="compile">
 	    <java classpathref="cp-test" classname="org.jnode.test.shell.harness.TestHarness">
 	        <arg value="-E"/>
 	        <arg value="-F"/>
@@ -66,7 +70,7 @@ help            Output these messages
 	    </java>
 	</target>
 	
-	<target name="all-blackbox">
+	<target name="all-blackbox" depends="compile">
 	    <java classpathref="cp-test" classname="org.jnode.test.shell.harness.TestHarness">
 			<arg value="-E"/>
 			<arg value="-s"/>

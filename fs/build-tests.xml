@@ -31,7 +31,11 @@ help         Output these messages
 		</echo>
 	</target>
 
-	<target name="all-junit">
+	<target name="compile" depends="prepare">
+		<ant target="compile" dir="${basedir}" inheritall="on" inheritrefs="on"/>
+	</target>
+
+	<target name="all-junit" depends="compile">
 		<delete dir="${basedir}/build/reports/junit"/>
 		<mkdir dir="${basedir}/build/reports/junit"/>
 		<junit showoutput="off" printsummary="on" fork="on" haltonfailure="on">
