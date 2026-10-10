@@ -94,6 +94,18 @@ public final class AC97Core implements AC97Constants, IRQHandler {
     public static final int PREBUFFER_DESCRIPTORS = 4;
 
     /**
+     * Time in milliseconds without any DMA progress before playback is
+     * considered stalled.
+     */
+    public static final int STALL_TIMEOUT = 5000;
+
+    /**
+     * Number of consecutive stall recoveries without the controller
+     * reporting any progress before the stream is given up on.
+     */
+    public static final int MAX_STALL_RECOVERIES = 3;
+
+    /**
      * Time in milliseconds to sleep between link reset events.
      */
     private static final int RESET_DELAY = 10;
@@ -108,12 +120,6 @@ public final class AC97Core implements AC97Constants, IRQHandler {
      * the reset state.
      */
     private static final int REG_BOX_RESET_TIMEOUT = 100;
-
-    /**
-     * Maximum time in milliseconds without any DMA progress before playback
-     * is considered stalled.
-     */
-    private static final int STALL_TIMEOUT = 5000;
 
     /**
      * The PCI device this core belongs to; it is also the ResourceOwner of
@@ -194,6 +200,13 @@ public final class AC97Core implements AC97Constants, IRQHandler {
      * Time of the last playback progress, used for stall detection.
      */
     private long lastProgress;
+
+    /**
+     * Number of stall recoveries since the controller last reported
+     * progress. {@link #MAX_STALL_RECOVERIES} of them in a row give up on
+     * the stream.
+     */
+    private int stallRecoveries;
 
     /**
      * Number of stereo frames queued through {@link #write} since the last
@@ -393,6 +406,7 @@ public final class AC97Core implements AC97Constants, IRQHandler {
             lastValidIndex = 0;
             currentIndex = 0;
             lastProgress = System.currentTimeMillis();
+            stallRecoveries = 0;
             totalQueuedFrames = 0;
             for (int i = 0; i < descriptorSamples.length; i++) {
                 descriptorSamples[i] = 0;
@@ -441,7 +455,10 @@ public final class AC97Core implements AC97Constants, IRQHandler {
                         throw new IllegalStateException(
                             "AC'97 playback closed while writing");
                     }
-                    checkStalled();
+                    if (!tryRecoverFromStall()) {
+                        throw new TimeoutException(
+                            "AC'97 DMA engine stalled and did not recover");
+                    }
                     // The interrupt handler wakes us up on every buffer
                     // completion.
                     playbackLock.wait(250);
@@ -577,7 +594,7 @@ public final class AC97Core implements AC97Constants, IRQHandler {
 
         synchronized (playbackLock) {
             currentIndex = maskEngineIndex(inNabmByte(PCM_OUT_CIV));
-            touchProgress();
+            noteControllerProgress();
             playbackLock.notifyAll();
         }
     }
@@ -888,7 +905,90 @@ public final class AC97Core implements AC97Constants, IRQHandler {
         inNabmByte(PCM_OUT_CIV);
     }
 
+    /**
+     * Notes progress made by the writer. Only refreshes the stall clock, so
+     * the recovery budget is not reset by a producer that keeps filling
+     * descriptors into an engine that is not transferring at all.
+     */
     private void touchProgress() {
+        lastProgress = System.currentTimeMillis();
+    }
+
+    /**
+     * Notes progress reported by the controller itself. This is what makes
+     * a stream healthy again, so it also clears the recovery budget.
+     */
+    private void noteControllerProgress() {
+        stallRecoveries = 0;
+        touchProgress();
+    }
+
+    /**
+     * Decides whether the engine has stalled: no progress for
+     * {@link #STALL_TIMEOUT} milliseconds.
+     *
+     * @param lastProgress time of the last progress, as of
+     *                     {@link System#currentTimeMillis()}
+     * @param now          the current time
+     */
+    public static boolean hasStalled(long lastProgress, long now) {
+        return (now - lastProgress) > STALL_TIMEOUT;
+    }
+
+    /**
+     * Has the recovery budget of {@link #MAX_STALL_RECOVERIES} consecutive
+     * recoveries been used up?
+     *
+     * @param recoveries recoveries since the last controller progress
+     */
+    public static boolean isRecoveryExhausted(int recoveries) {
+        return (recoveries >= MAX_STALL_RECOVERIES);
+    }
+
+    /**
+     * Recovers from a stalled DMA engine if it has stalled. Recovery resets
+     * the engine and restarts the stream from an empty ring; the audio that
+     * was still queued at that point is lost, but the caller's write()
+     * continues with fresh data instead of failing.
+     *
+     * @return false when the recovery budget is used up and the caller
+     *         should give up on the stream
+     */
+    private boolean tryRecoverFromStall() {
+        final long now = System.currentTimeMillis();
+        if (!hasStalled(lastProgress, now)) {
+            return true;
+        }
+        if (isRecoveryExhausted(stallRecoveries)) {
+            log.debug("AC'97 stalled " + (stallRecoveries + 1)
+                + " times without progress, giving up on the stream");
+            return false;
+        }
+        stallRecoveries++;
+        log.debug("AC'97 stalled, recovering the DMA engine (attempt "
+            + stallRecoveries + ')');
+        recoverFromStall();
+        return true;
+    }
+
+    /**
+     * Resets the DMA engine and the ring bookkeeping, and restarts the
+     * stream. Must be called with the playback lock held.
+     */
+    private void recoverFromStall() {
+        log.debug("AC'97 stalled; CIV=0x" + NumberUtils.hex(inNabmByte(PCM_OUT_CIV))
+            + " LVI=0x" + NumberUtils.hex(inNabmByte(PCM_OUT_LVI), 2) + " SR=0x"
+            + NumberUtils.hex(inNabmWord(PCM_OUT_SR), 4));
+        stopEngine();
+        resetEngine();
+        for (int i = 0; i < descriptorSamples.length; i++) {
+            descriptorSamples[i] = 0;
+        }
+        lastValidIndex = 0;
+        currentIndex = 0;
+        running = false;
+        // Not touchProgress(): that would clear the recovery budget that
+        // decides when to give up.
         lastProgress = System.currentTimeMillis();
     }
 

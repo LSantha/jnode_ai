@@ -102,6 +102,35 @@ public class AC97CoreTest {
     }
 
     @Test
+    public void testStallDetection() {
+        final long now = 1000000L;
+        // Fresh progress is never a stall, however long ago it was, as long
+        // as it is inside the timeout.
+        assertFalse(AC97Core.hasStalled(now - AC97Core.STALL_TIMEOUT, now));
+        assertFalse(AC97Core.hasStalled(now - (AC97Core.STALL_TIMEOUT - 1), now));
+        assertFalse(AC97Core.hasStalled(now, now));
+        // Past the timeout it is.
+        assertTrue(AC97Core.hasStalled(now - (AC97Core.STALL_TIMEOUT + 1), now));
+        assertTrue(AC97Core.hasStalled(now - 60000, now));
+    }
+
+    @Test
+    public void testRecoveryBudget() {
+        // A few recoveries are attempted, but a stream that never makes
+        // progress through the controller is given up on rather than
+        // recovered forever.
+        assertFalse(AC97Core.isRecoveryExhausted(0));
+        assertFalse(AC97Core.isRecoveryExhausted(1));
+        assertFalse(AC97Core.isRecoveryExhausted(AC97Core.MAX_STALL_RECOVERIES - 1));
+        assertTrue(AC97Core.isRecoveryExhausted(AC97Core.MAX_STALL_RECOVERIES));
+        assertTrue(AC97Core.isRecoveryExhausted(AC97Core.MAX_STALL_RECOVERIES + 5));
+        // The budget is small: recovering drops the buffered audio, so it
+        // must not be attempted indefinitely.
+        assertTrue(AC97Core.MAX_STALL_RECOVERIES <= 5);
+        assertTrue(AC97Core.MAX_STALL_RECOVERIES >= 1);
+    }
+
+    @Test
     public void testDrainCondition() {
         // drain() waits for the DMA controller halted bit: it is only set
         // once the last valid descriptor has been played, which is what
