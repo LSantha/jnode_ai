@@ -85,6 +85,29 @@ public class BufferDescriptorListTest {
     }
 
     @Test
+    public void testBufferUnderrunPolicyFlag() {
+        // BD_BUP is the other half of the control word and has to survive
+        // sample count and interrupt flag changes in either direction.
+        final int plain = BufferDescriptorList.encodeControlWord(2048, false);
+        assertEquals(0, plain & AC97Constants.BD_BUP);
+        assertEquals(AC97Constants.BD_BUP,
+            BufferDescriptorList.withBufferUnderrunPolicy(plain, true)
+                & AC97Constants.BD_BUP);
+        final int withBup = BufferDescriptorList.withBufferUnderrunPolicy(plain,
+            true);
+        // Setting it again changes nothing, clearing it restores the word.
+        assertEquals(withBup, BufferDescriptorList.withBufferUnderrunPolicy(
+            withBup, true));
+        assertEquals(plain, BufferDescriptorList.withBufferUnderrunPolicy(withBup,
+            false));
+        // The sample count and the interrupt flag are untouched.
+        assertEquals(2048, withBup & AC97Constants.BD_LENGTH_MASK);
+        final int armed = BufferDescriptorList.encodeControlWord(2, true);
+        assertEquals(AC97Constants.BD_BUP | AC97Constants.BD_IOC | 2,
+            BufferDescriptorList.withBufferUnderrunPolicy(armed, true));
+    }
+
+    @Test
     public void testControlWordRejectsHugeCounts() {
         try {
             BufferDescriptorList.encodeControlWord(65536, false);

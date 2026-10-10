@@ -234,6 +234,18 @@ public final class BufferDescriptorList implements AC97Constants {
     }
 
     /**
+     * Encodes a buffer descriptor control word with the given buffer
+     * underrun policy flag.
+     *
+     * @param controlWord the control word to change
+     * @param set         if <code>true</code> BD_BUP is set, otherwise it is
+     *                    cleared
+     */
+    public static int withBufferUnderrunPolicy(int controlWord, boolean set) {
+        return set ? (controlWord | BD_BUP) : (controlWord & ~BD_BUP);
+    }
+
+    /**
      * Gets the size of the DMA memory block that holds a descriptor list
      * with the given geometry: the aligned list itself plus the sample
      * buffers, with worst case alignment slack in front of each of them.
@@ -307,6 +319,22 @@ public final class BufferDescriptorList implements AC97Constants {
         // Little endian, sample pointer followed by control &amp; length word.
         descriptors.setInt(ofs, address.toInt());
         descriptors.setInt(ofs + 4, encodeControlWord(samples, interrupt));
+    }
+
+    /**
+     * Sets or clears the buffer underrun policy flag of a descriptor. When
+     * the flag is set on the last valid descriptor of a stream, the
+     * controller repeats the last sample after an underrun instead of
+     * playing garbage, which makes the end of a drained stream detectable.
+     *
+     * @param index index of the descriptor
+     * @param set   the new flag value
+     */
+    public final void setBufferUnderrunPolicy(int index, boolean set) {
+        testIndex(index);
+        final int ofs = descriptorOffset(index) + 4;
+        descriptors.setInt(ofs, withBufferUnderrunPolicy(descriptors.getInt(ofs),
+            set));
     }
 
     /**

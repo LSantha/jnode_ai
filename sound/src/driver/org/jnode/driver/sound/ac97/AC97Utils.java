@@ -99,12 +99,9 @@ public final class AC97Utils {
                 api.write(chunk, 0, count * AC97Constants.PCM_FRAME_SIZE);
             } while (generator.getRemainingFrames() > 0);
             // Wait until the DAC has actually played every frame we wrote.
-            // getPosition() is sample accurate, so this neither truncates the
-            // tone nor waits longer than the remaining audio.
-            final int target = generator.getTotalFrames();
-            while (api.getPosition() < target) {
-                Thread.sleep(5);
-            }
+            // The engine marks the last descriptor with the buffer underrun
+            // policy and halts, so drain() returns on the last sample.
+            api.drain();
         } catch (IllegalArgumentException ex) {
             log.error("Invalid tone", ex);
         } catch (InterruptedException ex) {

@@ -102,6 +102,21 @@ public class AC97CoreTest {
     }
 
     @Test
+    public void testDrainCondition() {
+        // drain() waits for the DMA controller halted bit: it is only set
+        // once the last valid descriptor has been played, which is what
+        // makes the end of a stream detectable.
+        assertFalse(AC97Core.isDrainComplete(0));
+        assertFalse(AC97Core.isDrainComplete(AC97Constants.SR_BCIS));
+        assertFalse(AC97Core.isDrainComplete(AC97Constants.SR_CELV));
+        // The bits a writer clears must not look like a halt.
+        assertFalse(AC97Core.isDrainComplete(AC97Constants.SR_WC_MASK));
+        assertTrue(AC97Core.isDrainComplete(AC97Constants.SR_DCH));
+        assertTrue(AC97Core.isDrainComplete(AC97Constants.SR_DCH
+            | AC97Constants.SR_BCIS));
+    }
+
+    @Test
     public void testRemainingSamplesEmptyRing() {
         // Nothing written yet: CIV equals LVI and PICB is zero, so nothing
         // is left to play. This is also the state after the controller has

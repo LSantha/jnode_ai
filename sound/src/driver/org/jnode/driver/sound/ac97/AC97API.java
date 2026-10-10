@@ -119,4 +119,13 @@ public interface AC97API extends DeviceAPI {
      * never runs past the data queued with {@link #write}.
      */
     public int getPosition();
+
+    /**
+     * Waits until the DMA engine has played every frame written so far. The
+     * stream stays open and the next {@link #write} restarts the engine.
+     *
+     * @throws InterruptedException when the thread is interrupted while waiting
+     * @throws TimeoutException     when the DMA engine stalls
+     */
+    public void drain() throws InterruptedException, TimeoutException;
 }

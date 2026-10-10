@@ -481,6 +481,35 @@ public final class AC97Core implements AC97Constants, IRQHandler {
     }
 
     /**
+     * Waits until the DMA engine has played every frame written so far. The
+     * last valid descriptor is marked with the buffer underrun policy flag,
+     * so the controller repeats its last sample instead of playing garbage,
+     * and halts with SR_DCH set when it is done - which is what makes the
+     * end of the stream detectable.
+     * <p>
+     * The stream stays open: the engine halts itself, and the next
+     * {@link #write} restarts it. A consumer that wants to drop the
+     * remaining audio should call {@link #close} instead.
+     *
+     * @throws InterruptedException when the thread is interrupted while waiting
+     * @throws TimeoutException     when the DMA engine stalls
+     */
+    public final void drain() throws InterruptedException, TimeoutException {
+        synchronized (playbackLock) {
+            if (!playing) {
+                throw new IllegalStateException("AC'97 playback is not open");
+            }
+            bdl.setBufferUnderrunPolicy(lastValidIndex, true);
+            while (!isDrainComplete(inNabmWord(PCM_OUT_SR))) {
+                // No recovery here: recovering would reset the engine and
+                // drop the very audio we are waiting for.
+                checkStalled();
+                playbackLock.wait(250);
+            }
+        }
+    }
+
+    /**
      * Stop playback. The DMA engine is halted and its register box reset, so
      * the engine is silent right away. Buffered PCM data is dropped.
      */
@@ -799,6 +828,17 @@ public final class AC97Core implements AC97Constants, IRQHandler {
             index = nextIndex(index, entryCount);
         }
         return samples;
+    }
+
+    /**
+     * Has the controller played everything it was given? The DMA controller
+     * halted status bit is set once it has finished the last valid
+     * descriptor, which is the signal a drain waits for.
+     *
+     * @param status the value of the engine status register
+     */
+    public static boolean isDrainComplete(int status) {
+        return (status & SR_DCH) != 0;
     }
 
     /**

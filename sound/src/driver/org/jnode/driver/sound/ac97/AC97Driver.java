@@ -185,4 +185,12 @@ public class AC97Driver extends Driver implements AC97API, AC97Constants {
         }
         return c.getPosition();
     }
+
+    public void drain() throws InterruptedException, TimeoutException {
+        final AC97Core c = core;
+        if (c == null) {
+            throw new IllegalStateException("AC'97 device is not started");
+        }
+        c.drain();
+    }
 }
