@@ -90,7 +90,9 @@
 	<property name="jnode-shell.jar" value="${root.dir}/shell/build/classes"/>
 	<property name="jnode-shell-test.jar" value="${root.dir}/shell/build/testclasses"/>
 	<property name="jnode-cli.jar" value="${root.dir}/cli/build/classes"/>
+	<property name="jnode-sound.jar" value="${root.dir}/sound/build/classes"/>
 	<property name="jnode-cli-test.jar" value="${root.dir}/cli/build/testclasses"/>
+	<property name="jnode-sound-test.jar" value="${root.dir}/sound/build/testclasses"/>
 	<property name="jnode-fonts.jar" value="${build.dir}/descriptors/jnode-fonts.jar"/>
 	<property name="jnode-images.jar" value="${build.dir}/descriptors/jnode-images.jar"/>
 
@@ -199,6 +201,7 @@
 		<pathelement location="${jnode-shell.jar}"/>
 		<pathelement location="${jnode-net.jar}"/>
 		<pathelement location="${jnode-gui.jar}"/>
+		<pathelement location="${jnode-sound.jar}"/>
 		<pathelement location="${jnode-cli.jar}"/>
 		<pathelement location="${thinlet.jar}"/>
 		<pathelement location="${jnode-textui.jar}"/>
@@ -213,6 +216,7 @@
 		<pathelement location="${jnode-shell-test.jar}"/>
 		<pathelement location="${jnode-net-test.jar}"/>
 		<pathelement location="${jnode-gui-test.jar}"/>
+		<pathelement location="${jnode-sound-test.jar}"/>
 		<pathelement location="${jnode-cli-test.jar}"/>
 		<pathelement location="${jnode-textui-test.jar}"/>
 		<pathelement location="${root.dir}/builder/build/testclasses"/>
@@ -398,6 +402,7 @@
 			<libalias name="jnode-distr.jar" alias="${jnode-distr.jar}"/>
 			<libalias name="jnode-fs.jar" alias="${jnode-fs.jar}"/>
 			<libalias name="jnode-gui.jar" alias="${jnode-gui.jar}"/>
+			<libalias name="jnode-sound.jar" alias="${jnode-sound.jar}"/>
 			<libalias name="jnode-textui.jar" alias="${jnode-textui.jar}"/>
 			<libalias name="jnode-net.jar" alias="${jnode-net.jar}"/>
 			<libalias name="jnode-shell.jar" alias="${jnode-shell.jar}"/>
@@ -407,6 +412,7 @@
 			<libalias name="jnode-distr-test.jar" alias="${jnode-distr-test.jar}"/>
 			<libalias name="jnode-fs-test.jar" alias="${jnode-fs-test.jar}"/>
 			<libalias name="jnode-gui-test.jar" alias="${jnode-gui-test.jar}"/>
+			<libalias name="jnode-sound-test.jar" alias="${jnode-sound-test.jar}"/>
 			<libalias name="jnode-textui-test.jar" alias="${jnode-textui-test.jar}"/>
 			<libalias name="jnode-net-test.jar" alias="${jnode-net-test.jar}"/>
 			<libalias name="jnode-shell-test.jar" alias="${jnode-shell-test.jar}"/>
@@ -873,7 +879,7 @@ clean             Remove all intermediate build results.
             <fileset dir="${root.dir}/shell" includes="*.xml"/>
             <fileset dir="${root.dir}/shell/descriptors" includes="*.xml"/>
             <fileset dir="${root.dir}/sound" includes="*.xml"/>
-            <!-- fileset dir="${root.dir}/sound/descriptors" includes="*.xml"/ -->
+            <fileset dir="${root.dir}/sound/descriptors" includes="*.xml"/>
             <fileset dir="${root.dir}/textui" includes="*.xml"/>
             <fileset dir="${root.dir}/textui/descriptors" includes="*.xml"/>
         </header>
