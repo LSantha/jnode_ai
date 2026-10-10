@@ -24,6 +24,7 @@ import org.jnode.plugin.model.PluginDescriptorModelTest;
 import org.jnode.test.threads.ThreadingTestJUnit4;
 import org.jnode.test.util.NumberUtilsTest;
 import org.jnode.test.util.VersionTest;
+import org.jnode.vm.x86.compiler.l1a.X86Level1ACompilerVisitorTest;
 import org.jnode.vm.compiler.ir.L2HostTest;
 import org.jnode.vm.compiler.ir.L2ModeMatrixTest;
 import org.jnode.vm.compiler.ir.L2PipelineTest;
@@ -52,6 +53,7 @@ import org.junit.runners.Suite.SuiteClasses;
     WaitTest.class,
     JavaCommandParserTest.class,
     ThreadingTestJUnit4.class,
+    X86Level1ACompilerVisitorTest.class,
     X86RegisterPoolTest.class,
     X86StreamTest.class,
     L2HostTest.class,
