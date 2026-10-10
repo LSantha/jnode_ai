@@ -573,12 +573,43 @@ public final class AC97Core implements AC97Constants, IRQHandler {
             }
             resetCaptureEngine();
             selectSampleRate(rate);
+            // Default record path: the dedicated microphone input at 0 dB
+            // gain. openCapture() overrides it for whatever the caller wants
+            // to record from.
+            setRecordSource(RECORD_SELECT_MIC, 0);
             armCaptureRing();
             captureOpen = true;
             // Start the controller. There is nothing to prebuffer like the
             // playback engine, because every descriptor is already armed.
             readBarrierIn();
             outNabmByte(PCM_IN_CR, CR_IOCE | CR_RPBM);
+        }
+    }
+
+    /**
+     * Selects what the ADC records and the gain it records at. The value is
+     * written to the record select register; both channels carry the same 3
+     * bit source code, so the caller passes the already duplicated value
+     * (see the RECORD_SELECT_* constants).
+     *
+     * @param select    the record select value, e.g. RECORD_SELECT_MIC
+     * @param gainSteps gain in 1.5 dB steps per channel, 0 is maximum gain
+     *                   and RECORD_GAIN_0DB
+     */
+    public final void setRecordSource(int select, int gainSteps) {
+        if ((select & 0xFF) != select) {
+            throw new IllegalArgumentException("Invalid record source 0x"
+                + Integer.toHexString(select));
+        }
+        if ((select & RECORD_SELECT_CHANNEL_MASK) != (select >> 4)) {
+            throw new IllegalArgumentException(
+                "Record source must be the same for both channels");
+        }
+        synchronized (captureLock) {
+            outNam(NAM_RECORD_SELECT, select);
+            final int gain = (gainSteps & 0x0F) | ((gainSteps & 0x0F) << 8);
+            outNam(NAM_RECORD_GAIN, gain);
+            outNam(NAM_RECORD_GAIN_MIC, gain);
         }
     }
 

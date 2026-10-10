@@ -169,4 +169,15 @@ public interface AC97API extends DeviceAPI {
      * Gets the number of recorded sample buffers that have not been read yet.
      */
     public int getCapturedBuffers();
+
+    /**
+     * Selects what the ADC records and the gain it records at. Can be called
+     * while capture is open; the change takes effect with the next recorded
+     * buffer.
+     *
+     * @param select    record select value with both channels equal, e.g.
+     *                  {@link AC97Constants#RECORD_SELECT_MIC}
+     * @param gainSteps gain in 1.5 dB steps per channel, 0 is maximum gain
+     */
+    public void setRecordSource(int select, int gainSteps);
 }

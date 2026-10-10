@@ -193,6 +193,12 @@ public interface AC97Constants extends PCIConstants {
     public static final int RECORD_GAIN_0DB = 0x0000;
 
     /**
+     * Mask of one channel of the record select register, which is a 3 bit
+     * source code per channel in bits 2:0 and bits 6:4.
+     */
+    public static final int RECORD_SELECT_CHANNEL_MASK = 0x07;
+
+    /**
      * First vendor identification register.
      */
     public static final int NAM_VENDOR_ID1 = 0x7C;

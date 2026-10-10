@@ -230,4 +230,12 @@ public class AC97Driver extends Driver implements AC97API, AC97Constants {
         }
         return c.getCapturedBuffers();
     }
+
+    public void setRecordSource(int select, int gainSteps) {
+        final AC97Core c = core;
+        if (c == null) {
+            throw new IllegalStateException("AC'97 device is not started");
+        }
+        c.setRecordSource(select, gainSteps);
+    }
 }

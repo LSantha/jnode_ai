@@ -39,6 +39,7 @@
 
   <extension point="org.jnode.shell.aliases">
     <alias name="ac97play" class="org.jnode.driver.sound.ac97.command.AC97PlayCommand"/>
+    <alias name="ac97capture" class="org.jnode.driver.sound.ac97.command.AC97CaptureCommand"/>
   </extension>
 
   <extension point="org.jnode.shell.syntaxes">
@@ -47,6 +48,12 @@
         <argument argLabel="frequency" description="tone frequency in Hz"/>
         <argument argLabel="duration" description="duration in milliseconds"/>
       </sequence>
+    </syntax>
+    <syntax alias="ac97capture">
+      <option argLabel="duration" description="recording time in milliseconds"/>
+      <option argLabel="rate" description="sample rate in Hz"/>
+      <option argLabel="gain" description="record gain in 1.5 dB steps, 0 is maximum gain"/>
+      <option argLabel="source" description="record source: mic or line"/>
     </syntax>
   </extension>
 
