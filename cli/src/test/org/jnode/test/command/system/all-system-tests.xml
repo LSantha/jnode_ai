@@ -1,0 +1,4 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testSet title="All system command tests">
+    <include setName="base64-command-tests.xml"/>
+</testSet>

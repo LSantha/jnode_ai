@@ -1,0 +1,103 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testSet title="base64 command tests">
+    <plugin id="org.jnode.command.system"/>
+    <plugin id="org.jnode.shell.bjorne" class="org.jnode.test.shell.bjorne.BjornePseudoPlugin"/>
+    <testSpec title="encode-stdin" command="base64" runMode="AS_ALIAS" rc="0">
+        <input>hello</input>
+        <output>aGVsbG8=
+</output>
+    </testSpec>
+    <testSpec title="encode-empty-stdin" command="base64" runMode="AS_ALIAS" rc="0">
+        <input></input>
+        <output></output>
+    </testSpec>
+    <testSpec title="encode-one-byte-pad" command="base64" runMode="AS_ALIAS" rc="0">
+        <input>a</input>
+        <output>YQ==
+</output>
+    </testSpec>
+    <testSpec title="encode-two-byte-pad" command="base64" runMode="AS_ALIAS" rc="0">
+        <input>ab</input>
+        <output>YWI=
+</output>
+    </testSpec>
+    <testSpec title="encode-no-pad" command="base64" runMode="AS_ALIAS" rc="0">
+        <input>abc</input>
+        <output>YWJj
+</output>
+    </testSpec>
+    <testSpec title="encode-wraps-at-76-columns" command="base64" runMode="AS_ALIAS" rc="0">
+        <input>The quick brown fox jumps over the lazy dog. The quick brown fox jumps over the lazy dog. The quick </input>
+        <output>VGhlIHF1aWNrIGJyb3duIGZveCBqdW1wcyBvdmVyIHRoZSBsYXp5IGRvZy4gVGhlIHF1aWNrIGJy
+b3duIGZveCBqdW1wcyBvdmVyIHRoZSBsYXp5IGRvZy4gVGhlIHF1aWNrIA==
+</output>
+    </testSpec>
+    <testSpec title="decode-stdin" command="base64" runMode="AS_ALIAS" rc="0">
+        <arg>-d</arg>
+        <input>aGVsbG8=</input>
+        <output>hello</output>
+    </testSpec>
+    <testSpec title="decode-long-flag" command="base64" runMode="AS_ALIAS" rc="0">
+        <arg>--decode</arg>
+        <input>YQ==</input>
+        <output>a</output>
+    </testSpec>
+    <testSpec title="decode-gnu-wrapped-input" command="base64" runMode="AS_ALIAS" rc="0">
+        <arg>-d</arg>
+        <input>VGhlIHF1aWNrIGJyb3duIGZveCBqdW1wcyBvdmVyIHRoZSBsYXp5IGRvZy4gVGhlIHF1aWNrIGJy
+b3duIGZveCBqdW1wcyBvdmVyIHRoZSBsYXp5IGRvZy4gVGhlIHF1aWNrIA==
+</input>
+        <output>The quick brown fox jumps over the lazy dog. The quick brown fox jumps over the lazy dog. The quick </output>
+    </testSpec>
+    <testSpec title="decode-unpadded-final-quantum" command="base64" runMode="AS_ALIAS" rc="1">
+        <arg>-d</arg>
+        <input>aGVsbG8</input>
+        <output>hello</output>
+        <error>&lt;stdin&gt;: invalid base64 input
+</error>
+    </testSpec>
+    <testSpec title="decode-invalid-character" command="base64" runMode="AS_ALIAS" rc="1">
+        <arg>-d</arg>
+        <input>aGVsbG8!!</input>
+        <output>hello</output>
+        <error>&lt;stdin&gt;: invalid base64 input
+</error>
+    </testSpec>
+    <testSpec title="decode-crlf-wrapped-input" command="base64" runMode="AS_ALIAS" rc="0">
+        <arg>-d</arg>
+        <input>aGVsbG8=
+</input>
+        <output>hello</output>
+    </testSpec>
+    <testSpec title="encode-file" command="run" runMode="AS_SCRIPT" rc="0">
+        <script>#!bjorne
+                base64 @TEMP_DIR@/a
+        </script>
+        <file name="a" input="true">hello</file>
+        <output>aGVsbG8=
+</output>
+    </testSpec>
+    <testSpec title="decode-file" command="run" runMode="AS_SCRIPT" rc="0">
+        <script>#!bjorne
+                base64 -d @TEMP_DIR@/a
+        </script>
+        <file name="a" input="true">aGVsbG8=</file>
+        <output>hello</output>
+    </testSpec>
+    <testSpec title="encode-decode-round-trip" command="run" runMode="AS_SCRIPT" rc="0">
+        <script>#!bjorne
+                base64 @TEMP_DIR@/a &gt; @TEMP_DIR@/a.b64
+                base64 -d @TEMP_DIR@/a.b64 &gt; @TEMP_DIR@/b
+                cmp @TEMP_DIR@/a @TEMP_DIR@/b
+        </script>
+        <file name="a" input="true">hello world</file>
+        <output></output>
+    </testSpec>
+    <testSpec title="encode-pipeline" command="run" runMode="AS_SCRIPT" rc="0">
+        <script>#!bjorne
+                cat @TEMP_DIR@/a | base64 | base64 -d
+        </script>
+        <file name="a" input="true">hello</file>
+        <output>hello</output>
+    </testSpec>
+</testSet>
