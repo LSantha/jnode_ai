@@ -40,6 +40,12 @@
   <extension point="org.jnode.shell.aliases">
     <alias name="ac97play" class="org.jnode.driver.sound.ac97.command.AC97PlayCommand"/>
     <alias name="ac97capture" class="org.jnode.driver.sound.ac97.command.AC97CaptureCommand"/>
+    <alias name="ac97wav" class="org.jnode.driver.sound.ac97.command.AC97WavCommand"/>
+  </extension>
+
+  <extension point="org.jnode.security.permissions">
+    <!-- The capture and wav commands read and write WAV files. -->
+    <permission class="java.io.FilePermission" name="&lt;&lt;ALL FILES&gt;&gt;" actions="read,write"/>
   </extension>
 
   <extension point="org.jnode.shell.syntaxes">
@@ -48,6 +54,9 @@
         <argument argLabel="frequency" description="tone frequency in Hz"/>
         <argument argLabel="duration" description="duration in milliseconds"/>
       </sequence>
+    </syntax>
+    <syntax alias="ac97wav">
+      <argument argLabel="file" description="the WAV file to play"/>
     </syntax>
     <syntax alias="ac97capture">
       <option argLabel="duration" description="recording time in milliseconds"/>

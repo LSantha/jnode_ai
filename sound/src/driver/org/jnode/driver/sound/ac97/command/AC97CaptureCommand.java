@@ -20,12 +20,17 @@
 
 package org.jnode.driver.sound.ac97.command;
 
+import java.io.File;
+import java.io.FileOutputStream;
+import java.io.IOException;
 import java.io.PrintWriter;
 
 import org.jnode.driver.sound.ac97.AC97API;
 import org.jnode.driver.sound.ac97.AC97Constants;
 import org.jnode.driver.sound.ac97.AC97Utils;
+import org.jnode.driver.sound.ac97.WavFile;
 import org.jnode.shell.AbstractCommand;
+import org.jnode.shell.syntax.FileArgument;
 import org.jnode.shell.syntax.Argument;
 import org.jnode.shell.syntax.EnumArgument;
 import org.jnode.shell.syntax.IntegerArgument;
@@ -87,9 +92,13 @@ public class AC97CaptureCommand extends AbstractCommand {
     private final SourceArgument argSource =
         new SourceArgument("source", Argument.OPTIONAL, "record source");
 
+    private final FileArgument argFile = new FileArgument(
+        "file", Argument.OPTIONAL, "write the recording as a WAV file to this"
+            + " path");
+
     public AC97CaptureCommand() {
         super("records from the AC'97 codec and reports the input level");
-        registerArguments(argDuration, argRate, argGain, argSource);
+        registerArguments(argDuration, argRate, argGain, argSource, argFile);
     }
 
     public static void main(String[] args) throws Exception {
@@ -116,6 +125,9 @@ public class AC97CaptureCommand extends AbstractCommand {
         final int totalFrames = (int) (((long) rate * durationMs) / 1000);
         final int windowFrames = rate / 10;
         final byte[] chunk = new byte[4096];
+        // The whole recording is kept so that it can be written out as a WAV
+        // file afterwards; the duration argument bounds the memory used.
+        final byte[] recording = new byte[totalFrames * frameSize];
 
         out.println("ac97capture: recording " + durationMs + "ms at " + rate
             + "Hz, source=" + source + " gain=" + gainSteps);
@@ -133,6 +145,8 @@ public class AC97CaptureCommand extends AbstractCommand {
                 final int frames = Math.min(chunk.length / frameSize, totalFrames
                     - recorded);
                 api.readCapture(chunk, 0, frames * frameSize);
+                System.arraycopy(chunk, 0, recording, recorded * frameSize,
+                    frames * frameSize);
                 recorded += frames;
                 for (int i = 0; i + 1 < frames * frameSize; i += 2) {
                     final int sample = (chunk[i] & 0xFF) | (chunk[i + 1] << 8);
@@ -179,9 +193,43 @@ public class AC97CaptureCommand extends AbstractCommand {
         out.println("ac97capture: recorded " + recorded + " frames ("
             + (recorded * 1000 / rate) + "ms), peak=" + totalPeak
             + ", clipped=" + totalClips);
+        if (argFile.isSet()) {
+            writeWav(out, argFile.getValue(), recording, recorded * frameSize,
+                rate);
+        }
         if (totalPeak == 0) {
             out.println("ac97capture: input is digital silence - check the"
                 + " record source, the gain and the host audio input");
+        }
+    }
+
+    /**
+     * Writes the recording as a 16 bit stereo PCM WAV file.
+     */
+    private void writeWav(PrintWriter out, File file, byte[] pcm, int length,
+        int rate) {
+        FileOutputStream fos = null;
+        try {
+            // The header wants bits per sample, the constant is bytes.
+            final byte[] header = WavFile.createHeader(length, rate,
+                AC97Constants.PCM_CHANNELS,
+                AC97Constants.PCM_BYTES_PER_SAMPLE * 8);
+            fos = new FileOutputStream(file);
+            fos.write(header);
+            fos.write(pcm, 0, length);
+            out.println("ac97capture: wrote " + (length + header.length)
+                + " bytes to " + file.getPath());
+        } catch (IOException ex) {
+            out.println("ac97capture: cannot write " + file.getPath() + ": "
+                + ex.getMessage());
+        } finally {
+            if (fos != null) {
+                try {
+                    fos.close();
+                } catch (IOException ex) {
+                    // ignored
+                }
+            }
         }
     }
 

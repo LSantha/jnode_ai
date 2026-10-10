@@ -42,6 +42,7 @@ import org.junit.runners.Suite;
     BufferDescriptorListTest.class,
     AC97CoreTest.class,
     ToneGeneratorTest.class,
+    WavFileTest.class,
     AC97CaptureCommandTest.class
 })
 public class AllTests {
