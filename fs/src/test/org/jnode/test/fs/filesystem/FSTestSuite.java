@@ -20,6 +20,7 @@
 
 package org.jnode.test.fs.filesystem;
 
+import org.jnode.fs.service.def.FileHandleManagerTest;
 import org.jnode.test.fs.ext4.Ext4FileSystemTest;
 import org.jnode.test.fs.filesystem.tests.BasicFSTest;
 import org.jnode.test.fs.filesystem.tests.ConcurrentAccessFSTest;
@@ -59,6 +60,7 @@ import org.junit.runners.Suite.SuiteClasses;
     FatFileSystemTest.class,
     FatWriteBench.class,
     JFatLongFileNameTest.class,
+    FileHandleManagerTest.class,
 }
 )
 public class FSTestSuite {

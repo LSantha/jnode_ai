@@ -24,6 +24,7 @@ import java.io.IOException;
 import java.io.VMOpenMode;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.Iterator;
 import java.util.Map;
 
 import org.apache.log4j.Logger;
@@ -47,13 +48,30 @@ final class FileHandleManager {
      * @throws IOException
      */
     public synchronized FileHandleImpl open(FSFile file, VMOpenMode mode) throws IOException {
+        return open(file, mode.canRead(), mode.canWrite());
+    }
+
+    synchronized FileHandleImpl open(FSFile file, boolean canWrite) throws IOException {
+        return open(file, !canWrite, canWrite);
+    }
+
+    synchronized FileHandleImpl open(FSFile file, boolean canRead, boolean canWrite) throws IOException {
+        Iterator<FileData> files = openFiles.values().iterator();
+        while (files.hasNext()) {
+            FileData openFile = files.next();
+            openFile.closeStaleHandles();
+            if (!openFile.hasHandles()) {
+                files.remove();
+            }
+        }
+
         FileData fd = openFiles.get(file);
         if (fd == null) {
             fd = new FileData(file);
             openFiles.put(file, fd);
         }
 
-        return fd.open(mode);
+        return fd.open(canRead, canWrite);
     }
 
     /**
@@ -118,15 +136,15 @@ final class FileHandleManager {
          * 
          * @throws IOException if file is already open in write mode.
          */
-        public FileHandleImpl open(VMOpenMode mode) throws IOException {
-            if (mode.canWrite()) {
+        public FileHandleImpl open(boolean canRead, boolean canWrite) throws IOException {
+            if (canWrite) {
                 if (hasWriters) {
                     throw new IOException("File is already open for writing");
                 } else {
                     hasWriters = true;
                 }
             }
-            final FileHandleImpl handle = new FileHandleImpl(file, mode, FileHandleManager.this);
+            final FileHandleImpl handle = new FileHandleImpl(file, canRead, canWrite, FileHandleManager.this);
             handles.add(handle);
             return handle;
         }
@@ -159,6 +177,25 @@ final class FileHandleManager {
             }
         }
 
+        void closeStaleHandles() {
+            Iterator<FileHandleImpl> staleHandles = handles.iterator();
+            while (staleHandles.hasNext()) {
+                FileHandleImpl handle = staleHandles.next();
+                if (!handle.isOwnerAlive()) {
+                    try {
+                        handle.closeFromManager();
+                    } catch (IOException e) {
+                        fdLog.warn("Unable to flush a stale file handle", e);
+                    } finally {
+                        staleHandles.remove();
+                        if (handle.isWrite()) {
+                            hasWriters = false;
+                        }
+                    }
+                }
+            }
+        }
+
         /**
          * Close the given handle for this file.
          * 
@@ -169,7 +206,7 @@ final class FileHandleManager {
         public void close(FileHandleImpl handle) throws IOException {
             if (handles.contains(handle)) {
                 handles.remove(handle);
-                if (handle.getMode().canWrite()) {
+                if (handle.isWrite()) {
                     hasWriters = false;
                 }
             } else {
