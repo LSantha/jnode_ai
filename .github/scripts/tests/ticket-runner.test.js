@@ -1078,6 +1078,40 @@ test("ticket-runner.js event handling suite", async (t) => {
     assert.strictEqual(mocks.calls.createComment.length, 0);
   });
 
+  await t.test("clear triage with incidental 'out of scope' prose still auto-starts DEV", async () => {
+    const mocks = createMocks("workflow_run", {
+      runName: "Triage #42 - Stale test classes",
+      runDisplayTitle: "Triage #42 - Stale test classes",
+      issueBody: "Bug description",
+      issueLabels: [{ name: "kind/chore" }]
+    });
+    mocks.setIssueComments([
+      { body: "## Triage\n\n- [x] **Repro:** build-tests.xml\n- [x] **Suggested next:** fix\n\nKnown-failing testExecuteJavaRunsPackagePrivateMain stays out of scope and is not a regression signal" }
+    ]);
+    await runTicketRunner(mocks);
+
+    const state = _parseState(mocks.getIssueBody());
+    assert.ok(state, "refusal heuristics must not treat 'out of scope' prose as a refusal");
+    assert.strictEqual(state.phase, "DEV");
+    assert.ok(mocks.calls.createComment.some(c => c.body.includes("/oc Please proceed")));
+  });
+
+  await t.test("triage with a Refusal heading does not auto-start DEV", async () => {
+    const mocks = createMocks("workflow_run", {
+      runName: "Triage #42 - Stale test classes",
+      runDisplayTitle: "Triage #42 - Stale test classes",
+      issueBody: "Bug description",
+      issueLabels: [{ name: "kind/chore" }]
+    });
+    mocks.setIssueComments([
+      { body: "## Triage\n\n- [x] **Suggested next:** fix\n\n## Refusal\n\nASM touch required; see resolver pre-flight." }
+    ]);
+    await runTicketRunner(mocks);
+
+    assert.strictEqual(_parseState(mocks.getIssueBody()), null);
+    assert.ok(!mocks.calls.createComment.some(c => c.body.includes("/oc Please proceed")));
+  });
+
   await t.test("issues:labeled ignores non-actionable kind", async () => {
     const mocks = createMocks("issues", { labelName: "kind/question" });
     await runTicketRunner(mocks);

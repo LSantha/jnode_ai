@@ -20,6 +20,7 @@
 'use strict';
 
 const createHelpers = require("./orchestrator-helpers.js");
+const { isRefusalComment, isNeedsInfoComment, isTriageComment, isTriggerComment } = require("./report-signals.js");
 
 const STATE_RE = /<!-- TICKET_RUNNER_STATE:\s*([\s\S]*?)\s*-->/;
 const ORCHESTRATOR_STATE_RE = /<!-- ORCHESTRATOR_STATE:/;
@@ -114,13 +115,9 @@ module.exports = async ({ github, context, core }) => {
   const ACTIONABLE_KINDS = ["kind/bug", "kind/feature", "kind/chore", "kind/wiki", "kind/test"];
   const AUTO_BLOCKING_LABELS = ["agent/done", "agent/investigated", "agent/skip", "agent/blocked",
     "agent/needs-info", "agent/duplicate", "agent/failed", "agent/in-progress"];
-  const VAGUE_RE = /needs more info from reporter|needs the following|suggested next:\s*needs-info/i;
-  const TRIAGE_RE = /## .*Triage/i;
-  const REFUSAL_RE = /refusal|out of scope/i;
   // A comment carrying a slash-command is a TRIGGER, never a REPORT.
   // Triggers routinely quote report strings (e.g. "## Triage", "Verdict: ..."),
   // so every report scan must skip them or it matches its own trigger.
-  const TRIGGER_RE = /(^|\s)\/(oc|run|orchestrate)(\s|$)/;
   const TRIAGE_REQUEST_RE = /(^|\s)\/oc\s+triage(?:\s|$)/i;
 
   // ---- Determine issue number depending on event type ----
@@ -312,10 +309,10 @@ module.exports = async ({ github, context, core }) => {
     for (var i = 0; i < list.length; i++) {
       var b = (list[i] && list[i].body) || "";
       if (TRIAGE_REQUEST_RE.test(b)) requested = true;
-      if (TRIGGER_RE.test(b)) continue;
-      if (TRIAGE_RE.test(b)) {
+      if (isTriggerComment(b)) continue;
+      if (isTriageComment(b)) {
         count++;
-        clear = !VAGUE_RE.test(b) && !REFUSAL_RE.test(b);
+        clear = !isNeedsInfoComment(b) && !isRefusalComment(b);
       }
     }
     return { present: count > 0, clear: clear, count: count, requested: requested };
