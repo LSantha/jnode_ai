@@ -13,7 +13,7 @@
     </testSpec>
     <testSpec title="alias" command="test" runMode="AS_SCRIPT" rc="0">
         <script>#!bjorne
-                alias &gt; @TEMP_DIR@/1
+                alias > @TEMP_DIR@/1
         </script>
         <file name="1" input="false"></file>
     </testSpec>
@@ -110,18 +110,18 @@ A --
     </testSpec>
     <testSpec title="read" runMode="AS_SCRIPT" rc="0">
         <script>#!bjorne
-                read &lt;&lt;EOF
+                read <<EOF
 1 2 3
 EOF
-                read A B C &lt;&lt;EOF 
+                read A B C <<EOF 
 1 2 3
 EOF
                 echo +$A+ +$B+ +$C+
-                read A B C D &lt;&lt;EOF 
+                read A B C D <<EOF 
  1 2 3 
 EOF
                 echo +$A+ +$B+ +$C+ +$D+
-                read A B &lt;&lt;EOF 
+                read A B <<EOF 
  1 2 3 
 EOF
                 echo +$A+ +$B+
@@ -133,19 +133,19 @@ EOF
     </testSpec>
     <testSpec title="read 2" runMode="AS_SCRIPT" rc="0">
         <script>#!bjorne
-                IFS="|" read A B C &lt;&lt;EOF 
+                IFS="|" read A B C <<EOF 
 1|2|3
 EOF
                 echo +$A+ +$B+ +$C+
-                IFS=" |" read A B C D &lt;&lt;EOF 
+                IFS=" |" read A B C D <<EOF 
  1 | 2 | 3 
 EOF
                 echo +$A+ +$B+ +$C+ +$D+
-                IFS=" |" read A B C D &lt;&lt;EOF 
+                IFS=" |" read A B C D <<EOF 
  1 | 2 || 3 
 EOF
                 echo +$A+ +$B+ +$C+ +$D+
-                IFS="" read A B &lt;&lt;EOF 
+                IFS="" read A B <<EOF 
  1 | 2 | 3 
 EOF
                 echo +$A+ +$B+
@@ -154,6 +154,16 @@ EOF
 +1+ +2+ +3+ ++
 +1+ +2+ ++ +3+
 + 1 | 2 | 3 + ++
+</output>
+    </testSpec>
+    <testSpec title="echo" runMode="AS_SCRIPT" rc="0">
+        <script>#!bjorne
+                echo hello world
+                echo -n hello world
+                echo -n
+        </script>
+        <output>hello world
+hello world
 </output>
     </testSpec>
 </testSet>
