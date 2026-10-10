@@ -599,6 +599,11 @@ public class DefaultInterpreter implements CommandInterpreter {
                                 finished = true;
                                 if (token.length() == 0) {
                                     token.append(currentChar);
+                                    if (currentChar == SEND_OUTPUT_TO_CHAR &&
+                                            pos < s.length() &&
+                                            s.charAt(pos) == SEND_OUTPUT_TO_CHAR) {
+                                        token.append(s.charAt(pos++));
+                                    }
                                     type = SPECIAL;
                                 } else {
                                     pos--; // the special character terminates the
