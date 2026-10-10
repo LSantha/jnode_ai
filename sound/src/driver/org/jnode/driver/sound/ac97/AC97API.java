@@ -128,4 +128,45 @@ public interface AC97API extends DeviceAPI {
      * @throws TimeoutException     when the DMA engine stalls
      */
     public void drain() throws InterruptedException, TimeoutException;
+
+    /**
+     * Opens the PCM in (capture) engine for recording. Every descriptor of
+     * the capture ring is armed up front, so the controller starts filling
+     * sample buffers immediately. The recorded format is the mirror image of
+     * the playback format accepted by {@link #write}.
+     *
+     * @param sampleRate sample rate in Hz, one of
+     *                   {@link AC97Constants#SAMPLE_RATES}
+     */
+    public void openCapture(int sampleRate);
+
+    /**
+     * Closes the PCM in engine and drops the recorded audio.
+     */
+    public void closeCapture();
+
+    /**
+     * Is the capture engine open?
+     */
+    public boolean isCaptureOpen();
+
+    /**
+     * Reads recorded PCM data, blocking until the whole destination is
+     * filled. The data is 16-bit signed little endian stereo, the same
+     * format {@link #write} plays.
+     *
+     * @param pcm    the destination array
+     * @param offset offset in the array
+     * @param length number of bytes to read, a multiple of PCM_FRAME_SIZE
+     * @return the number of bytes read
+     * @throws InterruptedException when the thread is interrupted while waiting
+     * @throws TimeoutException     when the capture engine stalls
+     */
+    public int readCapture(byte[] pcm, int offset, int length)
+        throws InterruptedException, TimeoutException;
+
+    /**
+     * Gets the number of recorded sample buffers that have not been read yet.
+     */
+    public int getCapturedBuffers();
 }

@@ -193,4 +193,41 @@ public class AC97Driver extends Driver implements AC97API, AC97Constants {
         }
         c.drain();
     }
+
+    public void openCapture(int sampleRate) {
+        final AC97Core c = core;
+        if (c == null) {
+            throw new IllegalStateException("AC'97 device is not started");
+        }
+        c.openCapture(sampleRate);
+    }
+
+    public void closeCapture() {
+        final AC97Core c = core;
+        if (c != null) {
+            c.closeCapture();
+        }
+    }
+
+    public boolean isCaptureOpen() {
+        final AC97Core c = core;
+        return (c != null) && c.isCaptureOpen();
+    }
+
+    public int readCapture(byte[] pcm, int offset, int length)
+        throws InterruptedException, TimeoutException {
+        final AC97Core c = core;
+        if (c == null) {
+            throw new IllegalStateException("AC'97 device is not started");
+        }
+        return c.readCapture(pcm, offset, length);
+    }
+
+    public int getCapturedBuffers() {
+        final AC97Core c = core;
+        if (c == null) {
+            return 0;
+        }
+        return c.getCapturedBuffers();
+    }
 }

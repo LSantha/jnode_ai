@@ -102,6 +102,52 @@ public class AC97CoreTest {
     }
 
     @Test
+    public void testCaptureRegisterBoxMirrorsPlayback() {
+        // The PCM in box at NABM+0x00 has the same registers in the same
+        // order as the PCM out box at 0x10.
+        assertEquals(AC97Constants.PCM_IN_BDBAR, AC97Constants.PCM_OUT_BDBAR
+            - AC97Constants.PCM_OUT_BOX);
+        assertEquals(AC97Constants.PCM_IN_CIV, AC97Constants.PCM_OUT_CIV
+            - AC97Constants.PCM_OUT_BOX);
+        assertEquals(AC97Constants.PCM_IN_LVI, AC97Constants.PCM_OUT_LVI
+            - AC97Constants.PCM_OUT_BOX);
+        assertEquals(AC97Constants.PCM_IN_SR, AC97Constants.PCM_OUT_SR
+            - AC97Constants.PCM_OUT_BOX);
+        assertEquals(AC97Constants.PCM_IN_PICB, AC97Constants.PCM_OUT_PICB
+            - AC97Constants.PCM_OUT_BOX);
+        assertEquals(AC97Constants.PCM_IN_PIV, AC97Constants.PCM_OUT_PIV
+            - AC97Constants.PCM_OUT_BOX);
+        assertEquals(AC97Constants.PCM_IN_CR, AC97Constants.PCM_OUT_CR
+            - AC97Constants.PCM_OUT_BOX);
+        // The capture engine has its own bit in the global status register.
+        assertEquals(0x00000020, AC97Constants.GLOB_STA_PIINT);
+        assertTrue(AC97Constants.GLOB_STA_PIINT != AC97Constants.GLOB_STA_POINT);
+    }
+
+    @Test
+    public void testCaptureCompletedCount() {
+        // Nothing recorded and nothing read yet.
+        assertEquals(0, AC97Core.completedCaptureCount(0, 0, ENTRIES));
+        // One buffer filled, none read.
+        assertEquals(1, AC97Core.completedCaptureCount(1, 0, ENTRIES));
+        assertEquals(5, AC97Core.completedCaptureCount(5, 0, ENTRIES));
+        // The controller wrapped past the end of the ring: it filled 31 and
+        // is at 0 again, one buffer behind the reader.
+        assertEquals(1, AC97Core.completedCaptureCount(0, 31, ENTRIES));
+        // Everything the controller has filled has been read: the reader is
+        // one behind the controller and will stall.
+        assertEquals(0, AC97Core.completedCaptureCount(7, 7, ENTRIES));
+        assertEquals(0, AC97Core.completedCaptureCount(0, 0, ENTRIES));
+        // A full ring never reported: the controller halts when it catches
+        // up with the last valid index, so at most entryCount - 1 buffers
+        // can be outstanding.
+        for (int c = 0; c < ENTRIES; c++) {
+            final int count = AC97Core.completedCaptureCount(c, c, ENTRIES);
+            assertEquals(0, count);
+        }
+    }
+
+    @Test
     public void testStallDetection() {
         final long now = 1000000L;
         // Fresh progress is never a stall, however long ago it was, as long
