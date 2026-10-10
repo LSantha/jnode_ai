@@ -252,6 +252,7 @@ function createMocks(eventName, {
     setPRList: (l) => { prListOverride = l; },
     setCheckRuns: (r) => { checkRuns = r; },
     setPRMerged: (m) => { currentPRMerged = m; },
+    setIssueState: (s) => { currentIssueState = s; },
     getIssueBody: () => currentIssueBody
   };
 }
@@ -1958,5 +1959,81 @@ test("ticket-runner.js event handling suite", async (t) => {
     await runTicketRunner(mocks);
 
     assert.strictEqual(mocks.calls.createComment.length, 0);
+  });
+
+  await t.test("auto-start refuses a closed issue", async () => {
+    const mocks = createMocks("workflow_run", {
+      runName: "Triage #42 - Fix bug",
+      runDisplayTitle: "Triage #42 - Fix bug",
+      issueBody: "Original issue body description",
+      issueLabels: [{ name: "kind/bug" }]
+    });
+    mocks.setIssueComments([{ body: "## Triage\n\n- [x] Repro: yes\n- [x] Suggested next: fix" }]);
+    mocks.setIssueState("closed");
+
+    await runTicketRunner(mocks);
+
+    assert.strictEqual(_parseState(mocks.getIssueBody()), null, "No state block is created");
+    assert.strictEqual(
+      mocks.calls.createComment.filter(c => /\/oc Please proceed/.test(c.body)).length, 0,
+      "DEV is never triggered on a closed issue"
+    );
+  });
+
+  await t.test("opencode completion on a closed issue cancels instead of advancing", async () => {
+    const initialBody = _replaceOrAppendStatus("Task", {
+      phase: "DEV",
+      pr: null,
+      turn: 0,
+      max_turns: 3,
+      retries: 0,
+      started: new Date().toISOString(),
+      history: [{ event: "auto_start", reason: "triage-clear after opencode run" }]
+    }, 42);
+
+    const mocks = createMocks("workflow_run", {
+      issueBody: initialBody,
+      runDisplayTitle: "Issue #42 - Fix bug",
+      issueLabels: [{ name: "kind/bug" }]
+    });
+    mocks.setIssueState("closed");
+
+    await runTicketRunner(mocks);
+
+    const state = _parseState(mocks.getIssueBody());
+    assert.strictEqual(state.phase, "CANCELLED", "Run is cancelled, not advanced");
+    assert.ok(state.history.some(h => h.event === "cancelled_issue_closed"));
+    assert.ok(
+      mocks.calls.addLabels.some(l => l.labels.includes("agent/skip")),
+      "Cancellation is visible on the closed issue via agent/skip"
+    );
+    assert.strictEqual(
+      mocks.calls.createComment.filter(c => /\/oc review/.test(c.body)).length, 0,
+      "No review is requested for a closed issue"
+    );
+    assert.strictEqual(mocks.calls.mergePR.length, 0, "Nothing is merged for a closed issue");
+  });
+
+  await t.test("a cancelled phase is terminal and never re-triggered", async () => {
+    const initialBody = _replaceOrAppendStatus("Task", {
+      phase: "CANCELLED",
+      pr: null,
+      turn: 0,
+      max_turns: 3,
+      retries: 0,
+      started: new Date().toISOString(),
+      history: [{ event: "cancelled_issue_closed" }]
+    }, 42);
+
+    const mocks = createMocks("workflow_run", {
+      issueBody: initialBody,
+      runDisplayTitle: "Issue #42 - Fix bug",
+      issueLabels: [{ name: "kind/bug" }]
+    });
+
+    await runTicketRunner(mocks);
+
+    assert.strictEqual(_parseState(mocks.getIssueBody()).phase, "CANCELLED");
+    assert.strictEqual(mocks.calls.createComment.length, 0, "No further work is triggered");
   });
 });

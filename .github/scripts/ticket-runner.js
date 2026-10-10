@@ -26,6 +26,10 @@ const { isRefusalComment, isNeedsInfoComment, isTriageComment, isTriggerComment 
 const STATE_RE = /<!-- TICKET_RUNNER_STATE:\s*([\s\S]*?)\s*-->/;
 const ORCHESTRATOR_STATE_RE = /<!-- ORCHESTRATOR_STATE:/;
 
+function isTerminalPhase(phase) {
+  return phase === "DONE" || phase === "FAILED" || phase === "CANCELLED";
+}
+
 function parseState(body) {
   if (!body) return null;
   var m = body.match(STATE_RE);
@@ -68,7 +72,7 @@ function replaceOrAppendState(body, state) {
 function renderStatusSection(state, issueNumber) {
   var phaseEmoji = {
     DEV: "🔨", REVIEW: "🔍", FEEDBACK: "🔧",
-    HUMAN_REVIEW: "👤", MERGE: "🚀", DONE: "✅", FAILED: "❌"
+    HUMAN_REVIEW: "👤", MERGE: "🚀", DONE: "✅", FAILED: "❌", CANCELLED: "🚫"
   };
   var emoji = phaseEmoji[state.phase] || "⏳";
   var lines = [
@@ -202,8 +206,8 @@ module.exports = async ({ github, context, core }) => {
     if (body.includes("--reset") || body.includes("--fresh")) {
       core.info("Ticket runner: reset requested via command flag.");
       state = null;
-    } else if (state && (state.phase === "DONE" || state.phase === "FAILED")) {
-      core.info("Previous run completed or failed. Starting fresh.");
+    } else if (state && isTerminalPhase(state.phase)) {
+      core.info("Previous run reached terminal phase " + state.phase + ". Starting fresh.");
       state = null;
     }
 
@@ -317,6 +321,7 @@ module.exports = async ({ github, context, core }) => {
       return { ok: false, reason: "fetch failed: " + err.message };
     }
     if (d.pull_request) return { ok: false, reason: "is a PR" };
+    if (d.state && d.state !== "open") return { ok: false, reason: "issue is " + d.state };
     var labels = h.extractLabels(d);
     if (labels.includes("no-auto")) return { ok: false, reason: "no-auto" };
     if (labels.includes("kind/orchestrator")) return { ok: false, reason: "orchestrator master" };
@@ -464,7 +469,7 @@ module.exports = async ({ github, context, core }) => {
       var found = await findIssueByPR(prNumber);
       if (!found) continue;
       var st = found.state;
-      if (!st || st.phase === "DONE" || st.phase === "FAILED") continue;
+      if (!st || isTerminalPhase(st.phase)) continue;
       if (conclusion === "success") {
         if (st.phase !== "REVIEW" || st.review_in_progress) continue;
         // Set both flags only after the trigger succeeds. On the DEV path this
@@ -549,7 +554,7 @@ module.exports = async ({ github, context, core }) => {
       return;
     }
 
-    if (state.phase === "DONE" || state.phase === "FAILED") {
+    if (isTerminalPhase(state.phase)) {
       core.info("Ticket runner: issue #" + runIssueNumber + " already in terminal state " + state.phase);
       return;
     }
@@ -654,6 +659,22 @@ module.exports = async ({ github, context, core }) => {
 
   async function advancePhase(issueNumber, state, phaseFailed) {
     core.info("Ticket runner: advancing #" + issueNumber + " phase=" + state.phase + " failed=" + phaseFailed);
+
+    var issueOpen = true;
+    try {
+      var issueRes = await github.rest.issues.get({ owner, repo, issue_number: issueNumber });
+      issueOpen = !issueRes.data.pull_request && issueRes.data.state === "open";
+    } catch (err) {
+      core.warning("Ticket runner: could not fetch #" + issueNumber + " state: " + err.message);
+    }
+    if (!issueOpen) {
+      state.phase = "CANCELLED";
+      state.history.push({ event: "cancelled_issue_closed", timestamp: new Date().toISOString() });
+      await updateIssueState(issueNumber, state);
+      await applyLabel(issueNumber, "agent/skip");
+      core.info("Ticket runner: #" + issueNumber + " is closed; cancelling run.");
+      return;
+    }
 
     switch (state.phase) {
       case "DEV":
