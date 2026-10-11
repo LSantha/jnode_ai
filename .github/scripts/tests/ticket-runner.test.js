@@ -2156,8 +2156,12 @@ test("ticket-runner.js event handling suite", async (t) => {
     // run, so COMPLETION_LABELS is too wide an exception: a closed kind/bug ticket
     // carrying it is a human abandonment, and falling through let the run reach the
     // merge path on a ticket the human had closed. Only the post-step's own close
-    // shapes (agent/duplicate, or agent/investigated on investigate/question) are
-    // treated as self-closed.
+    // shapes (agent/duplicate, or agent/investigated, which decideAgentLabel sets
+    // only through isInvestigationReport) are treated as self-closed.
+    //
+    // This variant is in REVIEW with a PR, so the no-PR clause also rejects the
+    // fall-through. The no-PR variant below is the one that decides between this
+    // rule and COMPLETION_LABELS on its own.
     const initialBody = _replaceOrAppendStatus("Task", {
       phase: "REVIEW",
       pr: 99,
@@ -2181,6 +2185,42 @@ test("ticket-runner.js event handling suite", async (t) => {
     const state = _parseState(mocks.getIssueBody());
     assert.strictEqual(state.phase, "CANCELLED", "a human-closed ticket is cancelled, not completed");
     assert.deepStrictEqual(mocks.calls.mergePR, [], "nothing is merged for a closed issue");
+    assert.ok(mocks.calls.addLabels.some(l => l.labels.includes("agent/skip")));
+  });
+
+  await t.test("a closed no-PR bug ticket carrying agent/done starts no new run", async () => {
+    // The variant that discriminates the label rule on its own: no PR, so the
+    // no-PR clause does not apply and only the label rule can reject the
+    // fall-through. Widening selfClosed to COMPLETION_LABELS here re-triggers a
+    // DEV run on a closed issue - retries=1, history=[retry] - which is the
+    // #748/#749 failure mode this PR exists to stop.
+    const initialBody = _replaceOrAppendStatus("Task", {
+      phase: "DEV",
+      pr: null,
+      turn: 0,
+      max_turns: 3,
+      retries: 0,
+      started: new Date().toISOString(),
+      history: []
+    }, 42);
+
+    const mocks = createMocks("workflow_run", {
+      issueBody: initialBody,
+      runDisplayTitle: "Issue #42 - Fix bug",
+      issueLabels: [{ name: "kind/bug" }, { name: "agent/done" }]
+    });
+    mocks.setPRList([]);
+    mocks.setIssueState("closed");
+
+    await runTicketRunner(mocks);
+
+    const state = _parseState(mocks.getIssueBody());
+    assert.strictEqual(state.phase, "CANCELLED", "cancelled on the label rule alone");
+    assert.strictEqual(state.retries, 0, "no retry was consumed, so no run re-started");
+    assert.strictEqual(
+      mocks.calls.createComment.filter(c => c.body.includes("/oc Please proceed")).length, 0,
+      "DEV is never re-triggered on a closed issue"
+    );
     assert.ok(mocks.calls.addLabels.some(l => l.labels.includes("agent/skip")));
   });
 
