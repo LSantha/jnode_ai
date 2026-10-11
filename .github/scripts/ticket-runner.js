@@ -683,14 +683,20 @@ module.exports = async ({ github, context, core }) => {
       // is still too wide - agent/done is the post-step's default branch for
       // every non-investigation run, so a closed kind/bug carrying it is an
       // abandonment and must cancel.
-      // The exception also requires no PR. A self-closed ticket never has one:
-      // the post-step closes investigations and duplicates from a report or a
-      // duplicate link, neither of which opens a PR, and the DONE path the
-      // exception protects is handleDevCompletion's short-circuit, which only
-      // runs when there is no PR. Without this, a stale agent/investigated -
-      // decideAgentLabel's existing branch preserves the label across runs - lets
-      // a reopened ticket that reached REVIEW with a PR fall through and merge on
-      // an issue a human had closed.
+      // The exception also requires no PR. Neither close opens a PR - the post-step
+      // closes investigations and duplicates from a report or a duplicate link -
+      // and the DONE path the exception protects is handleDevCompletion's
+      // short-circuit, which only runs when there is no PR. Wording matters here:
+      // a self-closed ticket does not need to lack a PR from earlier phases, it
+      // just cannot have been closed by one, so a self-closed FEEDBACK ticket
+      // that already had a PR does read as an abandonment. That is the deliberate
+      // trade against the stale-label case below: nothing merges and no retry is
+      // burned, the PR simply stays open unmerged on a closed issue.
+      //
+      // Without this clause a stale agent/investigated - decideAgentLabel's
+      // existing branch preserves the label across runs - lets a reopened ticket
+      // that reached REVIEW with a PR fall through and merge on an issue a human
+      // had closed.
       const selfClosed =
         (issueLabels.indexOf("agent/duplicate") >= 0 ||
          issueLabels.indexOf("agent/investigated") >= 0) && !state.pr;
