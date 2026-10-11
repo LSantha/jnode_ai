@@ -22,7 +22,10 @@ package org.jnode.driver.sound.ac97.command;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertTrue;
+import static org.junit.Assert.fail;
 
+import org.jnode.driver.sound.ac97.AC97Constants;
+import org.jnode.shell.syntax.CommandSyntaxException;
 import org.junit.Test;
 
 /**
@@ -118,6 +121,35 @@ public class AC97CaptureCommandTest {
         assertEquals("ac97capture: 2400 frames rms=32767 (-0.0 dBFS) peak=32767"
             + " clips=7", line.replace("0.0 dBFS", "-0.0 dBFS")
             .replace("-0.0 dBFS", "-0.0 dBFS"));
+    }
+
+    @Test
+    public void testRecordSourceParsing() throws Exception {
+        // The command line is case insensitive: "mic", "MIC" and "Mic" all
+        // select the microphone.
+        // The sources are package private; the values they carry are the
+        // record select constants of the codec.
+        assertEquals(AC97CaptureCommand.Source.MIC, AC97CaptureCommand.acceptSource("mic"));
+        assertEquals(AC97CaptureCommand.Source.MIC, AC97CaptureCommand.acceptSource("MIC"));
+        assertEquals(AC97CaptureCommand.Source.MIC, AC97CaptureCommand.acceptSource("Mic"));
+        assertEquals(AC97CaptureCommand.Source.LINE, AC97CaptureCommand.acceptSource("line"));
+        assertEquals(AC97CaptureCommand.Source.LINE, AC97CaptureCommand.acceptSource("LiNe"));
+    }
+
+    @Test
+    public void testUnknownRecordSourceIsRejected() {
+        try {
+            AC97CaptureCommand.acceptSource("microphone");
+            fail("expected an exception for an unknown source");
+        } catch (CommandSyntaxException ex) {
+            // expected
+        }
+        try {
+            AC97CaptureCommand.acceptSource("");
+            fail("expected an exception for an empty source");
+        } catch (CommandSyntaxException ex) {
+            // expected
+        }
     }
 
     @Test

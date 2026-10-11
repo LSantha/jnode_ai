@@ -647,14 +647,7 @@ public final class AC97Core implements AC97Constants, IRQHandler {
      *                   and RECORD_GAIN_0DB
      */
     public final void setRecordSource(int select, int gainSteps) {
-        if ((select & 0xFF) != select) {
-            throw new IllegalArgumentException("Invalid record source 0x"
-                + Integer.toHexString(select));
-        }
-        if ((select & RECORD_SELECT_CHANNEL_MASK) != (select >> 4)) {
-            throw new IllegalArgumentException(
-                "Record source must be the same for both channels");
-        }
+        validateRecordSource(select);
         synchronized (captureLock) {
             outNam(NAM_RECORD_SELECT, select);
             final int gain = (gainSteps & 0x0F) | ((gainSteps & 0x0F) << 8);
@@ -1262,6 +1255,30 @@ public final class AC97Core implements AC97Constants, IRQHandler {
      */
     public static boolean isDrainComplete(int status) {
         return (status & SR_DCH) != 0;
+    }
+
+    /**
+     * Validates a record select value.
+     * <p>
+     * The register has a 7 bit mux setting per channel: the right channel in
+     * bits 6:0 and the left channel in bits 14:8. This driver records the
+     * same source into both channels, so the two fields must be equal, which
+     * is why the accepted values are the duplicated source codes like
+     * RECORD_SELECT_MIC (0x0000) and RECORD_SELECT_LINE (0x0404).
+     *
+     * @param select the record select value
+     * @throws IllegalArgumentException if it is not a duplicated source
+     */
+    public static void validateRecordSource(int select) {
+        if ((select & 0xFFFF) != select) {
+            throw new IllegalArgumentException("Invalid record source 0x"
+                + Integer.toHexString(select));
+        }
+        if ((select & 0xFF) != ((select >> 8) & 0xFF)) {
+            throw new IllegalArgumentException(
+                "Record source must be the same for both channels (0x"
+                    + Integer.toHexString(select) + ')');
+        }
     }
 
     /**

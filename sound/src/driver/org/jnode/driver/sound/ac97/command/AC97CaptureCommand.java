@@ -30,9 +30,11 @@ import org.jnode.driver.sound.ac97.AC97Constants;
 import org.jnode.driver.sound.ac97.AC97Utils;
 import org.jnode.driver.sound.ac97.WavFile;
 import org.jnode.shell.AbstractCommand;
-import org.jnode.shell.syntax.FileArgument;
+import org.jnode.shell.CommandLine.Token;
 import org.jnode.shell.syntax.Argument;
+import org.jnode.shell.syntax.CommandSyntaxException;
 import org.jnode.shell.syntax.EnumArgument;
+import org.jnode.shell.syntax.FileArgument;
 import org.jnode.shell.syntax.IntegerArgument;
 
 /**
@@ -50,7 +52,7 @@ public class AC97CaptureCommand extends AbstractCommand {
     /**
      * Record sources the command can select.
      */
-    private enum Source {
+    enum Source {
         /** the dedicated microphone input */
         MIC(AC97Constants.RECORD_SELECT_MIC),
         /** the line input */
@@ -62,7 +64,7 @@ public class AC97CaptureCommand extends AbstractCommand {
             this.select = select;
         }
 
-        int select() {
+        public int select() {
             return select;
         }
     }
@@ -87,6 +89,17 @@ public class AC97CaptureCommand extends AbstractCommand {
         protected String argumentKind() {
             return "record source";
         }
+
+        /**
+         * Matches the record source case insensitively, so that "mic" and
+         * "MIC" both work: the underlying EnumArgument matches the declared
+         * enum constant names only, which are upper case.
+         */
+        @Override
+        protected Source doAccept(Token token, int flags)
+            throws CommandSyntaxException {
+            return acceptSource(token.text);
+        }
     }
 
     private final SourceArgument argSource =
@@ -99,6 +112,22 @@ public class AC97CaptureCommand extends AbstractCommand {
     public AC97CaptureCommand() {
         super("records from the AC'97 codec and reports the input level");
         registerArguments(argDuration, argRate, argGain, argSource, argFile);
+    }
+
+    /**
+     * Parses a record source name case insensitively.
+     *
+     * @param text the token typed by the user
+     * @return the source
+     * @throws CommandSyntaxException if it is not a known source
+     */
+    static Source acceptSource(String text) throws CommandSyntaxException {
+        for (Source source : Source.values()) {
+            if (source.name().equalsIgnoreCase(text)) {
+                return source;
+            }
+        }
+        throw new CommandSyntaxException("not a valid <record source>: " + text);
     }
 
     public static void main(String[] args) throws Exception {

@@ -21,6 +21,7 @@
 package org.jnode.driver.sound.ac97;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.fail;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
 
@@ -163,6 +164,38 @@ public class AC97CoreTest {
         assertFalse(AC97Core.isRecoveryExhausted(0));
         // Three tries, then the callers of both engines give up.
         assertEquals(3, AC97Core.MAX_STALL_RECOVERIES);
+    }
+
+    @Test
+    public void testRecordSourceValidation() {
+        // The register has a 7 bit mux per channel: the right one in bits
+        // 6:0 and the left one in bits 14:8, so a source for both channels is
+        // the source code duplicated in both bytes.
+        AC97Core.validateRecordSource(AC97Constants.RECORD_SELECT_MIC);
+        AC97Core.validateRecordSource(AC97Constants.RECORD_SELECT_LINE);
+        assertEquals(0x0000, AC97Constants.RECORD_SELECT_MIC);
+        assertEquals(0x0404, AC97Constants.RECORD_SELECT_LINE);
+        // Every duplicated source code is accepted.
+        for (int source = 0; source <= 7; source++) {
+            AC97Core.validateRecordSource(source | (source << 8));
+        }
+        // A source in only one channel, or different sources, is rejected.
+        for (int bad : new int[] {0x0004, 0x0400, 0x0102, 0x0301, 0x7F00}) {
+            try {
+                AC97Core.validateRecordSource(bad);
+                fail("expected an exception for record select 0x"
+                    + Integer.toHexString(bad));
+            } catch (IllegalArgumentException ex) {
+                // expected
+            }
+        }
+        // Values above the low byte are not a record source at all.
+        try {
+            AC97Core.validateRecordSource(0x010000);
+            fail("expected an exception for a value above 16 bit");
+        } catch (IllegalArgumentException ex) {
+            // expected
+        }
     }
 
     @Test
