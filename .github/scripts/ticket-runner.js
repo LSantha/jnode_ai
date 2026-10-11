@@ -1002,8 +1002,11 @@ module.exports = async ({ github, context, core }) => {
   }
 
   function phaseMessage(state) {
+    // REVIEW deliberately has no branch. Both callers - the /run escape hatch
+    // and retryOrFail - gate on isCIGreen first and post through requestReview,
+    // so an ungated review prompt cannot be produced from here. Adding one
+    // would silently re-open the race this branch used to keep alive.
     if (state.phase === "FEEDBACK") return "/oc fix Address review feedback.";
-    if (state.phase === "REVIEW") return h.getReviewPrompt();
     return "/oc Please proceed with this task.";
   }
 

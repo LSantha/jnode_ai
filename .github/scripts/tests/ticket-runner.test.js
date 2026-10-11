@@ -452,7 +452,8 @@ test("merge safety gate helpers", async (t) => {
     const hCfg = makeHelpers({ files: [{ filename: "jnode.properties", additions: 1 }] });
     assert.strictEqual(await hCfg.isDiffSafe(99), false);
     const hEmpty = makeHelpers({ files: [] });
-    assert.strictEqual(await hEmpty.isDiffSafe(99), false);
+    assert.strictEqual(await hEmpty.isDiffSafe(99), true,
+      "no changed files cannot exceed a budget; reporting it as over-budget routed an empty diff to HUMAN_REVIEW on a false cause");
   });
 
   await t.test("isDiffSafe: allows large test-only diffs but not production diffs", async () => {

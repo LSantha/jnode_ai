@@ -666,6 +666,20 @@ module.exports = async ({ github, context, core }) => {
         }
 
         if (phaseFailed) {
+          // A retry that posts nothing must not cost a retry, whichever caller
+          // arrives, and must be evaluated before the max-retries check. This is
+          // the same hoist the ticket runner got: without it, three failed
+          // completions against a task parked from DEV on red CI reach
+          // retries >= 3 and fail the task -- advancing the queue with no review
+          // ever requested and no label or comment left behind.
+          if (task.phase === 'REVIEW' && task.pr && !(await h.isCIGreen(task.pr))) {
+            task.review_pending_ci = true;
+            task.review_in_progress = false;
+            state.history.push({ event: 'review_pending_ci', task: task.issue, pr: task.pr, reason: 'retry suppressed: CI not green', timestamp: new Date().toISOString() });
+            core.info(`Task #${task.issue} retry suppressed: PR #${task.pr} CI not green.`);
+            await updateMasterIssue(masterIssueNumber, state);
+            return;
+          }
           task.retries += 1;
           if (task.retries >= 3) {
             core.error(`Task #${task.issue} phase ${task.phase} reached max retries. FAILED.`);
@@ -673,22 +687,13 @@ module.exports = async ({ github, context, core }) => {
             isDone = true;
           } else {
             const target = task.pr ? task.pr : task.issue;
-            if (task.phase === 'REVIEW' && task.pr && !(await h.isCIGreen(task.pr))) {
-              // Never re-prompt for review on red CI: a reviewer could approve
-              // and the human-approval path merges without re-checking CI.
-              task.review_pending_ci = true;
-              task.review_in_progress = false;
-              core.info(`Task #${task.issue} retry suppressed: PR #${task.pr} CI not green.`);
-              await updateMasterIssue(masterIssueNumber, state);
-              return;
-            }
             const msg = task.phase === 'FEEDBACK' ? "/oc fix Address review feedback." : task.phase === 'REVIEW' ? getReviewPrompt() : "/oc Please proceed with this task.";
-            // Set the flag only after the trigger succeeds so a failed post
-            // cannot strand it true forever.
+            // Set the flags only after the trigger succeeds so a failed post
+            // cannot strand them forever.
             if (task.phase === 'REVIEW') {
-              task.review_pending_ci = false;
               await triggerTask(target, msg);
               task.review_in_progress = true;
+              task.review_pending_ci = false;
             } else {
               await triggerTask(target, msg);
             }

@@ -527,4 +527,50 @@ test('orchestrator.js test suite', async (t) => {
     );
   });
 
+  await t.test('a task parked on red CI is never failed by stray failed runs', async () => {
+    // The red-CI park must sit above the retry increment and the max-retries
+    // check, or three failed opencode completions advance the queue with no
+    // review ever requested and no label or comment left behind. Reachable
+    // through runIssueNumber === prNum, which the CI-heal loop produces itself.
+    let masterBody = `<!-- ORCHESTRATOR_STATE:\n{ "status": "IN_PROGRESS", "current_task": { "issue": 2, "pr": 99, "phase": "REVIEW", "turn": 0, "max_turns": 3, "retries": 0, "review_pending_ci": true, "review_in_progress": false }, "queue": [3], "completed": [], "failed": [], "order": [2, 3] }\n-->`;
+    for (let i = 0; i < 4; i++) {
+      const { core, github, context, calls, setMasterBody, updateIssueDetails } = createMocks('workflow_run');
+      setMasterBody(masterBody);
+      context.payload.workflow_run.conclusion = 'failure';
+      context.payload.workflow_run.display_title = 'Issue #99 - PR';
+      context.payload.workflow_run.head_commit = { message: 'Issue #99 - PR' };
+      github.rest.checks.listForRef = async () => ({ data: { check_runs: javaCiChecks('failure') } });
+
+      await runOrchestrator({ github, context, core });
+
+      // Chain the persisted master body into the next run, exactly as a
+      // sequence of stray completions would arrive.
+      const persisted = updateIssueDetails.filter(u => u.issue_number === 1).pop();
+      assert.ok(persisted && persisted.body, 'the master body is persisted each run');
+      masterBody = persisted.body;
+      assert.strictEqual(calls.mergePR.length, 0, 'nothing merges on red CI');
+      assert.strictEqual(
+        calls.createComment.filter(c => c.body.includes('/oc review')).length, 0,
+        'no review prompt on red CI'
+      );
+    }
+
+    // Parse the final persisted state block.
+    const m = /ORCHESTRATOR_STATE:\n([\s\S]*?)\n-->/.exec(masterBody);
+    assert.ok(m, 'state block is still present');
+    const state = JSON.parse(m[1]);
+    assert.strictEqual(state.current_task.retries, 0, 'four failed completions consumed no retry');
+    assert.deepStrictEqual(state.failed, [], 'the task is not failed');
+    assert.strictEqual(state.current_task.phase, 'REVIEW', 'still parked');
+    assert.strictEqual(state.current_task.review_pending_ci, true, 'still waiting on CI');
+  });
+
+  await t.test('isDiffSafe treats an empty changed-file list as within budget', async () => {
+    const { core, github, context } = createMocks('workflow_run');
+    github.rest.pulls.listFiles = async () => ({ data: [] });
+    const h = require('../orchestrator-helpers.js')({ github, context: { repo: { owner: 't', repo: 'r' } }, core });
+    assert.strictEqual(await h.isDiffSafe(99), true,
+      'no changed files cannot exceed a budget');
+  });
+
 });

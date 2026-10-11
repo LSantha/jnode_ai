@@ -137,7 +137,11 @@ module.exports = function createHelpers({ github, context, core }) {
       return false;
     }
     var list = files.data || [];
-    if (list.length === 0 || list.length >= 100) return false;
+    // 100 is the per_page floor, so a full page means the diff may be bigger
+    // than what was read: unknown, not safe. An empty list is different - it
+    // means no changed files at all, which cannot exceed any budget, and
+    // reporting it as "over budget" sent an empty diff to HUMAN_REVIEW on a lie.
+    if (list.length >= 100) return false;
 
     var prodAdditions = 0;
     var testAdditions = 0;
