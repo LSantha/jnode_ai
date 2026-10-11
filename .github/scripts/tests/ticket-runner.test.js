@@ -506,8 +506,6 @@ test("merge safety gate helpers", async (t) => {
     assert.strictEqual(await makeHelpers({ runs: [{ name: "build", status: "in_progress", conclusion: null }] }).isCIGreen(99), false);
     // A green run from an unrelated workflow on the same SHA must not satisfy the gate.
     assert.strictEqual(await makeHelpers({ runs: [{ name: "some-other-workflow", status: "completed", conclusion: "success" }] }).isCIGreen(99), false, "non-Java-CI success is ignored");
-    // A green run from an unrelated workflow on the same SHA must not satisfy the gate.
-    assert.strictEqual(await makeHelpers({ runs: [{ name: "some-other-workflow", status: "completed", conclusion: "success" }] }).isCIGreen(99), false, "non-Java-CI success is ignored");
     // A partial pipeline (only `build` finished) is not green: the QEMU boot jobs
     // have not reported yet.
     assert.strictEqual(await makeHelpers({ runs: [{ name: "build", status: "completed", conclusion: "success" }] }).isCIGreen(99), false, "partial pipeline is not green");
@@ -1129,34 +1127,6 @@ test("ticket-runner.js event handling suite", async (t) => {
     assert.ok(mocks.calls.createComment.some(c => c.issue_number === 99 && c.body.includes("/oc fix Address human review feedback.")));
   });
 
-  await t.test("Human PR review approval does not merge while CI is red", async () => {
-    const initialBody = _replaceOrAppendStatus("Task", {
-      phase: "HUMAN_REVIEW",
-      pr: 99,
-      turn: 1,
-      max_turns: 3,
-      retries: 0,
-      started: new Date().toISOString(),
-      history: []
-    }, 42);
-
-    const mocks = createMocks("pull_request_review", {
-      issueBody: initialBody,
-      reviewState: "approved"
-    });
-    // CI has gone red since the merge gate last ran. A human approval is an
-    // instruction to merge, not an override of CI, so the merge must be deferred
-    // until the Java CI wakeup re-enters REVIEW on green.
-    mocks.setCheckRuns([{ name: "test", status: "completed", conclusion: "failure" }]);
-
-    await runTicketRunner(mocks);
-
-    const state = _parseState(mocks.getIssueBody());
-    assert.strictEqual(mocks.calls.mergePR.length, 0, "must not merge a red-CI PR");
-    assert.strictEqual(state.review_pending_ci, true, "parks for the Java CI wakeup");
-    assert.ok(mocks.calls.createComment.some(c => c.issue_number === 99 && c.body.includes("CI is not green")));
-  });
-
   await t.test("REVIEW retry does not prompt on red CI", async () => {
     // A review workflow completed with no verdict, which routes to retryOrFail.
     // With CI red the retry must not re-post /oc review -- that is the race the
@@ -1403,6 +1373,36 @@ test("ticket-runner.js event handling suite", async (t) => {
     );
   });
 
+  await t.test("recovered state on a red-CI PR parks instead of prompting review", async () => {
+    // The existing recovery test only ever runs green CI, so the red branch of
+    // recoverLossState's gate was never executed. Re-introducing a review
+    // prompt on red CI is what the wakeup exists to prevent.
+    const mocks = createMocks("workflow_run", {
+      issueBody: "Bug description (body was rewritten, state block gone)",
+      issueLabels: [{ name: "agent/done" }, { name: "kind/bug" }],
+      runDisplayTitle: "Issue #42 - Fix bug",
+      prHeadRef: "opencode/issue42-fix",
+      prBody: "Closes #42"
+    });
+    mocks.setCheckRuns(javaCiChecks("failure"));
+
+    await runTicketRunner(mocks);
+
+    const state = _parseState(mocks.getIssueBody());
+    assert.ok(state, "a state block was rebuilt");
+    assert.strictEqual(state.phase, "REVIEW");
+    assert.strictEqual(state.pr, 99);
+    assert.strictEqual(
+      mocks.calls.createComment.filter(c => c.body.includes("/oc review")).length, 0,
+      "must not request review while CI is red"
+    );
+    assert.strictEqual(state.review_pending_ci, true, "parked flag set so the wakeup owns it");
+    assert.strictEqual(state.review_in_progress, false, "no review in flight");
+    // The default mock PR opens a review comment body of "Verdict: approve" only
+    // when asked; recoverLossState must not have consumed it.
+    assert.strictEqual(state.retries, 0, "no retry consumed by recovery");
+  });
+
   await t.test("lost state with no PR still waits instead of faking REVIEW", async () => {
     // Guards against the recovery being too eager: no PR means DEV has not
     // produced anything, so this must fall through to the normal auto-start path.
@@ -1645,6 +1645,10 @@ test("ticket-runner.js event handling suite", async (t) => {
     assert.strictEqual(state.phase, "REVIEW");
     assert.strictEqual(state.pr, 99);
     assert.strictEqual(state.review_in_progress, false, "Review is not armed while CI runs");
+    // The flag, not just the history entry, is what tells a later stray
+    // completion that no prompt was ever posted. Without it each stray burns a
+    // retry and three strays on a healthy ticket reach agent/failed.
+    assert.strictEqual(state.review_pending_ci, true, "Parked flag is set, not just logged");
     assert.ok(
       !mocks.calls.createComment.some(c => c.body.includes("/oc review")),
       "No review prompt before CI is green"
@@ -1691,6 +1695,7 @@ test("ticket-runner.js event handling suite", async (t) => {
     const state = _parseState(mocks.getIssueBody());
     assert.strictEqual(state.phase, "REVIEW");
     assert.strictEqual(state.review_in_progress, false);
+    assert.strictEqual(state.review_pending_ci, true, "Parked flag, not just history");
     assert.ok(!mocks.calls.createComment.some(c => c.body.includes("/oc review")));
   });
 

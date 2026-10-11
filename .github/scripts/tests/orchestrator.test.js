@@ -467,4 +467,64 @@ test('orchestrator.js test suite', async (t) => {
     assert.strictEqual(fixes.length, 1, 'marker dedupes the second identical run');
   });
 
+  await t.test('/orchestrate retrigger does not prompt review on red CI', async () => {
+    const { core, github, context, calls, setMasterBody, updateIssueDetails } = createMocks('issue_comment', '/orchestrate');
+
+    setMasterBody(`<!-- ORCHESTRATOR_STATE:\n{ "status": "IN_PROGRESS", "current_task": { "issue": 2, "pr": 99, "phase": "REVIEW", "turn": 0, "max_turns": 3, "retries": 0, "review_in_progress": false }, "queue": [3], "completed": [], "failed": [], "order": [2, 3] }\n-->`);
+    github.rest.checks.listForRef = async () => ({ data: { check_runs: javaCiChecks('failure') } });
+
+    await runOrchestrator({ github, context, core });
+
+    assert.strictEqual(
+      calls.createComment.filter(c => c.body.includes('/oc review')).length, 0,
+      'the manual retrigger must not post a review prompt on red CI'
+    );
+    assert.ok(
+      updateIssueDetails.some(u => /"review_pending_ci":\s*true/.test(u.body)),
+      'parks with review_pending_ci so the Java CI wakeup can pick it up'
+    );
+  });
+
+  await t.test('DEV completion on a red-CI PR does not request review and parks', async () => {
+    const { core, github, context, calls, setMasterBody, setTaskData, updateIssueDetails } = createMocks('workflow_run');
+
+    setMasterBody(`<!-- ORCHESTRATOR_STATE:\n{ "status": "IN_PROGRESS", "current_task": { "issue": 2, "pr": null, "phase": "DEV", "turn": 0, "max_turns": 3, "retries": 0 }, "queue": [3], "completed": [], "failed": [], "order": [2, 3] }\n-->`);
+    setTaskData({ labels: [{ name: 'agent/done' }], state: 'open' });
+    github.rest.pulls.list = async () => ({ data: [] });
+    github.rest.issues.listComments = async () => ({ data: [{ body: 'Created PR #99' }] });
+    github.rest.checks.listForRef = async () => ({ data: { check_runs: javaCiChecks('failure') } });
+
+    await runOrchestrator({ github, context, core });
+
+    assert.strictEqual(
+      calls.createComment.filter(c => c.body.includes('/oc review')).length, 0,
+      'no review prompt while CI is red'
+    );
+    assert.ok(
+      updateIssueDetails.some(u => /"review_pending_ci":\s*true/.test(u.body)),
+      'the flag, not just history, is persisted'
+    );
+    const master = updateIssueDetails.find(u => u.issue_number === 1);
+    assert.ok(master && /"phase"\s*:\s*"REVIEW"/.test(master.body), 'advanced to REVIEW');
+  });
+
+  await t.test('FEEDBACK completion on a red-CI PR does not re-request review', async () => {
+    const { core, github, context, calls, setMasterBody, updateIssueDetails } = createMocks('workflow_run');
+
+    setMasterBody(`<!-- ORCHESTRATOR_STATE:\n{ "status": "IN_PROGRESS", "current_task": { "issue": 2, "pr": 99, "phase": "FEEDBACK", "turn": 1, "max_turns": 3, "retries": 0 }, "queue": [3], "completed": [], "failed": [], "order": [2, 3] }\n-->`);
+    github.rest.issues.listComments = async () => ({ data: [] });
+    github.rest.checks.listForRef = async () => ({ data: { check_runs: javaCiChecks('failure') } });
+
+    await runOrchestrator({ github, context, core });
+
+    assert.strictEqual(
+      calls.createComment.filter(c => c.body.includes('/oc review')).length, 0,
+      'no review prompt while CI is red'
+    );
+    assert.ok(
+      updateIssueDetails.some(u => /"review_pending_ci":\s*true/.test(u.body)),
+      'the flag, not just history, is persisted'
+    );
+  });
+
 });

@@ -709,6 +709,11 @@ module.exports = async ({ github, context, core }) => {
         core.info("Ticket runner: #" + issueNumber + " -> REVIEW on PR #" + prNumber);
       } else {
         state.review_in_progress = false;
+        // Parked means no prompt was posted. handleReviewCompletion reads this
+        // flag to tell "never asked" from "asked, no answer"; leaving it false
+        // makes each stray completion burn a retry re-deriving the park, and
+        // three strays on a healthy ticket would reach agent/failed.
+        state.review_pending_ci = true;
         state.history.push({ event: "review_pending_ci", timestamp: new Date().toISOString() });
         await updateIssueState(issueNumber, state);
         core.info("Ticket runner: #" + issueNumber + " -> REVIEW on PR #" + prNumber
@@ -928,6 +933,9 @@ module.exports = async ({ github, context, core }) => {
     var ciGreen = await h.isCIGreen(state.pr);
     if (!ciGreen) {
       state.review_in_progress = false;
+      // Same invariant as the DEV park: the flag, not just the history entry,
+      // is what keeps a stray completion from burning a retry.
+      state.review_pending_ci = true;
       state.history.push({ event: "review_pending_ci", timestamp: new Date().toISOString() });
       await updateIssueState(issueNumber, state);
       core.info("Ticket runner: #" + issueNumber + " -> REVIEW on PR #" + state.pr
@@ -1092,6 +1100,8 @@ module.exports = async ({ github, context, core }) => {
     }
     var ciGreen = await h.isCIGreen(found);
     if (!ciGreen) {
+      st.review_in_progress = false;
+      st.review_pending_ci = true;
       st.history.push({ event: "review_pending_ci", timestamp: new Date().toISOString() });
       try {
         await github.rest.issues.update({ owner, repo, issue_number: issueNumber, body: replaceOrAppendStatus(body, st, issueNumber) });
