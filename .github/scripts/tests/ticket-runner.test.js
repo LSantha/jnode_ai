@@ -35,6 +35,7 @@ function createMocks(eventName, {
   prLabels = [],
   prHeadRef = "opencode/issue42-fix",
   mergeError = null,
+  getIssueError = null,
   reviewUser = { login: "LSantha", type: "User" },
   reviewAssociation = "OWNER",
   reviewState = "approved",
@@ -78,6 +79,11 @@ function createMocks(eventName, {
       issues: {
         get: async ({ issue_number }) => {
           calls.getIssue.push(issue_number);
+          if (getIssueError && issue_number === issueNumber) {
+            var e = getIssueError;
+            getIssueError = null; // transient: only the guard's fetch fails
+            throw new Error(e);
+          }
           if (issue_number === issueNumber) {
             return {
               data: {
@@ -2012,6 +2018,126 @@ test("ticket-runner.js event handling suite", async (t) => {
       "No review is requested for a closed issue"
     );
     assert.strictEqual(mocks.calls.mergePR.length, 0, "Nothing is merged for a closed issue");
+  });
+
+  await t.test("a closed investigation ticket completes instead of being cancelled", async () => {
+    // Regression guard: opencode-post-step closes kind/investigate and
+    // kind/question tickets as their NORMAL success path once agent/investigated
+    // lands. Without the COMPLETION_LABELS check, advancePhase's closed-issue
+    // guard reported those as CANCELLED and stamped agent/skip on top of the
+    // real agent/investigated -- "cancelled by a human" for a ticket that
+    // actually succeeded.
+    const initialBody = _replaceOrAppendStatus("Task", {
+      phase: "DEV",
+      pr: null,
+      turn: 0,
+      max_turns: 3,
+      retries: 0,
+      started: new Date().toISOString(),
+      history: [{ event: "auto_start" }]
+    }, 42);
+
+    const mocks = createMocks("workflow_run", {
+      issueBody: initialBody,
+      runDisplayTitle: "Issue #42 - Investigate",
+      issueLabels: [{ name: "kind/investigate" }, { name: "agent/investigated" }]
+    });
+    mocks.setPRList([]); // investigations produce a comment, not a PR
+    mocks.setIssueState("closed");
+
+    await runTicketRunner(mocks);
+
+    const state = _parseState(mocks.getIssueBody());
+    assert.strictEqual(state.phase, "DONE", "a completed investigation is DONE, not CANCELLED");
+    assert.ok(!state.history.some(h => h.event === "cancelled_issue_closed"), "not recorded as a human cancellation");
+    assert.ok(
+      !mocks.calls.addLabels.some(l => l.labels.includes("agent/skip")),
+      "agent/skip must not overwrite the real agent/investigated outcome"
+    );
+  });
+
+  await t.test("a closed issue with no completion label still cancels the run", async () => {
+    // The other half of the same guard: closed AND no completion label is a
+    // human abandonment, so the run is cancelled and visible as such.
+    const initialBody = _replaceOrAppendStatus("Task", {
+      phase: "REVIEW",
+      pr: 99,
+      turn: 0,
+      max_turns: 3,
+      retries: 0,
+      started: new Date().toISOString(),
+      history: []
+    }, 42);
+
+    const mocks = createMocks("workflow_run", {
+      issueBody: initialBody,
+      runDisplayTitle: "Issue #42 - Fix bug",
+      issueLabels: [{ name: "kind/bug" }, { name: "agent/in-progress" }]
+    });
+    mocks.setIssueState("closed");
+
+    await runTicketRunner(mocks);
+
+    const state = _parseState(mocks.getIssueBody());
+    assert.strictEqual(state.phase, "CANCELLED");
+    assert.ok(mocks.calls.addLabels.some(l => l.labels.includes("agent/skip")));
+  });
+
+  await t.test("an unreadable issue state does not cancel the run", async () => {
+    // Deliberate fail-open: if the issue cannot be fetched the run advances as
+    // before. It is the one branch of the guard with no test otherwise.
+    const initialBody = _replaceOrAppendStatus("Task", {
+      phase: "DEV",
+      pr: null,
+      turn: 0,
+      max_turns: 3,
+      retries: 0,
+      started: new Date().toISOString(),
+      history: []
+    }, 42);
+
+    const mocks = createMocks("workflow_run", {
+      issueBody: initialBody,
+      runDisplayTitle: "Issue #42 - Fix bug",
+      issueLabels: [{ name: "kind/bug" }],
+      getIssueError: "API unavailable"
+    });
+    mocks.setPRList([{ number: 99 }]);
+    mocks.setIssueComments([{ body: "Created PR #99" }]);
+
+    await runTicketRunner(mocks);
+
+    const state = _parseState(mocks.getIssueBody());
+    assert.notStrictEqual(state.phase, "CANCELLED", "an unreadable state must not cancel a healthy run");
+    assert.strictEqual(state.phase, "REVIEW", "the phase advanced as normal");
+    assert.ok(!mocks.calls.addLabels.some(l => l.labels.includes("agent/skip")));
+  });
+
+  await t.test("/run on a cancelled ticket starts a fresh DEV run", async () => {
+    // isTerminalPhase is what lets the escape hatch restart a CANCELLED run; the
+    // other closed-issue tests all refuse before it is consulted, so without
+    // this the helper reverts to DONE|FAILED silently.
+    const initialBody = _replaceOrAppendStatus("Task", {
+      phase: "CANCELLED",
+      pr: null,
+      turn: 0,
+      max_turns: 3,
+      retries: 0,
+      started: new Date().toISOString(),
+      history: [{ event: "cancelled_issue_closed" }]
+    }, 42);
+
+    const mocks = createMocks("issue_comment", {
+      commentBody: "/run",
+      issueBody: initialBody,
+      issueLabels: [{ name: "kind/bug" }]
+    });
+
+    await runTicketRunner(mocks);
+
+    const state = _parseState(mocks.getIssueBody());
+    assert.strictEqual(state.phase, "DEV", "CANCELLED is terminal, so /run restarts from DEV");
+    assert.ok(mocks.calls.createComment.some(c => c.body.includes("/oc Please proceed")));
   });
 
   await t.test("a cancelled phase is terminal and never re-triggered", async () => {

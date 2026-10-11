@@ -661,19 +661,34 @@ module.exports = async ({ github, context, core }) => {
     core.info("Ticket runner: advancing #" + issueNumber + " phase=" + state.phase + " failed=" + phaseFailed);
 
     var issueOpen = true;
+    var issueLabels = [];
     try {
       var issueRes = await github.rest.issues.get({ owner, repo, issue_number: issueNumber });
+      issueLabels = h.extractLabels(issueRes.data);
       issueOpen = !issueRes.data.pull_request && issueRes.data.state === "open";
     } catch (err) {
       core.warning("Ticket runner: could not fetch #" + issueNumber + " state: " + err.message);
     }
     if (!issueOpen) {
-      state.phase = "CANCELLED";
-      state.history.push({ event: "cancelled_issue_closed", timestamp: new Date().toISOString() });
-      await updateIssueState(issueNumber, state);
-      await applyLabel(issueNumber, "agent/skip");
-      core.info("Ticket runner: #" + issueNumber + " is closed; cancelling run.");
-      return;
+      // "Closed" is not the same question as "abandoned". The post-step closes
+      // kind/investigate and kind/question tickets as their normal success path
+      // once agent/investigated lands, so the runner's own completion close is
+      // indistinguishable from a human closing an abandoned ticket unless the
+      // labels are consulted. Cancelling here would report a successful
+      // investigation as CANCELLED and stamp agent/skip on its real
+      // agent/investigated. When a completion label is present, fall through to
+      // the phase's short-circuit branch, which reaches DONE correctly.
+      var completed = h.COMPLETION_LABELS.some(function(l) { return issueLabels.indexOf(l) >= 0; });
+      if (completed) {
+        core.info("Ticket runner: #" + issueNumber + " is closed but carries a completion label; letting the phase short-circuit handle it.");
+      } else {
+        state.phase = "CANCELLED";
+        state.history.push({ event: "cancelled_issue_closed", timestamp: new Date().toISOString() });
+        await updateIssueState(issueNumber, state);
+        await applyLabel(issueNumber, "agent/skip");
+        core.info("Ticket runner: #" + issueNumber + " is closed; cancelling run.");
+        return;
+      }
     }
 
     switch (state.phase) {
