@@ -296,6 +296,29 @@ test("ticket-runner.js internal utilities", async (t) => {
     assert.deepStrictEqual(_parseState(b2), s2);
   });
 
+  await t.test("_serializeState caps history so the state block stays writable", () => {
+    // GitHub caps issue bodies at 65536 chars and the body is the runner's own
+    // store. The suppressed-retry park pushes an entry per CI-heal completion,
+    // so a persistently red PR grows history without bound until the body is
+    // unwritable and the runner can no longer persist its own state.
+    const big = { phase: "REVIEW", pr: 12, history: [] };
+    for (var i = 0; i < 500; i++) {
+      big.history.push({ event: "review_pending_ci", reason: "retry suppressed: CI not green", timestamp: new Date().toISOString() });
+    }
+
+    const parsed = _parseState(_serializeState(big));
+    assert.strictEqual(parsed.history.length, 200, "history is capped at the most recent 200 entries");
+    assert.ok(
+      JSON.stringify(parsed).length < 60000,
+      "the persisted block stays well inside the body size limit"
+    );
+
+    // A state with no history round-trips unchanged.
+    const noHistory = { phase: "REVIEW", pr: 12, turn: 1 };
+    assert.deepStrictEqual(_parseState(_serializeState(noHistory)), noHistory,
+      "a state without history gains nothing");
+  });
+
   await t.test("_replaceOrAppendStatus updates both status section and state block (LF and CRLF)", () => {
     const origBody = "My issue description";
     const s1 = _initState();
@@ -410,7 +433,7 @@ test("orchestrator-helpers utilities", async (t) => {
 });
 
 test("merge safety gate helpers", async (t) => {
-  function makeHelpers({ issueLabels = [], prLabels = [], files = [], runs = [], sha = "abc", prs = [] } = {}) {
+  function makeHelpers({ issueLabels = [], prLabels = [], files = [], runs = [], sha = "abc", prs = [], raw = undefined } = {}) {
     const gh = {
       rest: {
         issues: {
@@ -422,7 +445,7 @@ test("merge safety gate helpers", async (t) => {
       pulls: {
         get: async () => ({ data: { head: { sha } } }),
         list: async () => ({ data: prs }),
-        listFiles: async () => ({ data: files })
+        listFiles: async () => (raw === undefined ? { data: files } : raw)
       },
         checks: {
           listForRef: async () => ({ data: { check_runs: runs } })
@@ -454,6 +477,15 @@ test("merge safety gate helpers", async (t) => {
     const hEmpty = makeHelpers({ files: [] });
     assert.strictEqual(await hEmpty.isDiffSafe(99), true,
       "no changed files cannot exceed a budget; reporting it as over-budget routed an empty diff to HUMAN_REVIEW on a false cause");
+    // An unknown response shape is not an empty diff. `files.data || []` would
+    // read a partial/aborted response as "no changed files" and fall through to
+    // mergePR, so the gate must fail closed like the >= 100 page-limit guard.
+    const hNoData = makeHelpers({ files: null, raw: {} });
+    assert.strictEqual(await hNoData.isDiffSafe(99), false, "missing data is unknown, not safe");
+    const hNullData = makeHelpers({ files: null, raw: { data: null } });
+    assert.strictEqual(await hNullData.isDiffSafe(99), false, "data: null is unknown, not safe");
+    const hObjData = makeHelpers({ files: null, raw: { data: {} } });
+    assert.strictEqual(await hObjData.isDiffSafe(99), false, "data: {} is unknown, not safe");
   });
 
   await t.test("isDiffSafe: allows large test-only diffs but not production diffs", async () => {

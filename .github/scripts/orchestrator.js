@@ -126,8 +126,15 @@ module.exports = async ({ github, context, core }) => {
       markdown += `- [${info.box}] #${taskNum} ${info.emoji} *(${info.label})*\n`;
     }
 
-    // Append state JSON as hidden comment
-    markdown += `\n<!-- ORCHESTRATOR_STATE:\n${JSON.stringify(state, null, 2)}\n-->`;
+    // Append state JSON as hidden comment. History is capped for the same
+    // reason as the ticket runner: the body is the runner's own store, the
+    // suppressed-retry park pushes an entry per CI-heal completion, and a
+    // persistently red PR would otherwise grow it until the body is unwritable.
+    const persisted = Object.assign({}, state);
+    if (Array.isArray(state.history)) {
+      persisted.history = state.history.slice(-200);
+    }
+    markdown += `\n<!-- ORCHESTRATOR_STATE:\n${JSON.stringify(persisted, null, 2)}\n-->`;
 
     core.info("Updating master issue body...");
     await github.rest.issues.update({

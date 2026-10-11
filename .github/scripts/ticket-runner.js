@@ -46,8 +46,21 @@ function initState(maxTurns) {
   };
 }
 
+// GitHub caps issue bodies at 65536 characters and the runner persists its own
+// state into that body. Nothing trims history, and the suppressed-retry park
+// pushes an entry per CI-heal completion, so a persistently red PR grows it
+// without bound until the body is unwritable and the runner loses its own
+// state. Keep the most recent 200; tests and the status table stay well under.
+var MAX_HISTORY_ENTRIES = 200;
+
 function serializeState(state) {
-  return "<!-- TICKET_RUNNER_STATE:\n" + JSON.stringify(state, null, 2) + "\n-->";
+  var capped = Object.assign({}, state);
+  // Only rewrite an existing history array: a state without one round-trips
+  // unchanged, and adding an empty array would break deep-equality checks.
+  if (Array.isArray(state.history)) {
+    capped.history = state.history.slice(-MAX_HISTORY_ENTRIES);
+  }
+  return "<!-- TICKET_RUNNER_STATE:\n" + JSON.stringify(capped, null, 2) + "\n-->";
 }
 
 function replaceOrAppendState(body, state) {

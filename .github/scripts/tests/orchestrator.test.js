@@ -573,4 +573,32 @@ test('orchestrator.js test suite', async (t) => {
       'no changed files cannot exceed a budget');
   });
 
+  await t.test('the master body caps history so it stays writable', async () => {
+    // Same reason as the ticket runner: the body is the runner's own store and
+    // the suppressed-retry park pushes an entry per CI-heal completion, so a
+    // persistently red PR grows history until updateMasterIssue can no longer
+    // write the body and the runner loses its own state.
+    const hugeHistory = [];
+    for (let i = 0; i < 500; i++) {
+      hugeHistory.push({ event: 'review_pending_ci', reason: 'retry suppressed: CI not green', timestamp: new Date().toISOString() });
+    }
+    const { core, github, context, setMasterBody, updateIssueDetails } = createMocks('workflow_run');
+    setMasterBody(`<!-- ORCHESTRATOR_STATE:\n${JSON.stringify({ status: 'IN_PROGRESS', current_task: { issue: 2, pr: 99, phase: 'REVIEW', turn: 0, max_turns: 3, retries: 0, review_in_progress: false }, queue: [3], completed: [], failed: [], order: [2, 3], history: hugeHistory })}\n-->`);
+    context.payload.workflow_run.name = 'Java CI';
+    context.payload.workflow_run.conclusion = 'success';
+    context.payload.workflow_run.head_sha = 'abc';
+    context.payload.workflow_run.id = 77;
+    github.rest.pulls.list = async () => ({ data: [{ number: 99, head: { ref: 'opencode/issue2-fix', sha: 'abc' } }] });
+
+    await runOrchestrator({ github, context, core });
+
+    const persisted = updateIssueDetails.filter(u => u.issue_number === 1).pop();
+    assert.ok(persisted && persisted.body, 'the master body is persisted');
+    const m = /ORCHESTRATOR_STATE:\n([\s\S]*?)\n-->/.exec(persisted.body);
+    assert.ok(m, 'state block present');
+    const state = JSON.parse(m[1]);
+    assert.strictEqual(state.history.length, 200, 'history is capped at the most recent 200 entries');
+    assert.ok(persisted.body.length < 60000, 'the body stays well inside the GitHub limit');
+  });
+
 });

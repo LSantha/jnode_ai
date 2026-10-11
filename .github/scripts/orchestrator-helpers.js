@@ -136,9 +136,14 @@ module.exports = function createHelpers({ github, context, core }) {
       core.warning("isDiffSafe: listFiles failed for PR #" + prNumber + ": " + e.message);
       return false;
     }
-    var list = files.data || [];
+    // Fail closed on an unknown shape, exactly like the >= 100 guard below: a
+    // response that resolved without a `data` array is not the same as an empty
+    // diff, and `files.data || []` would collapse the two and read a malformed
+    // partial response as "no changed files, therefore within budget".
+    var list = files && files.data;
+    if (!Array.isArray(list)) return false;
     // 100 is the per_page floor, so a full page means the diff may be bigger
-    // than what was read: unknown, not safe. An empty list is different - it
+    // than what was read: unknown, not safe. An empty array is different - it
     // means no changed files at all, which cannot exceed any budget, and
     // reporting it as "over budget" sent an empty diff to HUMAN_REVIEW on a lie.
     if (list.length >= 100) return false;
