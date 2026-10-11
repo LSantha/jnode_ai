@@ -3,6 +3,12 @@ const assert = require("node:assert");
 
 const runTicketRunner = require("../ticket-runner.js");
 const createHelpers = require("../orchestrator-helpers.js");
+
+// isCIGreen only counts the four ant.yml jobs (their ids are the check-run names),
+// so mocks must name the runs. Default to all four green.
+function javaCiChecks(conclusion = "success", status = "completed") {
+  return ["build", "test", "boot32", "boot64"].map(name => ({ name, status, conclusion }));
+}
 const {
   _parseState,
   _initState,
@@ -58,7 +64,7 @@ function createMocks(eventName, {
   let commentsOnIssue = [];
   let prListOverride = null;
   let prFiles = [{ filename: "fs/src/fs/org/jnode/fs/jfat/FatChain.java", additions: 10 }];
-  let checkRuns = [{ name: "test", status: "completed", conclusion: "success" }];
+  let checkRuns = javaCiChecks();
   let masterIssues = [...orchestratorMasters];
 
   const core = {
@@ -290,6 +296,29 @@ test("ticket-runner.js internal utilities", async (t) => {
     assert.deepStrictEqual(_parseState(b2), s2);
   });
 
+  await t.test("_serializeState caps history so the state block stays writable", () => {
+    // GitHub caps issue bodies at 65536 chars and the body is the runner's own
+    // store. The suppressed-retry park pushes an entry per CI-heal completion,
+    // so a persistently red PR grows history without bound until the body is
+    // unwritable and the runner can no longer persist its own state.
+    const big = { phase: "REVIEW", pr: 12, history: [] };
+    for (var i = 0; i < 500; i++) {
+      big.history.push({ event: "review_pending_ci", reason: "retry suppressed: CI not green", timestamp: new Date().toISOString() });
+    }
+
+    const parsed = _parseState(_serializeState(big));
+    assert.strictEqual(parsed.history.length, 200, "history is capped at the most recent 200 entries");
+    assert.ok(
+      JSON.stringify(parsed).length < 60000,
+      "the persisted block stays well inside the body size limit"
+    );
+
+    // A state with no history round-trips unchanged.
+    const noHistory = { phase: "REVIEW", pr: 12, turn: 1 };
+    assert.deepStrictEqual(_parseState(_serializeState(noHistory)), noHistory,
+      "a state without history gains nothing");
+  });
+
   await t.test("_replaceOrAppendStatus updates both status section and state block (LF and CRLF)", () => {
     const origBody = "My issue description";
     const s1 = _initState();
@@ -404,7 +433,7 @@ test("orchestrator-helpers utilities", async (t) => {
 });
 
 test("merge safety gate helpers", async (t) => {
-  function makeHelpers({ issueLabels = [], prLabels = [], files = [], runs = [], sha = "abc", prs = [] } = {}) {
+  function makeHelpers({ issueLabels = [], prLabels = [], files = [], runs = [], sha = "abc", prs = [], raw = undefined } = {}) {
     const gh = {
       rest: {
         issues: {
@@ -416,7 +445,7 @@ test("merge safety gate helpers", async (t) => {
       pulls: {
         get: async () => ({ data: { head: { sha } } }),
         list: async () => ({ data: prs }),
-        listFiles: async () => ({ data: files })
+        listFiles: async () => (raw === undefined ? { data: files } : raw)
       },
         checks: {
           listForRef: async () => ({ data: { check_runs: runs } })
@@ -425,7 +454,7 @@ test("merge safety gate helpers", async (t) => {
     };
     return createHelpers({ github: gh, context: { repo: { owner: "t", repo: "t" } }, core: { info: () => {}, warning: () => {} } });
   }
-  const ok = [{ name: "build", status: "completed", conclusion: "success" }];
+  const ok = javaCiChecks();
 
   await t.test("isAutoMergeEligible: explicit, implicit, negative", async () => {
     assert.strictEqual(await makeHelpers({ issueLabels: [{ name: "kind/bug" }, { name: "auto-merge" }] }).isAutoMergeEligible(42, 99), true);
@@ -446,7 +475,17 @@ test("merge safety gate helpers", async (t) => {
     const hCfg = makeHelpers({ files: [{ filename: "jnode.properties", additions: 1 }] });
     assert.strictEqual(await hCfg.isDiffSafe(99), false);
     const hEmpty = makeHelpers({ files: [] });
-    assert.strictEqual(await hEmpty.isDiffSafe(99), false);
+    assert.strictEqual(await hEmpty.isDiffSafe(99), true,
+      "no changed files cannot exceed a budget; reporting it as over-budget routed an empty diff to HUMAN_REVIEW on a false cause");
+    // An unknown response shape is not an empty diff. `files.data || []` would
+    // read a partial/aborted response as "no changed files" and fall through to
+    // mergePR, so the gate must fail closed like the >= 100 page-limit guard.
+    const hNoData = makeHelpers({ files: null, raw: {} });
+    assert.strictEqual(await hNoData.isDiffSafe(99), false, "missing data is unknown, not safe");
+    const hNullData = makeHelpers({ files: null, raw: { data: null } });
+    assert.strictEqual(await hNullData.isDiffSafe(99), false, "data: null is unknown, not safe");
+    const hObjData = makeHelpers({ files: null, raw: { data: {} } });
+    assert.strictEqual(await hObjData.isDiffSafe(99), false, "data: {} is unknown, not safe");
   });
 
   await t.test("isDiffSafe: allows large test-only diffs but not production diffs", async () => {
@@ -495,9 +534,30 @@ test("merge safety gate helpers", async (t) => {
 
   await t.test("isCIGreen: success, failure, none", async () => {
     assert.strictEqual(await makeHelpers({ runs: ok }).isCIGreen(99), true);
-    assert.strictEqual(await makeHelpers({ runs: ok.concat([{ name: "boot", status: "completed", conclusion: "failure" }]) }).isCIGreen(99), false);
+    assert.strictEqual(await makeHelpers({ runs: ok.concat([{ name: "boot64", status: "completed", conclusion: "failure" }]) }).isCIGreen(99), false);
     assert.strictEqual(await makeHelpers({ runs: [] }).isCIGreen(99), false);
     assert.strictEqual(await makeHelpers({ runs: [{ name: "build", status: "in_progress", conclusion: null }] }).isCIGreen(99), false);
+    // A green run from an unrelated workflow on the same SHA must not satisfy the gate.
+    assert.strictEqual(await makeHelpers({ runs: [{ name: "some-other-workflow", status: "completed", conclusion: "success" }] }).isCIGreen(99), false, "non-Java-CI success is ignored");
+    // A partial pipeline (only `build` finished) is not green: the QEMU boot jobs
+    // have not reported yet.
+    assert.strictEqual(await makeHelpers({ runs: [{ name: "build", status: "completed", conclusion: "success" }] }).isCIGreen(99), false, "partial pipeline is not green");
+  });
+
+  await t.test("touchesForbiddenPath detects a real wall and not much else", async () => {
+    // Note on the unknown-response case: touchesForbiddenPath returns false for
+    // a malformed response either way - an unreadable file list contains no
+    // matching path - so the Array.isArray guard on the response shape makes no
+    // observable difference here. It is there so the twin guards in
+    // isDiffSafe and touchesForbiddenPath read the same way, not because a test
+    // can distinguish it.
+    assert.strictEqual(
+      await makeHelpers({ raw: { data: [{ filename: "core/src/native/x86/kernel.asm" }] } }).touchesForbiddenPath(99),
+      true,
+      "a real forbidden path is detected"
+    );
+    assert.strictEqual(await makeHelpers({ raw: { data: [] } }).touchesForbiddenPath(99), false);
+    assert.strictEqual(await makeHelpers({ raw: { data: [{ filename: "fs/a.java" }] } }).touchesForbiddenPath(99), false);
   });
 
   await t.test("findPRsForSHA matches head SHA", async () => {
@@ -625,6 +685,79 @@ test("ticket-runner.js event handling suite", async (t) => {
 
     assert.strictEqual(mocks.calls.createComment.length, 1);
     assert.ok(mocks.calls.createComment[0].body.includes("waiting for human approval on PR #99"));
+  });
+
+  await t.test("/run on a REVIEW ticket with red CI does not re-request review", async () => {
+    // /run is the manual escape hatch, but it is not an override of the CI
+    // gate: prompting here posts the one review the human-approval re-check
+    // later refuses to act on, and a stale timing then double-prompts on the
+    // next green Java CI wakeup.
+    const initialBody = _replaceOrAppendStatus("Task", {
+      phase: "REVIEW",
+      pr: 99,
+      turn: 0,
+      max_turns: 3,
+      retries: 1,
+      review_in_progress: false,
+      review_pending_ci: true,
+      started: new Date().toISOString(),
+      history: [{ event: "review_pending_ci" }]
+    }, 42);
+
+    const mocks = createMocks("issue_comment", {
+      commentBody: "/run",
+      issueBody: initialBody,
+      issueLabels: [{ name: "kind/bug" }, { name: "auto-merge" }]
+    });
+    mocks.setCheckRuns(javaCiChecks("failure"));
+
+    await runTicketRunner(mocks);
+
+    assert.strictEqual(
+      mocks.calls.createComment.filter(c => c.body.includes("/oc review")).length, 0,
+      "must not post /oc review while CI is red"
+    );
+    const state = _parseState(mocks.getIssueBody());
+    assert.strictEqual(state.review_pending_ci, true, "still parked for the wakeup");
+    assert.strictEqual(state.review_in_progress, false, "no phantom review in flight");
+    assert.ok(
+      mocks.calls.createComment.some(c => c.body.includes("waiting for Java CI")),
+      "tells the runner why the review was not re-requested"
+    );
+    assert.ok(state.history.some(h => h.event === "review_deferred_ci"));
+  });
+
+  await t.test("/run on a REVIEW ticket arms a review once CI is green", async () => {
+    // The same escape hatch must still work when CI is green: it re-triggers
+    // review and arms review_in_progress so the wakeup cannot double-prompt.
+    const initialBody = _replaceOrAppendStatus("Task", {
+      phase: "REVIEW",
+      pr: 99,
+      turn: 0,
+      max_turns: 3,
+      retries: 0,
+      review_in_progress: false,
+      review_pending_ci: true,
+      started: new Date().toISOString(),
+      history: [{ event: "review_pending_ci" }]
+    }, 42);
+
+    const mocks = createMocks("issue_comment", {
+      commentBody: "/run",
+      issueBody: initialBody,
+      issueLabels: [{ name: "kind/bug" }, { name: "auto-merge" }]
+    });
+    mocks.setCheckRuns(javaCiChecks("success"));
+
+    await runTicketRunner(mocks);
+
+    const state = _parseState(mocks.getIssueBody());
+    assert.ok(
+      mocks.calls.createComment.some(c => c.issue_number === 99 && c.body.includes("/oc review")),
+      "the review prompt is posted on green CI"
+    );
+    assert.strictEqual(state.review_in_progress, true, "armed so the wakeup will not double-prompt");
+    assert.strictEqual(state.review_pending_ci, false, "no longer parked");
   });
 
   await t.test("/run --reset restarts even if in progress", async () => {
@@ -925,6 +1058,43 @@ test("ticket-runner.js event handling suite", async (t) => {
     assert.ok(mocks.calls.createComment.some(c => c.issue_number === 99 && c.body.includes("/oc review")));
   });
 
+  await t.test("a review parked pending CI is not re-prompted by a verdict-less completion", async () => {
+    // review_pending_ci means no prompt was ever posted, so "no verdict found"
+    // must not retry into a /oc review on a red-CI PR. Mutating the skip to
+    // always-retry leaves this green unless the state is asserted.
+    const initialBody = _replaceOrAppendStatus("Task", {
+      phase: "REVIEW",
+      pr: 99,
+      turn: 0,
+      max_turns: 3,
+      retries: 1,
+      review_in_progress: true,
+      review_pending_ci: true,
+      started: new Date().toISOString(),
+      history: [{ event: "review_pending_ci" }]
+    }, 42);
+
+    const mocks = createMocks("workflow_run", {
+      issueBody: initialBody,
+      runName: "opencode review",
+      runConclusion: "success",
+      issueLabels: [{ name: "kind/bug" }, { name: "auto-merge" }]
+    });
+    mocks.setCommentsOnPR([]); // the reviewer was never asked, so there is no verdict
+    mocks.setCheckRuns(javaCiChecks("failure"));
+
+    await runTicketRunner(mocks);
+
+    assert.strictEqual(
+      mocks.calls.createComment.filter(c => c.body.includes("/oc review")).length, 0,
+      "must not post /oc review while parked pending CI"
+    );
+    const state = _parseState(mocks.getIssueBody());
+    assert.strictEqual(state.retries, 1, "no retry was consumed");
+    assert.strictEqual(state.phase, "REVIEW", "still parked");
+    assert.strictEqual(state.review_pending_ci, true, "still waiting for CI");
+  });
+
   await t.test("Human PR review approval merges PR and closes issue", async () => {
     const initialBody = _replaceOrAppendStatus("Task", {
       phase: "HUMAN_REVIEW",
@@ -949,6 +1119,39 @@ test("ticket-runner.js event handling suite", async (t) => {
     assert.ok(mocks.calls.addLabels.some(l => l.labels.includes("agent/done")));
   });
 
+  await t.test("Human PR review approval defers the merge while CI is red", async () => {
+    const initialBody = _replaceOrAppendStatus("Task", {
+      phase: "HUMAN_REVIEW",
+      pr: 99,
+      turn: 1,
+      max_turns: 3,
+      retries: 0,
+      started: new Date().toISOString(),
+      history: []
+    }, 42);
+
+    const mocks = createMocks("pull_request_review", {
+      issueBody: initialBody,
+      reviewState: "approved"
+    });
+    // CI went red after the merge gate last ran. A human approval is an
+    // instruction to merge, not an override of the safety gate.
+    mocks.setCheckRuns(["build", "test", "boot32", "boot64"].map(name => ({
+      name: name, status: "completed", conclusion: name === "boot64" ? "failure" : "success"
+    })));
+
+    await runTicketRunner(mocks);
+
+    const state = _parseState(mocks.getIssueBody());
+    assert.deepStrictEqual(mocks.calls.mergePR, [], "No merge while CI is red");
+    assert.strictEqual(state.phase, "REVIEW", "Back to REVIEW so the Java CI wakeup can finish it");
+    assert.strictEqual(state.review_pending_ci, true, "Parked pending CI");
+    assert.ok(
+      mocks.calls.createComment.some(c => c.issue_number === 99 && c.body.includes("Java CI is not green")),
+      "The comment names CI as the reason"
+    );
+  });
+
   await t.test("Human PR review changes_requested moves to FEEDBACK", async () => {
     const initialBody = _replaceOrAppendStatus("Task", {
       phase: "HUMAN_REVIEW",
@@ -971,6 +1174,116 @@ test("ticket-runner.js event handling suite", async (t) => {
     assert.strictEqual(state.phase, "FEEDBACK");
     assert.strictEqual(state.turn, 2);
     assert.ok(mocks.calls.createComment.some(c => c.issue_number === 99 && c.body.includes("/oc fix Address human review feedback.")));
+  });
+
+  await t.test("REVIEW retry does not prompt on red CI", async () => {
+    // A review workflow completed with no verdict, which routes to retryOrFail.
+    // With CI red the retry must not re-post /oc review -- that is the race the
+    // CI gate exists to prevent. It parks for the Java CI wakeup instead.
+    const initialBody = _replaceOrAppendStatus("Task", {
+      phase: "REVIEW",
+      pr: 99,
+      turn: 1,
+      max_turns: 3,
+      retries: 1,
+      started: new Date().toISOString(),
+      history: []
+    }, 42);
+
+    const mocks = createMocks("workflow_run", {
+      issueBody: initialBody,
+      runName: "opencode review",
+      runConclusion: "success"
+    });
+    // No verdict comment on the PR, and CI is red.
+    mocks.setCommentsOnPR([]);
+    mocks.setCheckRuns([{ name: "test", status: "completed", conclusion: "failure" }]);
+
+    await runTicketRunner(mocks);
+
+    const state = _parseState(mocks.getIssueBody());
+    assert.strictEqual(
+      mocks.calls.createComment.filter(c => c.body.includes("/oc review")).length, 0,
+      "must not re-prompt for review while CI is red"
+    );
+    assert.strictEqual(state.review_pending_ci, true, "parks for the Java CI wakeup");
+  });
+
+  await t.test("REVIEW retry on green CI posts the prompt and clears the parked flag", async () => {
+    // The retry path is the mirror of the red-CI case: once CI is green the
+    // prompt goes out AND the parked flag clears. Leaving review_pending_ci true
+    // after a prompt makes handleReviewCompletion treat a live review request as
+    // a parked ticket and skip it, inverting the invariant.
+    const initialBody = _replaceOrAppendStatus("Task", {
+      phase: "REVIEW",
+      pr: 99,
+      turn: 1,
+      max_turns: 3,
+      retries: 1,
+      review_in_progress: false,
+      review_pending_ci: true,
+      started: new Date().toISOString(),
+      history: [{ event: "review_pending_ci" }]
+    }, 42);
+
+    const mocks = createMocks("workflow_run", {
+      issueBody: initialBody,
+      runName: "opencode review",
+      runConclusion: "success"
+    });
+    mocks.setCommentsOnPR([]);
+    mocks.setCheckRuns(javaCiChecks("success"));
+
+    await runTicketRunner(mocks);
+
+    const state = _parseState(mocks.getIssueBody());
+    assert.ok(
+      mocks.calls.createComment.some(c => c.issue_number === 99 && c.body.includes("/oc review")),
+      "the review prompt goes out once CI is green"
+    );
+    assert.strictEqual(state.review_in_progress, true, "armed so the wakeup will not double-prompt");
+    assert.strictEqual(state.review_pending_ci, false, "no longer parked: a prompt exists");
+  });
+
+  await t.test("a parked ticket on red CI never consumes a retry, even on failed runs", async () => {
+    // The red-CI defer sits above the retry increment now. Before the hoist, a
+    // failed completion reached retryOrFail via phaseFailed, incremented, and
+    // three strays reached agent/failed on a perfectly healthy parked ticket.
+    const initialBody = _replaceOrAppendStatus("Task", {
+      phase: "REVIEW",
+      pr: 99,
+      turn: 1,
+      max_turns: 3,
+      retries: 0,
+      review_in_progress: false,
+      review_pending_ci: true,
+      started: new Date().toISOString(),
+      history: [{ event: "review_pending_ci" }]
+    }, 42);
+
+    var body = initialBody;
+    var state;
+    for (var i = 0; i < 4; i++) {
+      const mocks = createMocks("workflow_run", {
+        issueBody: body,
+        runName: "opencode review",
+        runConclusion: "failure"
+      });
+      mocks.setCommentsOnPR([]);
+      mocks.setCheckRuns(javaCiChecks("failure"));
+
+      await runTicketRunner(mocks);
+
+      // Chain the resulting body into the next run, exactly as a sequence of
+      // stray completions would arrive.
+      body = mocks.getIssueBody();
+      state = _parseState(body);
+      assert.strictEqual(mocks.calls.mergePR.length, 0, "nothing merges on red CI");
+    }
+
+    assert.strictEqual(state.retries, 0, "four failed completions consumed no retry");
+    assert.strictEqual(state.phase, "REVIEW", "still parked, not FAILED");
+    assert.ok(!state.history.some(h => h.event === "max_retries"), "never reached max retries");
   });
 
   await t.test("Bot PR review is ignored", async () => {
@@ -1171,7 +1484,12 @@ test("ticket-runner.js event handling suite", async (t) => {
     assert.ok(state, "a state block was rebuilt");
     assert.strictEqual(state.phase, "REVIEW");
     assert.strictEqual(state.pr, 99);
-    assert.strictEqual(state.review_in_progress, false);
+    // The recovery posted a review prompt, so the in-flight flag must be armed.
+    // Asserting false here (as this test originally did) locks in the defect the
+    // round-5 review found: the guard at the Java CI wakeup then passes and a
+    // second /oc review goes out for the same PR.
+    assert.strictEqual(state.review_in_progress, true, "the posted review is armed");
+    assert.strictEqual(state.review_pending_ci, false, "not parked: a prompt exists");
     assert.ok(
       state.history.some(h => h.event === "state_recovered"),
       "history records the recovery"
@@ -1184,6 +1502,36 @@ test("ticket-runner.js event handling suite", async (t) => {
       !mocks.calls.createComment.some(c => c.body.includes("/oc Please proceed")),
       "DEV was not re-triggered"
     );
+  });
+
+  await t.test("recovered state on a red-CI PR parks instead of prompting review", async () => {
+    // The existing recovery test only ever runs green CI, so the red branch of
+    // recoverLossState's gate was never executed. Re-introducing a review
+    // prompt on red CI is what the wakeup exists to prevent.
+    const mocks = createMocks("workflow_run", {
+      issueBody: "Bug description (body was rewritten, state block gone)",
+      issueLabels: [{ name: "agent/done" }, { name: "kind/bug" }],
+      runDisplayTitle: "Issue #42 - Fix bug",
+      prHeadRef: "opencode/issue42-fix",
+      prBody: "Closes #42"
+    });
+    mocks.setCheckRuns(javaCiChecks("failure"));
+
+    await runTicketRunner(mocks);
+
+    const state = _parseState(mocks.getIssueBody());
+    assert.ok(state, "a state block was rebuilt");
+    assert.strictEqual(state.phase, "REVIEW");
+    assert.strictEqual(state.pr, 99);
+    assert.strictEqual(
+      mocks.calls.createComment.filter(c => c.body.includes("/oc review")).length, 0,
+      "must not request review while CI is red"
+    );
+    assert.strictEqual(state.review_pending_ci, true, "parked flag set so the wakeup owns it");
+    assert.strictEqual(state.review_in_progress, false, "no review in flight");
+    // The default mock PR opens a review comment body of "Verdict: approve" only
+    // when asked; recoverLossState must not have consumed it.
+    assert.strictEqual(state.retries, 0, "no retry consumed by recovery");
   });
 
   await t.test("lost state with no PR still waits instead of faking REVIEW", async () => {
@@ -1374,7 +1722,7 @@ test("ticket-runner.js event handling suite", async (t) => {
     );
   });
 
-  await t.test("REVIEW approve defers when diff touches ASM", async () => {
+  await t.test("REVIEW approve defers with an honest CI message when CI is red", async () => {
     const initialBody = _replaceOrAppendStatus("Task", {
       phase: "REVIEW",
       pr: 99,
@@ -1391,13 +1739,131 @@ test("ticket-runner.js event handling suite", async (t) => {
       issueLabels: [{ name: "kind/bug" }, { name: "auto-merge" }]
     });
     mocks.setCommentsOnPR([{ body: "Verdict: approve" }]);
-    mocks.setPRFiles([{ filename: "core/src/native/x86/kernel.asm", additions: 2 }]);
+    mocks.setPRFiles([{ filename: "fs/a.java", additions: 5 }]);
+    mocks.setCheckRuns([{ name: "test", status: "completed", conclusion: "failure" }]);
 
     await runTicketRunner(mocks);
 
     const state = _parseState(mocks.getIssueBody());
     assert.strictEqual(state.phase, "REVIEW");
     assert.strictEqual(mocks.calls.mergePR.length, 0);
+    assert.ok(
+      mocks.calls.createComment.some(c => c.issue_number === 99 && c.body.includes("Java CI is not green yet")),
+      "The comment blames CI, and CI is genuinely red"
+    );
+  });
+
+  await t.test("DEV completion waits for green CI before requesting review", async () => {
+    const initialBody = _replaceOrAppendStatus("Task", {
+      phase: "DEV",
+      pr: null,
+      turn: 0,
+      max_turns: 3,
+      retries: 0,
+      started: new Date().toISOString(),
+      history: []
+    }, 42);
+
+    const mocks = createMocks("workflow_run", {
+      issueBody: initialBody,
+      issueLabels: [{ name: "agent/done" }, { name: "kind/bug" }]
+    });
+    mocks.setCheckRuns([{ name: "test", status: "in_progress", conclusion: null }]);
+
+    await runTicketRunner(mocks);
+
+    const state = _parseState(mocks.getIssueBody());
+    assert.strictEqual(state.phase, "REVIEW");
+    assert.strictEqual(state.pr, 99);
+    assert.strictEqual(state.review_in_progress, false, "Review is not armed while CI runs");
+    // The flag, not just the history entry, is what tells a later stray
+    // completion that no prompt was ever posted. Without it each stray burns a
+    // retry and three strays on a healthy ticket reach agent/failed.
+    assert.strictEqual(state.review_pending_ci, true, "Parked flag is set, not just logged");
+    assert.ok(
+      !mocks.calls.createComment.some(c => c.body.includes("/oc review")),
+      "No review prompt before CI is green"
+    );
+    assert.ok(state.history.some(h => h.event === "review_pending_ci"));
+
+    // CI turns green: the Java CI wakeup must request the review.
+    const ciMocks = createMocks("workflow_run", {
+      issueBody: mocks.getIssueBody(),
+      issueLabels: [{ name: "kind/bug" }],
+      runName: "Java CI",
+      runConclusion: "success"
+    });
+    await runTicketRunner(ciMocks);
+
+    const state2 = _parseState(ciMocks.getIssueBody());
+    assert.strictEqual(state2.review_in_progress, true, "Wakeup arms the review");
+    assert.ok(
+      ciMocks.calls.createComment.some(c => c.issue_number === 99 && c.body.includes("/oc review")),
+      "Wakeup posts the review prompt"
+    );
+  });
+
+  await t.test("FEEDBACK completion waits for green CI before re-review", async () => {
+    const initialBody = _replaceOrAppendStatus("Task", {
+      phase: "FEEDBACK",
+      pr: 99,
+      turn: 1,
+      max_turns: 3,
+      retries: 0,
+      started: new Date().toISOString(),
+      history: []
+    }, 42);
+
+    const mocks = createMocks("workflow_run", {
+      issueBody: initialBody,
+      runDisplayTitle: "Issue #99 - Fix feedback",
+      issueLabels: [{ name: "kind/bug" }]
+    });
+    mocks.setCheckRuns([{ name: "test", status: "in_progress", conclusion: null }]);
+
+    await runTicketRunner(mocks);
+
+    const state = _parseState(mocks.getIssueBody());
+    assert.strictEqual(state.phase, "REVIEW");
+    assert.strictEqual(state.review_in_progress, false);
+    assert.strictEqual(state.review_pending_ci, true, "Parked flag, not just history");
+    assert.ok(!mocks.calls.createComment.some(c => c.body.includes("/oc review")));
+  });
+
+  await t.test("REVIEW approve on a forbidden path routes to HUMAN_REVIEW", async () => {
+    const initialBody = _replaceOrAppendStatus("Task", {
+      phase: "REVIEW",
+      pr: 99,
+      turn: 0,
+      max_turns: 3,
+      retries: 0,
+      started: new Date().toISOString(),
+      history: []
+    }, 42);
+
+    const mocks = createMocks("workflow_run", {
+      issueBody: initialBody,
+      runDisplayTitle: "Issue #99 - PR",
+      issueLabels: [{ name: "kind/bug" }, { name: "auto-merge" }]
+    });
+    mocks.setCommentsOnPR([{ body: "Verdict: approve" }]);
+    // CI is green and the diff is small, but it touches core/src/native/x86.
+    mocks.setPRFiles([{ filename: "core/src/native/x86/kernel.asm", additions: 3 }]);
+    // isCIGreen only counts the ant.yml job ids, and requires all four green.
+    mocks.setCheckRuns(["build", "test", "boot32", "boot64"].map(name => ({
+      name: name, status: "completed", conclusion: "success"
+    })));
+
+    await runTicketRunner(mocks);
+
+    const state = _parseState(mocks.getIssueBody());
+    // A forbidden path is a hard wall, not a wait: no CI run makes core/src/native/x86
+    // auto-mergeable, so staying in REVIEW would stall forever promising a retry that
+    // can never help. Route to a human and say the real reason.
+    assert.strictEqual(state.phase, "HUMAN_REVIEW");
+    assert.strictEqual(mocks.calls.mergePR.length, 0);
+    const mergeBlockers = mocks.calls.createComment.filter(c => /forbidden path/.test(c.body || ""));
+    assert.strictEqual(mergeBlockers.length, 1, "names the forbidden path as the blocker");
   });
 
   await t.test("Java CI success re-reviews deferred REVIEW", async () => {
