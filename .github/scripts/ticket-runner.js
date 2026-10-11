@@ -245,17 +245,14 @@ module.exports = async ({ github, context, core }) => {
         return;
       }
       core.info("Ticket runner: re-triggering phase " + state.phase + " for #" + issueNumber);
-      var target = state.pr || issueNumber;
-      var msg = phaseMessage(state);
-      await h.triggerTask(target, msg);
-      // Persist review_in_progress after the post succeeds, so a failed trigger
-      // cannot strand it true; a false flag only risks one extra prompt on the
-      // next green CI wakeup.
-      if (state.phase === "REVIEW" && state.pr) {
-        state.review_in_progress = true;
-        state.review_pending_ci = false;
-        state.history.push({ event: "review_re_requested", timestamp: new Date().toISOString() });
+      if (state.phase === "REVIEW") {
+        // The red-CI gate above has already returned, so CI is green here.
         await updateIssueState(issueNumber, state);
+        await requestReview(state, state.pr);
+        await updateIssueState(issueNumber, state);
+      } else {
+        var msg = phaseMessage(state);
+        await h.triggerTask(state.pr || issueNumber, msg);
       }
     }
   }
@@ -463,17 +460,14 @@ module.exports = async ({ github, context, core }) => {
       if (!st || st.phase === "DONE" || st.phase === "FAILED") continue;
       if (conclusion === "success") {
         if (st.phase !== "REVIEW" || st.review_in_progress) continue;
-        // Set review_in_progress only after the trigger succeeds. On the DEV
-        // path this wakeup is the ONLY one -- no /oc review was ever posted, so
-        // no workflow_run completion will arrive to clear the flag. If it is
-        // persisted before triggerTask and the post throws, the flag stays true
-        // forever and this guard skips every subsequent green CI, stranding the
-        // ticket in REVIEW with no prompt and no wakeup.
+        // Set both flags only after the trigger succeeds. On the DEV path this
+        // wakeup is the ONLY one -- no /oc review was ever posted, so no
+        // workflow_run completion will arrive to clear the flags. Persisting
+        // them before triggerTask and having the post throw would skip every
+        // subsequent green CI, stranding the ticket in REVIEW with no prompt.
         try {
-          await h.triggerTask(prNumber, h.getReviewPrompt());
-          st.review_in_progress = true;
-          st.review_pending_ci = false;
           st.history.push({ event: "ci_green_rereview", timestamp: new Date().toISOString() });
+          await requestReview(st, prNumber);
           await updateIssueState(found.issueNumber, st);
           core.info("Ticket runner: CI green, re-reviewing PR #" + prNumber + " for #" + found.issueNumber);
         } catch (err) {
@@ -690,6 +684,35 @@ module.exports = async ({ github, context, core }) => {
     return null;
   }
 
+  /**
+   * Post the review prompt and mark the ticket as under review.
+   *
+   * The two flags exist to tell three states apart, so they must move together:
+   * a review was requested (review_in_progress true), a review is waiting on CI
+   * and no prompt exists (review_pending_ci true), and neither. Every prompt
+   * site goes through here - four near-copies of the same two lines is what let
+   * them drift apart in review rounds 3 and 5. The flags are set only after the
+   * post succeeds, so a failed prompt leaves them both false and the Java CI
+   * wakeup can retry instead of skipping forever.
+   */
+  async function requestReview(state, prNumber) {
+    await h.triggerTask(prNumber, h.getReviewPrompt());
+    state.review_in_progress = true;
+    state.review_pending_ci = false;
+    state.history.push({ event: "review_requested", pr: prNumber, timestamp: new Date().toISOString() });
+  }
+
+  /** Park a ticket whose review cannot be requested yet because CI is not green. */
+  async function parkForCI(issueNumber, state, prNumber, reason) {
+    state.review_in_progress = false;
+    // Parked means no prompt was posted. handleReviewCompletion reads this flag
+    // to tell "never asked" from "asked, no answer".
+    state.review_pending_ci = true;
+    state.history.push({ event: "review_pending_ci", reason: reason, timestamp: new Date().toISOString() });
+    await updateIssueState(issueNumber, state);
+    core.info("Ticket runner: #" + issueNumber + " parked on PR #" + prNumber + ", review waits for CI: " + reason);
+  }
+
   async function handleDevCompletion(issueNumber, state, phaseFailed) {
     var prNumber = await findPRForIssueWithComment(issueNumber);
     if (prNumber) {
@@ -699,23 +722,12 @@ module.exports = async ({ github, context, core }) => {
       state.history.push({ event: "dev_done", pr: prNumber, timestamp: new Date().toISOString() });
       var ciGreen = await h.isCIGreen(prNumber);
       if (ciGreen) {
-        // Set review_in_progress only after the trigger succeeds. If the post
-        // throws, the flag would stay true forever and the CI-green wakeup skips
-        // (ticket-runner.js:440), stranding the ticket in REVIEW with no prompt.
         await updateIssueState(issueNumber, state);
-        await h.triggerTask(prNumber, h.getReviewPrompt());
-        state.review_in_progress = true;
+        await requestReview(state, prNumber);
         await updateIssueState(issueNumber, state);
         core.info("Ticket runner: #" + issueNumber + " -> REVIEW on PR #" + prNumber);
       } else {
-        state.review_in_progress = false;
-        // Parked means no prompt was posted. handleReviewCompletion reads this
-        // flag to tell "never asked" from "asked, no answer"; leaving it false
-        // makes each stray completion burn a retry re-deriving the park, and
-        // three strays on a healthy ticket would reach agent/failed.
-        state.review_pending_ci = true;
-        state.history.push({ event: "review_pending_ci", timestamp: new Date().toISOString() });
-        await updateIssueState(issueNumber, state);
+        await parkForCI(issueNumber, state, prNumber, "CI not green after DEV");
         core.info("Ticket runner: #" + issueNumber + " -> REVIEW on PR #" + prNumber
           + ", review waits for CI (Java CI wakeup will request it)");
       }
@@ -896,7 +908,12 @@ module.exports = async ({ github, context, core }) => {
       // reviewer could approve a PR whose checks have not passed. Do nothing;
       // the Java CI success wakeup clears review_pending_ci and posts the
       // prompt on green.
-      if (state.review_pending_ci) {
+      // No prompt was posted (review_pending_ci true) and CI is still red: we
+      // parked waiting for CI and never asked anyone, so re-prompting would post
+      // /oc review on a red-CI PR -- the exact race the CI gate exists to
+      // prevent. If CI has gone green, fall through to retryOrFail, which now
+      // posts the prompt through requestReview and clears the parked flag.
+      if (state.review_pending_ci && !(await h.isCIGreen(state.pr))) {
         core.info("Ticket runner: #" + issueNumber + " review parked pending CI. Not re-prompting on red CI.");
         await updateIssueState(issueNumber, state);
       } else {
@@ -932,21 +949,11 @@ module.exports = async ({ github, context, core }) => {
     state.history.push({ event: "feedback_done", timestamp: new Date().toISOString() });
     var ciGreen = await h.isCIGreen(state.pr);
     if (!ciGreen) {
-      state.review_in_progress = false;
-      // Same invariant as the DEV park: the flag, not just the history entry,
-      // is what keeps a stray completion from burning a retry.
-      state.review_pending_ci = true;
-      state.history.push({ event: "review_pending_ci", timestamp: new Date().toISOString() });
-      await updateIssueState(issueNumber, state);
-      core.info("Ticket runner: #" + issueNumber + " -> REVIEW on PR #" + state.pr
-        + ", review waits for CI (Java CI wakeup will request it)");
+      await parkForCI(issueNumber, state, state.pr, "CI not green after feedback");
       return;
     }
-    // Set review_in_progress only after the trigger succeeds, so a failed post
-    // cannot leave the flag true forever and block the CI-green wakeup.
     await updateIssueState(issueNumber, state);
-    await h.triggerTask(state.pr, h.getReviewPrompt());
-    state.review_in_progress = true;
+    await requestReview(state, state.pr);
     await updateIssueState(issueNumber, state);
     core.info("Ticket runner: #" + issueNumber + " -> REVIEW (after feedback)");
   }
@@ -956,6 +963,15 @@ module.exports = async ({ github, context, core }) => {
   // ================================================================
 
   async function retryOrFail(issueNumber, state) {
+    // A retry that posts nothing must not cost a retry, whichever caller arrives.
+    // handleReviewCompletion can get here via phaseFailed before it reaches its
+    // own parked-skip, and the increment below is what pushed a healthy parked
+    // ticket to agent/failed on the third stray. Hoisted above the increment so
+    // a defer is free regardless of caller.
+    if (state.phase === "REVIEW" && state.pr && !(await h.isCIGreen(state.pr))) {
+      await parkForCI(issueNumber, state, state.pr, "retry suppressed: CI not green");
+      return;
+    }
     state.retries += 1;
     state.history.push({ event: "retry", retries: state.retries, phase: state.phase, timestamp: new Date().toISOString() });
     if (state.retries >= 3) {
@@ -967,28 +983,20 @@ module.exports = async ({ github, context, core }) => {
       await applyLabel(issueNumber, "agent/failed");
       await github.rest.issues.createComment({
         owner, repo, issue_number: issueNumber,
-        body: "\u274c Ticket runner: phase " + failedPhase + " failed after 3 retries."
+        body: "❌ Ticket runner: phase " + failedPhase + " failed after 3 retries."
       });
     } else {
       var target = state.pr || issueNumber;
-
-      // Never re-prompt for review on red CI. A reviewer could approve a PR
-      // whose checks have not passed, and the human-approval path re-checks CI
-      // and defers -- so the prompt would produce a wasted approval round.
-      // Park with review_pending_ci set; the Java CI success wakeup clears it
-      // and posts the prompt once checks are green.
-      if (state.phase === "REVIEW" && state.pr && !(await h.isCIGreen(state.pr))) {
-        state.review_in_progress = false;
-        state.review_pending_ci = true;
-        state.history.push({ event: "review_deferred_ci", timestamp: new Date().toISOString() });
+      if (state.phase === "REVIEW") {
         await updateIssueState(issueNumber, state);
-        core.info("Ticket runner: #" + issueNumber + " review retry suppressed: PR #" + state.pr + " CI not green.");
-        return;
+        await requestReview(state, target);
+        await updateIssueState(issueNumber, state);
+      } else {
+        var msg = phaseMessage(state);
+        await updateIssueState(issueNumber, state);
+        await h.triggerTask(target, msg);
+        core.info("Ticket runner: #" + issueNumber + " retrying (attempt " + (state.retries + 1) + "/3)");
       }
-
-      var msg = phaseMessage(state);
-      await updateIssueState(issueNumber, state);
-      await h.triggerTask(target, msg);
       core.info("Ticket runner: #" + issueNumber + " retrying (attempt " + (state.retries + 1) + "/3)");
     }
   }
@@ -1110,7 +1118,10 @@ module.exports = async ({ github, context, core }) => {
         + ", review waits for CI (Java CI wakeup will request it)");
       return true;
     }
-    await h.triggerTask(found, h.getReviewPrompt());
+    await requestReview(st, found);
+    try {
+      await github.rest.issues.update({ owner, repo, issue_number: issueNumber, body: replaceOrAppendStatus(body, st, issueNumber) });
+    } catch (_) { /* non-fatal: the wakeup re-reads the state from the body */ }
     core.info("Ticket runner: #" + issueNumber + " recovered -> REVIEW (requesting review of PR #"
       + found + ")");
     return true;

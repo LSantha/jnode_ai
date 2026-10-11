@@ -1160,6 +1160,83 @@ test("ticket-runner.js event handling suite", async (t) => {
     assert.strictEqual(state.review_pending_ci, true, "parks for the Java CI wakeup");
   });
 
+  await t.test("REVIEW retry on green CI posts the prompt and clears the parked flag", async () => {
+    // The retry path is the mirror of the red-CI case: once CI is green the
+    // prompt goes out AND the parked flag clears. Leaving review_pending_ci true
+    // after a prompt makes handleReviewCompletion treat a live review request as
+    // a parked ticket and skip it, inverting the invariant.
+    const initialBody = _replaceOrAppendStatus("Task", {
+      phase: "REVIEW",
+      pr: 99,
+      turn: 1,
+      max_turns: 3,
+      retries: 1,
+      review_in_progress: false,
+      review_pending_ci: true,
+      started: new Date().toISOString(),
+      history: [{ event: "review_pending_ci" }]
+    }, 42);
+
+    const mocks = createMocks("workflow_run", {
+      issueBody: initialBody,
+      runName: "opencode review",
+      runConclusion: "success"
+    });
+    mocks.setCommentsOnPR([]);
+    mocks.setCheckRuns(javaCiChecks("success"));
+
+    await runTicketRunner(mocks);
+
+    const state = _parseState(mocks.getIssueBody());
+    assert.ok(
+      mocks.calls.createComment.some(c => c.issue_number === 99 && c.body.includes("/oc review")),
+      "the review prompt goes out once CI is green"
+    );
+    assert.strictEqual(state.review_in_progress, true, "armed so the wakeup will not double-prompt");
+    assert.strictEqual(state.review_pending_ci, false, "no longer parked: a prompt exists");
+  });
+
+  await t.test("a parked ticket on red CI never consumes a retry, even on failed runs", async () => {
+    // The red-CI defer sits above the retry increment now. Before the hoist, a
+    // failed completion reached retryOrFail via phaseFailed, incremented, and
+    // three strays reached agent/failed on a perfectly healthy parked ticket.
+    const initialBody = _replaceOrAppendStatus("Task", {
+      phase: "REVIEW",
+      pr: 99,
+      turn: 1,
+      max_turns: 3,
+      retries: 0,
+      review_in_progress: false,
+      review_pending_ci: true,
+      started: new Date().toISOString(),
+      history: [{ event: "review_pending_ci" }]
+    }, 42);
+
+    var body = initialBody;
+    var state;
+    for (var i = 0; i < 4; i++) {
+      const mocks = createMocks("workflow_run", {
+        issueBody: body,
+        runName: "opencode review",
+        runConclusion: "failure"
+      });
+      mocks.setCommentsOnPR([]);
+      mocks.setCheckRuns(javaCiChecks("failure"));
+
+      await runTicketRunner(mocks);
+
+      // Chain the resulting body into the next run, exactly as a sequence of
+      // stray completions would arrive.
+      body = mocks.getIssueBody();
+      state = _parseState(body);
+      assert.strictEqual(mocks.calls.mergePR.length, 0, "nothing merges on red CI");
+    }
+
+    assert.strictEqual(state.retries, 0, "four failed completions consumed no retry");
+    assert.strictEqual(state.phase, "REVIEW", "still parked, not FAILED");
+    assert.ok(!state.history.some(h => h.event === "max_retries"), "never reached max retries");
+  });
+
   await t.test("Bot PR review is ignored", async () => {
     const initialBody = _replaceOrAppendStatus("Task", {
       phase: "HUMAN_REVIEW",
@@ -1358,7 +1435,12 @@ test("ticket-runner.js event handling suite", async (t) => {
     assert.ok(state, "a state block was rebuilt");
     assert.strictEqual(state.phase, "REVIEW");
     assert.strictEqual(state.pr, 99);
-    assert.strictEqual(state.review_in_progress, false);
+    // The recovery posted a review prompt, so the in-flight flag must be armed.
+    // Asserting false here (as this test originally did) locks in the defect the
+    // round-5 review found: the guard at the Java CI wakeup then passes and a
+    // second /oc review goes out for the same PR.
+    assert.strictEqual(state.review_in_progress, true, "the posted review is armed");
+    assert.strictEqual(state.review_pending_ci, false, "not parked: a prompt exists");
     assert.ok(
       state.history.some(h => h.event === "state_recovered"),
       "history records the recovery"
