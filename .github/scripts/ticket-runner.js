@@ -683,9 +683,17 @@ module.exports = async ({ github, context, core }) => {
       // is still too wide - agent/done is the post-step's default branch for
       // every non-investigation run, so a closed kind/bug carrying it is an
       // abandonment and must cancel.
+      // The exception also requires no PR. A self-closed ticket never has one:
+      // the post-step closes investigations and duplicates from a report or a
+      // duplicate link, neither of which opens a PR, and the DONE path the
+      // exception protects is handleDevCompletion's short-circuit, which only
+      // runs when there is no PR. Without this, a stale agent/investigated -
+      // decideAgentLabel's existing branch preserves the label across runs - lets
+      // a reopened ticket that reached REVIEW with a PR fall through and merge on
+      // an issue a human had closed.
       const selfClosed =
-        issueLabels.indexOf("agent/duplicate") >= 0 ||
-        issueLabels.indexOf("agent/investigated") >= 0;
+        (issueLabels.indexOf("agent/duplicate") >= 0 ||
+         issueLabels.indexOf("agent/investigated") >= 0) && !state.pr;
       if (selfClosed) {
         core.info("Ticket runner: #" + issueNumber + " is closed but was closed by the post-step; letting the phase short-circuit handle it.");
       } else {

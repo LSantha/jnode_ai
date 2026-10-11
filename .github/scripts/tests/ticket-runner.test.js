@@ -2088,6 +2088,37 @@ test("ticket-runner.js event handling suite", async (t) => {
     assert.ok(mocks.calls.addLabels.some(l => l.labels.includes("agent/skip")));
   });
 
+  await t.test("a closed REVIEW ticket with a stale investigated label does not merge", async () => {
+    // decideAgentLabel's existing branch preserves agent/investigated across runs,
+    // so a reopened ticket that reached REVIEW with a PR can still carry it. The
+    // self-closed exception requires no PR: the DONE path it protects is
+    // handleDevCompletion's short-circuit, which only runs without one. Without
+    // that, this shape falls through to the merge path on a closed issue.
+    const initialBody = _replaceOrAppendStatus("Task", {
+      phase: "REVIEW",
+      pr: 99,
+      turn: 0,
+      max_turns: 3,
+      retries: 0,
+      started: new Date().toISOString(),
+      history: [{ event: "state_recovered" }]
+    }, 42);
+
+    const mocks = createMocks("workflow_run", {
+      issueBody: initialBody,
+      runDisplayTitle: "Issue #99 - PR",
+      issueLabels: [{ name: "kind/bug" }, { name: "agent/investigated" }]
+    });
+    mocks.setCommentsOnPR([{ body: "Verdict: approve" }]);
+    mocks.setIssueState("closed");
+
+    await runTicketRunner(mocks);
+
+    const state = _parseState(mocks.getIssueBody());
+    assert.strictEqual(state.phase, "CANCELLED", "a closed ticket with an open PR is cancelled, not merged");
+    assert.deepStrictEqual(mocks.calls.mergePR, [], "nothing merges on a closed issue");
+  });
+
   await t.test("a closed bug ticket that delivered a report completes, not cancels", async () => {
     // shouldClose's third branch, kind-independent: the post-step closes behind
     // agent/investigated on ANY kind when the comment is an investigation report,
