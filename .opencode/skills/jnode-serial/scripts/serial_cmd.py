@@ -294,6 +294,24 @@ def run_batch(paths, cmds, timeout):
 # One-shot mode (mux-free fallback)
 # --------------------------------------------------------------------------
 
+def drain_quiet(sock, quiet=0.4, cap=3.0):
+    """Discard already-buffered bytes until the line stays quiet."""
+    deadline = time.time() + cap
+    last = time.time()
+    while time.time() < deadline:
+        try:
+            sock.settimeout(quiet)
+            data = sock.recv(4096)
+            if not data:
+                return
+            last = time.time()
+        except socket.timeout:
+            if time.time() - last >= quiet:
+                return
+        except OSError:
+            return
+
+
 def oneshot(paths, cmds, timeout):
     sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
     sock.settimeout(5)
@@ -302,6 +320,12 @@ def oneshot(paths, cmds, timeout):
     except (FileNotFoundError, ConnectionRefusedError):
         print("ERROR: %s not found/refused. Is the instance '%s' running? "
               "(jnode_paths.py --list)" % (paths.agent_sock, paths.id))
+        return 1
+    except (BlockingIOError, InterruptedError) as e:
+        print("ERROR: cannot connect to %s: %s" % (paths.agent_sock, e))
+        print("HINT: another client may already hold this console socket "
+              "(the mux?). Use serial_cmd.py without --oneshot, or "
+              "serial_cmd.py --stop --instance %s first." % paths.id)
         return 1
 
     def wait_prompt(budget):
@@ -343,6 +367,12 @@ def oneshot(paths, cmds, timeout):
               "few seconds and retry -- it self-recovers.")
         sock.close()
         return 1
+
+    # F1 fix: the guest may emit the prompt twice (spontaneous console-open
+    # prompt plus the reply to our probe newline). Consume any stale bytes
+    # now, otherwise the command loop below breaks on a leftover prompt
+    # and silently drops the command output.
+    drain_quiet(sock)
 
     rc = 0
     cmd_deadline = time.time() + timeout

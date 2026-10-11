@@ -29,6 +29,7 @@ For the legacy "default" instance the pipes stay at the historical
 
 import argparse
 import os
+import signal
 import subprocess
 import sys
 import time
@@ -162,11 +163,24 @@ def cmd_start(a):
     return 0
 
 
+def stop_mux(paths):
+    # tear the serial mux down too, or it idles forever with a dead UART
+    # pipe (same F2 as in start_qemu.sh --stop); paths.mux_pid covers
+    # both the legacy and the namespaced layout
+    try:
+        with open(paths.mux_pid) as f:
+            pid = int(f.read().strip())
+        os.kill(pid, signal.SIGTERM)
+    except (OSError, ValueError):
+        pass
+
+
 def cmd_stop(a):
     paths = jp.resolve_paths(a.instance)
     if not is_running(a.name):
         print("%s is not running" % a.name)
         jp.unregister(paths.id)
+        stop_mux(paths)
         return 0
     vbox("controlvm", a.name, "acpipowerbutton")
     for _ in range(15):
@@ -181,6 +195,7 @@ def cmd_stop(a):
                 break
             time.sleep(1)
     jp.unregister(paths.id)
+    stop_mux(paths)
     print("stopped %s (instance %s)" % (a.name, paths.id))
     return 0
 

@@ -82,9 +82,9 @@ fi
 if [ "$STOP" = "1" ]; then
   ENTRY_JSON=$(python3 "$PATHS_PY" --field registry_path --instance "$INSTANCE")
   if [ ! -f "$ENTRY_JSON" ]; then
-    echo "ERROR: no registry entry for instance '$INSTANCE'"
+    echo "instance '$INSTANCE': no registry entry, nothing to stop"
     python3 "$PATHS_PY" --list || true
-    exit 1
+    exit 0
   fi
   HYP=$(python3 -c "import json,sys; print(json.load(open(sys.argv[1])).get('hypervisor') or '')" "$ENTRY_JSON")
   PID=$(python3 -c "import json,sys; print(json.load(open(sys.argv[1])).get('vm_pid') or '')" "$ENTRY_JSON")
@@ -103,6 +103,8 @@ if [ "$STOP" = "1" ]; then
   python3 "$PATHS_PY" --unregister --instance "$INSTANCE"
   eval "$(python3 "$PATHS_PY" --env --instance "$INSTANCE")"
   rm -f "$JNODE_AGENT_SOCK" "$JNODE_MONITOR_SOCK" "$JNODE_KDB_SOCK"
+  # F2 fix: tear the mux down too, or it idles forever with a dead socket
+  python3 "$SERIAL_SCRIPTS/serial_cmd.py" --stop --instance "$INSTANCE" >/dev/null 2>&1 || true
   exit 0
 fi
 

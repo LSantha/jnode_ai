@@ -7,8 +7,10 @@ Run:  python3 -m pytest .opencode/skills/jnode-serial/tests/ -q
 """
 
 import os
+import socket
 import subprocess
 import sys
+import threading
 import time
 
 import pytest
@@ -154,12 +156,60 @@ def test_oneshot_without_mux(world):
     assert "mux: not running" in r.stdout
 
 
+def test_oneshot_survives_stale_prompt(world):
+    """Regression for CI finding F1: the guest may emit the prompt twice
+    (spontaneous console-open prompt, then a reply to the probe newline).
+    The leftover prompt must not be mistaken for the end of the command."""
+    state, make = world
+    guest = make("t4c")
+    _run(state, "--instance", "t4c", "--stop")
+
+    # chatty guest: spontaneous prompt + delayed second prompt on newline
+    os.unlink(guest.sock)  # the fixture's fake guest still owns the path
+    srv = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    srv.bind(guest.sock)
+    srv.listen(1)
+
+    def chatty():
+        conn, _ = srv.accept()
+        conn.sendall(b"\n[JNODE_AGENT_READY]\n")  # spontaneous console-open
+        conn.recv(4096)                           # probe newline
+        time.sleep(0.3)
+        conn.sendall(b"\n[JNODE_AGENT_READY]\n")  # stale reply to the probe
+        conn.recv(4096)                           # the real command
+        conn.sendall(b"OUT:date\r\n")
+        conn.sendall(b"\n[JNODE_AGENT_READY]\n")
+        conn.close()
+
+    import threading
+    t = threading.Thread(target=chatty, daemon=True)
+    t.start()
+
+    r = _run(state, "--instance", "t4c", "--oneshot", "date")
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert "OUT:date" in r.stdout
+    srv.close()
+
+
 def test_env_var_selects_instance(world):
     state, make = world
     make("t5")
     r = _run(state, "echo via-env", env_extra={"JNODE_INSTANCE": "t5"})
     assert r.returncode == 0, r.stdout + r.stderr
     assert "via-env" in r.stdout
+
+
+def test_qemu_stop_unknown_instance_is_graceful(world):
+    """Regression for CI finding F4: --stop on a never-registered
+    instance exits 0 with a hint, not an error."""
+    state, _ = world
+    script = os.path.join(HERE, "..", "..", "jnode-qemu", "scripts",
+                          "start_qemu.sh")
+    r = subprocess.run(
+        ["bash", script, "--stop", "--instance", "no-such-ci-xyz"],
+        capture_output=True, text=True, timeout=30, env=_env(state))
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert "nothing to stop" in r.stdout
 
 
 def test_missing_instance_socket_is_a_clean_error(world):
