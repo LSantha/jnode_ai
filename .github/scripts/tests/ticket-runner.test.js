@@ -36,7 +36,7 @@ function createMocks(eventName, {
   prHeadRef = "opencode/issue42-fix",
   mergeError = null,
   getIssueError = null,
-  getIssueErrorAt = 1,
+  getIssueErrorAt = 1, // throw on this call to issues.get for the target issue, not from this call on
   reviewUser = { login: "LSantha", type: "User" },
   reviewAssociation = "OWNER",
   reviewState = "approved",
@@ -68,7 +68,7 @@ function createMocks(eventName, {
   let prFiles = [{ filename: "fs/src/fs/org/jnode/fs/jfat/FatChain.java", additions: 10 }];
   let checkRuns = javaCiChecks();
   let masterIssues = [...orchestratorMasters];
-  var getIssueCalls = 0;
+  let getIssueCalls = 0;
 
   const core = {
     info: (msg) => logs.info.push(msg),
@@ -83,7 +83,7 @@ function createMocks(eventName, {
           calls.getIssue.push(issue_number);
           getIssueCalls += 1;
           if (getIssueError !== null && issue_number === issueNumber) {
-            if (getIssueCalls >= getIssueErrorAt) {
+            if (getIssueCalls === getIssueErrorAt) {
               var e = getIssueError;
               getIssueError = null; // one transient failure, not a permanent one
               throw new Error(e);
@@ -2086,6 +2086,38 @@ test("ticket-runner.js event handling suite", async (t) => {
     const state = _parseState(mocks.getIssueBody());
     assert.strictEqual(state.phase, "CANCELLED");
     assert.ok(mocks.calls.addLabels.some(l => l.labels.includes("agent/skip")));
+  });
+
+  await t.test("a closed bug ticket that delivered a report completes, not cancels", async () => {
+    // shouldClose's third branch, kind-independent: the post-step closes behind
+    // agent/investigated on ANY kind when the comment is an investigation report,
+    // and /oc investigate and /oc explain route to that task type by verb rather
+    // than by kind. So a kind/bug ticket driven through them is closed by its own
+    // report, and cancelling here would stamp agent/skip on delivered work.
+    const initialBody = _replaceOrAppendStatus("Task", {
+      phase: "DEV",
+      pr: null,
+      turn: 0,
+      max_turns: 3,
+      retries: 0,
+      started: new Date().toISOString(),
+      history: [{ event: "auto_start" }]
+    }, 42);
+
+    const mocks = createMocks("workflow_run", {
+      issueBody: initialBody,
+      runDisplayTitle: "Issue #42 - Investigate",
+      issueLabels: [{ name: "kind/bug" }, { name: "agent/investigated" }]
+    });
+    mocks.setPRList([]);
+    mocks.setIssueState("closed");
+
+    await runTicketRunner(mocks);
+
+    const state = _parseState(mocks.getIssueBody());
+    assert.strictEqual(state.phase, "DONE", "a delivered investigation report is DONE on any kind");
+    assert.ok(!state.history.some(h => h.event === "cancelled_issue_closed"));
+    assert.ok(!mocks.calls.addLabels.some(l => l.labels.includes("agent/skip")));
   });
 
   await t.test("a closed bug ticket carrying agent/done is cancelled, not merged", async () => {

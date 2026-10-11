@@ -672,18 +672,20 @@ module.exports = async ({ github, context, core }) => {
     if (!issueOpen) {
       // "Closed" is not the same question as "abandoned". The post-step closes
       // some tickets itself, and its own completion close must not be read as a
-      // human cancellation. Mirror shouldClose in opencode-post-step.js rather
-      // than COMPLETION_LABELS: the post-step closes only behind
-      // agent/duplicate, or agent/investigated on an investigate/question kind.
-      // COMPLETION_LABELS is too wide - agent/done is the post-step's default
-      // branch for every non-investigation run, so a closed kind/bug ticket
-      // carrying it would fall through as if completed when the human in fact
-      // abandoned it. `isTerminalPhase` and `handleDevCompletion` are already
-      // consulted downstream; this only decides whether cancellation applies.
-      var selfClosed =
+      // human cancellation. Mirror shouldClose in opencode-post-step.js: it
+      // closes behind agent/duplicate, or agent/investigated on any kind. The
+      // kind-independent half matters because /oc investigate and /oc explain
+      // route to the investigation task type by verb, independent of kind, so a
+      // kind/bug ticket driven through them is closed by its own report. No kind
+      // clause is needed or wanted: decideAgentLabel reaches agent/investigated
+      // only through isInvestigationReport, so the label itself means a report
+      // was delivered, and a human-closed bug never carries it. COMPLETION_LABELS
+      // is still too wide - agent/done is the post-step's default branch for
+      // every non-investigation run, so a closed kind/bug carrying it is an
+      // abandonment and must cancel.
+      const selfClosed =
         issueLabels.indexOf("agent/duplicate") >= 0 ||
-        (issueLabels.indexOf("agent/investigated") >= 0 &&
-          ["kind/investigate", "kind/question"].some(function(k) { return issueLabels.indexOf(k) >= 0; }));
+        issueLabels.indexOf("agent/investigated") >= 0;
       if (selfClosed) {
         core.info("Ticket runner: #" + issueNumber + " is closed but was closed by the post-step; letting the phase short-circuit handle it.");
       } else {
