@@ -44,6 +44,7 @@ import org.jnode.vm.compiler.ir.quad.BranchQuad;
 import org.jnode.vm.compiler.ir.quad.CallAssignQuad;
 import org.jnode.vm.compiler.ir.quad.CallQuad;
 import org.jnode.vm.compiler.ir.quad.InstanceofAssignQuad;
+import org.jnode.vm.compiler.ir.quad.InterfaceCallQuad;
 import org.jnode.vm.compiler.ir.quad.CheckcastQuad;
 import org.jnode.vm.compiler.ir.quad.ConstantClassAssignQuad;
 import org.jnode.vm.compiler.ir.quad.JsrQuad;
@@ -59,12 +60,15 @@ import org.jnode.vm.compiler.ir.quad.Quad;
 import org.jnode.vm.compiler.ir.quad.RefAssignQuad;
 import org.jnode.vm.compiler.ir.quad.RefStoreQuad;
 import org.jnode.vm.compiler.ir.quad.RetQuad;
+import org.jnode.vm.compiler.ir.quad.SpecialCallQuad;
+import org.jnode.vm.compiler.ir.quad.StaticCallQuad;
 import org.jnode.vm.compiler.ir.quad.StaticRefAssignQuad;
 import org.jnode.vm.compiler.ir.quad.StaticRefStoreQuad;
 import org.jnode.vm.compiler.ir.quad.TableswitchQuad;
 import org.jnode.vm.compiler.ir.quad.ThrowQuad;
 import org.jnode.vm.compiler.ir.quad.UnconditionalBranchQuad;
 import org.jnode.vm.compiler.ir.quad.VariableRefAssignQuad;
+import org.jnode.vm.compiler.ir.quad.VirtualCallQuad;
 import org.jnode.vm.objects.BootableArrayList;
 
 /**
@@ -1029,6 +1033,343 @@ public class IRControlFlowGraph<T> implements Iterable<IRBasicBlock<T>> {
                     q.doPass3(values);
                 }
             }
+        }
+    }
+
+    /**
+     * ANCHOR-L2-242 (ported from L2-MiniMax-M3 018d58f87, soundness fixes):
+     * algebraic simplification of integer binary operations. Identity folds
+     * (x+0, x*1, x&-1, x^x, ...) become copies or constants that keep the
+     * original LHS and bytecode address; the folded quad is replaced in
+     * place. Integer (int/long) only -- float/double identities are not
+     * valid under IEEE-754 (x+0.0f is not always x) and are left alone.
+     */
+    public void simplifyAlgebraicExpressions() {
+        for (IRBasicBlock<T> b : bblocks) {
+            for (int i = 0; i < b.getQuads().size(); i += 1) {
+                Quad<T> q = b.getQuads().get(i);
+                if (q.isDeadCode() || !(q instanceof BinaryQuad)) {
+                    continue;
+                }
+                BinaryQuad<T> bq = (BinaryQuad<T>) q;
+                Quad<T> replacement = simplifyAlgebraicBinaryQuad(bq);
+                if (replacement != bq) {
+                    b.getQuads().set(i, replacement);
+                }
+            }
+        }
+    }
+
+    private Quad<T> simplifyAlgebraicBinaryQuad(BinaryQuad<T> bq) {
+        Operand<T> op1 = bq.getOperand1();
+        Operand<T> op2 = bq.getOperand2();
+        Variable<T> lhs = bq.getLHS();
+        BinaryOperation op = bq.getOperation();
+
+        // ANCHOR-L2-242 fix vs M3: fold x OP x only when the operand is a
+        // variable. Interned Constant instances compare == as well, and the
+        // x OP x -> x branch would have hit its (Variable) cast on c & c.
+        if (op1 == op2 && op1 instanceof Variable) {
+            switch (op) {
+                case ISUB:
+                case LSUB:
+                case IXOR:
+                case LXOR:
+                    return new ConstantRefAssignQuad<T>(bq.getAddress(),
+                        bq.getBasicBlock(), lhs, zeroForType(lhs.getType()));
+                case IAND:
+                case LAND:
+                case IOR:
+                case LOR:
+                    return new VariableRefAssignQuad<T>(bq.getAddress(),
+                        bq.getBasicBlock(), lhs, (Variable<T>) op1);
+                default:
+                    break;
+            }
+        }
+
+        if (op2 instanceof Constant) {
+            Constant<T> c = (Constant<T>) op2;
+            Quad<T> r = simplifyWithConstantOnRight(op, op1, c, lhs,
+                bq.getAddress(), bq.getBasicBlock());
+            if (r != null) {
+                return r;
+            }
+        }
+
+        if (op1 instanceof Constant && op2 instanceof Variable &&
+            isCommutative(op)) {
+            Constant<T> c = (Constant<T>) op1;
+            Quad<T> r = simplifyWithConstantOnRight(op, op2, c, lhs,
+                bq.getAddress(), bq.getBasicBlock());
+            if (r != null) {
+                return r;
+            }
+        }
+
+        return bq;
+    }
+
+    private Quad<T> simplifyWithConstantOnRight(BinaryOperation op,
+        Operand<T> varOp, Constant<T> c, Variable<T> lhs,
+        int address, IRBasicBlock<T> block) {
+        // ANCHOR-L2-242 fix vs M3: both operands may be constants (5 + 0);
+        // the identity folds below produce copies of the variable side.
+        if (!(varOp instanceof Variable)) {
+            return null;
+        }
+        if (isIntegerZero(c)) {
+            switch (op) {
+                case IADD:
+                case LADD:
+                case ISUB:
+                case LSUB:
+                case IOR:
+                case LOR:
+                case IXOR:
+                case LXOR:
+                case ISHL:
+                case LSHL:
+                case ISHR:
+                case LSHR:
+                case IUSHR:
+                case LUSHR:
+                    return new VariableRefAssignQuad<T>(address, block, lhs,
+                        (Variable<T>) varOp);
+                case IMUL:
+                case LMUL:
+                case IAND:
+                case LAND:
+                    return new ConstantRefAssignQuad<T>(address, block, lhs,
+                        zeroForType(lhs.getType()));
+                default:
+                    break;
+            }
+        } else if (isIntegerOne(c)) {
+            switch (op) {
+                case IMUL:
+                case LMUL:
+                case IDIV:
+                case LDIV:
+                    return new VariableRefAssignQuad<T>(address, block, lhs,
+                        (Variable<T>) varOp);
+                case IREM:
+                case LREM:
+                    return new ConstantRefAssignQuad<T>(address, block, lhs,
+                        zeroForType(lhs.getType()));
+                default:
+                    break;
+            }
+        } else if (isIntegerMinusOne(c)) {
+            switch (op) {
+                case IAND:
+                case LAND:
+                    return new VariableRefAssignQuad<T>(address, block, lhs,
+                        (Variable<T>) varOp);
+                case IOR:
+                case LOR:
+                    return new ConstantRefAssignQuad<T>(address, block, lhs, c);
+                default:
+                    break;
+            }
+        }
+        return null;
+    }
+
+    /**
+     * ANCHOR-L2-242 (ported from M3 018d58f87, soundness fixes): local
+     * common-subexpression elimination. Within one basic block, a repeated
+     * pure binary computation with SSA-identical operands reuses the first
+     * result: later uses are renamed to it and the redundant quad is marked
+     * dead. The map is cleared at side-effecting quads so a future extension
+     * that keys loads stays conservative; binary results themselves do not
+     * depend on memory. Reuse is valid for int, long and float alike: the
+     * computation is a pure function of its operands and, in SSA, no
+     * operand's value can change under the pass.
+     */
+    public void eliminateCommonSubexpressions() {
+        for (IRBasicBlock<T> b : bblocks) {
+            HashMap<CSEKey, Variable<T>> cseMap =
+                new HashMap<CSEKey, Variable<T>>();
+            for (int i = 0; i < b.getQuads().size(); i += 1) {
+                Quad<T> q = b.getQuads().get(i);
+                if (q.isDeadCode()) {
+                    continue;
+                }
+                if (q instanceof BinaryQuad) {
+                    BinaryQuad<T> bq = (BinaryQuad<T>) q;
+                    CSEKey key = cseKey(bq);
+                    if (key != null) {
+                        Variable<T> prev = cseMap.get(key);
+                        if (prev != null && prev != bq.getLHS()) {
+                            replaceAllUses(bq.getLHS(), prev);
+                            bq.setDeadCode(true);
+                        } else {
+                            cseMap.put(key, bq.getLHS());
+                        }
+                    }
+                } else if (isSideEffectingQuad(q)) {
+                    cseMap.clear();
+                }
+            }
+        }
+    }
+
+    /**
+     * Rename every use of {@code oldVar} (matched by SSA equality) to
+     * {@code newOperand}. ANCHOR-L2-242 fix vs M3: phi sources are renamed
+     * through {@link PhiAssignQuad#replaceSource} -- getReferencedOps is a
+     * throwaway copy (ANCHOR-L2-130), so the original rewrite wrote into
+     * that copy, the phi rename was lost, and the phi kept reading the
+     * CSE-killed definition. All other quads expose a live refs array.
+     */
+    private void replaceAllUses(Variable<T> oldVar, Operand<T> newOperand) {
+        for (IRBasicBlock<T> b : bblocks) {
+            for (Quad<T> q : b.getQuads()) {
+                if (q.isDeadCode()) {
+                    continue;
+                }
+                if (q instanceof PhiAssignQuad) {
+                    ((PhiAssignQuad<T>) q).replaceSource(oldVar, newOperand);
+                    continue;
+                }
+                Operand<T>[] refs = q.getReferencedOps();
+                if (refs == null) {
+                    continue;
+                }
+                for (int j = 0; j < refs.length; j += 1) {
+                    if (refs[j] != null && refs[j].equals(oldVar)) {
+                        refs[j] = newOperand;
+                    }
+                }
+            }
+        }
+    }
+
+    /**
+     * ANCHOR-L2-242: exact-operand key. Commutative ops are normalized
+     * (constant right); non-commutative ops are keyed in exact order only
+     * (extension vs M3: exact match, no reordering). Constant/constant
+     * pairs are left to constant folding.
+     */
+    private CSEKey cseKey(BinaryQuad<T> bq) {
+        Operand<T> op1 = bq.getOperand1();
+        Operand<T> op2 = bq.getOperand2();
+        if (op1 instanceof Variable && op2 instanceof Variable) {
+            return new CSEKey(bq.getOperation(), op1, op2);
+        }
+        if (isCommutative(bq.getOperation())) {
+            if (op1 instanceof Constant && op2 instanceof Variable) {
+                return new CSEKey(bq.getOperation(), op2, op1);
+            }
+            if (op1 instanceof Variable && op2 instanceof Constant) {
+                return new CSEKey(bq.getOperation(), op1, op2);
+            }
+        } else if (op1 instanceof Variable && op2 instanceof Constant) {
+            return new CSEKey(bq.getOperation(), op1, op2);
+        }
+        return null;
+    }
+
+    private static boolean isSideEffectingQuad(Quad<?> q) {
+        return q instanceof CallQuad
+            || q instanceof StaticCallQuad
+            || q instanceof VirtualCallQuad
+            || q instanceof InterfaceCallQuad
+            || q instanceof SpecialCallQuad
+            || q instanceof ArrayStoreQuad
+            || q instanceof RefStoreQuad
+            || q instanceof StaticRefStoreQuad
+            || q instanceof MonitorenterQuad
+            || q instanceof MonitorexitQuad
+            || q instanceof ThrowQuad;
+    }
+
+    private static boolean isCommutative(BinaryOperation op) {
+        switch (op) {
+            case IADD:
+            case IMUL:
+            case IAND:
+            case IOR:
+            case IXOR:
+            case LADD:
+            case LMUL:
+            case LAND:
+            case LOR:
+            case LXOR:
+            case FADD:
+            case FMUL:
+            case DADD:
+            case DMUL:
+                return true;
+            default:
+                return false;
+        }
+    }
+
+    private boolean isIntegerZero(Constant<T> c) {
+        if (c instanceof IntConstant) {
+            return ((IntConstant<T>) c).getValue() == 0;
+        }
+        if (c instanceof LongConstant) {
+            return ((LongConstant<T>) c).getValue() == 0L;
+        }
+        return false;
+    }
+
+    private boolean isIntegerOne(Constant<T> c) {
+        if (c instanceof IntConstant) {
+            return ((IntConstant<T>) c).getValue() == 1;
+        }
+        if (c instanceof LongConstant) {
+            return ((LongConstant<T>) c).getValue() == 1L;
+        }
+        return false;
+    }
+
+    private boolean isIntegerMinusOne(Constant<T> c) {
+        if (c instanceof IntConstant) {
+            return ((IntConstant<T>) c).getValue() == -1;
+        }
+        if (c instanceof LongConstant) {
+            return ((LongConstant<T>) c).getValue() == -1L;
+        }
+        return false;
+    }
+
+    private Constant<T> zeroForType(int type) {
+        switch (type) {
+            case Operand.LONG:
+                return new LongConstant<T>(0L);
+            default:
+                return new IntConstant<T>(0);
+        }
+    }
+
+    private static final class CSEKey {
+        private final BinaryOperation op;
+        private final Operand op1;
+        private final Operand op2;
+
+        CSEKey(BinaryOperation op, Operand op1, Operand op2) {
+            this.op = op;
+            this.op1 = op1;
+            this.op2 = op2;
+        }
+
+        public boolean equals(Object other) {
+            if (other instanceof CSEKey) {
+                CSEKey k = (CSEKey) other;
+                return op == k.op && op1 == k.op1 && op2 == k.op2;
+            }
+            return false;
+        }
+
+        public int hashCode() {
+            int h = op.hashCode();
+            h = h * 31 + System.identityHashCode(op1);
+            h = h * 31 + System.identityHashCode(op2);
+            return h;
         }
     }
 

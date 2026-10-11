@@ -87,6 +87,24 @@ public class PhiAssignQuad<T> extends AssignQuad<T> {
         return phi.getSources().toArray(new Operand[phi.getSources().size()]);
     }
 
+    /**
+     * ANCHOR-L2-242: rename one source operand in place. Unlike
+     * {@link #getReferencedOps}, which is a throwaway copy (ANCHOR-L2-130),
+     * this mutates the phi's real source list -- which is what SSA-value
+     * rewrites such as local CSE must use, or the rename is silently lost
+     * and the phi keeps reading the killed definition.
+     */
+    public void replaceSource(Operand<T> oldOp, Operand<T> newOp) {
+        final List<Operand<T>> sources = phi.getSources();
+        final int n = sources.size();
+        for (int i = 0; i < n; i += 1) {
+            final Operand<T> src = sources.get(i);
+            if (src == oldOp || (src != null && src.equals(oldOp))) {
+                sources.set(i, newOp);
+            }
+        }
+    }
+
     public void doPass2() {
         //phi.simplify();
 

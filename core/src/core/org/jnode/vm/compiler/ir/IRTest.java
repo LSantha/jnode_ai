@@ -211,6 +211,13 @@ public class IRTest {
         cfg.optimize();
         printCFG(cfg, "Optimized SSA (pass 2)");
 
+        // ANCHOR-L2-242: mirror X86Level2Compiler.optimizeOnce.
+        cfg.simplifyAlgebraicExpressions();
+        printCFG(cfg, "Algebraically simplified");
+
+        cfg.eliminateCommonSubexpressions();
+        printCFG(cfg, "CSE applied");
+
         cfg.removeUnusedVars();
         printCFG(cfg, "Unused vars removed SSA");
 

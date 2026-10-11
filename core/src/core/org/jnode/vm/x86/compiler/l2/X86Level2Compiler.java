@@ -416,6 +416,10 @@ public class X86Level2Compiler extends AbstractX86Compiler {
     /** One optimize/DCE pair (second half of the closure pair above). */
     public static void optimizeOnce(IRControlFlowGraph cfg) {
         cfg.optimize();
+        // ANCHOR-L2-242: integer simplification + local CSE (ported from
+        // L2-MiniMax-M3); must run between the SSA optimizer and DCE.
+        cfg.simplifyAlgebraicExpressions();
+        cfg.eliminateCommonSubexpressions();
         cfg.removeUnusedVars();
     }
 
