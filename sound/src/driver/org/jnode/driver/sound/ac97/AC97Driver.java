@@ -326,4 +326,44 @@ public class AC97Driver extends Driver implements AC97API, AC97Constants {
         }
         return c.getCodecId();
     }
+
+    public int getPlaybackBufferSize() {
+        final AC97Core c = core;
+        if (c == null) {
+            throw new IllegalStateException("AC'97 device is not started");
+        }
+        return c.getPlaybackBufferSize();
+    }
+
+    public int getPlaybackLatencyMs() {
+        final AC97Core c = core;
+        if (c == null) {
+            throw new IllegalStateException("AC'97 device is not started");
+        }
+        return c.getPlaybackLatencyMs();
+    }
+
+    public void setPlaybackBufferSize(int framesPerBuffer) {
+        final AC97Core c = core;
+        if (c == null) {
+            throw new IllegalStateException("AC'97 device is not started");
+        }
+        c.setPlaybackBufferSize(framesPerBuffer);
+    }
+
+    public int getMicGainSteps() {
+        final AC97Core c = core;
+        if (c == null) {
+            throw new IllegalStateException("AC'97 device is not started");
+        }
+        return c.getMicGainSteps();
+    }
+
+    public void setMicGainSteps(int steps) {
+        final AC97Core c = core;
+        if (c == null) {
+            throw new IllegalStateException("AC'97 device is not started");
+        }
+        c.setMicGainSteps(steps);
+    }
 }

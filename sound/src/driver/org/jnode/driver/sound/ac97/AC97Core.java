@@ -91,6 +91,12 @@ public final class AC97Core implements AC97Constants, IRQHandler {
     public static final int CAPTURE_FRAMES_PER_BUFFER = 512;
 
     /**
+     * Largest number of stereo frames per sample buffer the driver
+     * allocates, which is about 42ms of audio at 48kHz.
+     */
+    public static final int MAX_FRAMES_PER_BUFFER = 2048;
+
+    /**
      * Number of stereo frames per sample buffer. 1024 frames are 4096 bytes,
      * which is about 21ms of audio at 48kHz.
      */
@@ -168,6 +174,13 @@ public final class AC97Core implements AC97Constants, IRQHandler {
      * The buffer descriptor list and its sample buffers.
      */
     private BufferDescriptorList bdl;
+
+    /**
+     * Number of stereo frames per playback sample buffer; the ring depth in
+     * time follows from it, and it can be chosen with
+     * {@link #setPlaybackBufferSize} while playback is closed.
+     */
+    private int playbackFramesPerBuffer;
 
     /**
      * Sample rate in use (valid for 48000 and for VRA capable codecs).
@@ -412,6 +425,7 @@ public final class AC97Core implements AC97Constants, IRQHandler {
             irq = null;
             throw ex;
         }
+        this.playbackFramesPerBuffer = DEFAULT_FRAMES_PER_BUFFER;
         try {
             bdl = new BufferDescriptorList(device, DEFAULT_ENTRY_COUNT,
                 DEFAULT_FRAMES_PER_BUFFER);
@@ -464,6 +478,100 @@ public final class AC97Core implements AC97Constants, IRQHandler {
      */
     public final int getSampleRate() {
         return sampleRate;
+    }
+
+    /**
+     * Gets the number of stereo frames per playback sample buffer.
+     */
+    public final int getPlaybackBufferSize() {
+        synchronized (playbackLock) {
+            return playbackFramesPerBuffer;
+        }
+    }
+
+    /**
+     * Gets the depth of the playback ring in milliseconds, which is the
+     * latency of a stream plus the room a producer has to run ahead.
+     */
+    public final int getPlaybackLatencyMs() {
+        synchronized (playbackLock) {
+            return (int) (((long) bdl.getEntryCount()
+                * playbackFramesPerBuffer * 1000L) / sampleRate);
+        }
+    }
+
+    /**
+     * Chooses the number of frames per playback sample buffer, trading ring
+     * depth for memory: a small buffer interrupts more often and gives lower
+     * latency, a large one behaves better on a slow producer.
+     * <p>
+     * The ring is reallocated, which is only possible while playback is
+     * closed. The number of descriptors stays at the hardware maximum.
+     *
+     * @param framesPerBuffer 1..2048 stereo frames per buffer
+     */
+    public final void setPlaybackBufferSize(int framesPerBuffer) {
+        if ((framesPerBuffer < 1) || (framesPerBuffer > MAX_FRAMES_PER_BUFFER)) {
+            throw new IllegalArgumentException("Invalid buffer size "
+                + framesPerBuffer);
+        }
+        synchronized (playbackLock) {
+            if (playing) {
+                throw new IllegalStateException(
+                    "The ring size cannot change while playback is open");
+            }
+            if (framesPerBuffer == playbackFramesPerBuffer) {
+                return;
+            }
+            final BufferDescriptorList current = bdl;
+            try {
+                bdl = new BufferDescriptorList(device,
+                    DEFAULT_ENTRY_COUNT, framesPerBuffer);
+            } catch (ResourceNotFreeException ex) {
+                bdl = current;
+                throw new IllegalStateException(
+                    "Cannot claim a playback ring of " + framesPerBuffer
+                        + " frames per buffer");
+            }
+            playbackFramesPerBuffer = framesPerBuffer;
+            resetEngine();
+            current.release();
+            log.debug("AC'97 playback ring rebuilt with " + framesPerBuffer
+                + " frames per buffer");
+        }
+    }
+
+    /**
+     * Validates a microphone gain step value. The boost field is 4 bit wide,
+     * so the whole range is 0..15 in 1.5 dB steps.
+     *
+     * @param steps the gain steps
+     */
+    public static void validateMicGainSteps(int steps) {
+        if ((steps < 0) || (steps > 15)) {
+            throw new IllegalArgumentException("Invalid mic gain " + steps);
+        }
+    }
+
+    /**
+     * Gets the microphone gain, in 1.5 dB steps above the input gain, as the
+     * codec boost register has it.
+     */
+    public final int getMicGainSteps() {
+        return (readCodecRegister(NAM_RECORD_GAIN_MIC) >> 6) & 0x0F;
+    }
+
+    /**
+     * Sets the microphone gain, in 1.5 dB steps above the input gain, which
+     * is what a quiet microphone usually needs.
+     *
+     * @param steps 0..15
+     */
+    public final void setMicGainSteps(int steps) {
+        validateMicGainSteps(steps);
+        final int value = readCodecRegister(NAM_RECORD_GAIN_MIC);
+        writeCodecRegister(NAM_RECORD_GAIN_MIC, (value & ~0x03C0)
+            | ((steps & 0x0F) << 6));
     }
 
     /**
@@ -1097,6 +1205,7 @@ public final class AC97Core implements AC97Constants, IRQHandler {
             bdl.release();
             bdl = null;
         }
+
         if (nabm != null) {
             nabm.release();
             nabm = null;

@@ -258,4 +258,37 @@ public interface AC97API extends DeviceAPI {
      * into one 32 bit value.
      */
     public int getCodecId();
+
+    /**
+     * Gets the number of stereo frames per playback sample buffer.
+     */
+    public int getPlaybackBufferSize();
+
+    /**
+     * Gets the depth of the playback ring in milliseconds, which is the
+     * latency of a stream plus the room a producer has to run ahead.
+     */
+    public int getPlaybackLatencyMs();
+
+    /**
+     * Chooses the number of frames per playback sample buffer, trading ring
+     * depth for memory. Only possible while playback is closed, because the
+     * ring is reallocated.
+     *
+     * @param framesPerBuffer 1..2048 stereo frames per buffer
+     */
+    public void setPlaybackBufferSize(int framesPerBuffer);
+
+    /**
+     * Gets the microphone gain in 1.5 dB steps above the input gain.
+     */
+    public int getMicGainSteps();
+
+    /**
+     * Sets the microphone gain in 1.5 dB steps above the input gain, which is
+     * what a quiet microphone usually needs.
+     *
+     * @param steps 0..15
+     */
+    public void setMicGainSteps(int steps);
 }

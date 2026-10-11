@@ -233,6 +233,52 @@ public class AC97CoreTest {
     }
 
     @Test
+    public void testPlaybackRingLatency() {
+        // The ring depth in time follows from the geometry: 32 descriptors
+        // of 1024 frames at 48 kHz are about 682 ms, and a caller can see it.
+        final int geometryMs = (AC97Core.DEFAULT_ENTRY_COUNT
+            * AC97Core.DEFAULT_FRAMES_PER_BUFFER * 1000) / 48000;
+        assertEquals(682, geometryMs);
+        // A smaller buffer shortens the ring and the latency.
+        assertEquals(170, (AC97Core.DEFAULT_ENTRY_COUNT * 256 * 1000) / 48000);
+        // The buffer size is bounded so a caller cannot claim an absurd ring.
+        assertEquals(2048, AC97Core.MAX_FRAMES_PER_BUFFER);
+    }
+
+    @Test
+    public void testMicGainRegisterBits() {
+        // The microphone boost lives in bits 9:6 of the record gain
+        // microphone register; reading it must not pick up the lower bits of
+        // the input gain.
+        for (int steps = 0; steps <= 15; steps++) {
+            final int register = (steps << 6) | 0x03;   // plus input gain bits
+            assertEquals("steps " + steps, steps, (register >> 6) & 0x0F);
+        }
+        // The write keeps the bits around it and must not disturb the mute
+        // bit or the input gain.
+        final int original = 0x8000 | (3 << 6) | 0x0F;
+        final int written = (original & ~0x03C0) | (10 << 6);
+        assertEquals("input gain must survive", original & 0x0F,
+            written & 0x0F);
+        assertEquals("mute must survive", original & 0x8000,
+            written & 0x8000);
+        assertEquals("boost must change", 10, (written >> 6) & 0x0F);
+        // And the step value is bounded the way the register is: the field
+        // is 4 bit wide, so anything above 15 is not a boost the codec has.
+        for (int steps = 0; steps <= 15; steps++) {
+            AC97Core.validateMicGainSteps(steps);
+        }
+        for (int bad : new int[] {-1, 16, 0x100}) {
+            try {
+                AC97Core.validateMicGainSteps(bad);
+                fail("expected an exception for mic gain " + bad);
+            } catch (IllegalArgumentException ex) {
+                // expected
+            }
+        }
+    }
+
+    @Test
     public void testStallDetection() {
         final long now = 1000000L;
         // Fresh progress is never a stall, however long ago it was, as long
