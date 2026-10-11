@@ -21,6 +21,7 @@
 package org.jnode.driver.sound.ac97;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertTrue;
 import static org.junit.Assert.fail;
 
 import org.junit.Test;
@@ -132,9 +133,34 @@ public class BufferDescriptorListTest {
     }
 
     @Test
+    public void testTotalSizeFollowsTheFrameSize() {
+        // The DMA memory the ring needs follows the frame size of the format,
+        // so a 4 channel buffer is twice the memory of a stereo one.
+        final int stereo = BufferDescriptorList.totalSize(ENTRY_COUNT,
+            FRAMES_PER_BUFFER, PcmFormat.STEREO_16);
+        final int quad = BufferDescriptorList.totalSize(ENTRY_COUNT,
+            FRAMES_PER_BUFFER, new PcmFormat(4, 16));
+        // The buffers hold twice the bytes; the fixed part (descriptor list and
+        // alignment slack) is counted once, so only the buffer bytes double.
+        final int fixed = BufferDescriptorList.BDL_ALIGN
+            + (ENTRY_COUNT * AC97Constants.BDL_ENTRY_SIZE)
+            + (ENTRY_COUNT * BufferDescriptorList.BUFFER_ALIGN);
+        assertEquals(stereo + ENTRY_COUNT * FRAMES_PER_BUFFER * 4, quad);
+        assertEquals(fixed + (ENTRY_COUNT * FRAMES_PER_BUFFER * 4), stereo);
+        // 20 bit samples live in 32 bit words, so the same is true there.
+        final int wide = BufferDescriptorList.totalSize(ENTRY_COUNT,
+            FRAMES_PER_BUFFER, PcmFormat.STEREO_20);
+        assertEquals(quad, wide);
+        // And the descriptor length is counted in 16 bit words whatever the
+        // format, which is why the same frames fit in the same descriptors.
+        assertEquals(1024 * 2, PcmFormat.STEREO_16.getWordsPerFrame() * FRAMES_PER_BUFFER);
+        assertEquals(1024 * 4, PcmFormat.STEREO_20.getWordsPerFrame() * FRAMES_PER_BUFFER);
+    }
+
+    @Test
     public void testTotalSize() {
         final int total = BufferDescriptorList.totalSize(ENTRY_COUNT,
-            FRAMES_PER_BUFFER);
+            FRAMES_PER_BUFFER, PcmFormat.STEREO_16);
         // The list itself, then worst case alignment slack plus a buffer per
         // descriptor. 32 x 4KB of sample data needs 128KB of DMA memory.
         final int expected = BufferDescriptorList.BDL_ALIGN
@@ -146,8 +172,10 @@ public class BufferDescriptorListTest {
         // A smaller ring needs proportionally less DMA memory, but the list
         // and the alignment slack in front of the first buffer stay.
         assertEquals(128 + 64 + (8 * (8 + 4096)),
-            BufferDescriptorList.totalSize(8, FRAMES_PER_BUFFER));
-        assertEquals(33024, BufferDescriptorList.totalSize(8, FRAMES_PER_BUFFER));
+            BufferDescriptorList.totalSize(8, FRAMES_PER_BUFFER,
+                PcmFormat.STEREO_16));
+        assertEquals(33024, BufferDescriptorList.totalSize(8, FRAMES_PER_BUFFER,
+            PcmFormat.STEREO_16));
     }
 
     @Test

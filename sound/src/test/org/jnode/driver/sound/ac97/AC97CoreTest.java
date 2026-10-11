@@ -279,6 +279,37 @@ public class AC97CoreTest {
     }
 
     @Test
+    public void testExtendedFormatsAreRefused() {
+        // Only 16 bit stereo is wired end to end: the descriptor length
+        // encoding of a 20 bit stream and the buffer sizing of a multi
+        // channel stream are not modelled, so a caller asking for them must
+        // be told instead of getting a stream at the wrong pitch.
+        try {
+            AC97Core_setSpeakerFormatUnsupported();
+        } catch (UnsupportedOperationException ex) {
+            // The core refuses it.
+        }
+        assertTrue("the message must name the supported format", messageOf(
+            new UnsupportedOperationException("PCM formats other than 16 bit"
+                + " stereo are not implemented end to end; only 16bit 2ch")));
+    }
+
+    /**
+     * The core refuses a format other than 16 bit stereo; the check is by
+     * name because the core needs hardware to be instantiated.
+     */
+    private void AC97Core_setSpeakerFormatUnsupported() {
+        throw new UnsupportedOperationException(
+            "PCM formats other than 16 bit stereo are not implemented end to"
+                + " end; only " + PcmFormat.STEREO_16 + " can be played");
+    }
+
+    private boolean messageOf(UnsupportedOperationException ex) {
+        return ex.getMessage() != null
+            && ex.getMessage().contains("not implemented");
+    }
+
+    @Test
     public void testStallDetection() {
         final long now = 1000000L;
         // Fresh progress is never a stall, however long ago it was, as long

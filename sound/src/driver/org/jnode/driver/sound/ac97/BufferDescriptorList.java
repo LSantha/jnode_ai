@@ -106,9 +106,22 @@ public final class BufferDescriptorList implements AC97Constants {
     private final int framesPerBuffer;
 
     /**
-     * Number of 16-bit samples per sample buffer.
+     * Number of 16-bit words per sample buffer, which is what the buffer
+     * descriptor length field counts and what the buffer holds for any
+     * format a 16 bit wide descriptor can describe.
      */
-    private final int samplesPerBuffer;
+    private final int wordsPerBuffer;
+
+    /**
+     * Size of one sample frame in bytes, from the format this list was
+     * created for.
+     */
+    private final int frameSize;
+
+    /**
+     * The format this list was built for.
+     */
+    private final PcmFormat format;
 
     /**
      * Create a new descriptor list, but do not program the hardware yet.
@@ -119,18 +132,28 @@ public final class BufferDescriptorList implements AC97Constants {
      * @throws ResourceNotFreeException if the DMA memory cannot be claimed
      */
     public BufferDescriptorList(ResourceOwner owner, int entryCount,
-        int framesPerBuffer) throws ResourceNotFreeException {
+        int framesPerBuffer, PcmFormat format) throws ResourceNotFreeException {
         if ((entryCount < 1) || (entryCount > BDL_MAX_ENTRIES)) {
             throw new IllegalArgumentException("Invalid entryCount " + entryCount);
         }
+        if (framesPerBuffer < 1) {
+            throw new IllegalArgumentException("Invalid framesPerBuffer "
+                + framesPerBuffer);
+        }
+        if (format == null) {
+            throw new IllegalArgumentException("No sample format");
+        }
         this.framesPerBuffer = framesPerBuffer;
-        this.samplesPerBuffer = framesPerBuffer * PCM_CHANNELS;
-        if (samplesPerBuffer > BD_MAX_SAMPLES) {
-            throw new IllegalArgumentException("Buffer too large: " + samplesPerBuffer);
+        this.format = format;
+        this.frameSize = format.getFrameSize();
+        this.wordsPerBuffer = framesPerBuffer * format.getWordsPerFrame();
+        if (wordsPerBuffer > BD_MAX_SAMPLES) {
+            throw new IllegalArgumentException("Buffer too large: "
+                + wordsPerBuffer);
         }
         this.entryCount = entryCount;
 
-        final int total = totalSize(entryCount, framesPerBuffer);
+        final int total = totalSize(entryCount, framesPerBuffer, format);
 
         final ResourceManager rm;
         try {
@@ -146,7 +169,7 @@ public final class BufferDescriptorList implements AC97Constants {
         // Carve the block up. The BDL comes first because it must be aligned
         // to BDL_ALIGN; claiming it first wastes at most BDL_ALIGN bytes.
         final int bdlBytes = entryCount * BDL_ENTRY_SIZE;
-        final int bufferBytes = framesPerBuffer * PCM_FRAME_SIZE;
+        final int bufferBytes = framesPerBuffer * frameSize;
         try {
             this.descriptors = memory.claimChildResource(bdlBytes, BDL_ALIGN);
             this.buffers = new MemoryResource[entryCount];
@@ -253,9 +276,10 @@ public final class BufferDescriptorList implements AC97Constants {
      * @param entryCount      number of descriptors
      * @param framesPerBuffer number of stereo frames per sample buffer
      */
-    public static int totalSize(int entryCount, int framesPerBuffer) {
+    public static int totalSize(int entryCount, int framesPerBuffer,
+        PcmFormat format) {
         final int bdlBytes = entryCount * BDL_ENTRY_SIZE;
-        final int bufferBytes = framesPerBuffer * PCM_FRAME_SIZE;
+        final int bufferBytes = framesPerBuffer * format.getFrameSize();
         return BDL_ALIGN + bdlBytes + (entryCount * (BUFFER_ALIGN + bufferBytes));
     }
 
@@ -267,10 +291,25 @@ public final class BufferDescriptorList implements AC97Constants {
     }
 
     /**
-     * Gets the number of 16-bit samples per sample buffer.
+     * Gets the number of 16-bit words per sample buffer, which is what the
+     * buffer descriptor length field counts.
      */
-    public final int getSamplesPerBuffer() {
-        return samplesPerBuffer;
+    public final int getWordsPerBuffer() {
+        return wordsPerBuffer;
+    }
+
+    /**
+     * Gets the size of one sample frame in bytes.
+     */
+    public final int getFrameSize() {
+        return frameSize;
+    }
+
+    /**
+     * Gets the sample format of this list.
+     */
+    public final PcmFormat getFormat() {
+        return format;
     }
 
     /**
@@ -306,7 +345,7 @@ public final class BufferDescriptorList implements AC97Constants {
      */
     public final void setDescriptor(int index, int samples, boolean interrupt) {
         testIndex(index);
-        validateSampleCount(samples, samplesPerBuffer);
+        validateSampleCount(samples, wordsPerBuffer);
         // BDBAR and the descriptor pointer are 32 bit registers, so the
         // buffer must be below 4 GB. toInt() would silently truncate a
         // higher address, hence the check on the full 64 bit value.
@@ -344,11 +383,11 @@ public final class BufferDescriptorList implements AC97Constants {
      * @param src     source PCM data (16-bit stereo, little endian)
      * @param srcOfs  offset in the source array
      * @param length  number of bytes to copy, at most
-     *                {@link #getFramesPerBuffer()} * PCM_FRAME_SIZE
+     *                {@link #getFramesPerBuffer()} * getFrameSize()
      */
     public final void copyToBuffer(int index, byte[] src, int srcOfs, int length) {
         testIndex(index);
-        final int max = framesPerBuffer * PCM_FRAME_SIZE;
+        final int max = framesPerBuffer * frameSize;
         if ((length < 0) || (length > max)) {
             throw new IllegalArgumentException("Invalid length " + length);
         }
@@ -380,7 +419,7 @@ public final class BufferDescriptorList implements AC97Constants {
     public final void copyFromBuffer(int index, int srcOfs, byte[] dst,
         int dstOfs, int length) {
         testIndex(index);
-        final int max = framesPerBuffer * PCM_FRAME_SIZE - srcOfs;
+        final int max = framesPerBuffer * frameSize - srcOfs;
         if ((length < 0) || (length > max)) {
             throw new IllegalArgumentException("Invalid length " + length
                 + " (max " + max + ')');

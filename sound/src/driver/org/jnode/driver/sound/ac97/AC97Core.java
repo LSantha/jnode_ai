@@ -97,6 +97,12 @@ public final class AC97Core implements AC97Constants, IRQHandler {
     public static final int MAX_FRAMES_PER_BUFFER = 2048;
 
     /**
+     * The sample format of the capture path. Capture is 16 bit stereo, the
+     * format every codec can record.
+     */
+    public static final PcmFormat CAPTURE_FORMAT = PcmFormat.STEREO_16;
+
+    /**
      * Number of stereo frames per sample buffer. 1024 frames are 4096 bytes,
      * which is about 21ms of audio at 48kHz.
      */
@@ -450,7 +456,7 @@ public final class AC97Core implements AC97Constants, IRQHandler {
         this.playbackFramesPerBuffer = DEFAULT_FRAMES_PER_BUFFER;
         try {
             bdl = new BufferDescriptorList(device, DEFAULT_ENTRY_COUNT,
-                DEFAULT_FRAMES_PER_BUFFER);
+                DEFAULT_FRAMES_PER_BUFFER, speakerFormat);
         } catch (ResourceNotFreeException ex) {
             nabm.release();
             nam.release();
@@ -548,7 +554,7 @@ public final class AC97Core implements AC97Constants, IRQHandler {
             final BufferDescriptorList current = bdl;
             try {
                 bdl = new BufferDescriptorList(device,
-                    DEFAULT_ENTRY_COUNT, framesPerBuffer);
+                    DEFAULT_ENTRY_COUNT, framesPerBuffer, speakerFormat);
             } catch (ResourceNotFreeException ex) {
                 bdl = current;
                 throw new IllegalStateException(
@@ -689,21 +695,19 @@ public final class AC97Core implements AC97Constants, IRQHandler {
      */
     public final void setSpeakerFormat(PcmFormat format) {
         synchronized (playbackLock) {
-            if (format.equals(PcmFormat.STEREO_16)) {
-                speakerFormat = PcmFormat.STEREO_16;
-                applySpeakerFormat();
-                return;
+            // Only 16 bit stereo is wired end to end: the mixer path, the WAV
+            // path and the tone generator all produce that format, and the
+            // descriptor length encoding of a 20 bit stream is per 32 bit
+            // word, which the ring does not model yet. Selecting anything
+            // else is refused rather than programmed into a stream that would
+            // then play at the wrong pitch.
+            if (!PcmFormat.STEREO_16.equals(format)) {
+                throw new UnsupportedOperationException(
+                    "PCM formats other than 16 bit stereo are not implemented"
+                        + " end to end; only " + PcmFormat.STEREO_16
+                        + " can be played");
             }
-            if ((format.getBitsPerSample() == 20) && !sample16_20) {
-                throw new IllegalArgumentException(
-                    "Controller does not support 20 bit samples");
-            }
-            if (format.getChannels() > maxChannels) {
-                throw new IllegalArgumentException(
-                    "Controller reports " + maxChannels
-                        + " output channels, not " + format.getChannels());
-            }
-            speakerFormat = format;
+            speakerFormat = PcmFormat.STEREO_16;
             applySpeakerFormat();
         }
     }
@@ -1047,7 +1051,7 @@ public final class AC97Core implements AC97Constants, IRQHandler {
     private void claimCaptureBuffers() {
         try {
             captureBdl = new BufferDescriptorList(device, CAPTURE_ENTRY_COUNT,
-                CAPTURE_FRAMES_PER_BUFFER);
+                CAPTURE_FRAMES_PER_BUFFER, CAPTURE_FORMAT);
         } catch (ResourceNotFreeException ex) {
             throw new IllegalStateException(
                 "Cannot claim AC'97 capture DMA memory", ex);
@@ -1459,8 +1463,9 @@ public final class AC97Core implements AC97Constants, IRQHandler {
                 break;
         }
         if (sample16_20 || (maxChannels > 2)) {
-            log.debug("AC'97 speaker capability: " + maxChannels
-                + " channels, 16/20 bit=" + sample16_20);
+            log.info("AC'97 codec reports " + maxChannels + " channels and "
+                + (sample16_20 ? "16/20" : "16")
+                + " bit samples; this driver plays 16 bit stereo");
         }
     }
 
