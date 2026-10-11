@@ -67,13 +67,25 @@ REPLUG_AFTER_FINS = 3
 # Replug the pipe server if a batch is in flight but not a single byte
 # arrives for this long. The guest always answers a fresh command with the
 # BEGIN-marker echo within seconds, so total RX silence means the VBox UART
-# itself wedged (observed with no log line at all). Replug is harmless to a
-# healthy guest; the in-flight command is resent afterwards (it may run
-# twice -- documented caveat, same as reconnect-resend).
+# itself wedged (observed with no log line at all). Replug is harmless to
+# a healthy guest; the in-flight command is resent afterwards, bounded by
+# the resend budget, rate limit, and client-liveness checks
+# (MAX_RESENDS_PER_CMD et al).
 WEDGE_SILENCE = 180.0
 # Replug at most this often (seconds) to avoid hammering VBox.
 REPLUG_MIN_INTERVAL = 15.0
 DEFAULT_REQ_TIMEOUT = 1200.0
+# Bound every resend path. The wait_begin prompt-resend and the reconnect
+# resend were both unbounded; a guest that keeps printing prompts without
+# the marker echo (error storm, wedged shell) re-triggered them ~10x/s
+# until the request timeout, and each resend executed a real command on
+# the guest (proclet spawn + logged exception), OOM'ing its heap.
+MAX_RESENDS_PER_CMD = 3
+# Minimum seconds between resends of the same command.
+MIN_RESEND_INTERVAL = 2.0
+# Capture cap per command: an error flood can drown the END marker so the
+# command never completes; cut it off and ETX the guest instead.
+MAX_CAPTURE_BYTES = 512 * 1024
 
 
 def log(msg):
@@ -290,6 +302,9 @@ def main():
             return {"reqid": reqid, "cmds": list(cmds),
                     "timeout": timeout, "start": time.time(),
                     "idx": 0, "phase": "idle", "lines": b"",
+                    "pid": data.get("pid"),
+                    "resends": 0, "sends_this_cmd": 0,
+                    "last_resend": 0.0, "cap_total": 0,
                     "out": open(os.path.join(RESPDIR, reqid + ".out"),
                                 "ab", buffering=0)}
         except Exception as e:
@@ -332,6 +347,52 @@ def main():
                                                           "replace")
         link.send_blob(blob)
 
+    class Abandon(Exception):
+        """Drop the current request (dead client, resend budget, flood)."""
+
+    def client_alive(cpid):
+        if cpid is None:
+            return True
+        try:
+            return os.path.exists("/proc/%d" % int(cpid))
+        except (TypeError, ValueError):
+            return True
+
+    def abandon_cur(req, reason):
+        nonlocal cur
+        try:
+            link.send_blob(b"\x03")
+        except (IOError, OSError):
+            pass
+        log("batch %s abandoned: %s" % (req["reqid"], reason))
+        finish_request(req, "ERROR " + str(reason))
+        if cur is req:
+            cur = None
+        link.buf = b""
+
+    def guarded_send(req):
+        """Single funnel for every (re)send of the current command.
+
+        First send of a command passes through; any resend must keep the
+        submitting client alive, respect the rate limit, and stay within
+        the resend budget, or the whole request is abandoned.
+        """
+        if not client_alive(req.get("pid")):
+            raise Abandon("client %s died" % req.get("pid"))
+        if req["sends_this_cmd"] > 0:
+            now = time.time()
+            if now - req["last_resend"] < MIN_RESEND_INTERVAL:
+                return
+            req["resends"] += 1
+            if req["resends"] > MAX_RESENDS_PER_CMD:
+                raise Abandon("abandoned after %d resends"
+                              % MAX_RESENDS_PER_CMD)
+            req["last_resend"] = now
+            log("resend %s cmd %d (resend #%d)"
+                % (req["reqid"], req["idx"], req["resends"]))
+        req["sends_this_cmd"] += 1
+        start_next_cmd(req)
+
     def emit(req, data, flush=False):
         """Write complete, meaningful lines to the response file.
 
@@ -364,10 +425,11 @@ def main():
                 if len(link.buf) > 256:
                     link.buf = link.buf[-256:]
                 # Prompt without marker: shell ready but echo lost;
-                # re-send markers rather than hang.
+                # re-send markers rather than hang (rate- and
+                # budget-capped: this was the storm engine).
                 if PROMPT in link.buf:
                     link.buf = b""
-                    start_next_cmd(req)
+                    guarded_send(req)
                 return False
             link.buf = link.buf[i + len(bmark):]
             req["phase"] = "capture"
@@ -378,9 +440,17 @@ def main():
                 # split marker), then wait for more.
                 keep = len(emark) + 8
                 if len(link.buf) > keep:
+                    req["cap_total"] += len(link.buf) - keep
+                    if req["cap_total"] > MAX_CAPTURE_BYTES:
+                        raise Abandon("output overflow (> %d bytes)"
+                                      % MAX_CAPTURE_BYTES)
                     emit(req, link.buf[:-keep].replace(b"\r", b""))
                     link.buf = link.buf[-keep:]
                 return False
+            req["cap_total"] += j
+            if req["cap_total"] > MAX_CAPTURE_BYTES:
+                raise Abandon("output overflow (> %d bytes)"
+                              % MAX_CAPTURE_BYTES)
             emit(req, link.buf[:j].replace(b"\r", b""), flush=True)
             link.buf = link.buf[j + len(emark):]
             req["phase"] = "wait_prompt"
@@ -527,7 +597,9 @@ def main():
                     cur["phase"] = "idle"
                     link.buf = b""
                     try:
-                        start_next_cmd(cur)
+                        guarded_send(cur)
+                    except Abandon as e:
+                        abandon_cur(cur, e)
                     except (IOError, OSError) as e:
                         log("resend failed after link up: %s" % e)
                         link.close()
@@ -583,7 +655,7 @@ def main():
                 continue
             try:
                 if cur["phase"] == "idle":
-                    start_next_cmd(cur)
+                    guarded_send(cur)
                 elif process_stream(cur):
                     cur["idx"] += 1
                     cmd_count += 1
@@ -595,6 +667,10 @@ def main():
                         cur = None
                     else:
                         cur["phase"] = "idle"
+                        cur["sends_this_cmd"] = 0
+                        cur["cap_total"] = 0
+            except Abandon as e:
+                abandon_cur(cur, e)
             except (IOError, OSError) as e:
                 log("link lost during batch %s: %s" % (cur["reqid"], e))
                 link.close()
