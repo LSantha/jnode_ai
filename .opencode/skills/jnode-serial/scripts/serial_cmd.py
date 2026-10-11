@@ -167,7 +167,8 @@ def submit(cmds, timeout):
     reqid = "%x%x" % (time.time_ns(), random.getrandbits(32))
     reqpath = os.path.join(REQDIR, reqid + ".json")
     with open(reqpath, "w") as f:
-        json.dump({"cmds": cmds, "timeout": timeout}, f)
+        json.dump({"cmds": cmds, "timeout": timeout,
+                   "pid": os.getpid()}, f)
     # Wake the mux (non-blocking; it also polls, so a full fifo is fine).
     try:
         fd = os.open(FIFO, os.O_WRONLY | os.O_NONBLOCK)
