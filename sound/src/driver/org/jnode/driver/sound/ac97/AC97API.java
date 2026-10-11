@@ -260,6 +260,13 @@ public interface AC97API extends DeviceAPI {
     public int getCodecId();
 
     /**
+     * Gets the number of codec accesses that failed the access semaphore or
+     * the read completion handshake since the driver started. A nonzero value
+     * on a codec that answers means the access protocol needs attention.
+     */
+    public int getCodecErrors();
+
+    /**
      * Gets the number of stereo frames per playback sample buffer.
      */
     public int getPlaybackBufferSize();

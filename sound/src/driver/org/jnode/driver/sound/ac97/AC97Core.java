@@ -134,6 +134,20 @@ public final class AC97Core implements AC97Constants, IRQHandler {
     private static final int CODEC_READY_TIMEOUT = 1000;
 
     /**
+     * Number of semaphore polls at a millisecond apart, about 8ms in total.
+     * Anyone holding the codec semaphore longer than that means a real
+     * problem, and refusing the access forever is worse than doing it.
+     */
+    public static final int CODEC_SEMA_TIMEOUT = 8;
+
+    /**
+     * Bits of the global status register that are cleared by writing a 0 to
+     * them, rather than the write-one-to-clear of the interrupt status bits.
+     * The codec-read status is one of them.
+     */
+    public static final int GLOB_STA_WRITE0_MASK = GLOB_STA_RCS;
+
+    /**
      * Maximum time in milliseconds to wait for the DMA register box to leave
      * the reset state.
      */
@@ -243,6 +257,14 @@ public final class AC97Core implements AC97Constants, IRQHandler {
      * The sample format the PCM out engine plays.
      */
     private PcmFormat speakerFormat = PcmFormat.STEREO_16;
+
+    /**
+     * Number of codec accesses that failed the semaphore or the read
+     * completion status. Read by ac97info; a counter rather than logging
+     * because the accessor runs on the caller's thread and a log line per
+     * failure is unusable on a hot path.
+     */
+    private volatile int codecErrors;
 
     /**
      * Lock protecting the playback ring state below and the DMA registers
@@ -582,7 +604,7 @@ public final class AC97Core implements AC97Constants, IRQHandler {
      */
     public final int readCodecRegister(int index) {
         validateCodecRegisterIndex(index);
-        return inNam(index);
+        return inCodec(index);
     }
 
     /**
@@ -593,7 +615,7 @@ public final class AC97Core implements AC97Constants, IRQHandler {
      */
     public final void writeCodecRegister(int index, int value) {
         validateCodecRegisterIndex(index);
-        outNam(index, value);
+        outCodec(index, value);
     }
 
     /**
@@ -602,8 +624,8 @@ public final class AC97Core implements AC97Constants, IRQHandler {
      * logging and for manufacturer specific code.
      */
     public final int getCodecId() {
-        return (inNam(NAM_VENDOR_ID1) << 16)
-            | (inNam(NAM_VENDOR_ID2) & 0xFFFF);
+        return (inCodec(NAM_VENDOR_ID1) << 16)
+            | (inCodec(NAM_VENDOR_ID2) & 0xFFFF);
     }
 
     /**
@@ -623,7 +645,7 @@ public final class AC97Core implements AC97Constants, IRQHandler {
      * Gets the master output volume as the codec currently has it.
      */
     public final MixerVolume getMasterVolume() {
-        return MixerVolume.fromRegister(inNam(NAM_MASTER_VOLUME));
+        return MixerVolume.fromRegister(inCodec(NAM_MASTER_VOLUME));
     }
 
     /**
@@ -631,7 +653,7 @@ public final class AC97Core implements AC97Constants, IRQHandler {
      * register, so the change takes effect without a gap between them.
      */
     public final void setMasterVolume(MixerVolume volume) {
-        outNam(NAM_MASTER_VOLUME, volume.toRegister());
+        outCodec(NAM_MASTER_VOLUME, volume.toRegister());
     }
 
     /**
@@ -639,14 +661,14 @@ public final class AC97Core implements AC97Constants, IRQHandler {
      * driver writes next to the master volume.
      */
     public final MixerVolume getPcmVolume() {
-        return MixerVolume.fromRegister(inNam(NAM_PCM_OUT_VOLUME));
+        return MixerVolume.fromRegister(inCodec(NAM_PCM_OUT_VOLUME));
     }
 
     /**
      * Sets the volume of the PCM path.
      */
     public final void setPcmVolume(MixerVolume volume) {
-        outNam(NAM_PCM_OUT_VOLUME, volume.toRegister());
+        outCodec(NAM_PCM_OUT_VOLUME, volume.toRegister());
     }
 
     /**
@@ -708,14 +730,14 @@ public final class AC97Core implements AC97Constants, IRQHandler {
      * Gets the volume of the headphone output, if the codec has one.
      */
     public final MixerVolume getHeadphoneVolume() {
-        return MixerVolume.fromRegister(inNam(NAM_HEADPHONE_VOLUME));
+        return MixerVolume.fromRegister(inCodec(NAM_HEADPHONE_VOLUME));
     }
 
     /**
      * Sets the volume of the headphone output.
      */
     public final void setHeadphoneVolume(MixerVolume volume) {
-        outNam(NAM_HEADPHONE_VOLUME, volume.toRegister());
+        outCodec(NAM_HEADPHONE_VOLUME, volume.toRegister());
     }
 
     /**
@@ -917,10 +939,10 @@ public final class AC97Core implements AC97Constants, IRQHandler {
     public final void setRecordSource(int select, int gainSteps) {
         validateRecordSource(select);
         synchronized (captureLock) {
-            outNam(NAM_RECORD_SELECT, select);
+            outCodec(NAM_RECORD_SELECT, select);
             final int gain = (gainSteps & 0x0F) | ((gainSteps & 0x0F) << 8);
-            outNam(NAM_RECORD_GAIN, gain);
-            outNam(NAM_RECORD_GAIN_MIC, gain);
+            outCodec(NAM_RECORD_GAIN, gain);
+            outCodec(NAM_RECORD_GAIN_MIC, gain);
         }
     }
 
@@ -1170,12 +1192,12 @@ public final class AC97Core implements AC97Constants, IRQHandler {
         if (variableRate) {
             // Variable rate is enabled in the extended audio control
             // register, after which every rate register is writable.
-            outNam(NAM_EXTENDED_AUDIO_STATUS_CTRL, NAM_EAC_VRA);
+            outCodec(NAM_EXTENDED_AUDIO_STATUS_CTRL, NAM_EAC_VRA);
         }
-        outNam(NAM_PCM_FRONT_DAC_RATE, rate);
+        outCodec(NAM_PCM_FRONT_DAC_RATE, rate);
         // The ADC rate register only matters on codecs with variable rate
         // capture; on a fixed rate codec the write is ignored.
-        outNam(NAM_PCM_LR_ADC_RATE, rate);
+        outCodec(NAM_PCM_LR_ADC_RATE, rate);
     }
 
     public final void close() {
@@ -1331,12 +1353,12 @@ public final class AC97Core implements AC97Constants, IRQHandler {
      * @throws DriverException when the codec did not become ready
      */
     private void powerUpCodec() throws DriverException {
-        final int controls = inNam(NAM_POWERDOWN_CTRL_STAT);
+        final int controls = inCodec(NAM_POWERDOWN_CTRL_STAT);
         // Clear the power-down controls, keep the external amplifier on.
-        outNam(NAM_POWERDOWN_CTRL_STAT, (controls & ~NAM_POWER_DOWN_PR_MASK)
+        outCodec(NAM_POWERDOWN_CTRL_STAT, (controls & ~NAM_POWER_DOWN_PR_MASK)
             | NAM_POWER_EAPD);
         for (int i = 0; i < CODEC_READY_TIMEOUT; i++) {
-            final int status = inNam(NAM_POWERDOWN_CTRL_STAT);
+            final int status = inCodec(NAM_POWERDOWN_CTRL_STAT);
             if ((status & NAM_POWER_STATUS_MASK) == NAM_POWER_STATUS_MASK) {
                 log.debug("AC'97 codec powered up after " + (i + RESET_DELAY)
                     + "ms, status=0x" + NumberUtils.hex(status, 4));
@@ -1345,7 +1367,7 @@ public final class AC97Core implements AC97Constants, IRQHandler {
             sleep(1);
         }
         throw new DriverException("Codec did not become ready: powerdown=0x"
-            + NumberUtils.hex(inNam(NAM_POWERDOWN_CTRL_STAT), 4));
+            + NumberUtils.hex(inCodec(NAM_POWERDOWN_CTRL_STAT), 4));
     }
 
     /**
@@ -1388,26 +1410,26 @@ public final class AC97Core implements AC97Constants, IRQHandler {
         // A register reset puts all NAM registers back to their default
         // value; several volume registers default to muted. The volumes are
         // set after it, so the reset cannot undo them.
-        outNam(NAM_RESET, 0x0000);
+        outCodec(NAM_RESET, 0x0000);
 
         // Unmute the master output. The default of the master volume
         // register is muted (0x8000), which is the classic "no sound" trap.
-        outNam(NAM_MASTER_VOLUME, new MixerVolume(0, 0, false).toRegister());
-        outNam(NAM_HEADPHONE_VOLUME, new MixerVolume(0, 0, false).toRegister());
+        outCodec(NAM_MASTER_VOLUME, new MixerVolume(0, 0, false).toRegister());
+        outCodec(NAM_HEADPHONE_VOLUME, new MixerVolume(0, 0, false).toRegister());
         // The PCM path is left 8 steps (-12 dB) below full level, so that the
         // first samples a caller writes cannot clip.
-        outNam(NAM_PCM_OUT_VOLUME, NAM_PCM_OUT_DEFAULT);
+        outCodec(NAM_PCM_OUT_VOLUME, NAM_PCM_OUT_DEFAULT);
 
         // Variable rate audio support?
-        variableRate = ((inNam(NAM_EXTENDED_AUDIO_ID) & NAM_EI_VRA) != 0);
+        variableRate = ((inCodec(NAM_EXTENDED_AUDIO_ID) & NAM_EI_VRA) != 0);
         if (variableRate) {
-            outNam(NAM_EXTENDED_AUDIO_STATUS_CTRL, NAM_EAC_VRA);
+            outCodec(NAM_EXTENDED_AUDIO_STATUS_CTRL, NAM_EAC_VRA);
         }
         this.sampleRate = SAMPLE_RATE_48000;
-        outNam(NAM_PCM_FRONT_DAC_RATE, SAMPLE_RATE_48000);
+        outCodec(NAM_PCM_FRONT_DAC_RATE, SAMPLE_RATE_48000);
 
-        final int id1 = inNam(NAM_VENDOR_ID1);
-        final int id2 = inNam(NAM_VENDOR_ID2);
+        final int id1 = inCodec(NAM_VENDOR_ID1);
+        final int id2 = inCodec(NAM_VENDOR_ID2);
         log.info("AC'97 codec " + NumberUtils.hex(id1, 4) + ":"
             + NumberUtils.hex(id2, 4) + " VRA=" + variableRate);
     }
@@ -1790,11 +1812,73 @@ public final class AC97Core implements AC97Constants, IRQHandler {
     // Register accessors
     // ------------------------------------------------------------------
 
-    private int inNam(int offset) {
+    /**
+     * Reads a codec register through the ICH codec access protocol: the
+     * semaphore is waited for, and the read completion status is checked
+     * afterwards.
+     * <p>
+     * A failure is not fatal and does not stop the access, following what
+     * Linux does on the same hardware: accesses to registers that do not
+     * exist in the codec never release the semaphore, so refusing to
+     * continue would break the ones that do exist. A failed read returns
+     * 0xFFFF and counts an error.
+     *
+     * @param offset the codec register offset
+     */
+    private int inCodec(int offset) {
+        waitCodecSemaphore();
+        final int value = inNamRaw(offset);
+        final int status = inNabmDword(GLOB_STA);
+        if ((status & GLOB_STA_RCS) != 0) {
+            // The read did not complete; clear the bit and report a failure.
+            outNabmDword(GLOB_STA, status & ~GLOB_STA_WRITE0_MASK);
+            codecErrors++;
+            log.debug("AC'97 codec read timeout on register 0x"
+                + NumberUtils.hex(offset));
+            return 0xFFFF;
+        }
+        return value;
+    }
+
+    /**
+     * Writes a codec register after waiting for the codec access semaphore.
+     *
+     * @param offset the codec register offset
+     * @param value  the 16 bit value to write
+     */
+    private void outCodec(int offset, int value) {
+        waitCodecSemaphore();
+        outNamRaw(offset, value);
+    }
+
+    /**
+     * Waits for the codec access semaphore of the controller, and counts a
+     * codec error when it does not come free. The access itself is still
+     * performed by the caller.
+     */
+    private void waitCodecSemaphore() {
+        for (int i = 0; i < CODEC_SEMA_TIMEOUT; i++) {
+            if ((inNabmByte(ACC_SEMA) & ACC_SEMA_CAS) == 0) {
+                return;
+            }
+            sleep(1);
+        }
+        codecErrors++;
+        log.debug("AC'97 codec semaphore timeout");
+    }
+
+    /**
+     * Gets the number of codec access failures since the driver started.
+     */
+    public int getCodecErrors() {
+        return codecErrors;
+    }
+
+    private int inNamRaw(int offset) {
         return nam.inPortWord(namBase + offset) & 0xFFFF;
     }
 
-    private void outNam(int offset, int value) {
+    private void outNamRaw(int offset, int value) {
         nam.outPortWord(namBase + offset, value & 0xFFFF);
     }
 

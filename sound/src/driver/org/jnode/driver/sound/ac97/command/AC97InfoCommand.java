@@ -99,6 +99,7 @@ public class AC97InfoCommand extends AbstractCommand {
             + ", buffers waiting=" + api.getCapturedBuffers()
             + ", microphone gain=" + api.getMicGainSteps() + " steps");
         out.println("ac97info: codec id=0x"
-            + Integer.toHexString(api.getCodecId()));
+            + Integer.toHexString(api.getCodecId()) + " codecErrors="
+            + api.getCodecErrors());
     }
 }

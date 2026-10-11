@@ -327,6 +327,14 @@ public class AC97Driver extends Driver implements AC97API, AC97Constants {
         return c.getCodecId();
     }
 
+    public int getCodecErrors() {
+        final AC97Core c = core;
+        if (c == null) {
+            throw new IllegalStateException("AC'97 device is not started");
+        }
+        return c.getCodecErrors();
+    }
+
     public int getPlaybackBufferSize() {
         final AC97Core c = core;
         if (c == null) {
