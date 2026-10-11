@@ -237,6 +237,27 @@ public interface AC97Constants extends PCIConstants {
     public static final int NAM_VOLUME_MUTE = 0x8000;
 
     /**
+     * Highest attenuation step of a volume register: 31 x 1.5 dB. The
+     * registers are 5 bit per channel on the codecs this driver targets.
+     */
+    public static final int NAM_VOLUME_MAX_STEPS = 31;
+
+    /**
+     * Bit shift of the left channel of a stereo volume register.
+     */
+    public static final int NAM_VOLUME_LEFT_SHIFT = 8;
+
+    /**
+     * Bit shift of the right channel of a stereo volume register.
+     */
+    public static final int NAM_VOLUME_RIGHT_SHIFT = 0;
+
+    /**
+     * Mask of one channel of a stereo volume register.
+     */
+    public static final int NAM_VOLUME_MASK = 0x1F;
+
+    /**
      * Volume of 0 dB (unmuted) for one channel. A stereo volume register is
      * made of two of these; 0008h means 0 dB attenuation.
      */

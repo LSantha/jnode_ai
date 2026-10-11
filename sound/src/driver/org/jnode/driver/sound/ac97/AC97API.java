@@ -180,4 +180,42 @@ public interface AC97API extends DeviceAPI {
      * @param gainSteps gain in 1.5 dB steps per channel, 0 is maximum gain
      */
     public void setRecordSource(int select, int gainSteps);
+
+    /**
+     * Gets the master output volume. The result is the value the codec
+     * reports, so a codec with a muted default reads as muted.
+     */
+    public MixerVolume getMasterVolume();
+
+    /**
+     * Sets the master output volume.
+     *
+     * @param volume the new volume
+     */
+    public void setMasterVolume(MixerVolume volume);
+
+    /**
+     * Gets the volume of the PCM path, which gates the samples written with
+     * {@link #write} in addition to the master volume.
+     */
+    public MixerVolume getPcmVolume();
+
+    /**
+     * Sets the volume of the PCM path.
+     *
+     * @param volume the new volume
+     */
+    public void setPcmVolume(MixerVolume volume);
+
+    /**
+     * Gets the volume of the headphone output.
+     */
+    public MixerVolume getHeadphoneVolume();
+
+    /**
+     * Sets the volume of the headphone output.
+     *
+     * @param volume the new volume
+     */
+    public void setHeadphoneVolume(MixerVolume volume);
 }

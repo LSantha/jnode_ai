@@ -41,6 +41,7 @@
     <alias name="ac97play" class="org.jnode.driver.sound.ac97.command.AC97PlayCommand"/>
     <alias name="ac97capture" class="org.jnode.driver.sound.ac97.command.AC97CaptureCommand"/>
     <alias name="ac97wav" class="org.jnode.driver.sound.ac97.command.AC97WavCommand"/>
+    <alias name="ac97volume" class="org.jnode.driver.sound.ac97.command.AC97VolumeCommand"/>
   </extension>
 
   <extension point="org.jnode.security.permissions">
@@ -57,6 +58,11 @@
     </syntax>
     <syntax alias="ac97wav">
       <argument argLabel="file" description="the WAV file to play"/>
+    </syntax>
+    <syntax alias="ac97volume">
+      <option argLabel="mute" description="mute the outputs"/>
+      <option argLabel="unmute" description="unmute the outputs"/>
+      <option argLabel="level" description="volume in percent, 0..100"/>
     </syntax>
     <syntax alias="ac97capture">
       <option argLabel="duration" description="recording time in milliseconds"/>

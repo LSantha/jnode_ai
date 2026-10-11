@@ -408,6 +408,50 @@ public final class AC97Core implements AC97Constants, IRQHandler {
     }
 
     /**
+     * Gets the master output volume as the codec currently has it.
+     */
+    public final MixerVolume getMasterVolume() {
+        return MixerVolume.fromRegister(inNam(NAM_MASTER_VOLUME));
+    }
+
+    /**
+     * Sets the master output volume. Both channels are written in one
+     * register, so the change takes effect without a gap between them.
+     */
+    public final void setMasterVolume(MixerVolume volume) {
+        outNam(NAM_MASTER_VOLUME, volume.toRegister());
+    }
+
+    /**
+     * Gets the volume of the PCM path, which is what gates the samples this
+     * driver writes next to the master volume.
+     */
+    public final MixerVolume getPcmVolume() {
+        return MixerVolume.fromRegister(inNam(NAM_PCM_OUT_VOLUME));
+    }
+
+    /**
+     * Sets the volume of the PCM path.
+     */
+    public final void setPcmVolume(MixerVolume volume) {
+        outNam(NAM_PCM_OUT_VOLUME, volume.toRegister());
+    }
+
+    /**
+     * Gets the volume of the headphone output, if the codec has one.
+     */
+    public final MixerVolume getHeadphoneVolume() {
+        return MixerVolume.fromRegister(inNam(NAM_HEADPHONE_VOLUME));
+    }
+
+    /**
+     * Sets the volume of the headphone output.
+     */
+    public final void setHeadphoneVolume(MixerVolume volume) {
+        outNam(NAM_HEADPHONE_VOLUME, volume.toRegister());
+    }
+
+    /**
      * Does the codec support variable rate audio?
      */
     public final boolean isVariableRateSupported() {

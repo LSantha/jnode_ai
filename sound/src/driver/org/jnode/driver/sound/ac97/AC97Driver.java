@@ -238,4 +238,52 @@ public class AC97Driver extends Driver implements AC97API, AC97Constants {
         }
         c.setRecordSource(select, gainSteps);
     }
+
+    public MixerVolume getMasterVolume() {
+        final AC97Core c = core;
+        if (c == null) {
+            throw new IllegalStateException("AC'97 device is not started");
+        }
+        return c.getMasterVolume();
+    }
+
+    public void setMasterVolume(MixerVolume volume) {
+        final AC97Core c = core;
+        if (c == null) {
+            throw new IllegalStateException("AC'97 device is not started");
+        }
+        c.setMasterVolume(volume);
+    }
+
+    public MixerVolume getPcmVolume() {
+        final AC97Core c = core;
+        if (c == null) {
+            throw new IllegalStateException("AC'97 device is not started");
+        }
+        return c.getPcmVolume();
+    }
+
+    public void setPcmVolume(MixerVolume volume) {
+        final AC97Core c = core;
+        if (c == null) {
+            throw new IllegalStateException("AC'97 device is not started");
+        }
+        c.setPcmVolume(volume);
+    }
+
+    public MixerVolume getHeadphoneVolume() {
+        final AC97Core c = core;
+        if (c == null) {
+            throw new IllegalStateException("AC'97 device is not started");
+        }
+        return c.getHeadphoneVolume();
+    }
+
+    public void setHeadphoneVolume(MixerVolume volume) {
+        final AC97Core c = core;
+        if (c == null) {
+            throw new IllegalStateException("AC'97 device is not started");
+        }
+        c.setHeadphoneVolume(volume);
+    }
 }
