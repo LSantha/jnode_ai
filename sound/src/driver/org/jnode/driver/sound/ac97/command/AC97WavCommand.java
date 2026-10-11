@@ -81,6 +81,7 @@ public class AC97WavCommand extends AbstractCommand {
         final byte[] raw = new byte[chunkBytes];
         int played = 0;
         InputStream in = null;
+        boolean opened = false;
         try {
             in = new FileInputStream(file);
             // A canonical header is 44 bytes. Files with extra metadata are
@@ -113,6 +114,7 @@ public class AC97WavCommand extends AbstractCommand {
                     + "Hz to " + playRate + "Hz");
             }
             api.open(playRate);
+            opened = true;
             // The buffers hold one chunk worst case: 8 bit mono input is
             // multiplied by four per frame, and upsampling multiplies by the
             // rate ratio.
@@ -171,7 +173,9 @@ public class AC97WavCommand extends AbstractCommand {
                     // ignored
                 }
             }
-            api.close();
+            if (opened) {
+                api.close();
+            }
         }
     }
 

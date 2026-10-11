@@ -84,8 +84,10 @@ public final class AC97Utils {
             return;
         }
         ToneGenerator generator = null;
+        boolean opened = false;
         try {
             api.open(AC97Constants.SAMPLE_RATE_48000);
+            opened = true;
             generator = new ToneGenerator(api.getSampleRate(), frequencyHz,
                 durationMs);
             final byte[] chunk = new byte[generator.getFramesPerChunk()
@@ -111,7 +113,12 @@ public final class AC97Utils {
         } catch (TimeoutException ex) {
             log.error("AC'97 DMA engine stalled", ex);
         } finally {
-            api.close();
+            // Only close a stream this call opened: the PCM out engine is
+            // exclusive, so a close after a failed open would silence whoever
+            // holds it.
+            if (opened) {
+                api.close();
+            }
         }
     }
 }

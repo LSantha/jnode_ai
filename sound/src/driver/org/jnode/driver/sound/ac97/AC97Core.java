@@ -1218,11 +1218,23 @@ public final class AC97Core implements AC97Constants, IRQHandler {
 
     /**
      * Release all resources claimed by this core.
+     * <p>
+     * Both engines are stopped under their own lock before the ring memory
+     * is released, so a capture that is running at driver stop or plugin
+     * unload cannot keep writing into memory that is being freed. A reader
+     * that is waiting inside readCapture is woken and fails, rather than
+     * returning data from a released ring.
      */
     public final void release() {
         synchronized (playbackLock) {
             stopEngine();
             playing = false;
+            playbackLock.notifyAll();
+        }
+        synchronized (captureLock) {
+            captureOpen = false;
+            stopCaptureEngine();
+            captureLock.notifyAll();
         }
         if (captureBdl != null) {
             captureBdl.release();

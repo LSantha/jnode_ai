@@ -167,8 +167,10 @@ public class AC97CaptureCommand extends AbstractCommand {
         int windowClips = 0;
         int totalClips = 0;
         int totalPeak = 0;
+        boolean opened = false;
         try {
             api.openCapture(rate);
+            opened = true;
             api.setRecordSource(source.select(), gainSteps);
             while (recorded < totalFrames) {
                 final int frames = Math.min(chunk.length / frameSize, totalFrames
@@ -212,7 +214,12 @@ public class AC97CaptureCommand extends AbstractCommand {
         } catch (Exception ex) {
             out.println("ac97capture: failed: " + ex);
         } finally {
-            api.closeCapture();
+            // Only close a capture this command opened; the PCM in engine is
+            // exclusive, so a close after a failed open would stop whoever
+            // holds it.
+            if (opened) {
+                api.closeCapture();
+            }
         }
         if (recorded == 0) {
             out.println("ac97capture: no audio recorded");
