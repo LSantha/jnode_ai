@@ -671,16 +671,21 @@ module.exports = async ({ github, context, core }) => {
     }
     if (!issueOpen) {
       // "Closed" is not the same question as "abandoned". The post-step closes
-      // kind/investigate and kind/question tickets as their normal success path
-      // once agent/investigated lands, so the runner's own completion close is
-      // indistinguishable from a human closing an abandoned ticket unless the
-      // labels are consulted. Cancelling here would report a successful
-      // investigation as CANCELLED and stamp agent/skip on its real
-      // agent/investigated. When a completion label is present, fall through to
-      // the phase's short-circuit branch, which reaches DONE correctly.
-      var completed = h.COMPLETION_LABELS.some(function(l) { return issueLabels.indexOf(l) >= 0; });
-      if (completed) {
-        core.info("Ticket runner: #" + issueNumber + " is closed but carries a completion label; letting the phase short-circuit handle it.");
+      // some tickets itself, and its own completion close must not be read as a
+      // human cancellation. Mirror shouldClose in opencode-post-step.js rather
+      // than COMPLETION_LABELS: the post-step closes only behind
+      // agent/duplicate, or agent/investigated on an investigate/question kind.
+      // COMPLETION_LABELS is too wide - agent/done is the post-step's default
+      // branch for every non-investigation run, so a closed kind/bug ticket
+      // carrying it would fall through as if completed when the human in fact
+      // abandoned it. `isTerminalPhase` and `handleDevCompletion` are already
+      // consulted downstream; this only decides whether cancellation applies.
+      var selfClosed =
+        issueLabels.indexOf("agent/duplicate") >= 0 ||
+        (issueLabels.indexOf("agent/investigated") >= 0 &&
+          ["kind/investigate", "kind/question"].some(function(k) { return issueLabels.indexOf(k) >= 0; }));
+      if (selfClosed) {
+        core.info("Ticket runner: #" + issueNumber + " is closed but was closed by the post-step; letting the phase short-circuit handle it.");
       } else {
         state.phase = "CANCELLED";
         state.history.push({ event: "cancelled_issue_closed", timestamp: new Date().toISOString() });

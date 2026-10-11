@@ -36,6 +36,7 @@ function createMocks(eventName, {
   prHeadRef = "opencode/issue42-fix",
   mergeError = null,
   getIssueError = null,
+  getIssueErrorAt = 1,
   reviewUser = { login: "LSantha", type: "User" },
   reviewAssociation = "OWNER",
   reviewState = "approved",
@@ -67,6 +68,7 @@ function createMocks(eventName, {
   let prFiles = [{ filename: "fs/src/fs/org/jnode/fs/jfat/FatChain.java", additions: 10 }];
   let checkRuns = javaCiChecks();
   let masterIssues = [...orchestratorMasters];
+  var getIssueCalls = 0;
 
   const core = {
     info: (msg) => logs.info.push(msg),
@@ -79,10 +81,13 @@ function createMocks(eventName, {
       issues: {
         get: async ({ issue_number }) => {
           calls.getIssue.push(issue_number);
-          if (getIssueError && issue_number === issueNumber) {
-            var e = getIssueError;
-            getIssueError = null; // transient: only the guard's fetch fails
-            throw new Error(e);
+          getIssueCalls += 1;
+          if (getIssueError !== null && issue_number === issueNumber) {
+            if (getIssueCalls >= getIssueErrorAt) {
+              var e = getIssueError;
+              getIssueError = null; // one transient failure, not a permanent one
+              throw new Error(e);
+            }
           }
           if (issue_number === issueNumber) {
             return {
@@ -2083,6 +2088,39 @@ test("ticket-runner.js event handling suite", async (t) => {
     assert.ok(mocks.calls.addLabels.some(l => l.labels.includes("agent/skip")));
   });
 
+  await t.test("a closed bug ticket carrying agent/done is cancelled, not merged", async () => {
+    // agent/done is opencode-post-step's DEFAULT branch for every non-investigation
+    // run, so COMPLETION_LABELS is too wide an exception: a closed kind/bug ticket
+    // carrying it is a human abandonment, and falling through let the run reach the
+    // merge path on a ticket the human had closed. Only the post-step's own close
+    // shapes (agent/duplicate, or agent/investigated on investigate/question) are
+    // treated as self-closed.
+    const initialBody = _replaceOrAppendStatus("Task", {
+      phase: "REVIEW",
+      pr: 99,
+      turn: 0,
+      max_turns: 3,
+      retries: 0,
+      started: new Date().toISOString(),
+      history: []
+    }, 42);
+
+    const mocks = createMocks("workflow_run", {
+      issueBody: initialBody,
+      runDisplayTitle: "Issue #99 - PR",
+      issueLabels: [{ name: "kind/bug" }, { name: "agent/done" }]
+    });
+    mocks.setCommentsOnPR([{ body: "Verdict: approve" }]);
+    mocks.setIssueState("closed");
+
+    await runTicketRunner(mocks);
+
+    const state = _parseState(mocks.getIssueBody());
+    assert.strictEqual(state.phase, "CANCELLED", "a human-closed ticket is cancelled, not completed");
+    assert.deepStrictEqual(mocks.calls.mergePR, [], "nothing is merged for a closed issue");
+    assert.ok(mocks.calls.addLabels.some(l => l.labels.includes("agent/skip")));
+  });
+
   await t.test("an unreadable issue state does not cancel the run", async () => {
     // Deliberate fail-open: if the issue cannot be fetched the run advances as
     // before. It is the one branch of the guard with no test otherwise.
@@ -2100,13 +2138,21 @@ test("ticket-runner.js event handling suite", async (t) => {
       issueBody: initialBody,
       runDisplayTitle: "Issue #42 - Fix bug",
       issueLabels: [{ name: "kind/bug" }],
-      getIssueError: "API unavailable"
+      getIssueError: "API unavailable",
+      getIssueErrorAt: 2 // the workflow_run handler fetches the issue first; the guard's fetch is the one that must fail
     });
     mocks.setPRList([{ number: 99 }]);
     mocks.setIssueComments([{ body: "Created PR #99" }]);
 
     await runTicketRunner(mocks);
 
+    // Proof the guard's fetch is the one that failed: without this, shifting the
+    // call index one place to the right makes the test pass without ever
+    // reaching the catch.
+    assert.ok(
+      mocks.logs.warn.some(w => /could not fetch #42 state/.test(w)),
+      "the guard's own fetch failed and was caught"
+    );
     const state = _parseState(mocks.getIssueBody());
     assert.notStrictEqual(state.phase, "CANCELLED", "an unreadable state must not cancel a healthy run");
     assert.strictEqual(state.phase, "REVIEW", "the phase advanced as normal");
