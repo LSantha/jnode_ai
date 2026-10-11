@@ -9,7 +9,7 @@ metadata:
 
 # Skill: JNode Issue Resolver
 
-> The general playbook an OpenCode agent follows when it lands on a JNode issue or PR. Complementary to the focused skills (`filesystem-debug`, `jnode-interact`, `update-wiki`), each of which is also independently invokable.
+> The general playbook an OpenCode agent follows when it lands on a JNode issue or PR. Complementary to the focused skills (`filesystem-debug`, `jnode-qemu`, `jnode-vbox`, `jnode-serial`, `update-wiki`), each of which is also independently invokable.
 
 ## What I do
 
@@ -39,7 +39,7 @@ Each focused skill below has its own `description:` and loads independently — 
 
 | Focused skill | Load when… |
 |---|---|
-| `jnode-interact` | You must boot a built ISO in QEMU to verify a kernel/VM/driver change. |
+| `jnode-qemu` (+ `jnode-serial`) | You must boot a built ISO in QEMU to verify a kernel/VM/driver change. |
 | `filesystem-debug` | The bug is in `fs/src/fs/...` and the diagnosis needs BPB / FAT table inspection. |
 | `update-wiki` | The task is to create or update a wiki spoke page. |
 
@@ -167,7 +167,7 @@ If you find yourself past 5 minutes still "looking into it", you have failed the
 | Cached build | (none — CI uses `actions/cache@v4` keyed on `**/*.java` + `build.sh`) | default |
 | Focused unit tests | `cd <subproject> && ant test` | changed code is in `<subproject>` and the existing suite covers it |
 | Full sweep | `sh build.sh tests` | cross-subsystem change (e.g., plugin descriptor, assembly, build) |
-| QEMU boot test | load `jnode-interact`, run `bash .opencode/skills/jnode-interact/scripts/start_qemu.sh simple`, then `python3 .opencode/skills/jnode-interact/scripts/jnode_agent_cmd.py "date" "mount" "plugin"` | kernel/VM/driver/FS work |
+| QEMU boot test | `.opencode/skills/jnode-qemu/scripts/start_qemu.sh --wait-ready 240 simple`, then `python3 .opencode/skills/jnode-serial/scripts/serial_cmd.py --wait 300 "date" "mount" "plugin"` | kernel/VM/driver/FS work |
 | FS structure decode | load `filesystem-debug` | FS bugs at BPB/FAT level |
 | Wiki push | `cd .wiki && git add . && git commit -m "..." && git push` | wiki-doc kind only — `AGENTS.md` requires manual push |
 
@@ -320,7 +320,7 @@ These are **hard walls**. If a request matches any of them, follow §2.5 (pre-fl
 - ❌ **Wiki fabrication** — never invent a wiki page that is not backed by source code. Load `update-wiki` and follow its protocol.
 - ❌ **Fabricated completion reports** — never claim a step is done unless you actually saw its output. **Before saying "pushed"**, the wiki push command must have returned 0 with the new commit hash visible. **Before saying "PR opened"**, `gh pr create` must have returned a PR URL. **Before saying "investigation complete"**, the report must be on the issue. If you have not run a step, say "I did not run X" — do not invent a fake report of having run it.
 - ❌ **Closing unclear issues** — never close an issue when the task is unclear; apply `agent/needs-info` and ask 3–5 specific questions instead.
-- ❌ **Reimplementing existing skills** — never reimplement `filesystem-debug` / `jnode-interact` / `update-wiki` inline. Load them on demand.
+- ❌ **Reimplementing existing skills** — never reimplement `filesystem-debug` / `jnode-qemu` / `jnode-vbox` / `jnode-serial` / `update-wiki` inline. Load them on demand.
 - ❌ **Speculative optimization** — never optimize based on "I think this is slow" or "this could be faster". Require a profile, a benchmark, or a stack trace pointing at the bottleneck.
 - ❌ Rerun the full `sh build.sh tests` when a focused `cd <subproject> && ant test` would do.
 - ❌ **Locking a bug into a test** (S8) - never write a test that asserts known-broken behaviour, even when
@@ -415,7 +415,9 @@ file <changed.java>                                # encoding must be ASCII
 - `.github/scripts/opencode-post-step.js` — the post-step that applies `agent/*` labels and closes the issue (this skill, §3 step 6)
 - `.github/scripts/sync-labels.js` — the label-bootstrap script (this skill, §10)
 - `.opencode/skills/filesystem-debug/SKILL.md`
-- `.opencode/skills/jnode-interact/SKILL.md`
+- `.opencode/skills/jnode-qemu/SKILL.md`
+- `.opencode/skills/jnode-vbox/SKILL.md`
+- `.opencode/skills/jnode-serial/SKILL.md`
 - `.opencode/skills/update-wiki/SKILL.md`
 - `AGENTS.md` — root agent instructions
 - `.wiki/index.md` — Task Routing table
