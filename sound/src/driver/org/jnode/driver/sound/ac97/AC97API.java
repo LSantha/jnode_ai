@@ -218,4 +218,20 @@ public interface AC97API extends DeviceAPI {
      * @param volume the new volume
      */
     public void setHeadphoneVolume(MixerVolume volume);
+
+    /**
+     * Gets the sample format the PCM out engine currently plays. Every device
+     * can play {@link PcmFormat#STEREO_16}.
+     */
+    public PcmFormat getSpeakerFormat();
+
+    /**
+     * Sets the sample format the PCM out engine plays. 4 or 6 channel output
+     * and 20 bit samples need a controller and codec that report the
+     * capability; an unsupported format is refused rather than silently
+     * played at another rate.
+     *
+     * @param format the new format
+     */
+    public void setSpeakerFormat(PcmFormat format);
 }

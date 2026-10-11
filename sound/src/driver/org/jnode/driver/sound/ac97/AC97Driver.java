@@ -286,4 +286,20 @@ public class AC97Driver extends Driver implements AC97API, AC97Constants {
         }
         c.setHeadphoneVolume(volume);
     }
+
+    public PcmFormat getSpeakerFormat() {
+        final AC97Core c = core;
+        if (c == null) {
+            throw new IllegalStateException("AC'97 device is not started");
+        }
+        return c.getSpeakerFormat();
+    }
+
+    public void setSpeakerFormat(PcmFormat format) {
+        final AC97Core c = core;
+        if (c == null) {
+            throw new IllegalStateException("AC'97 device is not started");
+        }
+        c.setSpeakerFormat(format);
+    }
 }

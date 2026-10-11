@@ -504,6 +504,45 @@ public interface AC97Constants extends PCIConstants {
     public static final int GLOB_STA_PIINT = 0x00000020;
 
     /**
+     * Global status bit that reports 16 and 20 bit sample support (ICH4 and
+     * later, read-only). A controller without the bit cannot be switched to
+     * 20 bit samples.
+     */
+    public static final int GLOB_STA_SAMPLE_16_20 = 0x00400000;
+
+    /**
+     * Global status bits that report the channel capability of the PCM out
+     * engine (read-only): 0b00 for 2, 0b01 for 4 and 0b10 for 6 channels.
+     */
+    public static final int GLOB_STA_MULTICHAN_CAP = 0x00300000;
+
+    /**
+     * Global control bit that switches the PCM streams to 20 bit samples,
+     * which are then stored in the upper bits of 32 bit words.
+     */
+    public static final int GLOB_CNT_PCM_20BIT = 0x00400000;
+
+    /**
+     * Global control value that selects 4 output channels.
+     */
+    public static final int GLOB_CNT_PCM_4 = 0x00100000;
+
+    /**
+     * Global control value that selects 6 output channels.
+     */
+    public static final int GLOB_CNT_PCM_6 = 0x00200000;
+
+    /**
+     * Highest number of output channels the driver can play.
+     */
+    public static final int MAX_CHANNELS = 6;
+
+    /**
+     * Highest number of bits per sample the driver can play.
+     */
+    public static final int MAX_BITS_PER_SAMPLE = 20;
+
+    /**
      * Codec access semaphore busy bit.
      */
     public static final int ACC_SEMA_CAS = 0x01;

@@ -180,6 +180,21 @@ public final class AC97Core implements AC97Constants, IRQHandler {
     private boolean variableRate;
 
     /**
+     * Does the controller support 16 and 20 bit samples?
+     */
+    private boolean sample16_20;
+
+    /**
+     * The channel capability the controller reports: 2, 4 or 6 channels.
+     */
+    private int maxChannels;
+
+    /**
+     * The sample format the PCM out engine plays.
+     */
+    private PcmFormat speakerFormat = PcmFormat.STEREO_16;
+
+    /**
      * Lock protecting the playback ring state below and the DMA registers
      * of the PCM out engine. It is shared with the interrupt handler.
      */
@@ -384,6 +399,7 @@ public final class AC97Core implements AC97Constants, IRQHandler {
         try {
             resetACLink();
             initCodec();
+        readCapabilities();
         } catch (DriverException ex) {
             release();
             throw ex;
@@ -441,6 +457,61 @@ public final class AC97Core implements AC97Constants, IRQHandler {
      */
     public final void setPcmVolume(MixerVolume volume) {
         outNam(NAM_PCM_OUT_VOLUME, volume.toRegister());
+    }
+
+    /**
+     * Gets the sample format the PCM out engine currently plays.
+     */
+    public final PcmFormat getSpeakerFormat() {
+        synchronized (playbackLock) {
+            return speakerFormat;
+        }
+    }
+
+    /**
+     * Sets the sample format the PCM out engine plays. A format is only
+     * accepted when the controller reports the capability; 16 bit stereo is
+     * always accepted because every codec can play it.
+     *
+     * @param format the new format
+     */
+    public final void setSpeakerFormat(PcmFormat format) {
+        synchronized (playbackLock) {
+            if (format.equals(PcmFormat.STEREO_16)) {
+                speakerFormat = PcmFormat.STEREO_16;
+                applySpeakerFormat();
+                return;
+            }
+            if ((format.getBitsPerSample() == 20) && !sample16_20) {
+                throw new IllegalArgumentException(
+                    "Controller does not support 20 bit samples");
+            }
+            if (format.getChannels() > maxChannels) {
+                throw new IllegalArgumentException(
+                    "Controller reports " + maxChannels
+                        + " output channels, not " + format.getChannels());
+            }
+            speakerFormat = format;
+            applySpeakerFormat();
+        }
+    }
+
+    /**
+     * Writes the format into the global control register, without changing
+     * any other bit of it.
+     */
+    private void applySpeakerFormat() {
+        int cnt = inNabmDword(GLOB_CNT);
+        cnt &= ~(GLOB_CNT_PCM_20BIT | GLOB_CNT_PCM_246_MASK);
+        if (speakerFormat.getBitsPerSample() == 20) {
+            cnt |= GLOB_CNT_PCM_20BIT;
+        }
+        if (speakerFormat.getChannels() == 4) {
+            cnt |= GLOB_CNT_PCM_4;
+        } else if (speakerFormat.getChannels() == 6) {
+            cnt |= GLOB_CNT_PCM_6;
+        }
+        outNabmDword(GLOB_CNT, cnt);
     }
 
     /**
@@ -522,9 +593,16 @@ public final class AC97Core implements AC97Constants, IRQHandler {
      */
     public final void write(byte[] pcm, int offset, int length)
         throws InterruptedException, TimeoutException {
-        if ((length & (PCM_FRAME_SIZE - 1)) != 0) {
-            throw new IllegalArgumentException(
-                "Length must be a multiple of the stereo frame size");
+        final int frameSize;
+        final int wordsPerFrame;
+        synchronized (playbackLock) {
+            frameSize = speakerFormat.getFrameSize();
+            wordsPerFrame = speakerFormat.getWordsPerFrame();
+        }
+        if ((length % frameSize) != 0) {
+            throw new IllegalArgumentException("Length must be a multiple of"
+                + " the " + frameSize + " byte frame size of the "
+                + speakerFormat + " format");
         }
         synchronized (playbackLock) {
             if (!playing) {
@@ -547,21 +625,20 @@ public final class AC97Core implements AC97Constants, IRQHandler {
                     playbackLock.wait(250);
                 }
                 final int index = nextIndex(lastValidIndex, bdl.getEntryCount());
-                final int max = bdl.getFramesPerBuffer() * PCM_FRAME_SIZE;
+                final int max = bdl.getFramesPerBuffer() * frameSize;
                 final int chunk = Math.min(remaining, max);
                 bdl.copyToBuffer(index, pcm, src, chunk);
                 // Fresh data is only visible to the controller after the
                 // descriptor is filled in and the last valid index advanced,
                 // so this ordering is safe even while the DMA engine is
                 // prefetching the next descriptor.
-                final int samples = BufferDescriptorList.samplesForFrames(chunk
-                    / PCM_FRAME_SIZE);
+                final int samples = (chunk / frameSize) * wordsPerFrame;
                 bdl.setDescriptor(index, samples, true);
                 // The sample buffer and the descriptor stores must have left
                 // the CPU before the descriptor is published through LVI.
                 readBarrier();
                 descriptorSamples[index] = samples;
-                totalQueuedFrames += chunk / PCM_FRAME_SIZE;
+                totalQueuedFrames += chunk / frameSize;
                 lastValidIndex = index;
                 touchProgress();
                 outNabmByte(PCM_OUT_LVI, index);
@@ -1113,6 +1190,36 @@ public final class AC97Core implements AC97Constants, IRQHandler {
         final int id2 = inNam(NAM_VENDOR_ID2);
         log.info("AC'97 codec " + NumberUtils.hex(id1, 4) + ":"
             + NumberUtils.hex(id2, 4) + " VRA=" + variableRate);
+    }
+
+    /**
+     * Reads the sample size and channel capability of the PCM out engine from
+     * the global status register.
+     */
+    private void readCapabilities() {
+        final int sta = inNabmDword(GLOB_STA);
+        sample16_20 = ((sta & GLOB_STA_SAMPLE_16_20) != 0);
+        final int chanBits = (sta & GLOB_STA_MULTICHAN_CAP) >> 20;
+        switch (chanBits) {
+            case 0x00:
+                maxChannels = 2;
+                break;
+            case 0x01:
+                maxChannels = 4;
+                break;
+            case 0x02:
+                maxChannels = 6;
+                break;
+            default:
+                // A reserved capability is treated as unknown, so only the
+                // format every codec has is offered.
+                maxChannels = 2;
+                break;
+        }
+        if (sample16_20 || (maxChannels > 2)) {
+            log.debug("AC'97 speaker capability: " + maxChannels
+                + " channels, 16/20 bit=" + sample16_20);
+        }
     }
 
     /**

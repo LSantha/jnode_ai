@@ -47,6 +47,7 @@ import org.junit.runners.Suite;
     SampleRateConverterTest.class,
     PcmQueueTest.class,
     AC97MixerTest.class,
+    PcmFormatTest.class,
     AC97CaptureCommandTest.class
 })
 public class AllTests {
