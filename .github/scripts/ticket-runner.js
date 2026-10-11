@@ -26,6 +26,10 @@ const { isRefusalComment, isNeedsInfoComment, isTriageComment, isTriggerComment 
 const STATE_RE = /<!-- TICKET_RUNNER_STATE:\s*([\s\S]*?)\s*-->/;
 const ORCHESTRATOR_STATE_RE = /<!-- ORCHESTRATOR_STATE:/;
 
+function isTerminalPhase(phase) {
+  return phase === "DONE" || phase === "FAILED" || phase === "CANCELLED";
+}
+
 function parseState(body) {
   if (!body) return null;
   var m = body.match(STATE_RE);
@@ -68,7 +72,7 @@ function replaceOrAppendState(body, state) {
 function renderStatusSection(state, issueNumber) {
   var phaseEmoji = {
     DEV: "🔨", REVIEW: "🔍", FEEDBACK: "🔧",
-    HUMAN_REVIEW: "👤", MERGE: "🚀", DONE: "✅", FAILED: "❌"
+    HUMAN_REVIEW: "👤", MERGE: "🚀", DONE: "✅", FAILED: "❌", CANCELLED: "🚫"
   };
   var emoji = phaseEmoji[state.phase] || "⏳";
   var lines = [
@@ -202,8 +206,8 @@ module.exports = async ({ github, context, core }) => {
     if (body.includes("--reset") || body.includes("--fresh")) {
       core.info("Ticket runner: reset requested via command flag.");
       state = null;
-    } else if (state && (state.phase === "DONE" || state.phase === "FAILED")) {
-      core.info("Previous run completed or failed. Starting fresh.");
+    } else if (state && isTerminalPhase(state.phase)) {
+      core.info("Previous run reached terminal phase " + state.phase + ". Starting fresh.");
       state = null;
     }
 
@@ -317,6 +321,7 @@ module.exports = async ({ github, context, core }) => {
       return { ok: false, reason: "fetch failed: " + err.message };
     }
     if (d.pull_request) return { ok: false, reason: "is a PR" };
+    if (d.state && d.state !== "open") return { ok: false, reason: "issue is " + d.state };
     var labels = h.extractLabels(d);
     if (labels.includes("no-auto")) return { ok: false, reason: "no-auto" };
     if (labels.includes("kind/orchestrator")) return { ok: false, reason: "orchestrator master" };
@@ -464,7 +469,7 @@ module.exports = async ({ github, context, core }) => {
       var found = await findIssueByPR(prNumber);
       if (!found) continue;
       var st = found.state;
-      if (!st || st.phase === "DONE" || st.phase === "FAILED") continue;
+      if (!st || isTerminalPhase(st.phase)) continue;
       if (conclusion === "success") {
         if (st.phase !== "REVIEW" || st.review_in_progress) continue;
         // Set both flags only after the trigger succeeds. On the DEV path this
@@ -549,7 +554,7 @@ module.exports = async ({ github, context, core }) => {
       return;
     }
 
-    if (state.phase === "DONE" || state.phase === "FAILED") {
+    if (isTerminalPhase(state.phase)) {
       core.info("Ticket runner: issue #" + runIssueNumber + " already in terminal state " + state.phase);
       return;
     }
@@ -654,6 +659,58 @@ module.exports = async ({ github, context, core }) => {
 
   async function advancePhase(issueNumber, state, phaseFailed) {
     core.info("Ticket runner: advancing #" + issueNumber + " phase=" + state.phase + " failed=" + phaseFailed);
+
+    var issueOpen = true;
+    var issueLabels = [];
+    try {
+      var issueRes = await github.rest.issues.get({ owner, repo, issue_number: issueNumber });
+      issueLabels = h.extractLabels(issueRes.data);
+      issueOpen = !issueRes.data.pull_request && issueRes.data.state === "open";
+    } catch (err) {
+      core.warning("Ticket runner: could not fetch #" + issueNumber + " state: " + err.message);
+    }
+    if (!issueOpen) {
+      // "Closed" is not the same question as "abandoned". The post-step closes
+      // some tickets itself, and its own completion close must not be read as a
+      // human cancellation. Mirror shouldClose in opencode-post-step.js: it
+      // closes behind agent/duplicate, or agent/investigated on any kind. The
+      // kind-independent half matters because /oc investigate and /oc explain
+      // route to the investigation task type by verb, independent of kind, so a
+      // kind/bug ticket driven through them is closed by its own report. No kind
+      // clause is needed or wanted: decideAgentLabel reaches agent/investigated
+      // only through isInvestigationReport, so the label itself means a report
+      // was delivered, and a human-closed bug never carries it. COMPLETION_LABELS
+      // is still too wide - agent/done is the post-step's default branch for
+      // every non-investigation run, so a closed kind/bug carrying it is an
+      // abandonment and must cancel.
+      // The exception also requires no PR. Neither close opens a PR - the post-step
+      // closes investigations and duplicates from a report or a duplicate link -
+      // and the DONE path the exception protects is handleDevCompletion's
+      // short-circuit, which only runs when there is no PR. Wording matters here:
+      // a self-closed ticket does not need to lack a PR from earlier phases, it
+      // just cannot have been closed by one, so a self-closed FEEDBACK ticket
+      // that already had a PR does read as an abandonment. That is the deliberate
+      // trade against the stale-label case below: nothing merges and no retry is
+      // burned, the PR simply stays open unmerged on a closed issue.
+      //
+      // Without this clause a stale agent/investigated - decideAgentLabel's
+      // existing branch preserves the label across runs - lets a reopened ticket
+      // that reached REVIEW with a PR fall through and merge on an issue a human
+      // had closed.
+      const selfClosed =
+        (issueLabels.indexOf("agent/duplicate") >= 0 ||
+         issueLabels.indexOf("agent/investigated") >= 0) && !state.pr;
+      if (selfClosed) {
+        core.info("Ticket runner: #" + issueNumber + " is closed but was closed by the post-step; letting the phase short-circuit handle it.");
+      } else {
+        state.phase = "CANCELLED";
+        state.history.push({ event: "cancelled_issue_closed", timestamp: new Date().toISOString() });
+        await updateIssueState(issueNumber, state);
+        await applyLabel(issueNumber, "agent/skip");
+        core.info("Ticket runner: #" + issueNumber + " is closed; cancelling run.");
+        return;
+      }
+    }
 
     switch (state.phase) {
       case "DEV":
