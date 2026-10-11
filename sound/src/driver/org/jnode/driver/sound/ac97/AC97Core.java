@@ -877,8 +877,9 @@ public final class AC97Core implements AC97Constants, IRQHandler {
     }
 
     /**
-     * Stop playback. The DMA engine is halted and its register box reset, so
-     * the engine is silent right away. Buffered PCM data is dropped.
+     * Opens the PCM in engine for recording and arms every descriptor of
+     * the capture ring, so the controller can start filling sample buffers
+     * right away.
      */
     public final void openCapture(int rate) {
         synchronized (captureLock) {
@@ -1226,6 +1227,7 @@ public final class AC97Core implements AC97Constants, IRQHandler {
      *
      * @see org.jnode.system.resource.IRQHandler#handleInterrupt(int)
      */
+    @Override
     public void handleInterrupt(int irq) {
         final int status = inNabmWord(PCM_OUT_SR);
         if ((status & SR_INT_MASK) != 0) {
@@ -1266,7 +1268,6 @@ public final class AC97Core implements AC97Constants, IRQHandler {
         }
     }
 
-    /**
     /**
      * Gets the number of stereo frames that are queued in the ring but not
      * yet played by the DMA engine. The value is sample accurate, because
@@ -1318,6 +1319,36 @@ public final class AC97Core implements AC97Constants, IRQHandler {
     // ------------------------------------------------------------------
 
     /**
+     * Powers the codec up and waits until every section reports ready.
+     * <p>
+     * The power-down register holds its control bits in the high bits and the
+     * per-section ready status in the low bits, so powering up is a matter of
+     * clearing the controls rather than setting anything, and then polling the
+     * status bits until they are all set. The ready bits are the ones the
+     * codec drives, so a codec that is absent or that does not come up shows
+     * up here as a timeout rather than as silence later.
+     *
+     * @throws DriverException when the codec did not become ready
+     */
+    private void powerUpCodec() throws DriverException {
+        final int controls = inNam(NAM_POWERDOWN_CTRL_STAT);
+        // Clear the power-down controls, keep the external amplifier on.
+        outNam(NAM_POWERDOWN_CTRL_STAT, (controls & ~NAM_POWER_DOWN_PR_MASK)
+            | NAM_POWER_EAPD);
+        for (int i = 0; i < CODEC_READY_TIMEOUT; i++) {
+            final int status = inNam(NAM_POWERDOWN_CTRL_STAT);
+            if ((status & NAM_POWER_STATUS_MASK) == NAM_POWER_STATUS_MASK) {
+                log.debug("AC'97 codec powered up after " + (i + RESET_DELAY)
+                    + "ms, status=0x" + NumberUtils.hex(status, 4));
+                return;
+            }
+            sleep(1);
+        }
+        throw new DriverException("Codec did not become ready: powerdown=0x"
+            + NumberUtils.hex(inNam(NAM_POWERDOWN_CTRL_STAT), 4));
+    }
+
+    /**
      * Cold reset the AC-link and wait for the primary codec. This is the
      * "clear the cold reset bit, wait, set it again" sequence of the ICH
      * AC'97 PRM: the AC_RESET# signal is asserted by clearing
@@ -1351,23 +1382,21 @@ public final class AC97Core implements AC97Constants, IRQHandler {
      * Initialize the codec: power up all sections, unmute the master and PCM
      * out volumes and read the variable rate audio capability.
      */
-    private void initCodec() {
-        // Power up ADC, DAC, analog mixer and voltage reference, keeping the
-        // "ready" status bits intact.
-        int power = inNam(NAM_POWERDOWN_CTRL_STAT);
-        power = (power & NAM_POWER_STATUS) | NAM_POWER_UP;
-        outNam(NAM_POWERDOWN_CTRL_STAT, power);
+    private void initCodec() throws DriverException {
+        powerUpCodec();
 
         // A register reset puts all NAM registers back to their default
-        // value; several volume registers default to muted.
+        // value; several volume registers default to muted. The volumes are
+        // set after it, so the reset cannot undo them.
         outNam(NAM_RESET, 0x0000);
 
         // Unmute the master output. The default of the master volume
         // register is muted (0x8000), which is the classic "no sound" trap.
-        outNam(NAM_MASTER_VOLUME, 0x0000);
-        outNam(NAM_HEADPHONE_VOLUME, 0x0000);
-        // 0 dB for the PCM path.
-        outNam(NAM_PCM_OUT_VOLUME, NAM_VOLUME_0DB);
+        outNam(NAM_MASTER_VOLUME, new MixerVolume(0, 0, false).toRegister());
+        outNam(NAM_HEADPHONE_VOLUME, new MixerVolume(0, 0, false).toRegister());
+        // The PCM path is left 8 steps (-12 dB) below full level, so that the
+        // first samples a caller writes cannot clip.
+        outNam(NAM_PCM_OUT_VOLUME, NAM_PCM_OUT_DEFAULT);
 
         // Variable rate audio support?
         variableRate = ((inNam(NAM_EXTENDED_AUDIO_ID) & NAM_EI_VRA) != 0);

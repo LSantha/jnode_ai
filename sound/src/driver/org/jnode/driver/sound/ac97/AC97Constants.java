@@ -35,7 +35,7 @@ import org.jnode.driver.bus.pci.PCIConstants;
  * <dd>DMA engine register boxes, one per stream (PCM in, PCM out, MIC in), plus
  * the global control and status registers used to reset the AC-link.</dd>
  * </dl>
- * On the ICH (822801AA, 82801AB, 82801EB, ...) both BARs are I/O space. Some
+ * On the ICH (82801AA, 82801AB, 82801EB, ...) both BARs are I/O space. Some
  * other vendors (SiS, AMD) map the same registers in memory space; the JNode
  * PCI framework reports this through {@link org.jnode.driver.bus.pci.PCIBaseAddress}.
  *
@@ -127,9 +127,16 @@ public interface AC97Constants extends PCIConstants {
     public static final int NAM_HEADPHONE_VOLUME = 0x04;
 
     /**
+     * Master tone control register (0x08). The PC beep volume is 0x0A.
+     *
+     * @see #NAM_PC_BEEP_VOLUME
+     */
+    public static final int NAM_MASTER_TONE = 0x08;
+
+    /**
      * PC beep volume register.
      */
-    public static final int NAM_PC_BEEP_VOLUME = 0x08;
+    public static final int NAM_PC_BEEP_VOLUME = 0x0A;
 
     /**
      * PCM out volume register.
@@ -219,17 +226,24 @@ public interface AC97Constants extends PCIConstants {
     public static final int NAM_EAC_VRA = 0x0001;
 
     /**
-     * Mask of the section-power bits in NAM_POWERDOWN_CTRL_STAT.
-     * Writing 1s powers the ADC, DAC, analog mixer and voltage reference up.
-     * The upper nibble (0x0F00) holds the "ready" status bits, which must be
-     * left untouched.
+     * Mask of the power-down control bits of NAM_POWERDOWN_CTRL_STAT. Those
+     * live in the high bits and power the sections down when set, so a codec
+     * is powered up by clearing them.
      */
-    public static final int NAM_POWER_UP = 0x000F;
+    public static final int NAM_POWER_DOWN_PR_MASK = 0x0F00;
 
     /**
-     * Mask of the "power ready" status bits in NAM_POWERDOWN_CTRL_STAT.
+     * Mask of the section-ready status bits of NAM_POWERDOWN_CTRL_STAT: ADC,
+     * DAC, analog mixer and voltage reference. A section is usable once its
+     * bit is set, so power-up waits for the whole mask.
      */
-    public static final int NAM_POWER_STATUS = 0x0F00;
+    public static final int NAM_POWER_STATUS_MASK = 0x000F;
+
+    /**
+     * External amplifier power down bit of NAM_POWERDOWN_CTRL_STAT. The codec
+     * holds the headphone amp off while it is clear, so it is set.
+     */
+    public static final int NAM_POWER_EAPD = 0x8000;
 
     /**
      * Mute bit of a stereo volume register.
@@ -258,10 +272,17 @@ public interface AC97Constants extends PCIConstants {
     public static final int NAM_VOLUME_MASK = 0x1F;
 
     /**
-     * Volume of 0 dB (unmuted) for one channel. A stereo volume register is
-     * made of two of these; 0008h means 0 dB attenuation.
+     * Volume of 0 dB, both channels unmuted. In the AC'97 volume registers an
+     * attenuation value of 0 is 0 dB, which is the loudest setting.
      */
-    public static final int NAM_VOLUME_0DB = 0x0808;
+    public static final int NAM_VOLUME_0DB = 0x0000;
+
+    /**
+     * Volume the PCM path is initialized to: unmuted, 8 steps of attenuation
+     * (about -12 dB) below full level, so that the first samples a caller
+     * writes cannot clip.
+     */
+    public static final int NAM_PCM_OUT_DEFAULT = 0x0808;
 
     /**
      * Volume of maximum attenuation + mute (the reset value of several
@@ -581,7 +602,9 @@ public interface AC97Constants extends PCIConstants {
     public static final int BD_LENGTH_MASK = 0x0000FFFF;
 
     /**
-     * Maximum number of samples (16-bit words) in one buffer descriptor.
+     * Largest number of samples (16-bit words) one buffer descriptor can hold.
+     * The length field is 16 bit wide, and an odd count is not allowed by the
+     * specification, so 65536 cannot be encoded and 65534 is the limit.
      */
-    public static final int BD_MAX_SAMPLES = 65536;
+    public static final int BD_MAX_SAMPLES = 65534;
 }

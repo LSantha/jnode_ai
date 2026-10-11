@@ -52,14 +52,17 @@ public class MixerVolumeTest {
 
     @Test
     public void testPcmOutVolumeLayout() {
-        // The 0 dB value this driver writes into the PCM path register.
-        final MixerVolume volume = MixerVolume.fromRegister(AC97Constants.NAM_VOLUME_0DB);
+        // The volume the driver writes into the PCM path register: unmuted,
+        // 8 steps of attenuation per channel.
+        final MixerVolume volume = MixerVolume.fromRegister(
+            AC97Constants.NAM_PCM_OUT_DEFAULT);
         assertEquals(8, volume.getLeftSteps());
         assertEquals(8, volume.getRightSteps());
         assertFalse(volume.isMuted());
         assertEquals(-12.0, volume.getLeftDb(), 0.001);
-        // Eight steps at 1.5 dB is -12 dB, not 0.
-        assertTrue(AC97Constants.NAM_VOLUME_0DB != 0x0000);
+        // Eight steps at 1.5 dB is -12 dB, not the 0 dB of a zero
+        // attenuation, so the PCM default and 0 dB are different values.
+        assertTrue(AC97Constants.NAM_PCM_OUT_DEFAULT != AC97Constants.NAM_VOLUME_0DB);
     }
 
     @Test

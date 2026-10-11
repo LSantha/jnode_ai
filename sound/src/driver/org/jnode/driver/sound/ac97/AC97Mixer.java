@@ -44,7 +44,7 @@ public final class AC97Mixer implements AC97Constants {
     public static final int FRAMES_PER_CHUNK = 1024;
 
     /**
-     * Queue capacity of one voice, about 0.5s of audio at 48 kHz.
+     * Queue capacity of one voice, about one second of audio at 48 kHz.
      */
     public static final int VOICE_QUEUE_BYTES = 48000 * PCM_FRAME_SIZE;
 
