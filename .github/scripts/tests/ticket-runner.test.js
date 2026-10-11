@@ -640,6 +640,79 @@ test("ticket-runner.js event handling suite", async (t) => {
     assert.ok(mocks.calls.createComment[0].body.includes("waiting for human approval on PR #99"));
   });
 
+  await t.test("/run on a REVIEW ticket with red CI does not re-request review", async () => {
+    // /run is the manual escape hatch, but it is not an override of the CI
+    // gate: prompting here posts the one review the human-approval re-check
+    // later refuses to act on, and a stale timing then double-prompts on the
+    // next green Java CI wakeup.
+    const initialBody = _replaceOrAppendStatus("Task", {
+      phase: "REVIEW",
+      pr: 99,
+      turn: 0,
+      max_turns: 3,
+      retries: 1,
+      review_in_progress: false,
+      review_pending_ci: true,
+      started: new Date().toISOString(),
+      history: [{ event: "review_pending_ci" }]
+    }, 42);
+
+    const mocks = createMocks("issue_comment", {
+      commentBody: "/run",
+      issueBody: initialBody,
+      issueLabels: [{ name: "kind/bug" }, { name: "auto-merge" }]
+    });
+    mocks.setCheckRuns(javaCiChecks("failure"));
+
+    await runTicketRunner(mocks);
+
+    assert.strictEqual(
+      mocks.calls.createComment.filter(c => c.body.includes("/oc review")).length, 0,
+      "must not post /oc review while CI is red"
+    );
+    const state = _parseState(mocks.getIssueBody());
+    assert.strictEqual(state.review_pending_ci, true, "still parked for the wakeup");
+    assert.strictEqual(state.review_in_progress, false, "no phantom review in flight");
+    assert.ok(
+      mocks.calls.createComment.some(c => c.body.includes("waiting for Java CI")),
+      "tells the runner why the review was not re-requested"
+    );
+    assert.ok(state.history.some(h => h.event === "review_deferred_ci"));
+  });
+
+  await t.test("/run on a REVIEW ticket arms a review once CI is green", async () => {
+    // The same escape hatch must still work when CI is green: it re-triggers
+    // review and arms review_in_progress so the wakeup cannot double-prompt.
+    const initialBody = _replaceOrAppendStatus("Task", {
+      phase: "REVIEW",
+      pr: 99,
+      turn: 0,
+      max_turns: 3,
+      retries: 0,
+      review_in_progress: false,
+      review_pending_ci: true,
+      started: new Date().toISOString(),
+      history: [{ event: "review_pending_ci" }]
+    }, 42);
+
+    const mocks = createMocks("issue_comment", {
+      commentBody: "/run",
+      issueBody: initialBody,
+      issueLabels: [{ name: "kind/bug" }, { name: "auto-merge" }]
+    });
+    mocks.setCheckRuns(javaCiChecks("success"));
+
+    await runTicketRunner(mocks);
+
+    const state = _parseState(mocks.getIssueBody());
+    assert.ok(
+      mocks.calls.createComment.some(c => c.issue_number === 99 && c.body.includes("/oc review")),
+      "the review prompt is posted on green CI"
+    );
+    assert.strictEqual(state.review_in_progress, true, "armed so the wakeup will not double-prompt");
+    assert.strictEqual(state.review_pending_ci, false, "no longer parked");
+  });
+
   await t.test("/run --reset restarts even if in progress", async () => {
     const initialBody = _replaceOrAppendStatus("Task", {
       phase: "FEEDBACK",
@@ -936,6 +1009,43 @@ test("ticket-runner.js event handling suite", async (t) => {
     const state = _parseState(mocks.getIssueBody());
     assert.strictEqual(state.phase, "REVIEW");
     assert.ok(mocks.calls.createComment.some(c => c.issue_number === 99 && c.body.includes("/oc review")));
+  });
+
+  await t.test("a review parked pending CI is not re-prompted by a verdict-less completion", async () => {
+    // review_pending_ci means no prompt was ever posted, so "no verdict found"
+    // must not retry into a /oc review on a red-CI PR. Mutating the skip to
+    // always-retry leaves this green unless the state is asserted.
+    const initialBody = _replaceOrAppendStatus("Task", {
+      phase: "REVIEW",
+      pr: 99,
+      turn: 0,
+      max_turns: 3,
+      retries: 1,
+      review_in_progress: true,
+      review_pending_ci: true,
+      started: new Date().toISOString(),
+      history: [{ event: "review_pending_ci" }]
+    }, 42);
+
+    const mocks = createMocks("workflow_run", {
+      issueBody: initialBody,
+      runName: "opencode review",
+      runConclusion: "success",
+      issueLabels: [{ name: "kind/bug" }, { name: "auto-merge" }]
+    });
+    mocks.setCommentsOnPR([]); // the reviewer was never asked, so there is no verdict
+    mocks.setCheckRuns(javaCiChecks("failure"));
+
+    await runTicketRunner(mocks);
+
+    assert.strictEqual(
+      mocks.calls.createComment.filter(c => c.body.includes("/oc review")).length, 0,
+      "must not post /oc review while parked pending CI"
+    );
+    const state = _parseState(mocks.getIssueBody());
+    assert.strictEqual(state.retries, 1, "no retry was consumed");
+    assert.strictEqual(state.phase, "REVIEW", "still parked");
+    assert.strictEqual(state.review_pending_ci, true, "still waiting for CI");
   });
 
   await t.test("Human PR review approval merges PR and closes issue", async () => {

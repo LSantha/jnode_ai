@@ -315,6 +315,27 @@ test('orchestrator.js test suite', async (t) => {
     assert.ok(calls.createComment.some(c => c.issue_number === 99 && c.body.includes('deferred')));
   });
 
+  await t.test('Review approve on a forbidden path routes to HUMAN_REVIEW', async () => {
+    const { core, github, context, calls, setMasterBody, setTaskData, updateIssueDetails } = createMocks('workflow_run');
+
+    setMasterBody(`<!-- ORCHESTRATOR_STATE:\n{ "status": "IN_PROGRESS", "current_task": { "issue": 2, "pr": 99, "phase": "REVIEW", "turn": 0, "max_turns": 3, "retries": 0 }, "queue": [3], "completed": [], "failed": [], "order": [2, 3] }\n-->`);
+    setTaskData({ labels: [{name: 'auto-merge'}], state: 'open' });
+    github.rest.issues.listComments = async () => ({ data: [{ body: 'Verdict: approve' }] });
+    github.rest.pulls.get = async () => ({ data: { head: { ref: 'opencode/issue2-fix', sha: 'abc' }, merged: true } });
+    github.rest.pulls.listFiles = async () => ({ data: [{ filename: 'core/src/native/x86/kernel.asm', additions: 3 }] });
+    // CI defaults to green, so this isolates the diff gate.
+
+    await runOrchestrator({ github, context, core });
+
+    assert.strictEqual(calls.mergePR.length, 0, 'a forbidden path is never auto-merged');
+    assert.ok(
+      calls.createComment.some(c => c.issue_number === 99 && c.body.includes('forbidden path')),
+      'names the forbidden path as the blocker, not a generic budget message'
+    );
+    const updated = updateIssueDetails.find(u => u.issue_number === 1);
+    assert.ok(updated && /"phase"\s*:\s*"HUMAN_REVIEW"/.test(updated.body), 'routes to HUMAN_REVIEW');
+  });
+
   await t.test('Java CI success re-reviews active REVIEW PR', async () => {
     const { core, github, context, calls, setMasterBody } = createMocks('workflow_run');
 

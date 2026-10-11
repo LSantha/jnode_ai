@@ -223,10 +223,40 @@ module.exports = async ({ github, context, core }) => {
         });
         return;
       }
+      // /run is an escape hatch for a stall, not an override of the CI gate.
+      // Re-requesting review on a red-CI PR would post the one prompt that the
+      // human-approval re-check later refuses to act on, and leaving
+      // review_in_progress false here would double-prompt on the next green CI
+      // wakeup. Park instead; the wakeup posts the prompt on green.
+      if (state.phase === "REVIEW" && state.pr && !(await h.isCIGreen(state.pr))) {
+        await updateIssueState(issueNumber, Object.assign({}, state, {
+          review_in_progress: false,
+          review_pending_ci: true,
+          history: state.history.concat([{
+            event: "review_deferred_ci", reason: "manual run while CI not green",
+            timestamp: new Date().toISOString()
+          }])
+        }));
+        await github.rest.issues.createComment({
+          owner, repo, issue_number: issueNumber,
+          body: "Review is waiting for Java CI to go green on PR #" + state.pr + ". Not re-requesting review yet; the runner posts it as soon as CI completes."
+        });
+        core.info("Ticket runner: #" + issueNumber + " /run deferred: PR #" + state.pr + " CI not green.");
+        return;
+      }
       core.info("Ticket runner: re-triggering phase " + state.phase + " for #" + issueNumber);
       var target = state.pr || issueNumber;
       var msg = phaseMessage(state);
       await h.triggerTask(target, msg);
+      // Persist review_in_progress after the post succeeds, so a failed trigger
+      // cannot strand it true; a false flag only risks one extra prompt on the
+      // next green CI wakeup.
+      if (state.phase === "REVIEW" && state.pr) {
+        state.review_in_progress = true;
+        state.review_pending_ci = false;
+        state.history.push({ event: "review_re_requested", timestamp: new Date().toISOString() });
+        await updateIssueState(issueNumber, state);
+      }
     }
   }
 
