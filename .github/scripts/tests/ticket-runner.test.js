@@ -544,6 +544,22 @@ test("merge safety gate helpers", async (t) => {
     assert.strictEqual(await makeHelpers({ runs: [{ name: "build", status: "completed", conclusion: "success" }] }).isCIGreen(99), false, "partial pipeline is not green");
   });
 
+  await t.test("touchesForbiddenPath detects a real wall and not much else", async () => {
+    // Note on the unknown-response case: touchesForbiddenPath returns false for
+    // a malformed response either way - an unreadable file list contains no
+    // matching path - so the Array.isArray guard on the response shape makes no
+    // observable difference here. It is there so the twin guards in
+    // isDiffSafe and touchesForbiddenPath read the same way, not because a test
+    // can distinguish it.
+    assert.strictEqual(
+      await makeHelpers({ raw: { data: [{ filename: "core/src/native/x86/kernel.asm" }] } }).touchesForbiddenPath(99),
+      true,
+      "a real forbidden path is detected"
+    );
+    assert.strictEqual(await makeHelpers({ raw: { data: [] } }).touchesForbiddenPath(99), false);
+    assert.strictEqual(await makeHelpers({ raw: { data: [{ filename: "fs/a.java" }] } }).touchesForbiddenPath(99), false);
+  });
+
   await t.test("findPRsForSHA matches head SHA", async () => {
     const h = makeHelpers({ prs: [{ number: 7, head: { sha: "abc" } }, { number: 8, head: { sha: "zzz" } }] });
     assert.deepStrictEqual(await h.findPRsForSHA("abc"), [7]);

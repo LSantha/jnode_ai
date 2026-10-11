@@ -12,6 +12,16 @@
 
 'use strict';
 
+/**
+ * Both runners persist their state into an issue body, which GitHub caps at
+ * 65536 characters, so history cannot grow without bound. A suppressed CI
+ * retry pushes one entry, and the CI-heal loop produces one completion per
+ * SHA indefinitely: at ~127 bytes per entry a persistently red PR would make
+ * the body unwritable and the runner would lose its own state. Keep the most
+ * recent entries; history has no functional readers, it is diagnostic only.
+ */
+var MAX_HISTORY_ENTRIES = 200;
+
 module.exports = function createHelpers({ github, context, core }) {
   const owner = context.repo.owner;
   const repo  = context.repo.repo;
@@ -108,7 +118,12 @@ module.exports = function createHelpers({ github, context, core }) {
       core.warning("touchesForbiddenPath: listFiles failed for PR #" + prNumber + ": " + e.message);
       return false;
     }
-    var list = files.data || [];
+    // Same fail-closed rule as isDiffSafe: an unknown response shape is not an
+    // empty diff. Both call sites only consult this when isDiffSafe already
+    // returned false, so this cannot open a merge hole, but reading a partial
+    // response as "no forbidden path" would report the wrong cause.
+    var list = files && files.data;
+    if (!Array.isArray(list)) return false;
     for (var i = 0; i < list.length; i++) {
       if (FORBIDDEN_DIFF_RE.test(list[i].filename || "")) return true;
     }
@@ -297,6 +312,7 @@ module.exports = function createHelpers({ github, context, core }) {
     isAutoMergeEligible: isAutoMergeEligible,
     isDiffSafe: isDiffSafe,
     touchesForbiddenPath: touchesForbiddenPath,
+    MAX_HISTORY_ENTRIES: MAX_HISTORY_ENTRIES,
     isCIGreen: isCIGreen,
     SAFE_AUTO_MERGE_KINDS: SAFE_AUTO_MERGE_KINDS,
     isBotUser: isBotUser,
@@ -307,3 +323,6 @@ module.exports = function createHelpers({ github, context, core }) {
     SHORT_CIRCUIT_LABELS: SHORT_CIRCUIT_LABELS
   };
 };
+
+// Module-level export so the runners can cap history without instantiating.
+module.exports.MAX_HISTORY_ENTRIES = MAX_HISTORY_ENTRIES;

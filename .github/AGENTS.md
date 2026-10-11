@@ -92,7 +92,7 @@ State lives in the master issue body as a hidden HTML comment:
 | `completed` | Tasks that finished completely (merged, or short-circuited) |
 | `failed` | Tasks that hit 3 retries without success, or max_turns |
 | `retries` | Attempt counter for `current_task`; resets on advance |
-| `history` | Append-only event log with ISO timestamps |
+| `history` | Event log with ISO timestamps, capped to the most recent 200 entries when persisted (`MAX_HISTORY_ENTRIES`). The runner's own store lives in the issue body, which GitHub caps at 65536 characters, and a suppressed CI retry pushes one entry per CI-heal completion. Diagnostic only: nothing reads it |
 | `order` | Original task order from the markdown checklist; rendered top-to-bottom in the status table |
 | `current_task.review_in_progress` | `true` once a `/oc review` has been scheduled for the active PR; cleared when the review workflow run completes. A green `Java CI` run skips `ci_green_rereview` while it is `true` (same guard as the ticket runner) |
 

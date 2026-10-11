@@ -20,6 +20,7 @@
 'use strict';
 
 const createHelpers = require("./orchestrator-helpers.js");
+const MAX_HISTORY_ENTRIES = createHelpers.MAX_HISTORY_ENTRIES || 200;
 const { isRefusalComment, isNeedsInfoComment, isTriageComment, isTriggerComment } = require("./report-signals.js");
 
 const STATE_RE = /<!-- TICKET_RUNNER_STATE:\s*([\s\S]*?)\s*-->/;
@@ -45,13 +46,6 @@ function initState(maxTurns) {
     history: []
   };
 }
-
-// GitHub caps issue bodies at 65536 characters and the runner persists its own
-// state into that body. Nothing trims history, and the suppressed-retry park
-// pushes an entry per CI-heal completion, so a persistently red PR grows it
-// without bound until the body is unwritable and the runner loses its own
-// state. Keep the most recent 200; tests and the status table stay well under.
-var MAX_HISTORY_ENTRIES = 200;
 
 function serializeState(state) {
   var capped = Object.assign({}, state);
@@ -820,9 +814,10 @@ module.exports = async ({ github, context, core }) => {
         core.info("Ticket runner: #" + issueNumber + " -> HUMAN_REVIEW");
       } else {
         // Ordering matters: CI first, then the diff. A red-CI PR with a big
-        // diff must not reach a human, because human approval merges
-        // unconditionally further down and there is no CI re-check on that path.
-        // Deferring on red CI is strictly safer and the wakeup provably fires.
+        // diff must not reach a human, because human approval only re-checks CI
+        // (handlePullRequestReview) and a deferred merge on red CI has a wakeup
+        // while a queue in HUMAN_REVIEW does not. Deferring on red CI is
+        // strictly safer and the wakeup provably fires.
         var diffSafe = await h.isDiffSafe(state.pr);
         var ciGreen = await h.isCIGreen(state.pr);
         var forbidden = diffSafe ? false : await h.touchesForbiddenPath(state.pr);
@@ -915,17 +910,13 @@ module.exports = async ({ github, context, core }) => {
       // A prompt WAS posted (review_pending_ci false): the reviewer has not
       // answered yet, so re-prompting after a stray completion is correct.
       //
-      // No prompt was posted (review_pending_ci true): we parked waiting for
-      // CI and never asked anyone. Re-prompting here would post /oc review on
-      // a red-CI PR -- the exact race the CI gate exists to prevent -- and the
-      // reviewer could approve a PR whose checks have not passed. Do nothing;
-      // the Java CI success wakeup clears review_pending_ci and posts the
-      // prompt on green.
       // No prompt was posted (review_pending_ci true) and CI is still red: we
       // parked waiting for CI and never asked anyone, so re-prompting would post
       // /oc review on a red-CI PR -- the exact race the CI gate exists to
-      // prevent. If CI has gone green, fall through to retryOrFail, which now
-      // posts the prompt through requestReview and clears the parked flag.
+      // prevent. Do nothing; the Java CI success wakeup clears the parked flag
+      // and posts the prompt on green. If CI has gone green meanwhile, fall
+      // through to retryOrFail, which posts it through requestReview and clears
+      // the flag.
       if (state.review_pending_ci && !(await h.isCIGreen(state.pr))) {
         core.info("Ticket runner: #" + issueNumber + " review parked pending CI. Not re-prompting on red CI.");
         await updateIssueState(issueNumber, state);

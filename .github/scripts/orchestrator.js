@@ -132,7 +132,7 @@ module.exports = async ({ github, context, core }) => {
     // persistently red PR would otherwise grow it until the body is unwritable.
     const persisted = Object.assign({}, state);
     if (Array.isArray(state.history)) {
-      persisted.history = state.history.slice(-200);
+      persisted.history = state.history.slice(-h.MAX_HISTORY_ENTRIES);
     }
     markdown += `\n<!-- ORCHESTRATOR_STATE:\n${JSON.stringify(persisted, null, 2)}\n-->`;
 
