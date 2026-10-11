@@ -45,6 +45,8 @@ import org.junit.runners.Suite;
     WavFileTest.class,
     MixerVolumeTest.class,
     SampleRateConverterTest.class,
+    PcmQueueTest.class,
+    AC97MixerTest.class,
     AC97CaptureCommandTest.class
 })
 public class AllTests {
