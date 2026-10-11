@@ -29,6 +29,7 @@ import java.io.PrintWriter;
 import org.jnode.driver.sound.ac97.AC97API;
 import org.jnode.driver.sound.ac97.AC97Constants;
 import org.jnode.driver.sound.ac97.AC97Utils;
+import org.jnode.driver.sound.ac97.SampleRateConverter;
 import org.jnode.driver.sound.ac97.WavFile;
 import org.jnode.shell.AbstractCommand;
 import org.jnode.util.TimeoutException;
@@ -46,6 +47,12 @@ import org.jnode.shell.syntax.FileArgument;
  * @author JNode contributors
  */
 public class AC97WavCommand extends AbstractCommand {
+
+    /**
+     * Extra room in the resample buffer, so that a chunk that ends on a frame
+     * boundary cannot overflow it.
+     */
+    private static final int FRAME_PADDING = 16;
 
     private final FileArgument argFile = new FileArgument(
         "file", Argument.MANDATORY, "the WAV file to play");
@@ -94,15 +101,24 @@ public class AC97WavCommand extends AbstractCommand {
                 format = WavFile.parseFormat(header, headerLength);
             }
             out.println("ac97wav: " + file.getPath() + " is " + format);
-            if (format.getSampleRate() != AC97Constants.SAMPLE_RATE_48000
-                && !api.isVariableRateSupported()) {
-                out.println("ac97wav: codec has no variable rate audio and the"
-                    + " file is not 48000 Hz; convert the file to 48000 Hz");
-                exit(1);
-                return;
+            // A file plays at its own rate if the codec can reach it, and is
+            // resampled to 48000 Hz otherwise; the AC'97 DAC cannot play
+            // anything but the specification rates.
+            final int playRate = playbackRate(api, format.getSampleRate());
+            final SampleRateConverter converter = (playRate == format
+                .getSampleRate()) ? null : new SampleRateConverter(
+                format.getSampleRate(), playRate);
+            if (converter != null) {
+                out.println("ac97wav: resampling " + format.getSampleRate()
+                    + "Hz to " + playRate + "Hz");
             }
-            api.open(format.getSampleRate());
+            api.open(playRate);
+            // The buffers hold one chunk worst case: 8 bit mono input is
+            // multiplied by four per frame, and upsampling multiplies by the
+            // rate ratio.
             final byte[] pcm = new byte[WavFile.convertedLength(chunkBytes, 1, 8)];
+            final byte[] resampled = new byte[pcm.length * playRate
+                / Math.max(1, format.getSampleRate()) + FRAME_PADDING];
 
             // PCM bytes that were read as part of the header buffer, either
             // because the header is longer than 44 bytes or because a whole
@@ -113,8 +129,9 @@ public class AC97WavCommand extends AbstractCommand {
                 if (buffered > format.getDataLength()) {
                     buffered = format.getDataLength();
                 }
-                played += playBuffer(out, api, format, header,
-                    format.getDataOffset(), buffered, raw, pcm);
+                played += playBuffer(api, format, header,
+                    format.getDataOffset(), buffered, pcm, converter, resampled,
+                    out);
                 remaining -= buffered;
             }
             while (remaining > 0) {
@@ -127,7 +144,8 @@ public class AC97WavCommand extends AbstractCommand {
                         + " bytes");
                     break;
                 }
-                played += playBuffer(out, api, format, raw, 0, read, raw, pcm);
+                played += playBuffer(api, format, raw, 0, read, pcm,
+                    converter, resampled, out);
                 remaining -= read;
             }
             api.drain();
@@ -162,15 +180,56 @@ public class AC97WavCommand extends AbstractCommand {
      *
      * @return the number of stereo frames written
      */
-    private int playBuffer(PrintWriter out, AC97API api, WavFile.Format format,
-        byte[] src, int srcOffset, int length, byte[] scratch, byte[] pcm)
-        throws InterruptedException, TimeoutException {
-        final int len = WavFile.convertToStereo16(src, srcOffset, length, pcm, 0,
-            format.getChannels(), format.getBitsPerSample());
-        if (len > 0) {
-            api.write(pcm, 0, len);
+    private int playBuffer(AC97API api, WavFile.Format format, byte[] src,
+        int srcOffset, int length, byte[] pcm, SampleRateConverter converter,
+        byte[] resampled, PrintWriter out) throws InterruptedException,
+        TimeoutException {
+        final int len = WavFile.convertToStereo16(src, srcOffset, length, pcm,
+            0, format.getChannels(), format.getBitsPerSample());
+        if (len <= 0) {
+            return 0;
         }
-        return len / AC97Constants.PCM_FRAME_SIZE;
+        int frames;
+        byte[] buffer;
+        if (converter == null) {
+            frames = len / AC97Constants.PCM_FRAME_SIZE;
+            buffer = pcm;
+        } else {
+            final int written = converter.convert(pcm, 0,
+                len / AC97Constants.PCM_FRAME_SIZE, resampled, 0);
+            if (written <= 0) {
+                return 0;
+            }
+            frames = written / AC97Constants.PCM_FRAME_SIZE;
+            buffer = resampled;
+        }
+        api.write(buffer, 0, frames * AC97Constants.PCM_FRAME_SIZE);
+        return frames;
+    }
+
+    /**
+     * Gets the rate the codec will play at for a file of the given rate: the
+     * file rate when the codec supports it, otherwise 48000 Hz, the only rate
+     * every AC'97 codec has.
+     */
+    private int playbackRate(AC97API api, int fileRate) {
+        if ((fileRate == AC97Constants.SAMPLE_RATE_48000)
+            || (api.isVariableRateSupported() && isAc97Rate(fileRate))) {
+            return fileRate;
+        }
+        return AC97Constants.SAMPLE_RATE_48000;
+    }
+
+    /**
+     * Is the given rate one the AC'97 DAC can play without resampling?
+     */
+    private boolean isAc97Rate(int rate) {
+        for (int r : AC97Constants.SAMPLE_RATES) {
+            if (r == rate) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /**

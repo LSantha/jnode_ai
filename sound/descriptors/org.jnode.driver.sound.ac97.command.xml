@@ -72,6 +72,7 @@
         <option argLabel="rate" shortName="r" longName="rate" description="sample rate in Hz"/>
         <option argLabel="gain" shortName="g" longName="gain" description="record gain in 1.5 dB steps, 0 is maximum gain"/>
         <option argLabel="source" shortName="s" longName="source" description="record source: mic or line"/>
+        <option argLabel="file" shortName="f" longName="file" description="write the recording as a WAV file to this path"/>
       </optionSet>
     </syntax>
   </extension>

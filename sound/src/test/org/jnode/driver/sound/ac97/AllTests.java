@@ -44,6 +44,7 @@ import org.junit.runners.Suite;
     ToneGeneratorTest.class,
     WavFileTest.class,
     MixerVolumeTest.class,
+    SampleRateConverterTest.class,
     AC97CaptureCommandTest.class
 })
 public class AllTests {
