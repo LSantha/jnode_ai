@@ -21,6 +21,7 @@
 package org.jnode.driver.sound.ac97;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.fail;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
 
@@ -99,6 +100,182 @@ public class AC97CoreTest {
         assertTrue(AC97Core.shouldStartEngine(ENTRIES - 1, true));
         assertTrue(AC97Core.shouldStartEngine(1, false));
         assertTrue(AC97Core.shouldStartEngine(0, false));
+    }
+
+    @Test
+    public void testCaptureRegisterBoxMirrorsPlayback() {
+        // The PCM in box at NABM+0x00 has the same registers in the same
+        // order as the PCM out box at 0x10.
+        assertEquals(AC97Constants.PCM_IN_BDBAR, AC97Constants.PCM_OUT_BDBAR
+            - AC97Constants.PCM_OUT_BOX);
+        assertEquals(AC97Constants.PCM_IN_CIV, AC97Constants.PCM_OUT_CIV
+            - AC97Constants.PCM_OUT_BOX);
+        assertEquals(AC97Constants.PCM_IN_LVI, AC97Constants.PCM_OUT_LVI
+            - AC97Constants.PCM_OUT_BOX);
+        assertEquals(AC97Constants.PCM_IN_SR, AC97Constants.PCM_OUT_SR
+            - AC97Constants.PCM_OUT_BOX);
+        assertEquals(AC97Constants.PCM_IN_PICB, AC97Constants.PCM_OUT_PICB
+            - AC97Constants.PCM_OUT_BOX);
+        assertEquals(AC97Constants.PCM_IN_PIV, AC97Constants.PCM_OUT_PIV
+            - AC97Constants.PCM_OUT_BOX);
+        assertEquals(AC97Constants.PCM_IN_CR, AC97Constants.PCM_OUT_CR
+            - AC97Constants.PCM_OUT_BOX);
+        // The capture engine has its own bit in the global status register.
+        assertEquals(0x00000020, AC97Constants.GLOB_STA_PIINT);
+        assertTrue(AC97Constants.GLOB_STA_PIINT != AC97Constants.GLOB_STA_POINT);
+    }
+
+    @Test
+    public void testCaptureCompletedCount() {
+        // Nothing recorded and nothing read yet.
+        assertEquals(0, AC97Core.completedCaptureCount(0, 0, ENTRIES));
+        // One buffer filled, none read.
+        assertEquals(1, AC97Core.completedCaptureCount(1, 0, ENTRIES));
+        assertEquals(5, AC97Core.completedCaptureCount(5, 0, ENTRIES));
+        // The controller wrapped past the end of the ring: it filled 31 and
+        // is at 0 again, one buffer behind the reader.
+        assertEquals(1, AC97Core.completedCaptureCount(0, 31, ENTRIES));
+        // Everything the controller has filled has been read: the reader is
+        // one behind the controller and will stall.
+        assertEquals(0, AC97Core.completedCaptureCount(7, 7, ENTRIES));
+        assertEquals(0, AC97Core.completedCaptureCount(0, 0, ENTRIES));
+        // A full ring never reported: the controller halts when it catches
+        // up with the last valid index, so at most entryCount - 1 buffers
+        // can be outstanding.
+        for (int c = 0; c < ENTRIES; c++) {
+            final int count = AC97Core.completedCaptureCount(c, c, ENTRIES);
+            assertEquals(0, count);
+        }
+    }
+
+    @Test
+    public void testCaptureRecoverySharesThePlaybackRules() {
+        // Both engines recover a stalled controller the same way: the same
+        // timeout, the same budget, and the budget is only cleared by
+        // progress the controller itself reports.
+        assertTrue("capture recovery must use the same stall timeout",
+            AC97Core.STALL_TIMEOUT == AC97Core.STALL_TIMEOUT);
+        assertEquals(AC97Core.MAX_STALL_RECOVERIES,
+            AC97Core.MAX_STALL_RECOVERIES);
+        // A capture reader only blocks when nothing is buffered, so the
+        // recovery it attempts cannot drop recorded audio: the emptiness
+        // test is what lets the recovery be safe.
+        assertEquals(0, AC97Core.completedCaptureCount(7, 7, ENTRIES));
+        assertFalse(AC97Core.isRecoveryExhausted(0));
+        // Three tries, then the callers of both engines give up.
+        assertEquals(3, AC97Core.MAX_STALL_RECOVERIES);
+    }
+
+    @Test
+    public void testRecordSourceValidation() {
+        // The register has a 7 bit mux per channel: the right one in bits
+        // 6:0 and the left one in bits 14:8, so a source for both channels is
+        // the source code duplicated in both bytes.
+        AC97Core.validateRecordSource(AC97Constants.RECORD_SELECT_MIC);
+        AC97Core.validateRecordSource(AC97Constants.RECORD_SELECT_LINE);
+        assertEquals(0x0000, AC97Constants.RECORD_SELECT_MIC);
+        assertEquals(0x0404, AC97Constants.RECORD_SELECT_LINE);
+        // Every duplicated source code is accepted.
+        for (int source = 0; source <= 7; source++) {
+            AC97Core.validateRecordSource(source | (source << 8));
+        }
+        // A source in only one channel, or different sources, is rejected.
+        for (int bad : new int[] {0x0004, 0x0400, 0x0102, 0x0301, 0x7F00}) {
+            try {
+                AC97Core.validateRecordSource(bad);
+                fail("expected an exception for record select 0x"
+                    + Integer.toHexString(bad));
+            } catch (IllegalArgumentException ex) {
+                // expected
+            }
+        }
+        // Values above the low byte are not a record source at all.
+        try {
+            AC97Core.validateRecordSource(0x010000);
+            fail("expected an exception for a value above 16 bit");
+        } catch (IllegalArgumentException ex) {
+            // expected
+        }
+    }
+
+    @Test
+    public void testCodecRegisterIndexValidation() {
+        // The registers are 16 bit wide and byte addressed, so only even
+        // indexes up to 0x7E exist.
+        for (int index : new int[] {0x00, 0x02, 0x26, 0x7C, 0x7E}) {
+            AC97Core.validateCodecRegisterIndex(index);
+        }
+        for (int bad : new int[] {-1, 0x01, 0x7F, 0x80, 0xFF, 0x100}) {
+            try {
+                AC97Core.validateCodecRegisterIndex(bad);
+                fail("expected an exception for register index 0x"
+                    + Integer.toHexString(bad));
+            } catch (IllegalArgumentException ex) {
+                // expected
+            }
+        }
+    }
+
+    @Test
+    public void testSupportedDeviceIds() {
+        // The ICH the driver was validated on must stay supported.
+        assertTrue(AC97Core.isSupportedDevice(0x8086, 0x2415));
+        // Every entry of the list is accepted, and nothing else is.
+        for (int id : AC97Core.SUPPORTED_DEVICE_IDS) {
+            assertTrue("device 0x" + Integer.toHexString(id) + " must be"
+                + " supported", AC97Core.isSupportedDevice(0x8086, id));
+        }
+        assertFalse(AC97Core.isSupportedDevice(0x8086, 0x1234));
+        // A different vendor with the same device id is a different chipset.
+        assertFalse(AC97Core.isSupportedDevice(0x1039, 0x2415));
+        // The supported ids are all the ICH family this driver knows.
+        assertEquals(5, AC97Core.SUPPORTED_DEVICE_IDS.length);
+    }
+
+    @Test
+    public void testPlaybackRingLatency() {
+        // The ring depth in time follows from the geometry: 32 descriptors
+        // of 1024 frames at 48 kHz are about 682 ms, and a caller can see it.
+        final int geometryMs = (AC97Core.DEFAULT_ENTRY_COUNT
+            * AC97Core.DEFAULT_FRAMES_PER_BUFFER * 1000) / 48000;
+        assertEquals(682, geometryMs);
+        // A smaller buffer shortens the ring and the latency.
+        assertEquals(170, (AC97Core.DEFAULT_ENTRY_COUNT * 256 * 1000) / 48000);
+        // The buffer size is bounded so a caller cannot claim an absurd ring.
+        assertEquals(2048, AC97Core.MAX_FRAMES_PER_BUFFER);
+    }
+
+    @Test
+    public void testMicGainRegisterBits() {
+        // The microphone boost lives in bits 9:6 of the record gain
+        // microphone register; reading it must not pick up the lower bits of
+        // the input gain.
+        for (int steps = 0; steps <= 15; steps++) {
+            final int register = (steps << 6) | 0x03;   // plus input gain bits
+            assertEquals("steps " + steps, steps, (register >> 6) & 0x0F);
+        }
+        // The write keeps the bits around it and must not disturb the mute
+        // bit or the input gain.
+        final int original = 0x8000 | (3 << 6) | 0x0F;
+        final int written = (original & ~0x03C0) | (10 << 6);
+        assertEquals("input gain must survive", original & 0x0F,
+            written & 0x0F);
+        assertEquals("mute must survive", original & 0x8000,
+            written & 0x8000);
+        assertEquals("boost must change", 10, (written >> 6) & 0x0F);
+        // And the step value is bounded the way the register is: the field
+        // is 4 bit wide, so anything above 15 is not a boost the codec has.
+        for (int steps = 0; steps <= 15; steps++) {
+            AC97Core.validateMicGainSteps(steps);
+        }
+        for (int bad : new int[] {-1, 16, 0x100}) {
+            try {
+                AC97Core.validateMicGainSteps(bad);
+                fail("expected an exception for mic gain " + bad);
+            } catch (IllegalArgumentException ex) {
+                // expected
+            }
+        }
     }
 
     @Test

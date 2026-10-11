@@ -12,6 +12,16 @@
 
 'use strict';
 
+/**
+ * Both runners persist their state into an issue body, which GitHub caps at
+ * 65536 characters, so history cannot grow without bound. A suppressed CI
+ * retry pushes one entry, and the CI-heal loop produces one completion per
+ * SHA indefinitely: at ~127 bytes per entry a persistently red PR would make
+ * the body unwritable and the runner would lose its own state. Keep the most
+ * recent entries; history has no functional readers, it is diagnostic only.
+ */
+var MAX_HISTORY_ENTRIES = 200;
+
 module.exports = function createHelpers({ github, context, core }) {
   const owner = context.repo.owner;
   const repo  = context.repo.repo;
@@ -93,6 +103,33 @@ module.exports = function createHelpers({ github, context, core }) {
   var FORBIDDEN_DIFF_RE = /(^|\/)(core\/src\/native\/x86\/|jnode\.properties$|all\/build\.xml$|all\/conf\/)/;
   var TEST_PATH_RE = /(^|\/)(src\/test\/|tests\/)/;
 
+  /**
+   * True when the PR diff touches a forbidden path. Distinct from a size-budget
+   * failure because a forbidden path is a hard wall no human can approve past by
+   * being patient: the change is out of scope for auto-merge regardless of size.
+   */
+  async function touchesForbiddenPath(prNumber) {
+    var files;
+    try {
+      files = await github.rest.pulls.listFiles({
+        owner, repo, pull_number: prNumber, per_page: 100
+      });
+    } catch (e) {
+      core.warning("touchesForbiddenPath: listFiles failed for PR #" + prNumber + ": " + e.message);
+      return false;
+    }
+    // Same guard shape as isDiffSafe, for symmetry only: an unknown response
+    // makes this return false either way, since an unreadable file list holds
+    // no matching path. No test can distinguish the two formulations, which is
+    // why the isDiffSafe twin has shape cases and this one does not.
+    var list = files && files.data;
+    if (!Array.isArray(list)) return false;
+    for (var i = 0; i < list.length; i++) {
+      if (FORBIDDEN_DIFF_RE.test(list[i].filename || "")) return true;
+    }
+    return false;
+  }
+
   // Diff-size budgets. Production additions stay tightly capped because they
   // are what can change runtime behaviour. Test additions get a much larger
   // budget: a regression test for a small fix routinely exceeds the
@@ -114,8 +151,17 @@ module.exports = function createHelpers({ github, context, core }) {
       core.warning("isDiffSafe: listFiles failed for PR #" + prNumber + ": " + e.message);
       return false;
     }
-    var list = files.data || [];
-    if (list.length === 0 || list.length >= 100) return false;
+    // Fail closed on an unknown shape, exactly like the >= 100 guard below: a
+    // response that resolved without a `data` array is not the same as an empty
+    // diff, and `files.data || []` would collapse the two and read a malformed
+    // partial response as "no changed files, therefore within budget".
+    var list = files && files.data;
+    if (!Array.isArray(list)) return false;
+    // 100 is the per_page floor, so a full page means the diff may be bigger
+    // than what was read: unknown, not safe. An empty array is different - it
+    // means no changed files at all, which cannot exceed any budget, and
+    // reporting it as "over budget" sent an empty diff to HUMAN_REVIEW on a lie.
+    if (list.length >= 100) return false;
 
     var prodAdditions = 0;
     var testAdditions = 0;
@@ -159,14 +205,29 @@ module.exports = function createHelpers({ github, context, core }) {
       return false;
     }
     var BAD = ["failure", "cancelled", "timed_out", "action_required"];
-    var ok = 0;
+    // Only runs named for the ant.yml ("Java CI") jobs count. Names are the job
+    // ids, which GitHub uses as the check-run name when a job defines no `name:`.
+    // `heal` is excluded: it is skipped on green and would only ever make the
+    // gate read as pending. Note this filters by name, not by workflow, so a
+    // job with the same id in another workflow would also count.
+    var JAVA_CI_JOBS = ["build", "test", "boot32", "boot64"];
+    var seen = {};
     for (var i = 0; i < runs.length; i++) {
       var r = runs[i];
-      if (r.status !== "completed") continue;
+      if (JAVA_CI_JOBS.indexOf(r.name) < 0) continue;
+      // A run that has not finished is not green. Without this the gate reads a
+      // completed green `build` job as whole-workflow green while the QEMU boot
+      // jobs are still running, which is the race the gate exists to prevent.
+      if (r.status !== "completed") return false;
       if (BAD.indexOf(r.conclusion) >= 0) return false;
-      if (r.conclusion === "success") ok++;
+      if (r.conclusion === "success") seen[r.name] = true;
     }
-    return ok > 0;
+    // Every Java CI job must have reported green. Without this a run showing only
+    // a green `build` passes while the boot tests have not run at all.
+    for (var j = 0; j < JAVA_CI_JOBS.length; j++) {
+      if (!seen[JAVA_CI_JOBS[j]]) return false;
+    }
+    return true;
   }
 
   /** Return true if the user object represents a bot. */
@@ -250,6 +311,8 @@ module.exports = function createHelpers({ github, context, core }) {
     getAgentReviewVerdict: getAgentReviewVerdict,
     isAutoMergeEligible: isAutoMergeEligible,
     isDiffSafe: isDiffSafe,
+    touchesForbiddenPath: touchesForbiddenPath,
+    MAX_HISTORY_ENTRIES: MAX_HISTORY_ENTRIES,
     isCIGreen: isCIGreen,
     SAFE_AUTO_MERGE_KINDS: SAFE_AUTO_MERGE_KINDS,
     isBotUser: isBotUser,
@@ -260,3 +323,7 @@ module.exports = function createHelpers({ github, context, core }) {
     SHORT_CIRCUIT_LABELS: SHORT_CIRCUIT_LABELS
   };
 };
+
+// Module-level export so the runners can cap history without instantiating.
+module.exports.MAX_HISTORY_ENTRIES = MAX_HISTORY_ENTRIES;
+

@@ -20,6 +20,8 @@
 
 package org.jnode.driver.sound.ac97;
 
+import org.jnode.driver.sound.ac97.command.AC97CaptureCommandTest;
+
 import org.junit.runner.RunWith;
 import org.junit.runners.Suite;
 
@@ -39,7 +41,14 @@ import org.junit.runners.Suite;
     Ac97ConstantsTest.class,
     BufferDescriptorListTest.class,
     AC97CoreTest.class,
-    ToneGeneratorTest.class
+    ToneGeneratorTest.class,
+    WavFileTest.class,
+    MixerVolumeTest.class,
+    SampleRateConverterTest.class,
+    PcmQueueTest.class,
+    AC97MixerTest.class,
+    PcmFormatTest.class,
+    AC97CaptureCommandTest.class
 })
 public class AllTests {
 

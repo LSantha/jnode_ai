@@ -128,4 +128,167 @@ public interface AC97API extends DeviceAPI {
      * @throws TimeoutException     when the DMA engine stalls
      */
     public void drain() throws InterruptedException, TimeoutException;
+
+    /**
+     * Opens the PCM in (capture) engine for recording. Every descriptor of
+     * the capture ring is armed up front, so the controller starts filling
+     * sample buffers immediately. The recorded format is the mirror image of
+     * the playback format accepted by {@link #write}.
+     *
+     * @param sampleRate sample rate in Hz, one of
+     *                   {@link AC97Constants#SAMPLE_RATES}
+     */
+    public void openCapture(int sampleRate);
+
+    /**
+     * Closes the PCM in engine and drops the recorded audio.
+     */
+    public void closeCapture();
+
+    /**
+     * Is the capture engine open?
+     */
+    public boolean isCaptureOpen();
+
+    /**
+     * Reads recorded PCM data, blocking until the whole destination is
+     * filled. The data is 16-bit signed little endian stereo, the same
+     * format {@link #write} plays.
+     *
+     * @param pcm    the destination array
+     * @param offset offset in the array
+     * @param length number of bytes to read, a multiple of PCM_FRAME_SIZE
+     * @return the number of bytes read
+     * @throws InterruptedException when the thread is interrupted while waiting
+     * @throws TimeoutException     when the capture engine stalls
+     */
+    public int readCapture(byte[] pcm, int offset, int length)
+        throws InterruptedException, TimeoutException;
+
+    /**
+     * Gets the number of recorded sample buffers that have not been read yet.
+     */
+    public int getCapturedBuffers();
+
+    /**
+     * Selects what the ADC records and the gain it records at. Can be called
+     * while capture is open; the change takes effect with the next recorded
+     * buffer.
+     *
+     * @param select    record select value with both channels equal, e.g.
+     *                  {@link AC97Constants#RECORD_SELECT_MIC}
+     * @param gainSteps gain in 1.5 dB steps per channel, 0 is maximum gain
+     */
+    public void setRecordSource(int select, int gainSteps);
+
+    /**
+     * Gets the master output volume. The result is the value the codec
+     * reports, so a codec with a muted default reads as muted.
+     */
+    public MixerVolume getMasterVolume();
+
+    /**
+     * Sets the master output volume.
+     *
+     * @param volume the new volume
+     */
+    public void setMasterVolume(MixerVolume volume);
+
+    /**
+     * Gets the volume of the PCM path, which gates the samples written with
+     * {@link #write} in addition to the master volume.
+     */
+    public MixerVolume getPcmVolume();
+
+    /**
+     * Sets the volume of the PCM path.
+     *
+     * @param volume the new volume
+     */
+    public void setPcmVolume(MixerVolume volume);
+
+    /**
+     * Gets the volume of the headphone output.
+     */
+    public MixerVolume getHeadphoneVolume();
+
+    /**
+     * Sets the volume of the headphone output.
+     *
+     * @param volume the new volume
+     */
+    public void setHeadphoneVolume(MixerVolume volume);
+
+    /**
+     * Gets the sample format the PCM out engine currently plays. Every device
+     * can play {@link PcmFormat#STEREO_16}.
+     */
+    public PcmFormat getSpeakerFormat();
+
+    /**
+     * Sets the sample format the PCM out engine plays. 4 or 6 channel output
+     * and 20 bit samples need a controller and codec that report the
+     * capability; an unsupported format is refused rather than silently
+     * played at another rate.
+     *
+     * @param format the new format
+     */
+    public void setSpeakerFormat(PcmFormat format);
+
+    /**
+     * Reads a codec (mixer) register.
+     *
+     * @param index the register index, 0..0x7E and even
+     * @return the 16 bit register value
+     */
+    public int readCodecRegister(int index);
+
+    /**
+     * Writes a codec (mixer) register. Writing the wrong register can silence
+     * the codec or break the link, so this is meant for manufacturer specific
+     * code and debugging.
+     *
+     * @param index the register index, 0..0x7E and even
+     * @param value the 16 bit register value
+     */
+    public void writeCodecRegister(int index, int value);
+
+    /**
+     * Gets the codec identity, the two vendor identification registers joined
+     * into one 32 bit value.
+     */
+    public int getCodecId();
+
+    /**
+     * Gets the number of stereo frames per playback sample buffer.
+     */
+    public int getPlaybackBufferSize();
+
+    /**
+     * Gets the depth of the playback ring in milliseconds, which is the
+     * latency of a stream plus the room a producer has to run ahead.
+     */
+    public int getPlaybackLatencyMs();
+
+    /**
+     * Chooses the number of frames per playback sample buffer, trading ring
+     * depth for memory. Only possible while playback is closed, because the
+     * ring is reallocated.
+     *
+     * @param framesPerBuffer 1..2048 stereo frames per buffer
+     */
+    public void setPlaybackBufferSize(int framesPerBuffer);
+
+    /**
+     * Gets the microphone gain in 1.5 dB steps above the input gain.
+     */
+    public int getMicGainSteps();
+
+    /**
+     * Sets the microphone gain in 1.5 dB steps above the input gain, which is
+     * what a quiet microphone usually needs.
+     *
+     * @param steps 0..15
+     */
+    public void setMicGainSteps(int steps);
 }

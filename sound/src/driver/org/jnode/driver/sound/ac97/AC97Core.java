@@ -79,6 +79,24 @@ public final class AC97Core implements AC97Constants, IRQHandler {
     public static final int DEFAULT_ENTRY_COUNT = BDL_MAX_ENTRIES;
 
     /**
+     * Number of buffer descriptors of the capture ring, also the hardware
+     * maximum for the same reason as DEFAULT_ENTRY_COUNT.
+     */
+    public static final int CAPTURE_ENTRY_COUNT = BDL_MAX_ENTRIES;
+
+    /**
+     * Number of stereo frames per capture sample buffer. 512 frames are
+     * about 11ms of audio at 48kHz and 2KB of DMA memory.
+     */
+    public static final int CAPTURE_FRAMES_PER_BUFFER = 512;
+
+    /**
+     * Largest number of stereo frames per sample buffer the driver
+     * allocates, which is about 42ms of audio at 48kHz.
+     */
+    public static final int MAX_FRAMES_PER_BUFFER = 2048;
+
+    /**
      * Number of stereo frames per sample buffer. 1024 frames are 4096 bytes,
      * which is about 21ms of audio at 48kHz.
      */
@@ -158,6 +176,13 @@ public final class AC97Core implements AC97Constants, IRQHandler {
     private BufferDescriptorList bdl;
 
     /**
+     * Number of stereo frames per playback sample buffer; the ring depth in
+     * time follows from it, and it can be chosen with
+     * {@link #setPlaybackBufferSize} while playback is closed.
+     */
+    private int playbackFramesPerBuffer;
+
+    /**
      * Sample rate in use (valid for 48000 and for VRA capable codecs).
      */
     private int sampleRate;
@@ -166,6 +191,58 @@ public final class AC97Core implements AC97Constants, IRQHandler {
      * Does the codec support variable rate audio?
      */
     private boolean variableRate;
+
+    /**
+     * Does the controller support 16 and 20 bit samples?
+     */
+    private boolean sample16_20;
+
+    /**
+     * The channel capability the controller reports: 2, 4 or 6 channels.
+     */
+    private int maxChannels;
+
+    /**
+     * The vendor of every controller this driver binds to.
+     */
+    public static final int SUPPORTED_VENDOR_ID = PCI_VENDOR_ID_INTEL;
+
+    /**
+     * The device ids of the InteI AC'97 controllers this driver supports. They
+     * all report the same NAM and NABM register sets; the entries beyond the
+     * ICH are the same controller in later chipsets, which the driver has not
+     * been run on.
+     */
+    public static final int[] SUPPORTED_DEVICE_IDS = {
+        PCI_DEVICE_ID_ICH_AC97,      // 82801AA (ICH), validated
+        0x2425,                      // 82801BA
+        0x24C5,                      // 82801DB
+        0x24D5,                      // 82801EB
+        0x27DE                       // 82801GB
+    };
+
+    /**
+     * Does this driver support a controller with the given ids?
+     *
+     * @param vendorId the vendor id
+     * @param deviceId the device id
+     */
+    public static boolean isSupportedDevice(int vendorId, int deviceId) {
+        if (vendorId != SUPPORTED_VENDOR_ID) {
+            return false;
+        }
+        for (int id : SUPPORTED_DEVICE_IDS) {
+            if (id == deviceId) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * The sample format the PCM out engine plays.
+     */
+    private PcmFormat speakerFormat = PcmFormat.STEREO_16;
 
     /**
      * Lock protecting the playback ring state below and the DMA registers
@@ -207,6 +284,56 @@ public final class AC97Core implements AC97Constants, IRQHandler {
      * the stream.
      */
     private int stallRecoveries;
+
+    /**
+     * Lock protecting the capture ring below and the DMA registers of the
+     * PCM in engine. Separate from the playback lock: the engines are
+     * independent and the interrupt handler takes whichever it needs.
+     */
+    private final Object captureLock = new Object();
+
+    /**
+     * The capture buffer descriptor list, claimed on the first
+     * {@link #openCapture} so that playback only users do not pay for it.
+     */
+    private BufferDescriptorList captureBdl;
+
+    /**
+     * Has capture been opened?
+     */
+    private boolean captureOpen;
+
+    /**
+     * Index of the last descriptor handed to the controller for filling
+     * (the value programmed into PCM_IN_LVI).
+     */
+    private int captureLastValidIndex;
+
+    /**
+     * Last observed value of PCM_IN_CIV, the descriptor being filled.
+     */
+    private int captureCurrentIndex;
+
+    /**
+     * Index of the descriptor the consumer is reading from.
+     */
+    private int captureLastHandled;
+
+    /**
+     * Byte offset within the descriptor being read.
+     */
+    private int captureReadOffset;
+
+    /**
+     * Time of the last capture progress, used for stall detection.
+     */
+    private long captureLastProgress;
+
+    /**
+     * Number of capture stall recoveries since the controller last reported
+     * progress, bounded by MAX_STALL_RECOVERIES like the playback one.
+     */
+    private int captureStallRecoveries;
 
     /**
      * Number of stereo frames queued through {@link #write} since the last
@@ -298,6 +425,7 @@ public final class AC97Core implements AC97Constants, IRQHandler {
             irq = null;
             throw ex;
         }
+        this.playbackFramesPerBuffer = DEFAULT_FRAMES_PER_BUFFER;
         try {
             bdl = new BufferDescriptorList(device, DEFAULT_ENTRY_COUNT,
                 DEFAULT_FRAMES_PER_BUFFER);
@@ -322,6 +450,7 @@ public final class AC97Core implements AC97Constants, IRQHandler {
         try {
             resetACLink();
             initCodec();
+        readCapabilities();
         } catch (DriverException ex) {
             release();
             throw ex;
@@ -339,31 +468,8 @@ public final class AC97Core implements AC97Constants, IRQHandler {
      * @throws IllegalArgumentException on an unsupported rate
      */
     public final void setSampleRate(int rate) {
-        if (rate <= 0) {
-            throw new IllegalArgumentException("Invalid sample rate " + rate);
-        }
-        boolean supported = false;
-        for (int r : SAMPLE_RATES) {
-            if (r == rate) {
-                supported = true;
-                break;
-            }
-        }
-        if (!supported) {
-            throw new IllegalArgumentException("Unsupported sample rate " + rate);
-        }
-        if ((rate != SAMPLE_RATE_48000) && !variableRate) {
-            throw new IllegalArgumentException(
-                "Codec has no variable rate audio support");
-        }
         synchronized (playbackLock) {
-            this.sampleRate = rate;
-            if (variableRate) {
-                // Variable rate is enabled in the extended audio control
-                // register, after which every rate register is writable.
-                outNam(NAM_EXTENDED_AUDIO_STATUS_CTRL, NAM_EAC_VRA);
-            }
-            outNam(NAM_PCM_FRONT_DAC_RATE, rate);
+            selectSampleRate(rate);
         }
     }
 
@@ -372,6 +478,244 @@ public final class AC97Core implements AC97Constants, IRQHandler {
      */
     public final int getSampleRate() {
         return sampleRate;
+    }
+
+    /**
+     * Gets the number of stereo frames per playback sample buffer.
+     */
+    public final int getPlaybackBufferSize() {
+        synchronized (playbackLock) {
+            return playbackFramesPerBuffer;
+        }
+    }
+
+    /**
+     * Gets the depth of the playback ring in milliseconds, which is the
+     * latency of a stream plus the room a producer has to run ahead.
+     */
+    public final int getPlaybackLatencyMs() {
+        synchronized (playbackLock) {
+            return (int) (((long) bdl.getEntryCount()
+                * playbackFramesPerBuffer * 1000L) / sampleRate);
+        }
+    }
+
+    /**
+     * Chooses the number of frames per playback sample buffer, trading ring
+     * depth for memory: a small buffer interrupts more often and gives lower
+     * latency, a large one behaves better on a slow producer.
+     * <p>
+     * The ring is reallocated, which is only possible while playback is
+     * closed. The number of descriptors stays at the hardware maximum.
+     *
+     * @param framesPerBuffer 1..2048 stereo frames per buffer
+     */
+    public final void setPlaybackBufferSize(int framesPerBuffer) {
+        if ((framesPerBuffer < 1) || (framesPerBuffer > MAX_FRAMES_PER_BUFFER)) {
+            throw new IllegalArgumentException("Invalid buffer size "
+                + framesPerBuffer);
+        }
+        synchronized (playbackLock) {
+            if (playing) {
+                throw new IllegalStateException(
+                    "The ring size cannot change while playback is open");
+            }
+            if (framesPerBuffer == playbackFramesPerBuffer) {
+                return;
+            }
+            final BufferDescriptorList current = bdl;
+            try {
+                bdl = new BufferDescriptorList(device,
+                    DEFAULT_ENTRY_COUNT, framesPerBuffer);
+            } catch (ResourceNotFreeException ex) {
+                bdl = current;
+                throw new IllegalStateException(
+                    "Cannot claim a playback ring of " + framesPerBuffer
+                        + " frames per buffer");
+            }
+            playbackFramesPerBuffer = framesPerBuffer;
+            resetEngine();
+            current.release();
+            log.debug("AC'97 playback ring rebuilt with " + framesPerBuffer
+                + " frames per buffer");
+        }
+    }
+
+    /**
+     * Validates a microphone gain step value. The boost field is 4 bit wide,
+     * so the whole range is 0..15 in 1.5 dB steps.
+     *
+     * @param steps the gain steps
+     */
+    public static void validateMicGainSteps(int steps) {
+        if ((steps < 0) || (steps > 15)) {
+            throw new IllegalArgumentException("Invalid mic gain " + steps);
+        }
+    }
+
+    /**
+     * Gets the microphone gain, in 1.5 dB steps above the input gain, as the
+     * codec boost register has it.
+     */
+    public final int getMicGainSteps() {
+        return (readCodecRegister(NAM_RECORD_GAIN_MIC) >> 6) & 0x0F;
+    }
+
+    /**
+     * Sets the microphone gain, in 1.5 dB steps above the input gain, which
+     * is what a quiet microphone usually needs.
+     *
+     * @param steps 0..15
+     */
+    public final void setMicGainSteps(int steps) {
+        validateMicGainSteps(steps);
+        final int value = readCodecRegister(NAM_RECORD_GAIN_MIC);
+        writeCodecRegister(NAM_RECORD_GAIN_MIC, (value & ~0x03C0)
+            | ((steps & 0x0F) << 6));
+    }
+
+    /**
+     * Reads a codec (mixer) register.
+     *
+     * @param index the register index, 0..0x7E and even
+     * @return the 16 bit register value
+     */
+    public final int readCodecRegister(int index) {
+        validateCodecRegisterIndex(index);
+        return inNam(index);
+    }
+
+    /**
+     * Writes a codec (mixer) register.
+     *
+     * @param index the register index, 0..0x7E and even
+     * @param value the 16 bit register value
+     */
+    public final void writeCodecRegister(int index, int value) {
+        validateCodecRegisterIndex(index);
+        outNam(index, value);
+    }
+
+    /**
+     * Gets the codec identity: the two vendor identification registers
+     * joined into one value, the high half being the first one. Useful for
+     * logging and for manufacturer specific code.
+     */
+    public final int getCodecId() {
+        return (inNam(NAM_VENDOR_ID1) << 16)
+            | (inNam(NAM_VENDOR_ID2) & 0xFFFF);
+    }
+
+    /**
+     * Validates a codec register index. The registers are addressed by byte
+     * and are 16 bit wide, so only even indexes up to 0x7E exist.
+     *
+     * @param index the register index
+     */
+    public static void validateCodecRegisterIndex(int index) {
+        if ((index < 0) || (index > 0x7E) || ((index & 1) != 0)) {
+            throw new IllegalArgumentException(
+                "Invalid codec register index 0x" + Integer.toHexString(index));
+        }
+    }
+
+    /**
+     * Gets the master output volume as the codec currently has it.
+     */
+    public final MixerVolume getMasterVolume() {
+        return MixerVolume.fromRegister(inNam(NAM_MASTER_VOLUME));
+    }
+
+    /**
+     * Sets the master output volume. Both channels are written in one
+     * register, so the change takes effect without a gap between them.
+     */
+    public final void setMasterVolume(MixerVolume volume) {
+        outNam(NAM_MASTER_VOLUME, volume.toRegister());
+    }
+
+    /**
+     * Gets the volume of the PCM path, which is what gates the samples this
+     * driver writes next to the master volume.
+     */
+    public final MixerVolume getPcmVolume() {
+        return MixerVolume.fromRegister(inNam(NAM_PCM_OUT_VOLUME));
+    }
+
+    /**
+     * Sets the volume of the PCM path.
+     */
+    public final void setPcmVolume(MixerVolume volume) {
+        outNam(NAM_PCM_OUT_VOLUME, volume.toRegister());
+    }
+
+    /**
+     * Gets the sample format the PCM out engine currently plays.
+     */
+    public final PcmFormat getSpeakerFormat() {
+        synchronized (playbackLock) {
+            return speakerFormat;
+        }
+    }
+
+    /**
+     * Sets the sample format the PCM out engine plays. A format is only
+     * accepted when the controller reports the capability; 16 bit stereo is
+     * always accepted because every codec can play it.
+     *
+     * @param format the new format
+     */
+    public final void setSpeakerFormat(PcmFormat format) {
+        synchronized (playbackLock) {
+            if (format.equals(PcmFormat.STEREO_16)) {
+                speakerFormat = PcmFormat.STEREO_16;
+                applySpeakerFormat();
+                return;
+            }
+            if ((format.getBitsPerSample() == 20) && !sample16_20) {
+                throw new IllegalArgumentException(
+                    "Controller does not support 20 bit samples");
+            }
+            if (format.getChannels() > maxChannels) {
+                throw new IllegalArgumentException(
+                    "Controller reports " + maxChannels
+                        + " output channels, not " + format.getChannels());
+            }
+            speakerFormat = format;
+            applySpeakerFormat();
+        }
+    }
+
+    /**
+     * Writes the format into the global control register, without changing
+     * any other bit of it.
+     */
+    private void applySpeakerFormat() {
+        int cnt = inNabmDword(GLOB_CNT);
+        cnt &= ~(GLOB_CNT_PCM_20BIT | GLOB_CNT_PCM_246_MASK);
+        if (speakerFormat.getBitsPerSample() == 20) {
+            cnt |= GLOB_CNT_PCM_20BIT;
+        }
+        if (speakerFormat.getChannels() == 4) {
+            cnt |= GLOB_CNT_PCM_4;
+        } else if (speakerFormat.getChannels() == 6) {
+            cnt |= GLOB_CNT_PCM_6;
+        }
+        outNabmDword(GLOB_CNT, cnt);
+    }
+
+    /**
+     * Gets the volume of the headphone output, if the codec has one.
+     */
+    public final MixerVolume getHeadphoneVolume() {
+        return MixerVolume.fromRegister(inNam(NAM_HEADPHONE_VOLUME));
+    }
+
+    /**
+     * Sets the volume of the headphone output.
+     */
+    public final void setHeadphoneVolume(MixerVolume volume) {
+        outNam(NAM_HEADPHONE_VOLUME, volume.toRegister());
     }
 
     /**
@@ -439,9 +783,16 @@ public final class AC97Core implements AC97Constants, IRQHandler {
      */
     public final void write(byte[] pcm, int offset, int length)
         throws InterruptedException, TimeoutException {
-        if ((length & (PCM_FRAME_SIZE - 1)) != 0) {
-            throw new IllegalArgumentException(
-                "Length must be a multiple of the stereo frame size");
+        final int frameSize;
+        final int wordsPerFrame;
+        synchronized (playbackLock) {
+            frameSize = speakerFormat.getFrameSize();
+            wordsPerFrame = speakerFormat.getWordsPerFrame();
+        }
+        if ((length % frameSize) != 0) {
+            throw new IllegalArgumentException("Length must be a multiple of"
+                + " the " + frameSize + " byte frame size of the "
+                + speakerFormat + " format");
         }
         synchronized (playbackLock) {
             if (!playing) {
@@ -464,21 +815,20 @@ public final class AC97Core implements AC97Constants, IRQHandler {
                     playbackLock.wait(250);
                 }
                 final int index = nextIndex(lastValidIndex, bdl.getEntryCount());
-                final int max = bdl.getFramesPerBuffer() * PCM_FRAME_SIZE;
+                final int max = bdl.getFramesPerBuffer() * frameSize;
                 final int chunk = Math.min(remaining, max);
                 bdl.copyToBuffer(index, pcm, src, chunk);
                 // Fresh data is only visible to the controller after the
                 // descriptor is filled in and the last valid index advanced,
                 // so this ordering is safe even while the DMA engine is
                 // prefetching the next descriptor.
-                final int samples = BufferDescriptorList.samplesForFrames(chunk
-                    / PCM_FRAME_SIZE);
+                final int samples = (chunk / frameSize) * wordsPerFrame;
                 bdl.setDescriptor(index, samples, true);
                 // The sample buffer and the descriptor stores must have left
                 // the CPU before the descriptor is published through LVI.
                 readBarrier();
                 descriptorSamples[index] = samples;
-                totalQueuedFrames += chunk / PCM_FRAME_SIZE;
+                totalQueuedFrames += chunk / frameSize;
                 lastValidIndex = index;
                 touchProgress();
                 outNabmByte(PCM_OUT_LVI, index);
@@ -530,6 +880,303 @@ public final class AC97Core implements AC97Constants, IRQHandler {
      * Stop playback. The DMA engine is halted and its register box reset, so
      * the engine is silent right away. Buffered PCM data is dropped.
      */
+    public final void openCapture(int rate) {
+        synchronized (captureLock) {
+            if (captureOpen) {
+                throw new IllegalStateException("AC'97 capture already open");
+            }
+            if (captureBdl == null) {
+                claimCaptureBuffers();
+            }
+            resetCaptureEngine();
+            captureStallRecoveries = 0;
+            selectSampleRate(rate);
+            // Default record path: the dedicated microphone input at 0 dB
+            // gain. openCapture() overrides it for whatever the caller wants
+            // to record from.
+            setRecordSource(RECORD_SELECT_MIC, 0);
+            armCaptureRing();
+            captureOpen = true;
+            // Start the controller. There is nothing to prebuffer like the
+            // playback engine, because every descriptor is already armed.
+            startCaptureEngine();
+        }
+    }
+
+    /**
+     * Selects what the ADC records and the gain it records at. The value is
+     * written to the record select register; both channels carry the same 3
+     * bit source code, so the caller passes the already duplicated value
+     * (see the RECORD_SELECT_* constants).
+     *
+     * @param select    the record select value, e.g. RECORD_SELECT_MIC
+     * @param gainSteps gain in 1.5 dB steps per channel, 0 is maximum gain
+     *                   and RECORD_GAIN_0DB
+     */
+    public final void setRecordSource(int select, int gainSteps) {
+        validateRecordSource(select);
+        synchronized (captureLock) {
+            outNam(NAM_RECORD_SELECT, select);
+            final int gain = (gainSteps & 0x0F) | ((gainSteps & 0x0F) << 8);
+            outNam(NAM_RECORD_GAIN, gain);
+            outNam(NAM_RECORD_GAIN_MIC, gain);
+        }
+    }
+
+    /**
+     * Close the PCM in engine and drop the recorded audio. The capture BDL
+     * stays claimed for the next openCapture.
+     */
+    public final void closeCapture() {
+        synchronized (captureLock) {
+            captureOpen = false;
+            stopCaptureEngine();
+            captureLock.notifyAll();
+        }
+    }
+
+    /**
+     * Is capture open?
+     */
+    public final boolean isCaptureOpen() {
+        synchronized (captureLock) {
+            return captureOpen;
+        }
+    }
+
+    /**
+     * Reads recorded PCM data. The call blocks until the whole destination
+     * is filled; that takes well under one buffer period as long as the
+     * codec is recording. The data is 16-bit signed, little endian, stereo
+     * interlaced, the mirror image of what {@link #write} plays.
+     * <p>
+     * Unlike the playback writer, a stalled capture engine is not recovered
+     * automatically: recovering would reset the controller and with it the
+     * audio that has already been recorded, so the caller is told with a
+     * TimeoutException instead.
+     *
+     * @param pcm    destination array
+     * @param offset offset in the array
+     * @param length number of bytes to read, a multiple of PCM_FRAME_SIZE
+     * @return the number of bytes read, always equal to length
+     */
+    public final int readCapture(byte[] pcm, int offset, int length)
+        throws InterruptedException, TimeoutException {
+        if ((length & (PCM_FRAME_SIZE - 1)) != 0) {
+            throw new IllegalArgumentException(
+                "Length must be a multiple of the stereo frame size");
+        }
+        synchronized (captureLock) {
+            if (!captureOpen) {
+                throw new IllegalStateException("AC'97 capture is not open");
+            }
+            final int count = captureBdl.getEntryCount();
+            final int bufferBytes = CAPTURE_FRAMES_PER_BUFFER * PCM_FRAME_SIZE;
+            int dst = offset;
+            int remaining = length;
+            while (remaining > 0) {
+                if (captureReadOffset >= bufferBytes) {
+                    // The descriptor just read is fully consumed; hand it
+                    // back to the controller so it can be filled again.
+                    rearmCaptureDescriptor(captureLastHandled);
+                    captureLastHandled = nextIndex(captureLastHandled, count);
+                    captureReadOffset = 0;
+                }
+                final int completed = completedCaptureCount(captureCurrentIndex,
+                    captureLastHandled, count);
+                if (completed == 0) {
+                    if (!tryRecoverCapture()) {
+                        throw new TimeoutException(
+                            "AC'97 capture engine stalled and did not recover");
+                    }
+                    captureLock.wait(250);
+                    continue;
+                }
+                final int available = bufferBytes - captureReadOffset;
+                final int chunk = Math.min(remaining, available);
+                captureBdl.copyFromBuffer(captureLastHandled, captureReadOffset,
+                    pcm, dst, chunk);
+                captureReadOffset += chunk;
+                dst += chunk;
+                remaining -= chunk;
+            }
+            return length;
+        }
+    }
+
+    /**
+     * Gets the number of recorded sample buffers that have not been read
+     * yet.
+     */
+    public final int getCapturedBuffers() {
+        synchronized (captureLock) {
+            if (!captureOpen) {
+                return 0;
+            }
+            return completedCaptureCount(captureCurrentIndex, captureLastHandled,
+                captureBdl.getEntryCount());
+        }
+    }
+
+    /**
+     * Claims the capture buffer descriptor list on first use.
+     */
+    private void claimCaptureBuffers() {
+        try {
+            captureBdl = new BufferDescriptorList(device, CAPTURE_ENTRY_COUNT,
+                CAPTURE_FRAMES_PER_BUFFER);
+        } catch (ResourceNotFreeException ex) {
+            throw new IllegalStateException(
+                "Cannot claim AC'97 capture DMA memory", ex);
+        }
+    }
+
+    /**
+     * Arms every descriptor of the capture ring with the full buffer size,
+     * programs the base address and leaves the controller stopped. Must be
+     * called with the capture lock held.
+     */
+    private void armCaptureRing() {
+        final int count = captureBdl.getEntryCount();
+        final int samples = BufferDescriptorList.samplesForFrames(CAPTURE_FRAMES_PER_BUFFER);
+        captureBdl.clear();
+        for (int i = 0; i < count; i++) {
+            captureBdl.setDescriptor(i, samples, true);
+        }
+        readBarrierIn();
+        outNabmDword(PCM_IN_BDBAR, captureBdl.getPhysicalAddress());
+        outNabmByte(PCM_IN_LVI, count - 1);
+        outNabmWord(PCM_IN_SR, SR_INT_MASK);
+        captureLastValidIndex = count - 1;
+        captureCurrentIndex = 0;
+        captureLastHandled = 0;
+        captureReadOffset = 0;
+        captureLastProgress = System.currentTimeMillis();
+    }
+
+    /**
+     * Re-arms a consumed capture descriptor and advances the last valid
+     * index, which is what keeps the controller fed. Must be called with the
+     * capture lock held.
+     */
+    private void rearmCaptureDescriptor(int index) {
+        final int samples = BufferDescriptorList.samplesForFrames(CAPTURE_FRAMES_PER_BUFFER);
+        captureBdl.setDescriptor(index, samples, true);
+        readBarrierIn();
+        outNabmByte(PCM_IN_LVI, index);
+        // The controller halts when it has filled everything up to LVI; a
+        // re-armed descriptor behind CIV is what lets it continue, and the
+        // run bit restarts it if it already stopped.
+        if (isDrainComplete(inNabmWord(PCM_IN_SR))) {
+            outNabmByte(PCM_IN_CR, CR_IOCE | CR_RPBM);
+        }
+    }
+
+    /**
+     * Stops the PCM in engine, leaving its register box reset.
+     */
+    private void stopCaptureEngine() {
+        outNabmByte(PCM_IN_CR, 0);
+        outNabmByte(PCM_IN_CR, CR_RR);
+    }
+
+    /**
+     * Resets the PCM in register box and waits for the hardware to leave
+     * the reset state.
+     */
+    private void resetCaptureEngine() {
+        outNabmByte(PCM_IN_CR, 0);
+        outNabmByte(PCM_IN_CR, CR_RR);
+        for (int i = 0; i < REG_BOX_RESET_TIMEOUT; i++) {
+            if ((inNabmByte(PCM_IN_CR) & CR_RR) == 0) {
+                break;
+            }
+            sleep(1);
+        }
+        if ((inNabmByte(PCM_IN_CR) & CR_RR) != 0) {
+            log.debug("AC'97 capture register box reset did not complete");
+        }
+    }
+
+    /**
+     * Recovers the capture engine if it has stalled. The reader only blocks
+     * when there is nothing buffered, so a recovery at that point loses no
+     * recorded audio: the whole ring is armed again and the controller is
+     * started.
+     *
+     * @return false when the recovery budget is used up and the caller
+     *         should give up on the recording
+     */
+    private boolean tryRecoverCapture() {
+        final long now = System.currentTimeMillis();
+        if (!hasStalled(captureLastProgress, now)) {
+            return true;
+        }
+        if (isRecoveryExhausted(captureStallRecoveries)) {
+            log.debug("AC'97 capture stalled " + (captureStallRecoveries + 1)
+                + " times without progress, giving up on the recording");
+            return false;
+        }
+        captureStallRecoveries++;
+        log.debug("AC'97 capture stalled, recovering the engine (attempt "
+            + captureStallRecoveries + ')');
+        recoverCapture();
+        return true;
+    }
+
+    /**
+     * Resets the PCM in engine and arms the whole ring again, restarting the
+     * controller. Must be called with the capture lock held.
+     */
+    private void recoverCapture() {
+        stopCaptureEngine();
+        resetCaptureEngine();
+        armCaptureRing();
+        startCaptureEngine();
+    }
+
+    /**
+     * Starts the PCM in controller. The ring must be armed first, because
+     * the controller starts filling descriptors as soon as it runs.
+     */
+    private void startCaptureEngine() {
+        readBarrierIn();
+        outNabmByte(PCM_IN_CR, CR_IOCE | CR_RPBM);
+    }
+
+    /**
+     * Selects the sample rate for both DAC and ADC.
+     */
+    private void selectSampleRate(int rate) {
+        if (rate <= 0) {
+            throw new IllegalArgumentException("Invalid sample rate " + rate);
+        }
+        boolean supported = false;
+        for (int r : SAMPLE_RATES) {
+            if (r == rate) {
+                supported = true;
+                break;
+            }
+        }
+        if (!supported) {
+            throw new IllegalArgumentException("Unsupported sample rate " + rate);
+        }
+        if ((rate != SAMPLE_RATE_48000) && !variableRate) {
+            throw new IllegalArgumentException(
+                "Codec has no variable rate audio support");
+        }
+        this.sampleRate = rate;
+        if (variableRate) {
+            // Variable rate is enabled in the extended audio control
+            // register, after which every rate register is writable.
+            outNam(NAM_EXTENDED_AUDIO_STATUS_CTRL, NAM_EAC_VRA);
+        }
+        outNam(NAM_PCM_FRONT_DAC_RATE, rate);
+        // The ADC rate register only matters on codecs with variable rate
+        // capture; on a fixed rate codec the write is ignored.
+        outNam(NAM_PCM_LR_ADC_RATE, rate);
+    }
+
     public final void close() {
         synchronized (playbackLock) {
             if (playing) {
@@ -550,10 +1197,15 @@ public final class AC97Core implements AC97Constants, IRQHandler {
             stopEngine();
             playing = false;
         }
+        if (captureBdl != null) {
+            captureBdl.release();
+            captureBdl = null;
+        }
         if (bdl != null) {
             bdl.release();
             bdl = null;
         }
+
         if (nabm != null) {
             nabm.release();
             nabm = null;
@@ -576,26 +1228,41 @@ public final class AC97Core implements AC97Constants, IRQHandler {
      */
     public void handleInterrupt(int irq) {
         final int status = inNabmWord(PCM_OUT_SR);
-        if ((status & SR_INT_MASK) == 0) {
-            // Shared interrupt line, not raised by us.
-            return;
-        }
-        // Acknowledge; these status bits are write 1 to clear.
-        outNabmWord(PCM_OUT_SR, SR_INT_MASK);
-        // The playback interrupt is latched in the global status too.
-        outNabmDword(GLOB_STA, inNabmDword(GLOB_STA) & GLOB_STA_POINT);
+        if ((status & SR_INT_MASK) != 0) {
+            // Acknowledge; these status bits are write 1 to clear.
+            outNabmWord(PCM_OUT_SR, SR_INT_MASK);
+            // The playback interrupt is latched in the global status too.
+            outNabmDword(GLOB_STA, inNabmDword(GLOB_STA) & GLOB_STA_POINT);
 
-        if ((status & SR_FIFOE) != 0) {
-            log.debug("AC'97 FIFO error");
-        }
-        if ((status & SR_LVBCI) != 0) {
-            log.debug("AC'97 last valid buffer completed");
+            if ((status & SR_FIFOE) != 0) {
+                log.debug("AC'97 FIFO error");
+            }
+            if ((status & SR_LVBCI) != 0) {
+                log.debug("AC'97 last valid buffer completed");
+            }
+
+            synchronized (playbackLock) {
+                currentIndex = maskEngineIndex(inNabmByte(PCM_OUT_CIV));
+                noteControllerProgress();
+                playbackLock.notifyAll();
+            }
         }
 
-        synchronized (playbackLock) {
-            currentIndex = maskEngineIndex(inNabmByte(PCM_OUT_CIV));
-            noteControllerProgress();
-            playbackLock.notifyAll();
+        // The capture engine raises its own interrupt on the same line.
+        final int inStatus = inNabmWord(PCM_IN_SR);
+        if ((inStatus & SR_INT_MASK) != 0) {
+            outNabmWord(PCM_IN_SR, SR_INT_MASK);
+            outNabmDword(GLOB_STA, inNabmDword(GLOB_STA) & GLOB_STA_PIINT);
+            synchronized (captureLock) {
+                if (captureOpen) {
+                    captureCurrentIndex = maskEngineIndex(inNabmByte(PCM_IN_CIV));
+                    // Progress from the controller is what clears the
+                    // recovery budget, exactly as for playback.
+                    captureStallRecoveries = 0;
+                    captureLastProgress = System.currentTimeMillis();
+                    captureLock.notifyAll();
+                }
+            }
         }
     }
 
@@ -714,6 +1381,36 @@ public final class AC97Core implements AC97Constants, IRQHandler {
         final int id2 = inNam(NAM_VENDOR_ID2);
         log.info("AC'97 codec " + NumberUtils.hex(id1, 4) + ":"
             + NumberUtils.hex(id2, 4) + " VRA=" + variableRate);
+    }
+
+    /**
+     * Reads the sample size and channel capability of the PCM out engine from
+     * the global status register.
+     */
+    private void readCapabilities() {
+        final int sta = inNabmDword(GLOB_STA);
+        sample16_20 = ((sta & GLOB_STA_SAMPLE_16_20) != 0);
+        final int chanBits = (sta & GLOB_STA_MULTICHAN_CAP) >> 20;
+        switch (chanBits) {
+            case 0x00:
+                maxChannels = 2;
+                break;
+            case 0x01:
+                maxChannels = 4;
+                break;
+            case 0x02:
+                maxChannels = 6;
+                break;
+            default:
+                // A reserved capability is treated as unknown, so only the
+                // format every codec has is offered.
+                maxChannels = 2;
+                break;
+        }
+        if (sample16_20 || (maxChannels > 2)) {
+            log.debug("AC'97 speaker capability: " + maxChannels
+                + " channels, 16/20 bit=" + sample16_20);
+        }
     }
 
     /**
@@ -859,6 +1556,43 @@ public final class AC97Core implements AC97Constants, IRQHandler {
     }
 
     /**
+     * Validates a record select value.
+     * <p>
+     * The register has a 7 bit mux setting per channel: the right channel in
+     * bits 6:0 and the left channel in bits 14:8. This driver records the
+     * same source into both channels, so the two fields must be equal, which
+     * is why the accepted values are the duplicated source codes like
+     * RECORD_SELECT_MIC (0x0000) and RECORD_SELECT_LINE (0x0404).
+     *
+     * @param select the record select value
+     * @throws IllegalArgumentException if it is not a duplicated source
+     */
+    public static void validateRecordSource(int select) {
+        if ((select & 0xFFFF) != select) {
+            throw new IllegalArgumentException("Invalid record source 0x"
+                + Integer.toHexString(select));
+        }
+        if ((select & 0xFF) != ((select >> 8) & 0xFF)) {
+            throw new IllegalArgumentException(
+                "Record source must be the same for both channels (0x"
+                    + Integer.toHexString(select) + ')');
+        }
+    }
+
+    /**
+     * Gets the number of descriptors the controller has filled and the
+     * consumer has not read yet.
+     *
+     * @param currentIndex   current value of PCM_IN_CIV
+     * @param lastHandledIndex index of the descriptor being read
+     * @param entryCount     number of descriptors in the ring
+     */
+    public static int completedCaptureCount(int currentIndex,
+        int lastHandledIndex, int entryCount) {
+        return ((currentIndex - lastHandledIndex) + entryCount) % entryCount;
+    }
+
+    /**
      * Should the DMA engine be (re)started after a descriptor has been
      * queued? The engine is only started once a few descriptors are in
      * flight, so that a slow producer cannot make it run out of data right
@@ -903,6 +1637,15 @@ public final class AC97Core implements AC97Constants, IRQHandler {
      */
     private void readBarrier() {
         inNabmByte(PCM_OUT_CIV);
+    }
+
+    /**
+     * The same ordering guarantee for the PCM in engine: the descriptor and
+     * sample buffer stores of the capture ring must be visible before the
+     * last valid index is advanced to publish them.
+     */
+    private void readBarrierIn() {
+        inNabmByte(PCM_IN_CIV);
     }
 
     /**

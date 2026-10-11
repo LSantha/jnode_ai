@@ -364,8 +364,28 @@ public final class BufferDescriptorList implements AC97Constants {
      * @param length   number of bytes to copy
      */
     public final void copyFromBuffer(int index, byte[] dst, int dstOfs, int length) {
+        copyFromBuffer(index, 0, dst, dstOfs, length);
+    }
+
+    /**
+     * Copy part of the raw PCM data of a sample buffer. Partially consumed
+     * buffers happen when a consumer reads less than one descriptor.
+     *
+     * @param index    index of the descriptor
+     * @param srcOfs   offset in the sample buffer
+     * @param dst      destination array
+     * @param dstOfs   offset in the destination array
+     * @param length   number of bytes to copy
+     */
+    public final void copyFromBuffer(int index, int srcOfs, byte[] dst,
+        int dstOfs, int length) {
         testIndex(index);
-        buffers[index].getBytes(0, dst, dstOfs, length);
+        final int max = framesPerBuffer * PCM_FRAME_SIZE - srcOfs;
+        if ((length < 0) || (length > max)) {
+            throw new IllegalArgumentException("Invalid length " + length
+                + " (max " + max + ')');
+        }
+        buffers[index].getBytes(srcOfs, dst, dstOfs, length);
     }
 
     /**

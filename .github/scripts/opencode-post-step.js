@@ -12,35 +12,19 @@
 
 'use strict';
 
+const {
+  isRefusalComment,
+  isNeedsInfoComment,
+  isTriageComment,
+  isTriageClearComment,
+  isTriggerComment
+} = require('./report-signals.js');
+
 const AGENT_COMPLETION_RE = /^agent\/(done|investigated|skip|needs-info|blocked|failed)$/;
 const CLOSE_KINDS = ['kind/investigate', 'kind/question'];
 
 function isPRContext(context) {
   return !!(context.payload.issue && context.payload.issue.pull_request);
-}
-
-function isRefusalComment(body) {
-  if (!body) return false;
-  return /^\s*##\s*(?:🤖\s*)?Refusal\b/im.test(body);
-}
-
-function isNeedsInfoComment(body) {
-  if (!body) return false;
-  return /needs more info from reporter|needs the following|suggested next:\s*needs-info/i.test(body);
-}
-
-function isTriageComment(body) {
-  if (!body) return false;
-  return /## .*Triage/i.test(body);
-}
-
-function isTriageClearComment(body) {
-  return isTriageComment(body) && !isNeedsInfoComment(body) && !isRefusalComment(body);
-}
-
-function isTriggerComment(body) {
-  if (!body) return false;
-  return /(^|\s)\/(oc|run|orchestrate)(\s|$)/.test(body);
 }
 
 function isDuplicateSignal(body) {

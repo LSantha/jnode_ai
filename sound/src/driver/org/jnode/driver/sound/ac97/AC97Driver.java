@@ -79,8 +79,8 @@ public class AC97Driver extends Driver implements AC97API, AC97Constants {
         final PCIDevice pciDev = (PCIDevice) device;
         final int vendor = pciDev.getConfig().getVendorID();
         final int deviceId = pciDev.getConfig().getDeviceID();
-        if ((vendor != PCI_VENDOR_ID_INTEL) || (deviceId != PCI_DEVICE_ID_ICH_AC97)) {
-            throw new DriverException("Not an Intel ICH AC'97 controller: "
+        if (!AC97Core.isSupportedDevice(vendor, deviceId)) {
+            throw new DriverException("Not a supported AC'97 controller: "
                 + Integer.toHexString(vendor) + ':' + Integer.toHexString(deviceId));
         }
     }
@@ -192,5 +192,178 @@ public class AC97Driver extends Driver implements AC97API, AC97Constants {
             throw new IllegalStateException("AC'97 device is not started");
         }
         c.drain();
+    }
+
+    public void openCapture(int sampleRate) {
+        final AC97Core c = core;
+        if (c == null) {
+            throw new IllegalStateException("AC'97 device is not started");
+        }
+        c.openCapture(sampleRate);
+    }
+
+    public void closeCapture() {
+        final AC97Core c = core;
+        if (c != null) {
+            c.closeCapture();
+        }
+    }
+
+    public boolean isCaptureOpen() {
+        final AC97Core c = core;
+        return (c != null) && c.isCaptureOpen();
+    }
+
+    public int readCapture(byte[] pcm, int offset, int length)
+        throws InterruptedException, TimeoutException {
+        final AC97Core c = core;
+        if (c == null) {
+            throw new IllegalStateException("AC'97 device is not started");
+        }
+        return c.readCapture(pcm, offset, length);
+    }
+
+    public int getCapturedBuffers() {
+        final AC97Core c = core;
+        if (c == null) {
+            return 0;
+        }
+        return c.getCapturedBuffers();
+    }
+
+    public void setRecordSource(int select, int gainSteps) {
+        final AC97Core c = core;
+        if (c == null) {
+            throw new IllegalStateException("AC'97 device is not started");
+        }
+        c.setRecordSource(select, gainSteps);
+    }
+
+    public MixerVolume getMasterVolume() {
+        final AC97Core c = core;
+        if (c == null) {
+            throw new IllegalStateException("AC'97 device is not started");
+        }
+        return c.getMasterVolume();
+    }
+
+    public void setMasterVolume(MixerVolume volume) {
+        final AC97Core c = core;
+        if (c == null) {
+            throw new IllegalStateException("AC'97 device is not started");
+        }
+        c.setMasterVolume(volume);
+    }
+
+    public MixerVolume getPcmVolume() {
+        final AC97Core c = core;
+        if (c == null) {
+            throw new IllegalStateException("AC'97 device is not started");
+        }
+        return c.getPcmVolume();
+    }
+
+    public void setPcmVolume(MixerVolume volume) {
+        final AC97Core c = core;
+        if (c == null) {
+            throw new IllegalStateException("AC'97 device is not started");
+        }
+        c.setPcmVolume(volume);
+    }
+
+    public MixerVolume getHeadphoneVolume() {
+        final AC97Core c = core;
+        if (c == null) {
+            throw new IllegalStateException("AC'97 device is not started");
+        }
+        return c.getHeadphoneVolume();
+    }
+
+    public void setHeadphoneVolume(MixerVolume volume) {
+        final AC97Core c = core;
+        if (c == null) {
+            throw new IllegalStateException("AC'97 device is not started");
+        }
+        c.setHeadphoneVolume(volume);
+    }
+
+    public PcmFormat getSpeakerFormat() {
+        final AC97Core c = core;
+        if (c == null) {
+            throw new IllegalStateException("AC'97 device is not started");
+        }
+        return c.getSpeakerFormat();
+    }
+
+    public void setSpeakerFormat(PcmFormat format) {
+        final AC97Core c = core;
+        if (c == null) {
+            throw new IllegalStateException("AC'97 device is not started");
+        }
+        c.setSpeakerFormat(format);
+    }
+
+    public int readCodecRegister(int index) {
+        final AC97Core c = core;
+        if (c == null) {
+            throw new IllegalStateException("AC'97 device is not started");
+        }
+        return c.readCodecRegister(index);
+    }
+
+    public void writeCodecRegister(int index, int value) {
+        final AC97Core c = core;
+        if (c == null) {
+            throw new IllegalStateException("AC'97 device is not started");
+        }
+        c.writeCodecRegister(index, value);
+    }
+
+    public int getCodecId() {
+        final AC97Core c = core;
+        if (c == null) {
+            throw new IllegalStateException("AC'97 device is not started");
+        }
+        return c.getCodecId();
+    }
+
+    public int getPlaybackBufferSize() {
+        final AC97Core c = core;
+        if (c == null) {
+            throw new IllegalStateException("AC'97 device is not started");
+        }
+        return c.getPlaybackBufferSize();
+    }
+
+    public int getPlaybackLatencyMs() {
+        final AC97Core c = core;
+        if (c == null) {
+            throw new IllegalStateException("AC'97 device is not started");
+        }
+        return c.getPlaybackLatencyMs();
+    }
+
+    public void setPlaybackBufferSize(int framesPerBuffer) {
+        final AC97Core c = core;
+        if (c == null) {
+            throw new IllegalStateException("AC'97 device is not started");
+        }
+        c.setPlaybackBufferSize(framesPerBuffer);
+    }
+
+    public int getMicGainSteps() {
+        final AC97Core c = core;
+        if (c == null) {
+            throw new IllegalStateException("AC'97 device is not started");
+        }
+        return c.getMicGainSteps();
+    }
+
+    public void setMicGainSteps(int steps) {
+        final AC97Core c = core;
+        if (c == null) {
+            throw new IllegalStateException("AC'97 device is not started");
+        }
+        c.setMicGainSteps(steps);
     }
 }

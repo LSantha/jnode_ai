@@ -20,6 +20,8 @@
 'use strict';
 
 const createHelpers = require("./orchestrator-helpers.js");
+const MAX_HISTORY_ENTRIES = createHelpers.MAX_HISTORY_ENTRIES;
+const { isRefusalComment, isNeedsInfoComment, isTriageComment, isTriggerComment } = require("./report-signals.js");
 
 const STATE_RE = /<!-- TICKET_RUNNER_STATE:\s*([\s\S]*?)\s*-->/;
 const ORCHESTRATOR_STATE_RE = /<!-- ORCHESTRATOR_STATE:/;
@@ -39,13 +41,20 @@ function initState(maxTurns) {
     max_turns: typeof maxTurns === "number" && maxTurns > 0 ? maxTurns : 3,
     retries: 0,
     review_in_progress: false,
+    review_pending_ci: false,
     started: new Date().toISOString(),
     history: []
   };
 }
 
 function serializeState(state) {
-  return "<!-- TICKET_RUNNER_STATE:\n" + JSON.stringify(state, null, 2) + "\n-->";
+  var capped = Object.assign({}, state);
+  // Only rewrite an existing history array: a state without one round-trips
+  // unchanged, and adding an empty array would break deep-equality checks.
+  if (Array.isArray(state.history)) {
+    capped.history = state.history.slice(-MAX_HISTORY_ENTRIES);
+  }
+  return "<!-- TICKET_RUNNER_STATE:\n" + JSON.stringify(capped, null, 2) + "\n-->";
 }
 
 function replaceOrAppendState(body, state) {
@@ -114,13 +123,9 @@ module.exports = async ({ github, context, core }) => {
   const ACTIONABLE_KINDS = ["kind/bug", "kind/feature", "kind/chore", "kind/wiki", "kind/test"];
   const AUTO_BLOCKING_LABELS = ["agent/done", "agent/investigated", "agent/skip", "agent/blocked",
     "agent/needs-info", "agent/duplicate", "agent/failed", "agent/in-progress"];
-  const VAGUE_RE = /needs more info from reporter|needs the following|suggested next:\s*needs-info/i;
-  const TRIAGE_RE = /## .*Triage/i;
-  const REFUSAL_RE = /refusal|out of scope/i;
   // A comment carrying a slash-command is a TRIGGER, never a REPORT.
   // Triggers routinely quote report strings (e.g. "## Triage", "Verdict: ..."),
   // so every report scan must skip them or it matches its own trigger.
-  const TRIGGER_RE = /(^|\s)\/(oc|run|orchestrate)(\s|$)/;
   const TRIAGE_REQUEST_RE = /(^|\s)\/oc\s+triage(?:\s|$)/i;
 
   // ---- Determine issue number depending on event type ----
@@ -225,10 +230,37 @@ module.exports = async ({ github, context, core }) => {
         });
         return;
       }
+      // /run is an escape hatch for a stall, not an override of the CI gate.
+      // Re-requesting review on a red-CI PR would post the one prompt that the
+      // human-approval re-check later refuses to act on, and leaving
+      // review_in_progress false here would double-prompt on the next green CI
+      // wakeup. Park instead; the wakeup posts the prompt on green.
+      if (state.phase === "REVIEW" && state.pr && !(await h.isCIGreen(state.pr))) {
+        await updateIssueState(issueNumber, Object.assign({}, state, {
+          review_in_progress: false,
+          review_pending_ci: true,
+          history: state.history.concat([{
+            event: "review_deferred_ci", reason: "manual run while CI not green",
+            timestamp: new Date().toISOString()
+          }])
+        }));
+        await github.rest.issues.createComment({
+          owner, repo, issue_number: issueNumber,
+          body: "Review is waiting for Java CI to go green on PR #" + state.pr + ". Not re-requesting review yet; the runner posts it as soon as CI completes."
+        });
+        core.info("Ticket runner: #" + issueNumber + " /run deferred: PR #" + state.pr + " CI not green.");
+        return;
+      }
       core.info("Ticket runner: re-triggering phase " + state.phase + " for #" + issueNumber);
-      var target = state.pr || issueNumber;
-      var msg = phaseMessage(state);
-      await h.triggerTask(target, msg);
+      if (state.phase === "REVIEW") {
+        // The red-CI gate above has already returned, so CI is green here.
+        await updateIssueState(issueNumber, state);
+        await requestReview(state, state.pr);
+        await updateIssueState(issueNumber, state);
+      } else {
+        var msg = phaseMessage(state);
+        await h.triggerTask(state.pr || issueNumber, msg);
+      }
     }
   }
 
@@ -312,10 +344,10 @@ module.exports = async ({ github, context, core }) => {
     for (var i = 0; i < list.length; i++) {
       var b = (list[i] && list[i].body) || "";
       if (TRIAGE_REQUEST_RE.test(b)) requested = true;
-      if (TRIGGER_RE.test(b)) continue;
-      if (TRIAGE_RE.test(b)) {
+      if (isTriggerComment(b)) continue;
+      if (isTriageComment(b)) {
         count++;
-        clear = !VAGUE_RE.test(b) && !REFUSAL_RE.test(b);
+        clear = !isNeedsInfoComment(b) && !isRefusalComment(b);
       }
     }
     return { present: count > 0, clear: clear, count: count, requested: requested };
@@ -435,11 +467,20 @@ module.exports = async ({ github, context, core }) => {
       if (!st || st.phase === "DONE" || st.phase === "FAILED") continue;
       if (conclusion === "success") {
         if (st.phase !== "REVIEW" || st.review_in_progress) continue;
-        st.review_in_progress = true;
-        st.history.push({ event: "ci_green_rereview", timestamp: new Date().toISOString() });
-        await updateIssueState(found.issueNumber, st);
-        await h.triggerTask(prNumber, h.getReviewPrompt());
-        core.info("Ticket runner: CI green, re-reviewing PR #" + prNumber + " for #" + found.issueNumber);
+        // Set both flags only after the trigger succeeds. On the DEV path this
+        // wakeup is the ONLY one -- no /oc review was ever posted, so no
+        // workflow_run completion will arrive to clear the flags. Persisting
+        // them before triggerTask and having the post throw would skip every
+        // subsequent green CI, stranding the ticket in REVIEW with no prompt.
+        try {
+          st.history.push({ event: "ci_green_rereview", timestamp: new Date().toISOString() });
+          await requestReview(st, prNumber);
+          await updateIssueState(found.issueNumber, st);
+          core.info("Ticket runner: CI green, re-reviewing PR #" + prNumber + " for #" + found.issueNumber);
+        } catch (err) {
+          core.warning("Ticket runner: re-review trigger failed for PR #" + prNumber + ": " + err.message +
+            ". review_in_progress left false so the next green CI retries.");
+        }
       } else {
         if (st.phase !== "REVIEW" && st.phase !== "FEEDBACK") continue;
         await postCiFixOnce(prNumber, sha.slice(0, 7), runUrl);
@@ -550,6 +591,24 @@ module.exports = async ({ github, context, core }) => {
     core.info("Ticket runner: human review on PR #" + prNumber + " for issue #" + found.issueNumber + ": " + reviewState);
 
     if (reviewState === "approved") {
+      // A human approval is an instruction to merge, not an override of CI.
+      // Re-check before merging: CI may have gone red since the merge gate last
+      // ran, so this one re-checks before merging. Deferring is cheap and the
+      // Java CI wakeup already re-enters REVIEW on green.
+      if (!(await h.isCIGreen(prNumber))) {
+        state.phase = "REVIEW";
+        state.review_in_progress = false;
+        state.review_pending_ci = true;
+        state.retries = 0;
+        state.history.push({ event: "human_approved_ci_red", timestamp: new Date().toISOString() });
+        await updateIssueState(found.issueNumber, state);
+        await github.rest.issues.createComment({
+          owner, repo, issue_number: prNumber,
+          body: "Human approval recorded, but Java CI is not green yet. Not merging. Will re-check and merge when CI completes."
+        });
+        core.info("Ticket runner: human approved PR #" + prNumber + " but CI is red; deferring merge.");
+        return;
+      }
       state.phase = "MERGE";
       state.history.push({ event: "human_approved", timestamp: new Date().toISOString() });
       try {
@@ -632,17 +691,53 @@ module.exports = async ({ github, context, core }) => {
     return null;
   }
 
+  /**
+   * Post the review prompt and mark the ticket as under review.
+   *
+   * The two flags exist to tell three states apart, so they must move together:
+   * a review was requested (review_in_progress true), a review is waiting on CI
+   * and no prompt exists (review_pending_ci true), and neither. Every prompt
+   * site goes through here - four near-copies of the same two lines is what let
+   * them drift apart in review rounds 3 and 5. The flags are set only after the
+   * post succeeds, so a failed prompt leaves them both false and the Java CI
+   * wakeup can retry instead of skipping forever.
+   */
+  async function requestReview(state, prNumber) {
+    await h.triggerTask(prNumber, h.getReviewPrompt());
+    state.review_in_progress = true;
+    state.review_pending_ci = false;
+    state.history.push({ event: "review_requested", pr: prNumber, timestamp: new Date().toISOString() });
+  }
+
+  /** Park a ticket whose review cannot be requested yet because CI is not green. */
+  async function parkForCI(issueNumber, state, prNumber, reason) {
+    state.review_in_progress = false;
+    // Parked means no prompt was posted. handleReviewCompletion reads this flag
+    // to tell "never asked" from "asked, no answer".
+    state.review_pending_ci = true;
+    state.history.push({ event: "review_pending_ci", reason: reason, timestamp: new Date().toISOString() });
+    await updateIssueState(issueNumber, state);
+    core.info("Ticket runner: #" + issueNumber + " parked on PR #" + prNumber + ", review waits for CI: " + reason);
+  }
+
   async function handleDevCompletion(issueNumber, state, phaseFailed) {
     var prNumber = await findPRForIssueWithComment(issueNumber);
     if (prNumber) {
       state.pr = prNumber;
       state.phase = "REVIEW";
       state.retries = 0;
-      state.review_in_progress = true;
       state.history.push({ event: "dev_done", pr: prNumber, timestamp: new Date().toISOString() });
-      await updateIssueState(issueNumber, state);
-      await h.triggerTask(prNumber, h.getReviewPrompt());
-      core.info("Ticket runner: #" + issueNumber + " -> REVIEW on PR #" + prNumber);
+      var ciGreen = await h.isCIGreen(prNumber);
+      if (ciGreen) {
+        await updateIssueState(issueNumber, state);
+        await requestReview(state, prNumber);
+        await updateIssueState(issueNumber, state);
+        core.info("Ticket runner: #" + issueNumber + " -> REVIEW on PR #" + prNumber);
+      } else {
+        await parkForCI(issueNumber, state, prNumber, "CI not green after DEV");
+        core.info("Ticket runner: #" + issueNumber + " -> REVIEW on PR #" + prNumber
+          + ", review waits for CI (Java CI wakeup will request it)");
+      }
       return;
     }
 
@@ -717,33 +812,77 @@ module.exports = async ({ github, context, core }) => {
           body: "Agent review passed. Awaiting human approval via native GitHub PR Review UI."
         });
         core.info("Ticket runner: #" + issueNumber + " -> HUMAN_REVIEW");
-      } else if (await h.isDiffSafe(state.pr) && await h.isCIGreen(state.pr)) {
-        state.phase = "MERGE";
-        state.history.push({ event: "review_approved", next: "MERGE", timestamp: new Date().toISOString() });
-        try {
-          await h.mergePR(state.pr);
-          state.phase = "DONE";
-          state.history.push({ event: "merged", pr: state.pr, timestamp: new Date().toISOString() });
-          await updateIssueState(issueNumber, state);
-          await closeIssueWithLabel(issueNumber);
-          core.info("Ticket runner: #" + issueNumber + " merged and closed.");
-        } catch (err) {
-          core.error("Failed to merge PR #" + state.pr + ": " + err.message);
-          state.history.push({ event: "merge_failed", error: err.message, timestamp: new Date().toISOString() });
+      } else {
+        // Ordering matters: CI first, then the diff. A red-CI PR with a big
+        // diff must not reach a human, because human approval only re-checks CI
+        // (handlePullRequestReview) and a deferred merge on red CI has a wakeup
+        // while a queue in HUMAN_REVIEW does not. Deferring on red CI is
+        // strictly safer and the wakeup provably fires.
+        var diffSafe = await h.isDiffSafe(state.pr);
+        var ciGreen = await h.isCIGreen(state.pr);
+        var forbidden = diffSafe ? false : await h.touchesForbiddenPath(state.pr);
+
+        if (!ciGreen) {
+          // Do NOT prompt. The reviewer could approve a PR whose checks have
+          // not passed, and a human approval only re-checks CI. Park with
+          // review_pending_ci set; the
+          // Java CI success wakeup clears it and posts the prompt on green.
+          state.review_pending_ci = true;
+          state.history.push({ event: "merge_deferred", reason: "ci_not_green", timestamp: new Date().toISOString() });
           await updateIssueState(issueNumber, state);
           await github.rest.issues.createComment({
             owner, repo, issue_number: state.pr,
-            body: "\u26a0\ufe0f Ticket runner: failed to auto-merge PR #" + state.pr + ": " + err.message
+            body: "Agent review passed but auto-merge deferred: Java CI is not green yet. Will re-check when CI completes."
           });
+          core.info("Ticket runner: #" + issueNumber + " merge deferred (CI not green), staying in REVIEW");
+        } else if (forbidden) {
+          // Hard wall, not a wait. The diff touches a path auto-merge may never
+          // touch (ASM, build config, plugin lists), so no amount of waiting or
+          // human approval makes it mergeable by this runner. Route to a human
+          // rather than looping, and say which wall was hit.
+          state.phase = "HUMAN_REVIEW";
+          state.retries = 0;
+          state.history.push({ event: "merge_blocked_forbidden_path", timestamp: new Date().toISOString() });
+          await updateIssueState(issueNumber, state);
+          await github.rest.issues.createComment({
+            owner, repo, issue_number: state.pr,
+            body: "Agent review passed but the diff touches a forbidden path (core/src/native/x86, jnode.properties, all/build.xml, or all/conf). This runner will not auto-merge it. Routing to HUMAN_REVIEW - if this must land, merge it yourself via the GitHub PR Review UI."
+          });
+          core.info("Ticket runner: #" + issueNumber + " -> HUMAN_REVIEW (forbidden path touched)");
+        } else if (!diffSafe) {
+          // Over the size budget. This is also a wait-free condition -- the
+          // budget only shrinks if someone pushes, so there is no wakeup to
+          // wait for. Say so instead of promising a CI re-check that will never
+          // help.
+          state.phase = "HUMAN_REVIEW";
+          state.retries = 0;
+          state.history.push({ event: "merge_blocked_diff_unsafe", timestamp: new Date().toISOString() });
+          await updateIssueState(issueNumber, state);
+          await github.rest.issues.createComment({
+            owner, repo, issue_number: state.pr,
+            body: "Agent review passed but the diff exceeds the auto-merge safety budget (isDiffSafe). Routing to HUMAN_REVIEW - approve via the GitHub PR Review UI to merge."
+          });
+          core.info("Ticket runner: #" + issueNumber + " -> HUMAN_REVIEW (diff over auto-merge budget)");
+        } else {
+          state.phase = "MERGE";
+          state.history.push({ event: "review_approved", next: "MERGE", timestamp: new Date().toISOString() });
+          try {
+            await h.mergePR(state.pr);
+            state.phase = "DONE";
+            state.history.push({ event: "merged", pr: state.pr, timestamp: new Date().toISOString() });
+            await updateIssueState(issueNumber, state);
+            await closeIssueWithLabel(issueNumber);
+            core.info("Ticket runner: #" + issueNumber + " merged and closed.");
+          } catch (err) {
+            core.error("Failed to merge PR #" + state.pr + ": " + err.message);
+            state.history.push({ event: "merge_failed", error: err.message, timestamp: new Date().toISOString() });
+            await updateIssueState(issueNumber, state);
+            await github.rest.issues.createComment({
+              owner, repo, issue_number: state.pr,
+              body: "⚠️ Ticket runner: failed to auto-merge PR #" + state.pr + ": " + err.message
+            });
+          }
         }
-      } else {
-        state.history.push({ event: "merge_deferred", timestamp: new Date().toISOString() });
-        await updateIssueState(issueNumber, state);
-        await github.rest.issues.createComment({
-          owner, repo, issue_number: state.pr,
-          body: "Agent review passed but auto-merge deferred (diff not safe or CI not green). Will retry when CI completes."
-        });
-        core.info("Ticket runner: #" + issueNumber + " merge deferred, staying in REVIEW");
       }
     } else if (verdict === "request-changes") {
       state.turn += 1;
@@ -766,9 +905,26 @@ module.exports = async ({ github, context, core }) => {
         core.info("Ticket runner: #" + issueNumber + " -> FEEDBACK (turn " + state.turn + ")");
       }
     } else {
-      // No verdict found -- retry
-      core.warning("Ticket runner: no verdict found for PR #" + state.pr + ". Retrying review.");
-      await retryOrFail(issueNumber, state);
+      // No verdict found. Two different states lead here, and only one of them
+      // should re-prompt.
+      //
+      // A prompt WAS posted (review_pending_ci false): the reviewer has not
+      // answered yet, so re-prompting after a stray completion is correct.
+      //
+      // No prompt was posted (review_pending_ci true) and CI is still red: we
+      // parked waiting for CI and never asked anyone, so re-prompting would post
+      // /oc review on a red-CI PR -- the exact race the CI gate exists to
+      // prevent. Do nothing; the Java CI success wakeup clears the parked flag
+      // and posts the prompt on green. If CI has gone green meanwhile, fall
+      // through to retryOrFail, which posts it through requestReview and clears
+      // the flag.
+      if (state.review_pending_ci && !(await h.isCIGreen(state.pr))) {
+        core.info("Ticket runner: #" + issueNumber + " review parked pending CI. Not re-prompting on red CI.");
+        await updateIssueState(issueNumber, state);
+      } else {
+        core.warning("Ticket runner: no verdict found for PR #" + state.pr + ". Retrying review.");
+        await retryOrFail(issueNumber, state);
+      }
     }
   }
 
@@ -795,10 +951,15 @@ module.exports = async ({ github, context, core }) => {
     // After feedback, go back to REVIEW
     state.phase = "REVIEW";
     state.retries = 0;
-    state.review_in_progress = true;
     state.history.push({ event: "feedback_done", timestamp: new Date().toISOString() });
+    var ciGreen = await h.isCIGreen(state.pr);
+    if (!ciGreen) {
+      await parkForCI(issueNumber, state, state.pr, "CI not green after feedback");
+      return;
+    }
     await updateIssueState(issueNumber, state);
-    await h.triggerTask(state.pr, h.getReviewPrompt());
+    await requestReview(state, state.pr);
+    await updateIssueState(issueNumber, state);
     core.info("Ticket runner: #" + issueNumber + " -> REVIEW (after feedback)");
   }
 
@@ -807,6 +968,15 @@ module.exports = async ({ github, context, core }) => {
   // ================================================================
 
   async function retryOrFail(issueNumber, state) {
+    // A retry that posts nothing must not cost a retry, whichever caller arrives.
+    // handleReviewCompletion can get here via phaseFailed before it reaches its
+    // own parked-skip, and the increment below is what pushed a healthy parked
+    // ticket to agent/failed on the third stray. Hoisted above the increment so
+    // a defer is free regardless of caller.
+    if (state.phase === "REVIEW" && state.pr && !(await h.isCIGreen(state.pr))) {
+      await parkForCI(issueNumber, state, state.pr, "retry suppressed: CI not green");
+      return;
+    }
     state.retries += 1;
     state.history.push({ event: "retry", retries: state.retries, phase: state.phase, timestamp: new Date().toISOString() });
     if (state.retries >= 3) {
@@ -818,20 +988,30 @@ module.exports = async ({ github, context, core }) => {
       await applyLabel(issueNumber, "agent/failed");
       await github.rest.issues.createComment({
         owner, repo, issue_number: issueNumber,
-        body: "\u274c Ticket runner: phase " + failedPhase + " failed after 3 retries."
+        body: "❌ Ticket runner: phase " + failedPhase + " failed after 3 retries."
       });
     } else {
       var target = state.pr || issueNumber;
-      var msg = phaseMessage(state);
-      await updateIssueState(issueNumber, state);
-      await h.triggerTask(target, msg);
+      if (state.phase === "REVIEW") {
+        await updateIssueState(issueNumber, state);
+        await requestReview(state, target);
+        await updateIssueState(issueNumber, state);
+      } else {
+        var msg = phaseMessage(state);
+        await updateIssueState(issueNumber, state);
+        await h.triggerTask(target, msg);
+        core.info("Ticket runner: #" + issueNumber + " retrying (attempt " + (state.retries + 1) + "/3)");
+      }
       core.info("Ticket runner: #" + issueNumber + " retrying (attempt " + (state.retries + 1) + "/3)");
     }
   }
 
   function phaseMessage(state) {
+    // REVIEW deliberately has no branch. Both callers - the /run escape hatch
+    // and retryOrFail - gate on isCIGreen first and post through requestReview,
+    // so an ungated review prompt cannot be produced from here. Adding one
+    // would silently re-open the race this branch used to keep alive.
     if (state.phase === "FEEDBACK") return "/oc fix Address review feedback.";
-    if (state.phase === "REVIEW") return h.getReviewPrompt();
     return "/oc Please proceed with this task.";
   }
 
@@ -934,7 +1114,22 @@ module.exports = async ({ github, context, core }) => {
       await retryOrFail(issueNumber, st);
       return true;
     }
-    await h.triggerTask(found, h.getReviewPrompt());
+    var ciGreen = await h.isCIGreen(found);
+    if (!ciGreen) {
+      st.review_in_progress = false;
+      st.review_pending_ci = true;
+      st.history.push({ event: "review_pending_ci", timestamp: new Date().toISOString() });
+      try {
+        await github.rest.issues.update({ owner, repo, issue_number: issueNumber, body: replaceOrAppendStatus(body, st, issueNumber) });
+      } catch (_) { /* state already rebuilt above; wakeup will re-read */ }
+      core.info("Ticket runner: #" + issueNumber + " recovered -> REVIEW on PR #" + found
+        + ", review waits for CI (Java CI wakeup will request it)");
+      return true;
+    }
+    await requestReview(st, found);
+    try {
+      await github.rest.issues.update({ owner, repo, issue_number: issueNumber, body: replaceOrAppendStatus(body, st, issueNumber) });
+    } catch (_) { /* non-fatal: the wakeup re-reads the state from the body */ }
     core.info("Ticket runner: #" + issueNumber + " recovered -> REVIEW (requesting review of PR #"
       + found + ")");
     return true;

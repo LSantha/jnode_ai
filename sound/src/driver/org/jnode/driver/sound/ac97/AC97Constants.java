@@ -193,6 +193,12 @@ public interface AC97Constants extends PCIConstants {
     public static final int RECORD_GAIN_0DB = 0x0000;
 
     /**
+     * Mask of one channel of the record select register, which is a 3 bit
+     * source code per channel in bits 2:0 and bits 6:4.
+     */
+    public static final int RECORD_SELECT_CHANNEL_MASK = 0x07;
+
+    /**
      * First vendor identification register.
      */
     public static final int NAM_VENDOR_ID1 = 0x7C;
@@ -229,6 +235,27 @@ public interface AC97Constants extends PCIConstants {
      * Mute bit of a stereo volume register.
      */
     public static final int NAM_VOLUME_MUTE = 0x8000;
+
+    /**
+     * Highest attenuation step of a volume register: 31 x 1.5 dB. The
+     * registers are 5 bit per channel on the codecs this driver targets.
+     */
+    public static final int NAM_VOLUME_MAX_STEPS = 31;
+
+    /**
+     * Bit shift of the left channel of a stereo volume register.
+     */
+    public static final int NAM_VOLUME_LEFT_SHIFT = 8;
+
+    /**
+     * Bit shift of the right channel of a stereo volume register.
+     */
+    public static final int NAM_VOLUME_RIGHT_SHIFT = 0;
+
+    /**
+     * Mask of one channel of a stereo volume register.
+     */
+    public static final int NAM_VOLUME_MASK = 0x1F;
 
     /**
      * Volume of 0 dB (unmuted) for one channel. A stereo volume register is
@@ -475,6 +502,45 @@ public interface AC97Constants extends PCIConstants {
      * Capture (PCM in) interrupt status.
      */
     public static final int GLOB_STA_PIINT = 0x00000020;
+
+    /**
+     * Global status bit that reports 16 and 20 bit sample support (ICH4 and
+     * later, read-only). A controller without the bit cannot be switched to
+     * 20 bit samples.
+     */
+    public static final int GLOB_STA_SAMPLE_16_20 = 0x00400000;
+
+    /**
+     * Global status bits that report the channel capability of the PCM out
+     * engine (read-only): 0b00 for 2, 0b01 for 4 and 0b10 for 6 channels.
+     */
+    public static final int GLOB_STA_MULTICHAN_CAP = 0x00300000;
+
+    /**
+     * Global control bit that switches the PCM streams to 20 bit samples,
+     * which are then stored in the upper bits of 32 bit words.
+     */
+    public static final int GLOB_CNT_PCM_20BIT = 0x00400000;
+
+    /**
+     * Global control value that selects 4 output channels.
+     */
+    public static final int GLOB_CNT_PCM_4 = 0x00100000;
+
+    /**
+     * Global control value that selects 6 output channels.
+     */
+    public static final int GLOB_CNT_PCM_6 = 0x00200000;
+
+    /**
+     * Highest number of output channels the driver can play.
+     */
+    public static final int MAX_CHANNELS = 6;
+
+    /**
+     * Highest number of bits per sample the driver can play.
+     */
+    public static final int MAX_BITS_PER_SAMPLE = 20;
 
     /**
      * Codec access semaphore busy bit.
