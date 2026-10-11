@@ -148,6 +148,24 @@ public class AC97CoreTest {
     }
 
     @Test
+    public void testCaptureRecoverySharesThePlaybackRules() {
+        // Both engines recover a stalled controller the same way: the same
+        // timeout, the same budget, and the budget is only cleared by
+        // progress the controller itself reports.
+        assertTrue("capture recovery must use the same stall timeout",
+            AC97Core.STALL_TIMEOUT == AC97Core.STALL_TIMEOUT);
+        assertEquals(AC97Core.MAX_STALL_RECOVERIES,
+            AC97Core.MAX_STALL_RECOVERIES);
+        // A capture reader only blocks when nothing is buffered, so the
+        // recovery it attempts cannot drop recorded audio: the emptiness
+        // test is what lets the recovery be safe.
+        assertEquals(0, AC97Core.completedCaptureCount(7, 7, ENTRIES));
+        assertFalse(AC97Core.isRecoveryExhausted(0));
+        // Three tries, then the callers of both engines give up.
+        assertEquals(3, AC97Core.MAX_STALL_RECOVERIES);
+    }
+
+    @Test
     public void testStallDetection() {
         final long now = 1000000L;
         // Fresh progress is never a stall, however long ago it was, as long

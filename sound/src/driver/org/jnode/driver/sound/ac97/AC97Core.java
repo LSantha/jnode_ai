@@ -265,6 +265,12 @@ public final class AC97Core implements AC97Constants, IRQHandler {
     private long captureLastProgress;
 
     /**
+     * Number of capture stall recoveries since the controller last reported
+     * progress, bounded by MAX_STALL_RECOVERIES like the playback one.
+     */
+    private int captureStallRecoveries;
+
+    /**
      * Number of stereo frames queued through {@link #write} since the last
      * {@link #open}. Together with the frames still to be played it gives
      * the playback position.
@@ -616,6 +622,7 @@ public final class AC97Core implements AC97Constants, IRQHandler {
                 claimCaptureBuffers();
             }
             resetCaptureEngine();
+            captureStallRecoveries = 0;
             selectSampleRate(rate);
             // Default record path: the dedicated microphone input at 0 dB
             // gain. openCapture() overrides it for whatever the caller wants
@@ -625,8 +632,7 @@ public final class AC97Core implements AC97Constants, IRQHandler {
             captureOpen = true;
             // Start the controller. There is nothing to prebuffer like the
             // playback engine, because every descriptor is already armed.
-            readBarrierIn();
-            outNabmByte(PCM_IN_CR, CR_IOCE | CR_RPBM);
+            startCaptureEngine();
         }
     }
 
@@ -719,7 +725,10 @@ public final class AC97Core implements AC97Constants, IRQHandler {
                 final int completed = completedCaptureCount(captureCurrentIndex,
                     captureLastHandled, count);
                 if (completed == 0) {
-                    checkCaptureStalled();
+                    if (!tryRecoverCapture()) {
+                        throw new TimeoutException(
+                            "AC'97 capture engine stalled and did not recover");
+                    }
                     captureLock.wait(250);
                     continue;
                 }
@@ -829,10 +838,50 @@ public final class AC97Core implements AC97Constants, IRQHandler {
         }
     }
 
-    private void checkCaptureStalled() throws TimeoutException {
-        if (hasStalled(captureLastProgress, System.currentTimeMillis())) {
-            throw new TimeoutException("AC'97 capture engine stalled");
+    /**
+     * Recovers the capture engine if it has stalled. The reader only blocks
+     * when there is nothing buffered, so a recovery at that point loses no
+     * recorded audio: the whole ring is armed again and the controller is
+     * started.
+     *
+     * @return false when the recovery budget is used up and the caller
+     *         should give up on the recording
+     */
+    private boolean tryRecoverCapture() {
+        final long now = System.currentTimeMillis();
+        if (!hasStalled(captureLastProgress, now)) {
+            return true;
         }
+        if (isRecoveryExhausted(captureStallRecoveries)) {
+            log.debug("AC'97 capture stalled " + (captureStallRecoveries + 1)
+                + " times without progress, giving up on the recording");
+            return false;
+        }
+        captureStallRecoveries++;
+        log.debug("AC'97 capture stalled, recovering the engine (attempt "
+            + captureStallRecoveries + ')');
+        recoverCapture();
+        return true;
+    }
+
+    /**
+     * Resets the PCM in engine and arms the whole ring again, restarting the
+     * controller. Must be called with the capture lock held.
+     */
+    private void recoverCapture() {
+        stopCaptureEngine();
+        resetCaptureEngine();
+        armCaptureRing();
+        startCaptureEngine();
+    }
+
+    /**
+     * Starts the PCM in controller. The ring must be armed first, because
+     * the controller starts filling descriptors as soon as it runs.
+     */
+    private void startCaptureEngine() {
+        readBarrierIn();
+        outNabmByte(PCM_IN_CR, CR_IOCE | CR_RPBM);
     }
 
     /**
@@ -946,6 +995,9 @@ public final class AC97Core implements AC97Constants, IRQHandler {
             synchronized (captureLock) {
                 if (captureOpen) {
                     captureCurrentIndex = maskEngineIndex(inNabmByte(PCM_IN_CIV));
+                    // Progress from the controller is what clears the
+                    // recovery budget, exactly as for playback.
+                    captureStallRecoveries = 0;
                     captureLastProgress = System.currentTimeMillis();
                     captureLock.notifyAll();
                 }
