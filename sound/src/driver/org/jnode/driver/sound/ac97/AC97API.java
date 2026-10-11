@@ -234,4 +234,28 @@ public interface AC97API extends DeviceAPI {
      * @param format the new format
      */
     public void setSpeakerFormat(PcmFormat format);
+
+    /**
+     * Reads a codec (mixer) register.
+     *
+     * @param index the register index, 0..0x7E and even
+     * @return the 16 bit register value
+     */
+    public int readCodecRegister(int index);
+
+    /**
+     * Writes a codec (mixer) register. Writing the wrong register can silence
+     * the codec or break the link, so this is meant for manufacturer specific
+     * code and debugging.
+     *
+     * @param index the register index, 0..0x7E and even
+     * @param value the 16 bit register value
+     */
+    public void writeCodecRegister(int index, int value);
+
+    /**
+     * Gets the codec identity, the two vendor identification registers joined
+     * into one 32 bit value.
+     */
+    public int getCodecId();
 }

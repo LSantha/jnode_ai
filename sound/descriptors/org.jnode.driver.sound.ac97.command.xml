@@ -42,6 +42,7 @@
     <alias name="ac97capture" class="org.jnode.driver.sound.ac97.command.AC97CaptureCommand"/>
     <alias name="ac97wav" class="org.jnode.driver.sound.ac97.command.AC97WavCommand"/>
     <alias name="ac97volume" class="org.jnode.driver.sound.ac97.command.AC97VolumeCommand"/>
+    <alias name="ac97reg" class="org.jnode.driver.sound.ac97.command.AC97RegCommand"/>
   </extension>
 
   <extension point="org.jnode.security.permissions">
@@ -55,6 +56,13 @@
         <argument argLabel="frequency" description="tone frequency in Hz"/>
         <argument argLabel="duration" description="duration in milliseconds"/>
       </sequence>
+    </syntax>
+    <syntax alias="ac97reg">
+      <optionSet>
+        <option argLabel="get" shortName="g" longName="get" description="read a single register by index"/>
+        <option argLabel="set" shortName="s" longName="set" description="write a register by index"/>
+        <option argLabel="value" shortName="v" longName="value" description="the 16 bit value for --set"/>
+      </optionSet>
     </syntax>
     <syntax alias="ac97wav">
       <argument argLabel="file" description="the WAV file to play"/>

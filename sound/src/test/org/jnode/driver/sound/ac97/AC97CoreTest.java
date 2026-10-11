@@ -199,6 +199,40 @@ public class AC97CoreTest {
     }
 
     @Test
+    public void testCodecRegisterIndexValidation() {
+        // The registers are 16 bit wide and byte addressed, so only even
+        // indexes up to 0x7E exist.
+        for (int index : new int[] {0x00, 0x02, 0x26, 0x7C, 0x7E}) {
+            AC97Core.validateCodecRegisterIndex(index);
+        }
+        for (int bad : new int[] {-1, 0x01, 0x7F, 0x80, 0xFF, 0x100}) {
+            try {
+                AC97Core.validateCodecRegisterIndex(bad);
+                fail("expected an exception for register index 0x"
+                    + Integer.toHexString(bad));
+            } catch (IllegalArgumentException ex) {
+                // expected
+            }
+        }
+    }
+
+    @Test
+    public void testSupportedDeviceIds() {
+        // The ICH the driver was validated on must stay supported.
+        assertTrue(AC97Core.isSupportedDevice(0x8086, 0x2415));
+        // Every entry of the list is accepted, and nothing else is.
+        for (int id : AC97Core.SUPPORTED_DEVICE_IDS) {
+            assertTrue("device 0x" + Integer.toHexString(id) + " must be"
+                + " supported", AC97Core.isSupportedDevice(0x8086, id));
+        }
+        assertFalse(AC97Core.isSupportedDevice(0x8086, 0x1234));
+        // A different vendor with the same device id is a different chipset.
+        assertFalse(AC97Core.isSupportedDevice(0x1039, 0x2415));
+        // The supported ids are all the ICH family this driver knows.
+        assertEquals(5, AC97Core.SUPPORTED_DEVICE_IDS.length);
+    }
+
+    @Test
     public void testStallDetection() {
         final long now = 1000000L;
         // Fresh progress is never a stall, however long ago it was, as long

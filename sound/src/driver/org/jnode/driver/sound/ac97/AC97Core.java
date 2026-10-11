@@ -190,6 +190,43 @@ public final class AC97Core implements AC97Constants, IRQHandler {
     private int maxChannels;
 
     /**
+     * The vendor of every controller this driver binds to.
+     */
+    public static final int SUPPORTED_VENDOR_ID = PCI_VENDOR_ID_INTEL;
+
+    /**
+     * The device ids of the InteI AC'97 controllers this driver supports. They
+     * all report the same NAM and NABM register sets; the entries beyond the
+     * ICH are the same controller in later chipsets, which the driver has not
+     * been run on.
+     */
+    public static final int[] SUPPORTED_DEVICE_IDS = {
+        PCI_DEVICE_ID_ICH_AC97,      // 82801AA (ICH), validated
+        0x2425,                      // 82801BA
+        0x24C5,                      // 82801DB
+        0x24D5,                      // 82801EB
+        0x27DE                       // 82801GB
+    };
+
+    /**
+     * Does this driver support a controller with the given ids?
+     *
+     * @param vendorId the vendor id
+     * @param deviceId the device id
+     */
+    public static boolean isSupportedDevice(int vendorId, int deviceId) {
+        if (vendorId != SUPPORTED_VENDOR_ID) {
+            return false;
+        }
+        for (int id : SUPPORTED_DEVICE_IDS) {
+            if (id == deviceId) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
      * The sample format the PCM out engine plays.
      */
     private PcmFormat speakerFormat = PcmFormat.STEREO_16;
@@ -427,6 +464,51 @@ public final class AC97Core implements AC97Constants, IRQHandler {
      */
     public final int getSampleRate() {
         return sampleRate;
+    }
+
+    /**
+     * Reads a codec (mixer) register.
+     *
+     * @param index the register index, 0..0x7E and even
+     * @return the 16 bit register value
+     */
+    public final int readCodecRegister(int index) {
+        validateCodecRegisterIndex(index);
+        return inNam(index);
+    }
+
+    /**
+     * Writes a codec (mixer) register.
+     *
+     * @param index the register index, 0..0x7E and even
+     * @param value the 16 bit register value
+     */
+    public final void writeCodecRegister(int index, int value) {
+        validateCodecRegisterIndex(index);
+        outNam(index, value);
+    }
+
+    /**
+     * Gets the codec identity: the two vendor identification registers
+     * joined into one value, the high half being the first one. Useful for
+     * logging and for manufacturer specific code.
+     */
+    public final int getCodecId() {
+        return (inNam(NAM_VENDOR_ID1) << 16)
+            | (inNam(NAM_VENDOR_ID2) & 0xFFFF);
+    }
+
+    /**
+     * Validates a codec register index. The registers are addressed by byte
+     * and are 16 bit wide, so only even indexes up to 0x7E exist.
+     *
+     * @param index the register index
+     */
+    public static void validateCodecRegisterIndex(int index) {
+        if ((index < 0) || (index > 0x7E) || ((index & 1) != 0)) {
+            throw new IllegalArgumentException(
+                "Invalid codec register index 0x" + Integer.toHexString(index));
+        }
     }
 
     /**

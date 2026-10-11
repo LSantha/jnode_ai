@@ -79,8 +79,8 @@ public class AC97Driver extends Driver implements AC97API, AC97Constants {
         final PCIDevice pciDev = (PCIDevice) device;
         final int vendor = pciDev.getConfig().getVendorID();
         final int deviceId = pciDev.getConfig().getDeviceID();
-        if ((vendor != PCI_VENDOR_ID_INTEL) || (deviceId != PCI_DEVICE_ID_ICH_AC97)) {
-            throw new DriverException("Not an Intel ICH AC'97 controller: "
+        if (!AC97Core.isSupportedDevice(vendor, deviceId)) {
+            throw new DriverException("Not a supported AC'97 controller: "
                 + Integer.toHexString(vendor) + ':' + Integer.toHexString(deviceId));
         }
     }
@@ -301,5 +301,29 @@ public class AC97Driver extends Driver implements AC97API, AC97Constants {
             throw new IllegalStateException("AC'97 device is not started");
         }
         c.setSpeakerFormat(format);
+    }
+
+    public int readCodecRegister(int index) {
+        final AC97Core c = core;
+        if (c == null) {
+            throw new IllegalStateException("AC'97 device is not started");
+        }
+        return c.readCodecRegister(index);
+    }
+
+    public void writeCodecRegister(int index, int value) {
+        final AC97Core c = core;
+        if (c == null) {
+            throw new IllegalStateException("AC'97 device is not started");
+        }
+        c.writeCodecRegister(index, value);
+    }
+
+    public int getCodecId() {
+        final AC97Core c = core;
+        if (c == null) {
+            throw new IllegalStateException("AC'97 device is not started");
+        }
+        return c.getCodecId();
     }
 }
