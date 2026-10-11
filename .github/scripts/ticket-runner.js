@@ -20,7 +20,7 @@
 'use strict';
 
 const createHelpers = require("./orchestrator-helpers.js");
-const MAX_HISTORY_ENTRIES = createHelpers.MAX_HISTORY_ENTRIES || 200;
+const MAX_HISTORY_ENTRIES = createHelpers.MAX_HISTORY_ENTRIES;
 const { isRefusalComment, isNeedsInfoComment, isTriageComment, isTriggerComment } = require("./report-signals.js");
 
 const STATE_RE = /<!-- TICKET_RUNNER_STATE:\s*([\s\S]*?)\s*-->/;
@@ -593,7 +593,7 @@ module.exports = async ({ github, context, core }) => {
     if (reviewState === "approved") {
       // A human approval is an instruction to merge, not an override of CI.
       // Re-check before merging: CI may have gone red since the merge gate last
-      // ran, and this path merges unconditionally. Deferring is cheap and the
+      // ran, so this one re-checks before merging. Deferring is cheap and the
       // Java CI wakeup already re-enters REVIEW on green.
       if (!(await h.isCIGreen(prNumber))) {
         state.phase = "REVIEW";
@@ -823,8 +823,9 @@ module.exports = async ({ github, context, core }) => {
         var forbidden = diffSafe ? false : await h.touchesForbiddenPath(state.pr);
 
         if (!ciGreen) {
-          // Do NOT prompt. The reviewer could approve and the human path would
-          // merge without re-checking CI. Park with review_pending_ci set; the
+          // Do NOT prompt. The reviewer could approve a PR whose checks have
+          // not passed, and a human approval only re-checks CI. Park with
+          // review_pending_ci set; the
           // Java CI success wakeup clears it and posts the prompt on green.
           state.review_pending_ci = true;
           state.history.push({ event: "merge_deferred", reason: "ci_not_green", timestamp: new Date().toISOString() });

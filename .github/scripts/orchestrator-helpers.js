@@ -118,10 +118,10 @@ module.exports = function createHelpers({ github, context, core }) {
       core.warning("touchesForbiddenPath: listFiles failed for PR #" + prNumber + ": " + e.message);
       return false;
     }
-    // Same fail-closed rule as isDiffSafe: an unknown response shape is not an
-    // empty diff. Both call sites only consult this when isDiffSafe already
-    // returned false, so this cannot open a merge hole, but reading a partial
-    // response as "no forbidden path" would report the wrong cause.
+    // Same guard shape as isDiffSafe, for symmetry only: an unknown response
+    // makes this return false either way, since an unreadable file list holds
+    // no matching path. No test can distinguish the two formulations, which is
+    // why the isDiffSafe twin has shape cases and this one does not.
     var list = files && files.data;
     if (!Array.isArray(list)) return false;
     for (var i = 0; i < list.length; i++) {
@@ -326,3 +326,4 @@ module.exports = function createHelpers({ github, context, core }) {
 
 // Module-level export so the runners can cap history without instantiating.
 module.exports.MAX_HISTORY_ENTRIES = MAX_HISTORY_ENTRIES;
+

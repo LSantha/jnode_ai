@@ -425,8 +425,9 @@ module.exports = async ({ github, context, core }) => {
         const target = isMultiStepTask(state.current_task) && state.current_task.pr ? state.current_task.pr : getTaskIssueNumber(state.current_task);
         const isReviewPhase = isMultiStepTask(state.current_task) && state.current_task.phase === 'REVIEW';
 
-        // Never post /oc review on red CI: the reviewer could approve and the
-        // human-approval path merges without re-checking CI. Park instead; the
+        // Never post /oc review on red CI: the reviewer could approve a PR
+        // whose checks have not passed, and a human approval only re-checks CI.
+        // Park instead; the
         // Java CI success wakeup re-runs review on green.
         if (isReviewPhase && state.current_task.pr && !(await h.isCIGreen(state.current_task.pr))) {
           state.current_task.review_pending_ci = true;
@@ -588,8 +589,10 @@ module.exports = async ({ github, context, core }) => {
                       body: "Agent review passed. Awaiting human approval via native GitHub PR Review UI."
                     });
                   } else {
-                    // CI first, then diff. Human approval merges unconditionally
-                    // below, so a red-CI PR must never reach HUMAN_REVIEW.
+                    // CI first, then diff. A red-CI PR must never reach
+                    // HUMAN_REVIEW: the only way out is a human approval, and a
+                    // deferred merge on red CI has a wakeup while a queue parked
+                    // in HUMAN_REVIEW does not.
                     const diffSafe = await h.isDiffSafe(task.pr);
                     const ciGreen = await h.isCIGreen(task.pr);
                     const forbidden = diffSafe ? false : await h.touchesForbiddenPath(task.pr);
@@ -754,7 +757,7 @@ module.exports = async ({ github, context, core }) => {
       if (reviewState === 'approved') {
         // A human approval is an instruction to merge, not an override of CI.
         // Re-check before merging: CI may have gone red since the merge gate
-        // last ran, and this path merges unconditionally. The Java CI success
+        // last ran, so this one re-checks before merging. The Java CI success
         // wakeup re-enters REVIEW on green.
         if (!(await h.isCIGreen(task.pr))) {
           task.phase = 'REVIEW';
