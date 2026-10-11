@@ -93,6 +93,28 @@ module.exports = function createHelpers({ github, context, core }) {
   var FORBIDDEN_DIFF_RE = /(^|\/)(core\/src\/native\/x86\/|jnode\.properties$|all\/build\.xml$|all\/conf\/)/;
   var TEST_PATH_RE = /(^|\/)(src\/test\/|tests\/)/;
 
+  /**
+   * True when the PR diff touches a forbidden path. Distinct from a size-budget
+   * failure because a forbidden path is a hard wall no human can approve past by
+   * being patient: the change is out of scope for auto-merge regardless of size.
+   */
+  async function touchesForbiddenPath(prNumber) {
+    var files;
+    try {
+      files = await github.rest.pulls.listFiles({
+        owner, repo, pull_number: prNumber, per_page: 100
+      });
+    } catch (e) {
+      core.warning("touchesForbiddenPath: listFiles failed for PR #" + prNumber + ": " + e.message);
+      return false;
+    }
+    var list = files.data || [];
+    for (var i = 0; i < list.length; i++) {
+      if (FORBIDDEN_DIFF_RE.test(list[i].filename || "")) return true;
+    }
+    return false;
+  }
+
   // Diff-size budgets. Production additions stay tightly capped because they
   // are what can change runtime behaviour. Test additions get a much larger
   // budget: a regression test for a small fix routinely exceeds the
@@ -159,14 +181,29 @@ module.exports = function createHelpers({ github, context, core }) {
       return false;
     }
     var BAD = ["failure", "cancelled", "timed_out", "action_required"];
-    var ok = 0;
+    // Only runs named for the ant.yml ("Java CI") jobs count. Names are the job
+    // ids, which GitHub uses as the check-run name when a job defines no `name:`.
+    // `heal` is excluded: it is skipped on green and would only ever make the
+    // gate read as pending. Note this filters by name, not by workflow, so a
+    // job with the same id in another workflow would also count.
+    var JAVA_CI_JOBS = ["build", "test", "boot32", "boot64"];
+    var seen = {};
     for (var i = 0; i < runs.length; i++) {
       var r = runs[i];
-      if (r.status !== "completed") continue;
+      if (JAVA_CI_JOBS.indexOf(r.name) < 0) continue;
+      // A run that has not finished is not green. Without this the gate reads a
+      // completed green `build` job as whole-workflow green while the QEMU boot
+      // jobs are still running, which is the race the gate exists to prevent.
+      if (r.status !== "completed") return false;
       if (BAD.indexOf(r.conclusion) >= 0) return false;
-      if (r.conclusion === "success") ok++;
+      if (r.conclusion === "success") seen[r.name] = true;
     }
-    return ok > 0;
+    // Every Java CI job must have reported green. Without this a run showing only
+    // a green `build` passes while the boot tests have not run at all.
+    for (var j = 0; j < JAVA_CI_JOBS.length; j++) {
+      if (!seen[JAVA_CI_JOBS[j]]) return false;
+    }
+    return true;
   }
 
   /** Return true if the user object represents a bot. */
@@ -250,6 +287,7 @@ module.exports = function createHelpers({ github, context, core }) {
     getAgentReviewVerdict: getAgentReviewVerdict,
     isAutoMergeEligible: isAutoMergeEligible,
     isDiffSafe: isDiffSafe,
+    touchesForbiddenPath: touchesForbiddenPath,
     isCIGreen: isCIGreen,
     SAFE_AUTO_MERGE_KINDS: SAFE_AUTO_MERGE_KINDS,
     isBotUser: isBotUser,

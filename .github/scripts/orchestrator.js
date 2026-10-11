@@ -200,9 +200,16 @@ module.exports = async ({ github, context, core }) => {
     const runUrl = `https://github.com/${context.repo.owner}/${context.repo.repo}/actions/runs/${run.id}`;
     if (run.conclusion === 'success') {
       if (task.phase !== 'REVIEW' || task.review_in_progress) return false;
-      task.review_in_progress = true;
       state.history.push({ event: 'ci_green_rereview', task: task.issue, timestamp: new Date().toISOString() });
-      await triggerTask(task.pr, getReviewPrompt());
+      // Trigger first, then set the flag. If the post throws, review_in_progress
+      // stays false and the next green CI retries instead of stranding the task.
+      try {
+        await triggerTask(task.pr, getReviewPrompt());
+        task.review_in_progress = true;
+        task.review_pending_ci = false;
+      } catch (err) {
+        core.warning(`ci_green_rereview trigger failed for PR #${task.pr}: ${err.message}`);
+      }
       return true;
     }
     if (task.phase !== 'REVIEW' && task.phase !== 'FEEDBACK') return false;
@@ -409,13 +416,31 @@ module.exports = async ({ github, context, core }) => {
       } else {
         core.info(`Orchestrator already in progress. Retriggering current task #${getTaskIssueNumber(state.current_task)}`);
         const target = isMultiStepTask(state.current_task) && state.current_task.pr ? state.current_task.pr : getTaskIssueNumber(state.current_task);
-        const msg = isMultiStepTask(state.current_task) && state.current_task.phase === 'FEEDBACK' ? "/oc fix Address review feedback." 
-                  : isMultiStepTask(state.current_task) && state.current_task.phase === 'REVIEW' ? getReviewPrompt()
-                  : "/oc Please proceed with this task.";
-        if (isMultiStepTask(state.current_task) && state.current_task.phase === 'REVIEW') {
-          state.current_task.review_in_progress = true;
+        const isReviewPhase = isMultiStepTask(state.current_task) && state.current_task.phase === 'REVIEW';
+
+        // Never post /oc review on red CI: the reviewer could approve and the
+        // human-approval path merges without re-checking CI. Park instead; the
+        // Java CI success wakeup re-runs review on green.
+        if (isReviewPhase && state.current_task.pr && !(await h.isCIGreen(state.current_task.pr))) {
+          state.current_task.review_pending_ci = true;
+          state.current_task.review_in_progress = false;
+          state.history.push({ event: 'retrigger_deferred', task: state.current_task.issue, reason: 'ci_not_green', timestamp: new Date().toISOString() });
+          core.info(`Orchestrator: PR #${state.current_task.pr} CI not green; not prompting for review yet.`);
+        } else {
+          const msg = isMultiStepTask(state.current_task) && state.current_task.phase === 'FEEDBACK' ? "/oc fix Address review feedback."
+                    : isReviewPhase ? getReviewPrompt()
+                    : "/oc Please proceed with this task.";
+          // Set the flag only after the trigger succeeds so a failed post cannot
+          // strand it true forever.
+          if (isReviewPhase) {
+            state.current_task.review_pending_ci = false;
+            await triggerTask(target, msg);
+            state.current_task.review_in_progress = true;
+            state.current_task.review_pending_ci = false;
+          } else {
+            await triggerTask(target, msg);
+          }
         }
-        await triggerTask(target, msg);
       }
 
       await updateMasterIssue(masterIssueNumber, state);
@@ -500,13 +525,21 @@ module.exports = async ({ github, context, core }) => {
                 task.pr = foundPr;
                 task.phase = 'REVIEW';
                 task.retries = 0;
+                // Never prompt for review on red CI. Park instead; the Java CI
+                // success wakeup re-runs review once checks are green.
                 if (await h.isCIGreen(foundPr)) {
-                  task.review_in_progress = true;
-                  await triggerTask(task.pr, getReviewPrompt());
+                  try {
+                    await triggerTask(task.pr, getReviewPrompt());
+                    task.review_in_progress = true;
+                    task.review_pending_ci = false;
+                  } catch (err) {
+                    core.warning(`review trigger failed for PR #${task.pr}: ${err.message}`);
+                  }
                 } else {
+                  task.review_pending_ci = true;
                   task.review_in_progress = false;
-                  state.history.push({ event: 'review_pending_ci', task: task.issue, timestamp: new Date().toISOString() });
-                  core.info(`#${task.issue}: review waits for CI on PR #${foundPr}`);
+                  state.history.push({ event: 'review_deferred_ci', task: task.issue, pr: foundPr, timestamp: new Date().toISOString() });
+                  core.info(`Task #${task.issue}: PR #${foundPr} CI not green; deferring review prompt.`);
                 }
               } else if (SHORT_CIRCUIT_LABELS.some(l => labels.includes(l))) {
                 // Short-circuit completion
@@ -548,13 +581,24 @@ module.exports = async ({ github, context, core }) => {
                       body: "Agent review passed. Awaiting human approval via native GitHub PR Review UI."
                     });
                   } else {
+                    // CI first, then diff. Human approval merges unconditionally
+                    // below, so a red-CI PR must never reach HUMAN_REVIEW.
                     const diffSafe = await h.isDiffSafe(task.pr);
                     const ciGreen = await h.isCIGreen(task.pr);
-                    if (diffSafe && ciGreen) {
-                      task.phase = 'MERGE';
-                      await mergePR(task.pr);
-                      state.completed.push(task.issue);
-                      isDone = true;
+                    const forbidden = diffSafe ? false : await h.touchesForbiddenPath(task.pr);
+                    if (!ciGreen) {
+                      task.review_pending_ci = true;
+                      await github.rest.issues.createComment({
+                        owner: context.repo.owner, repo: context.repo.repo, issue_number: task.pr,
+                        body: "Agent review passed but auto-merge deferred: Java CI is not green yet. Will re-check when CI completes."
+                      });
+                    } else if (forbidden) {
+                      task.phase = 'HUMAN_REVIEW';
+                      task.retries = 0;
+                      await github.rest.issues.createComment({
+                        owner: context.repo.owner, repo: context.repo.repo, issue_number: task.pr,
+                        body: "Agent review passed but the diff touches a forbidden path (core/src/native/x86, jnode.properties, all/build.xml, or all/conf). This runner will not auto-merge it. Routing to HUMAN_REVIEW - if this must land, merge it yourself via the GitHub PR Review UI."
+                      });
                     } else if (!diffSafe) {
                       task.phase = 'HUMAN_REVIEW';
                       task.retries = 0;
@@ -563,11 +607,10 @@ module.exports = async ({ github, context, core }) => {
                         body: "Agent review passed but the diff exceeds the auto-merge safety budget (isDiffSafe). Routing to HUMAN_REVIEW - approve via the GitHub PR Review UI to merge."
                       });
                     } else {
-                      task.retries = 0;
-                      await github.rest.issues.createComment({
-                        owner: context.repo.owner, repo: context.repo.repo, issue_number: task.pr,
-                        body: "Agent review passed but auto-merge deferred: Java CI is not green yet. Will re-check when CI completes."
-                      });
+                      task.phase = 'MERGE';
+                      await mergePR(task.pr);
+                      state.completed.push(task.issue);
+                      isDone = true;
                     }
                   }
                 } else if (verdict === 'request-changes') {
@@ -601,12 +644,18 @@ module.exports = async ({ github, context, core }) => {
                 task.phase = 'REVIEW';
                 task.retries = 0;
                 if (await h.isCIGreen(task.pr)) {
-                  task.review_in_progress = true;
-                  await triggerTask(task.pr, getReviewPrompt());
+                  try {
+                    await triggerTask(task.pr, getReviewPrompt());
+                    task.review_in_progress = true;
+                    task.review_pending_ci = false;
+                  } catch (err) {
+                    core.warning(`review trigger failed for PR #${task.pr}: ${err.message}`);
+                  }
                 } else {
+                  task.review_pending_ci = true;
                   task.review_in_progress = false;
-                  state.history.push({ event: 'review_pending_ci', task: task.issue, timestamp: new Date().toISOString() });
-                  core.info(`#${task.issue}: review after feedback waits for CI on PR #${task.pr}`);
+                  state.history.push({ event: 'review_deferred_ci', task: task.issue, pr: task.pr, timestamp: new Date().toISOString() });
+                  core.info(`Task #${task.issue}: PR #${task.pr} CI not green after feedback; deferring review prompt.`);
                 }
               }
             }
@@ -624,9 +673,25 @@ module.exports = async ({ github, context, core }) => {
             isDone = true;
           } else {
             const target = task.pr ? task.pr : task.issue;
+            if (task.phase === 'REVIEW' && task.pr && !(await h.isCIGreen(task.pr))) {
+              // Never re-prompt for review on red CI: a reviewer could approve
+              // and the human-approval path merges without re-checking CI.
+              task.review_pending_ci = true;
+              task.review_in_progress = false;
+              core.info(`Task #${task.issue} retry suppressed: PR #${task.pr} CI not green.`);
+              await updateMasterIssue(masterIssueNumber, state);
+              return;
+            }
             const msg = task.phase === 'FEEDBACK' ? "/oc fix Address review feedback." : task.phase === 'REVIEW' ? getReviewPrompt() : "/oc Please proceed with this task.";
-            if (task.phase === 'REVIEW') task.review_in_progress = true;
-            await triggerTask(target, msg);
+            // Set the flag only after the trigger succeeds so a failed post
+            // cannot strand it true forever.
+            if (task.phase === 'REVIEW') {
+              task.review_pending_ci = false;
+              await triggerTask(target, msg);
+              task.review_in_progress = true;
+            } else {
+              await triggerTask(target, msg);
+            }
             await updateMasterIssue(masterIssueNumber, state);
             return;
           }
@@ -675,6 +740,24 @@ module.exports = async ({ github, context, core }) => {
       
       const reviewState = context.payload.review.state;
       if (reviewState === 'approved') {
+        // A human approval is an instruction to merge, not an override of CI.
+        // Re-check before merging: CI may have gone red since the merge gate
+        // last ran, and this path merges unconditionally. The Java CI success
+        // wakeup re-enters REVIEW on green.
+        if (!(await h.isCIGreen(task.pr))) {
+          task.phase = 'REVIEW';
+          task.review_in_progress = false;
+          task.review_pending_ci = true;
+          task.retries = 0;
+          state.history.push({ event: 'human_approved_ci_red', task: task.issue, pr: task.pr, timestamp: new Date().toISOString() });
+          await updateMasterIssue(masterIssueNumber, state);
+          await github.rest.issues.createComment({
+            owner: context.repo.owner, repo: context.repo.repo, issue_number: task.pr,
+            body: "Human approval recorded, but Java CI is not green yet. Not merging. Will re-check and merge when CI completes."
+          });
+          core.info(`Human approved PR #${task.pr} but CI is red; deferring merge.`);
+          return;
+        }
         task.phase = 'MERGE';
         await mergePR(task.pr);
         state.completed.push(task.issue);
