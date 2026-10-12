@@ -22,6 +22,9 @@ def isolated_state(tmp_path, monkeypatch):
     monkeypatch.setattr(jp, "STATE_DIR", str(state))
     monkeypatch.setattr(jp, "REGISTRY_DIR", str(state / "instances"))
     monkeypatch.delenv("JNODE_INSTANCE", raising=False)
+    # a leftover /tmp/jnode.serial2 on the test host must not flip
+    # alloc_instance()'s hand-started-VM check
+    monkeypatch.setattr(jp, "_legacy_sock_busy", lambda: False)
     return state
 
 
@@ -237,13 +240,72 @@ def test_cli_register_list_unregister(tmp_path):
 def test_cli_alloc_and_probe(tmp_path):
     sd = tmp_path / "state"
     r = _cli("--alloc", state_dir=sd)
-    assert r.returncode == 0 and r.stdout.strip() == "default"
+    # a leftover /tmp/jnode.serial2 on the host means a hand-started VM
+    # owns the legacy default socket, so alloc must skip it
+    if os.path.exists("/tmp/jnode.serial2"):
+        assert r.returncode == 0 and r.stdout.strip() == "qemu-1"
+    else:
+        assert r.returncode == 0 and r.stdout.strip() == "default"
+    # --probe reads the legacy socket path, which is host-global: a
+    # hand-started VM (or leftover socket) on /tmp/jnode.serial2 flips it
     r = _cli("--probe", "--instance", "default", state_dir=sd)
-    # no socket in a sandbox world -> exit 1, but output is well formed
-    assert r.returncode == 1 and "agent_sock=" in r.stdout
+    assert "agent_sock=" in r.stdout
+    assert r.returncode == (0 if os.path.exists("/tmp/jnode.serial2") else 1)
 
 
 def test_cli_rejects_bad_instance(tmp_path):
     r = _cli("--field", "agent_sock", "--instance", "bad id",
              state_dir=tmp_path / "state")
     assert r.returncode == 2 and "invalid instance id" in r.stderr
+
+
+def test_alloc_skips_handstarted_legacy_sock(monkeypatch):
+    # the legacy default socket exists but no registry entry knows about
+    # it: alloc must not hand 'default' out (review nit)
+    monkeypatch.setattr(jp, "_legacy_sock_busy", lambda: True)
+    assert jp.alloc_instance() == "qemu-1"
+
+
+def test_resolve_instance_autodetect():
+    # nothing live -> legacy default
+    assert jp.resolve_instance() == "default"
+    _register("qemu-5", vm_pid=os.getpid())
+    # exactly one live -> that instance
+    assert jp.resolve_instance() == "qemu-5"
+    _register("qemu-6", vm_pid=os.getpid())
+    # several live -> explicit choice required
+    with pytest.raises(jp.InstanceError):
+        jp.resolve_instance()
+
+
+def test_cli_resolve(isolated_state):
+    sd = isolated_state
+    r = _cli("--resolve", state_dir=sd)
+    assert r.returncode == 1 and "no live" in r.stderr
+    _register("qemu-7", vm_pid=os.getpid())
+    r = _cli("--resolve", state_dir=sd)
+    assert r.returncode == 0 and r.stdout.strip() == "qemu-7"
+
+
+def test_vbox_register_writes_vm_key(monkeypatch):
+    """PR #761 review finding 1: jnode_vbox.register() must write the
+    registry key "vm" -- entry_live(), --list/--is-live and
+    serial_mux.configure() all read entry["vm"], not "vm_name"."""
+    import importlib.util
+    vbox_path = os.path.abspath(os.path.join(
+        os.path.dirname(__file__), "..", "..", "jnode-vbox", "scripts",
+        "jnode_vbox.py"))
+    spec = importlib.util.spec_from_file_location("jnode_vbox_under_test",
+                                                  vbox_path)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+
+    paths = jp.Paths("vbox-rt")
+    mod.register(paths, "JNode-RT", "ready")
+    entry = jp.read_entry("vbox-rt")
+    assert entry.get("vm") == "JNode-RT"
+    # with the key fixed, a running vbox VM survives liveness and prune
+    monkeypatch.setattr(jp, "_vbox_running", lambda name: name == "JNode-RT")
+    assert jp.entry_live(entry) is True
+    assert "vbox-rt" in [i for i, _ in jp.live_entries()]
+    assert "vbox-rt" not in jp.prune_stale()

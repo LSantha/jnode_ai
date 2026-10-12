@@ -41,6 +41,36 @@ CONNECT_RETRY_SECS = 1.0
 CONNECT_GIVEUP_SECS = 60.0
 
 
+def _pid_alive(pid):
+    try:
+        os.kill(pid, 0)
+        return True
+    except OSError:
+        return False
+
+
+def read_pid(paths):
+    try:
+        with open(paths.kdb_mux_pid) as f:
+            return int(f.read().strip())
+    except (OSError, ValueError):
+        return None
+
+
+def acquire_pidfile(paths):
+    """True when this process now owns the instance's KDB mux slot."""
+    existing = read_pid(paths)
+    if existing and _pid_alive(existing):
+        return False
+    try:
+        os.makedirs(os.path.dirname(paths.kdb_mux_pid), exist_ok=True)
+        with open(paths.kdb_mux_pid, "w") as f:
+            f.write("%d\n" % os.getpid())
+    except OSError:
+        pass
+    return True
+
+
 def log_line(path, data):
     try:
         with open(path, "ab", buffering=0) as f:
@@ -155,7 +185,20 @@ def main(argv=None):
     except jp.InstanceError as e:
         print("kdb_mux.py: %s" % e, file=sys.stderr)
         return 2
-    return run(paths)
+    # single-instance guard: two muxes on one FIFO/UART1 socket is the
+    # "only single connection supported" wedge this module exists to avoid
+    if not acquire_pidfile(paths):
+        print("kdb_mux.py: a kdb mux is already running for instance %s "
+              "(pid %d)" % (paths.id, read_pid(paths)), file=sys.stderr)
+        return 0
+    try:
+        return run(paths)
+    finally:
+        try:
+            if read_pid(paths) == os.getpid():
+                os.unlink(paths.kdb_mux_pid)
+        except OSError:
+            pass
 
 
 if __name__ == "__main__":

@@ -75,11 +75,17 @@ if [ "$ENTRY" -lt 0 ] || [ "$ENTRY" -gt 5 ] 2>/dev/null; then
 fi
 
 # ---------------------------------------------------------------- instance
-if [ -z "$INSTANCE" ]; then
-  INSTANCE=$(python3 "$PATHS_PY" --alloc --prefix qemu)
-fi
-
+# --stop resolves the running instance instead of allocating a free id
+# (a bare --stop used to allocate a fresh id and silently no-op; review
+# finding 2). --alloc only ever runs on the start path.
 if [ "$STOP" = "1" ]; then
+  if [ -z "$INSTANCE" ]; then
+    if ! INSTANCE=$(python3 "$PATHS_PY" --resolve 2>/dev/null); then
+      echo "no live registered instance to stop"
+      python3 "$PATHS_PY" --list || true
+      exit 0
+    fi
+  fi
   ENTRY_JSON=$(python3 "$PATHS_PY" --field registry_path --instance "$INSTANCE")
   if [ ! -f "$ENTRY_JSON" ]; then
     echo "instance '$INSTANCE': no registry entry, nothing to stop"
@@ -103,9 +109,23 @@ if [ "$STOP" = "1" ]; then
   python3 "$PATHS_PY" --unregister --instance "$INSTANCE"
   eval "$(python3 "$PATHS_PY" --env --instance "$INSTANCE")"
   rm -f "$JNODE_AGENT_SOCK" "$JNODE_MONITOR_SOCK" "$JNODE_KDB_SOCK"
-  # F2 fix: tear the mux down too, or it idles forever with a dead socket
+  # F2 fix: tear the muxes down too, or they idle forever with a dead
+  # socket (serial mux + KDB mux; review finding 4)
   python3 "$SERIAL_SCRIPTS/serial_cmd.py" --stop --instance "$INSTANCE" >/dev/null 2>&1 || true
+  python3 "$SERIAL_SCRIPTS/jnode_kdb_cmd.py" --stop --instance "$INSTANCE" >/dev/null 2>&1 || true
   exit 0
+fi
+
+if [ -z "$INSTANCE" ]; then
+  INSTANCE=$(python3 "$PATHS_PY" --alloc --prefix qemu)
+fi
+
+# validate the id once, up front (an invalid --instance used to print
+# the same ERROR from every later helper)
+if ! python3 "$PATHS_PY" --field id --instance "$INSTANCE" >/dev/null 2>&1; then
+  echo "ERROR: invalid --instance '$INSTANCE'"
+  echo "       ids: letters, digits, '-' and '_' (e.g. --instance qemu-1)"
+  exit 2
 fi
 
 if python3 "$PATHS_PY" --is-live --instance "$INSTANCE" >/dev/null 2>&1; then
@@ -122,29 +142,11 @@ QEMU_NAME="JNode x86"
 
 LAUNCH_LOG=$(python3 "$PATHS_PY" --field stderr_log --instance "$INSTANCE")
 
-if [ "$DRY" = "1" ]; then
-  echo "instance:  $INSTANCE"
-  echo "mode:      $MODE"
-  echo "iso:       $ISO"
-  echo "entry:     $ENTRY"
-  echo "agent:     $JNODE_AGENT_SOCK"
-  echo "kdb:       $JNODE_KDB_SOCK"
-  echo "boot log:  $JNODE_BOOT_LOG"
-  echo "monitor:   $JNODE_MONITOR_SOCK"
-  echo "launch log:$LAUNCH_LOG"
-  echo "name:      $QEMU_NAME"
-  exit 0
-fi
-
 if [ ! -f "$ISO" ]; then
   echo "ERROR: ISO not found: $ISO"
   echo "       build it first: sh build.sh cd-x86-lite"
   exit 1
 fi
-
-# Only this instance's resources are cleared -- never another VM's.
-rm -f "$JNODE_AGENT_SOCK" "$JNODE_MONITOR_SOCK" "$JNODE_BOOT_LOG"
-if [ "$MODE" = "full" ]; then rm -f "$JNODE_KDB_SOCK"; fi
 
 # ------------------------------------------------------------------- boot
 ARGS=(-machine accel=kvm:tcg -m "${JNODE_QEMU_MEM:-1024}"
@@ -159,6 +161,25 @@ else
          -serial "unix:$JNODE_AGENT_SOCK,server,nowait")
 fi
 ARGS+=(-monitor "unix:$JNODE_MONITOR_SOCK,server,nowait")
+
+if [ "$DRY" = "1" ]; then
+  echo "instance:  $INSTANCE"
+  echo "mode:      $MODE"
+  echo "iso:       $ISO"
+  echo "entry:     $ENTRY"
+  echo "agent:     $JNODE_AGENT_SOCK"
+  echo "kdb:       $JNODE_KDB_SOCK"
+  echo "boot log:  $JNODE_BOOT_LOG"
+  echo "monitor:   $JNODE_MONITOR_SOCK"
+  echo "launch log:$LAUNCH_LOG"
+  echo "name:      $QEMU_NAME"
+  echo "qemu:      qemu-system-x86_64 ${ARGS[*]} ${JNODE_QEMU_ARGS:-}"
+  exit 0
+fi
+
+# Only this instance's resources are cleared -- never another VM's.
+rm -f "$JNODE_AGENT_SOCK" "$JNODE_MONITOR_SOCK" "$JNODE_BOOT_LOG"
+if [ "$MODE" = "full" ]; then rm -f "$JNODE_KDB_SOCK"; fi
 
 qemu-system-x86_64 "${ARGS[@]}" ${JNODE_QEMU_ARGS:-} \
     </dev/null >"$LAUNCH_LOG" 2>&1 &

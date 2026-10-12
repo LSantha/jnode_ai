@@ -22,7 +22,6 @@ SERIAL_CMD = os.path.join(SCRIPTS, "serial_cmd.py")
 PATHS_PY = os.path.join(SCRIPTS, "jnode_paths.py")
 
 sys.path.insert(0, SCRIPTS)
-import jnode_paths as jp  # noqa: E402
 
 
 class Guest(object):
@@ -181,7 +180,6 @@ def test_oneshot_survives_stale_prompt(world):
         conn.sendall(b"\n[JNODE_AGENT_READY]\n")
         conn.close()
 
-    import threading
     t = threading.Thread(target=chatty, daemon=True)
     t.start()
 
@@ -216,9 +214,44 @@ def test_missing_instance_socket_is_a_clean_error(world):
     state, make = world
     make("t6")
     r = _run(state, "--instance", "no-such-instance", "date")
-    # mux starts but can never connect: batch must fail, not hang forever
+    # fail fast on the missing agent socket instead of hanging forever
     assert r.returncode != 0
     assert "ERROR" in r.stdout or "TIMEOUT" in r.stdout or "not ready" in r.stdout
+
+
+def test_instance_flag_alone_is_usage_not_traceback(world):
+    """PR #761 review finding 3: a bare `--instance X` must print usage,
+    not die with an IndexError traceback."""
+    state, make = world
+    make("t6a")
+    r = _run(state, "--instance", "t6a")
+    assert r.returncode == 2
+    assert "Traceback" not in r.stderr
+    assert "Usage" in r.stdout
+
+
+def test_list_flag_works_after_instance(world):
+    """`--instance X --list` must list, not ship `--list` to the guest."""
+    state, make = world
+    make("t6b")
+    r = _run(state, "--instance", "t6b", "--list")
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert "t6b" in r.stdout
+
+
+def test_write_keeps_earlier_commands(world):
+    """`serial_cmd date --write PATH` must run date AND write the file."""
+    state, make = world
+    make("t6c")
+    target = os.path.join(str(state), "t6c", "written.txt")
+    r = subprocess.run(
+        [sys.executable, SERIAL_CMD, "--instance", "t6c",
+         "date", "--write", target],
+        input="hello\n", capture_output=True, text=True, timeout=90,
+        env=_env(state))
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert "OUT:date" in r.stdout
+    assert "writing " in r.stdout
 
 
 # --------------------------------------------------------------------------

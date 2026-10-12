@@ -10,6 +10,7 @@ Usage:
     python3 jnode_kdb_cmd.py <command> [command ...]
     python3 jnode_kdb_cmd.py --instance qemu-2 W
     python3 jnode_kdb_cmd.py --mux          # start the persistent holder
+    python3 jnode_kdb_cmd.py --stop         # stop the persistent holder
 
 Commands:
     h, ?  - Help
@@ -25,6 +26,7 @@ Commands:
 """
 
 import os
+import signal
 import socket
 import subprocess
 import sys
@@ -34,6 +36,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 
 import jnode_paths as jp  # noqa: E402
+import kdb_mux as kdbmux  # noqa: E402
 
 KDB_MUX = os.path.join(HERE, "kdb_mux.py")
 
@@ -88,14 +91,47 @@ def send_kdb_command(sock, cmd):
 
 
 def start_mux(paths):
-    subprocess.Popen([sys.executable, KDB_MUX, "--instance", paths.id],
-                     stdin=subprocess.DEVNULL,
-                     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                     start_new_session=True)
-    print("kdb mux started (instance %s)" % paths.id)
+    existing = kdbmux.read_pid(paths)
+    if existing and kdbmux._pid_alive(existing):
+        print("kdb mux already running (pid %d, instance %s)"
+              % (existing, paths.id))
+    else:
+        subprocess.Popen([sys.executable, KDB_MUX, "--instance", paths.id],
+                         stdin=subprocess.DEVNULL,
+                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                         start_new_session=True)
+        print("kdb mux started (instance %s)" % paths.id)
     print("  socket : %s" % paths.kdb_sock)
     print("  fifo   : %s   (echo '<cmd>' > fifo to send)" % paths.kdb_fifo)
     print("  log    : %s" % paths.kdb_resp)
+
+
+def stop_mux(paths):
+    pid = kdbmux.read_pid(paths)
+    if not pid or not kdbmux._pid_alive(pid):
+        print("kdb mux not running (instance %s)" % paths.id)
+        try:
+            os.unlink(paths.kdb_mux_pid)
+        except OSError:
+            pass
+        return 0
+    try:
+        os.kill(pid, signal.SIGTERM)
+    except OSError as e:
+        print("ERROR: cannot signal kdb mux pid %d: %s" % (pid, e))
+        return 1
+    for _ in range(20):
+        if not kdbmux._pid_alive(pid):
+            break
+        time.sleep(0.25)
+    if kdbmux._pid_alive(pid):
+        os.kill(pid, signal.SIGKILL)
+    try:
+        os.unlink(paths.kdb_mux_pid)
+    except OSError:
+        pass
+    print("kdb mux stopped (pid %d, instance %s)" % (pid, paths.id))
+    return 0
 
 
 def main():
@@ -122,6 +158,9 @@ def main():
     if args and args[0] == "--mux":
         start_mux(paths)
         return
+
+    if args and args[0] == "--stop":
+        sys.exit(stop_mux(paths))
 
     commands = args
     for cmd in commands:

@@ -466,10 +466,6 @@ def main():
         usage()
         sys.exit(0)
 
-    # --list does not need an instance.
-    if args[0] == "--list":
-        sys.exit(jp.main(["--list"]))
-
     instance = None
     if "--instance" in args:
         i = args.index("--instance")
@@ -478,6 +474,17 @@ def main():
             sys.exit(2)
         instance = args[i + 1]
         del args[i:i + 2]
+
+    # --list does not need a live instance; accept it in any position
+    # (it used to be checked only as args[0], so `--instance X --list`
+    # shipped `--list` to the guest shell).
+    if args and args[0] == "--list":
+        sys.exit(jp.main(["--list"]))
+
+    if not args:
+        # e.g. a bare `--instance foo`: report usage, not a traceback
+        usage()
+        sys.exit(2)
 
     try:
         paths = jp.resolve_paths(instance)
@@ -509,6 +516,7 @@ def main():
     timeout = DEFAULT_TIMEOUT
     wait_secs = None
     oneshot_mode = False
+    write_path = None
     rest = []
     i = 0
     while i < len(args):
@@ -532,21 +540,19 @@ def main():
             if i + 1 >= len(args):
                 print("ERROR: --write requires a target path")
                 sys.exit(2)
-            rest = ["--write", args[i + 1]]
+            write_path = args[i + 1]
             i += 2
         else:
             rest.append(arg)
             i += 1
 
-    if rest and rest[0] == "--write":
-        if len(rest) < 2:
-            print("ERROR: --write requires a target path")
-            sys.exit(2)
-        path = rest[1]
+    if write_path:
         content = sys.stdin.read()
-        cmds, expected = write_commands(path, content)
+        wcmds, expected = write_commands(write_path, content)
         print("writing %s (%d bytes expected; echo may add trailing NL)"
-              % (path, expected))
+              % (write_path, expected))
+        # keep commands given alongside --write instead of dropping them
+        cmds = rest + wcmds
     else:
         cmds = rest
 

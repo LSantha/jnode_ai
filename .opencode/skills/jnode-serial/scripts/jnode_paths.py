@@ -77,6 +77,7 @@ _LEGACY = {
     "kdb_resp": "/tmp/kdb_resp.log",
     "kdb_log": "/tmp/kdb_mux.log",
     "kdb_out": "/tmp/kdb_mux.out",
+    "kdb_mux_pid": "/tmp/kdb_mux.pid",
     "stderr_log": "/tmp/qemu_launch.log",
 }
 
@@ -131,6 +132,7 @@ class Paths(object):
             self.kdb_resp = os.path.join(self.kdb_dir, "resp.log")
             self.kdb_log = os.path.join(self.kdb_dir, "mux.log")
             self.kdb_out = os.path.join(self.kdb_dir, "mux.out")
+            self.kdb_mux_pid = os.path.join(self.kdb_dir, "kdb_mux.pid")
 
     @property
     def registry_path(self):
@@ -156,8 +158,9 @@ class Paths(object):
                  "JNODE_BOOT_LOG=%s" % self.boot_log,
                  "JNODE_MONITOR_SOCK=%s" % self.monitor_sock,
                  "JNODE_MUX_FIFO=%s" % self.fifo,
-                 "JNODE_MUX_DIR=%s" % (self.req_dir if self.legacy
-                                       else self.mux_dir),
+                 # same meaning for every instance: the mux working
+                 # directory (the legacy layout keeps its flat /tmp files)
+                 "JNODE_MUX_DIR=%s" % self.mux_dir,
                  "JNODE_KDB_FIFO=%s" % self.kdb_fifo,
                  "JNODE_KDB_DIR=%s" % (self.kdb_dir)]
         return "\n".join("export %s" % l for l in lines) + "\n"
@@ -167,8 +170,8 @@ class Paths(object):
         for name in ("agent_sock", "kdb_sock", "boot_log", "monitor_sock",
                      "fifo", "req_dir", "resp_dir", "mux_pid", "mux_status",
                      "mux_out", "mux_log", "kdb_fifo", "kdb_resp", "kdb_log",
-                     "kdb_out", "mux_dir", "kdb_dir", "stderr_log",
-                     "registry_path"):
+                     "kdb_out", "kdb_mux_pid", "mux_dir", "kdb_dir",
+                     "stderr_log", "registry_path"):
             d[name] = getattr(self, name)
         return d
 
@@ -276,7 +279,9 @@ def entry_live(entry):
 
     qemu   -> QEMU pid alive (fallback: agent socket still present when the
               launcher did not record a pid)
-    vbox   -> `vboxmanage showvminfo` says running (fallback: socket)
+    vbox   -> `vboxmanage showvminfo` says running (a hard stop leaves the
+              UART pipe behind, so a dead-looking VM is never resurrected
+              from the socket)
     either -> a registered path that exists counts as live only when nothing
               better is known, so a hand-started VM with a stale entry still
               resolves.
@@ -334,18 +339,36 @@ def resolve_paths(explicit=None):
     return Paths(resolve_instance(explicit))
 
 
+def _legacy_sock_busy():
+    """A hand-started VM may own the legacy default socket without ever
+    registering; never hand 'default' out while that socket exists."""
+    return os.path.exists(Paths(DEFAULT_INSTANCE).agent_sock)
+
+
 def alloc_instance(prefix="qemu"):
-    """First free id: "default" when free, else <prefix>-1, -2, ..."""
-    prune_stale()
-    live = set(live_ids())
-    if DEFAULT_INSTANCE not in live:
-        return DEFAULT_INSTANCE
-    n = 1
-    while True:
-        candidate = "%s-%d" % (prefix, n)
-        if candidate not in live:
-            return candidate
-        n += 1
+    """First free id: "default" when free, else <prefix>-1, -2, ...
+
+    Serialized with a lock file so two concurrent launchers cannot pick
+    the same id (PR #761 review nit).
+    """
+    import fcntl
+    os.makedirs(STATE_DIR, exist_ok=True)
+    lock_path = os.path.join(STATE_DIR, ".alloc.lock")
+    with open(lock_path, "w") as lock:
+        try:
+            fcntl.flock(lock, fcntl.LOCK_EX)
+        except OSError:
+            pass
+        prune_stale()
+        live = set(live_ids())
+        if DEFAULT_INSTANCE not in live and not _legacy_sock_busy():
+            return DEFAULT_INSTANCE
+        n = 1
+        while True:
+            candidate = "%s-%d" % (prefix, n)
+            if candidate not in live:
+                return candidate
+            n += 1
 
 
 def prune_stale():
@@ -376,6 +399,9 @@ def _build_parser():
                    help="list registered instances and their liveness")
     p.add_argument("--alloc", action="store_true",
                    help="print a free instance id")
+    p.add_argument("--resolve", action="store_true",
+                   help="print the single live instance id "
+                        "(exit 1 none, exit 2 several)")
     p.add_argument("--prefix", default="qemu",
                    help="prefix for --alloc (default: qemu)")
     p.add_argument("--register", action="store_true")
@@ -402,6 +428,18 @@ def main(argv=None):
     if args.alloc:
         print(alloc_instance(args.prefix))
         return 0
+
+    if args.resolve:
+        live = live_ids()
+        if len(live) == 1:
+            print(live[0])
+            return 0
+        if not live:
+            print("no live instances", file=sys.stderr)
+            return 1
+        print("several live instances: %s (jnode_paths.py --list)"
+              % ", ".join(live), file=sys.stderr)
+        return 2
 
     if args.prune:
         removed = prune_stale()
@@ -448,15 +486,16 @@ def main(argv=None):
         return 0 if ok else 1
 
     if args.is_live:
-        entry_id = (args.instance or os.environ.get("JNODE_INSTANCE")
-                    or DEFAULT_INSTANCE)
+        # resolve like --probe/--field: explicit > $JNODE_INSTANCE >
+        # the single live instance > default (never silently pick
+        # 'default' while other instances are live)
         try:
-            entry_id = _check_id(entry_id)
+            paths = resolve_paths(args.instance)
         except InstanceError as e:
             print("ERROR: %s" % e, file=sys.stderr)
             return 2
-        live = entry_live(read_entry(entry_id))
-        print("instance=%s %s" % (entry_id, "live" if live else "dead"))
+        live = entry_live(read_entry(paths.id))
+        print("instance=%s %s" % (paths.id, "live" if live else "dead"))
         return 0 if live else 1
 
     if args.register:

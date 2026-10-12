@@ -71,7 +71,10 @@ def is_running(name):
 
 def register(paths, name, state):
     entry = jp.read_entry(paths.id) or {"id": paths.id}
-    entry.update(hypervisor="vbox", vm_name=name, state=state,
+    # the registry key is "vm" -- jnode_paths.entry_live(), --list/--is-live
+    # and serial_mux.configure() all read entry["vm"], so anything else
+    # makes a running VM read back as dead (PR #761 review finding 1)
+    entry.update(hypervisor="vbox", vm=name, state=state,
                  agent_sock=paths.agent_sock, boot_log=paths.boot_log,
                  kdb_sock=paths.kdb_sock)
     jp.write_entry(entry)
@@ -130,7 +133,7 @@ def cmd_start(a):
     if is_running(a.name):
         print("ERROR: %s already running" % a.name)
         return 1
-    if a.entry:
+    if a.entry is not None and a.entry >= 0:
         d = info(a.name)
         if not d:
             print("ERROR: VM %s does not exist (run config first)" % a.name)
@@ -143,7 +146,7 @@ def cmd_start(a):
     register(paths, a.name, "starting")
     vbox("startvm", a.name, "--type", "headless")
     print("VM %s started (instance %s)" % (a.name, paths.id))
-    if a.entry:
+    if a.entry is not None and a.entry >= 0:
         rc = subprocess.call([sys.executable, PICKER, "--vm", a.name,
                               "--entry", str(a.entry)])
         if rc != 0:
@@ -164,15 +167,16 @@ def cmd_start(a):
 
 
 def stop_mux(paths):
-    # tear the serial mux down too, or it idles forever with a dead UART
+    # tear the muxes down too, or they idle forever with a dead UART
     # pipe (same F2 as in start_qemu.sh --stop); paths.mux_pid covers
     # both the legacy and the namespaced layout
-    try:
-        with open(paths.mux_pid) as f:
-            pid = int(f.read().strip())
-        os.kill(pid, signal.SIGTERM)
-    except (OSError, ValueError):
-        pass
+    for pidfile in (paths.mux_pid, paths.kdb_mux_pid):
+        try:
+            with open(pidfile) as f:
+                pid = int(f.read().strip())
+            os.kill(pid, signal.SIGTERM)
+        except (OSError, ValueError):
+            pass
 
 
 def cmd_stop(a):

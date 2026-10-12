@@ -38,7 +38,11 @@ full              UART1 -> KDB socket + boot log, UART2 -> agent console
                     "default" when free, otherwise qemu-1, qemu-2, ...)
 --wait-ready SECS   block until the boot log shows the serial console
 --stop              kill the QEMU behind an instance and unregister it
---dry-run           print resolved instance/paths, start nothing
+                    (bare --stop resolves the single live instance;
+                    with --instance X it stops that one, and a never-
+                    registered id is a graceful no-op)
+--dry-run           print resolved instance/paths and the QEMU command,
+                    start nothing
 ```
 
 Extra QEMU args: set `JNODE_QEMU_ARGS`; memory: `JNODE_QEMU_MEM`

@@ -90,7 +90,11 @@ python3 scripts/jnode_kdb_cmd.py --instance qemu-kdb p   # ping
 python3 scripts/jnode_kdb_cmd.py --instance qemu-kdb t   # thread info
 python3 scripts/jnode_kdb_cmd.py --instance qemu-kdb T W # traces
 python3 scripts/jnode_kdb_cmd.py --mux                   # start persistent holder
+python3 scripts/jnode_kdb_cmd.py --stop                  # stop the holder
 ```
+
+`--mux` is idempotent: it refuses to start a second holder for an
+instance (single pid file), and `--stop` tears the holder down.
 
 Commands: `h/?` help, `p` ping, `t`/`T` current thread, `q`/`r` ready
 queue, `w`/`W` waiting threads, `v` verify states, `l` load queue.

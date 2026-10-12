@@ -28,9 +28,7 @@ inspection (pnmtopng it and look).
 import argparse
 import os
 import socket
-import subprocess
 import sys
-import tempfile
 import time
 
 TEXT_H = 16          # VGA text mode 720x400 => 25 rows of 16px
