@@ -210,6 +210,29 @@ def test_qemu_stop_unknown_instance_is_graceful(world):
     assert "nothing to stop" in r.stdout
 
 
+def test_qemu_bare_stop_reports_ambiguous_live_instances(world):
+    """Regression: a bare --stop with two live instances must say so
+    (and name them), not claim 'no live registered instance'."""
+    state, make = world
+    make("amb1")
+    make("amb2")
+    script = os.path.join(HERE, "..", "..", "jnode-qemu", "scripts",
+                          "start_qemu.sh")
+    r = subprocess.run(["bash", script, "--stop"],
+                       capture_output=True, text=True, timeout=30,
+                       env=_env(state))
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert "no live registered instance" not in r.stdout
+    assert "several live instances" in r.stdout + r.stderr
+    assert "amb1" in r.stdout + r.stderr and "amb2" in r.stdout + r.stderr
+    assert "stop one explicitly" in r.stdout
+    # ambiguity must not stop anything
+    r = subprocess.run([sys.executable, PATHS_PY, "--list"],
+                       capture_output=True, text=True, timeout=30,
+                       env=_env(state))
+    assert "amb1" in r.stdout and "live" in r.stdout
+
+
 def test_missing_instance_socket_is_a_clean_error(world):
     state, make = world
     make("t6")

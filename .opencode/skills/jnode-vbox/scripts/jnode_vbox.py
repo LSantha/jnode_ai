@@ -133,11 +133,9 @@ def cmd_start(a):
     if is_running(a.name):
         print("ERROR: %s already running" % a.name)
         return 1
-    if a.entry is not None and a.entry >= 0:
-        d = info(a.name)
-        if not d:
-            print("ERROR: VM %s does not exist (run config first)" % a.name)
-            return 1
+    if not info(a.name):
+        print("ERROR: VM %s does not exist (run config first)" % a.name)
+        return 1
     jp.makedirs_for(paths)
     # stale pipe files make VirtualBox refuse to open the UART
     for p in (paths.kdb_sock, paths.agent_sock):
@@ -146,7 +144,10 @@ def cmd_start(a):
     register(paths, a.name, "starting")
     vbox("startvm", a.name, "--type", "headless")
     print("VM %s started (instance %s)" % (a.name, paths.id))
-    if a.entry is not None and a.entry >= 0:
+    # entry 0 (the ISO default) skips the picker, exactly like
+    # start_qemu.sh's `if [ "$ENTRY" != "0" ]`; choices= rejects
+    # out-of-range values up front
+    if a.entry:
         rc = subprocess.call([sys.executable, PICKER, "--vm", a.name,
                               "--entry", str(a.entry)])
         if rc != 0:
@@ -235,7 +236,10 @@ def main():
             p.add_argument("--memory", type=int, default=2048)
         if name == "start":
             p.add_argument("--entry", type=int, default=0,
-                           help="GRUB menu entry (0-5) of a standard ISO")
+                           choices=range(6),
+                           help="GRUB menu entry (0-5) of a standard ISO; "
+                                "0 = boot the ISO default, picker only "
+                                "runs for 1-5")
             p.add_argument("--wait-ready", type=int, default=0, metavar="SECS",
                            help="block until the agent console answers")
     a = ap.parse_args()

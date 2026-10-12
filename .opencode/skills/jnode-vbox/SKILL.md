@@ -54,9 +54,10 @@ jnode_vbox.py status  --name VM [--instance ID]
 - `config` creates the VM when missing (`createvm` + IDE controller +
   DVD attach), then only modifies settings: memory, ACPI/IOAPIC, boot
   order, both UARTs. Refuses while the VM runs.
-- `start` is headless; `--entry N` selects a GRUB 0.97 menu entry via
+- `start` is headless; `--entry N` (0-5) selects a GRUB 0.97 menu entry via
   `vbox_grub_pick.py` (screenshots + keyboard scancodes, verified like
-  the QEMU picker); `--wait-ready SECS` blocks on `serial_cmd.py --wait`.
+  the QEMU picker); `0`/omitted boots the ISO default and skips the
+  picker, matching `start_qemu.sh`; `--wait-ready SECS` blocks on `serial_cmd.py --wait`.
 - `stop` sends ACPI poweroff, waits 15s, then forces `poweroff`
   (JNode guests often ignore ACPI).
 - `status` prints VM state, UART modes, and the registry entry.

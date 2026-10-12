@@ -80,8 +80,17 @@ fi
 # finding 2). --alloc only ever runs on the start path.
 if [ "$STOP" = "1" ]; then
   if [ -z "$INSTANCE" ]; then
-    if ! INSTANCE=$(python3 "$PATHS_PY" --resolve 2>/dev/null); then
-      echo "no live registered instance to stop"
+    # keep --resolve's rc: 1 = none live, 2 = several live. Collapsing
+    # them (2>/dev/null + if !) made an ambiguous bare --stop print the
+    # false "no live registered instance" line (review finding).
+    INSTANCE=$(python3 "$PATHS_PY" --resolve 2>&1) && RESOLVE_RC=0 || RESOLVE_RC=$?
+    if [ "$RESOLVE_RC" != "0" ]; then
+      if [ "$RESOLVE_RC" = "2" ]; then
+        echo "$INSTANCE"
+        echo "stop one explicitly: $0 --stop --instance ID"
+      else
+        echo "no live registered instance to stop"
+      fi
       python3 "$PATHS_PY" --list || true
       exit 0
     fi
