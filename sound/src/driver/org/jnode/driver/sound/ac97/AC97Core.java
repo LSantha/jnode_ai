@@ -147,6 +147,12 @@ public final class AC97Core implements AC97Constants, IRQHandler {
     public static final int CODEC_SEMA_TIMEOUT = 8;
 
     /**
+     * Number of times the CIV and PICB register pair is re-read until it is
+     * stable, for a position snapshot that does not count a buffer twice.
+     */
+    public static final int CIV_PICB_RETRIES = 16;
+
+    /**
      * Bits of the global status register that are cleared by writing a 0 to
      * them, rather than the write-one-to-clear of the interrupt status bits.
      * The codec-read status is one of them.
@@ -1391,10 +1397,25 @@ public final class AC97Core implements AC97Constants, IRQHandler {
      */
     private long remainingFrames() {
         final int count = bdl.getEntryCount();
-        final int civ = maskEngineIndex(inNabmByte(PCM_OUT_CIV));
-        final int picb = inNabmWord(PCM_OUT_PICB);
-        final long samples = remainingSamples(descriptorSamples, count, civ,
-            lastValidIndex, picb);
+        // CIV and PICB are two reads of hardware that keeps advancing, so
+        // CIV can move between them and the remainder of one buffer would be
+        // counted twice, which reads as audio that is briefly ahead of
+        // itself. Read the pair until it is stable, or give up after a few
+        // attempts: a progress meter is allowed to be wrong by a second,
+        // not to spin forever on a busy engine.
+        for (int attempt = 0; attempt < CIV_PICB_RETRIES; attempt++) {
+            final int civ = maskEngineIndex(inNabmByte(PCM_OUT_CIV));
+            final int picb = inNabmWord(PCM_OUT_PICB);
+            final int civAgain = maskEngineIndex(inNabmByte(PCM_OUT_CIV));
+            if (civ == civAgain) {
+                final long samples = remainingSamples(descriptorSamples, count,
+                    civ, lastValidIndex, picb);
+                return samples / PCM_CHANNELS;
+            }
+        }
+        final long samples = remainingSamples(descriptorSamples, count,
+            maskEngineIndex(inNabmByte(PCM_OUT_CIV)), lastValidIndex,
+            inNabmWord(PCM_OUT_PICB));
         return samples / PCM_CHANNELS;
     }
 

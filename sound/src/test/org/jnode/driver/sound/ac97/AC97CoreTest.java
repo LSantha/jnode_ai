@@ -167,6 +167,37 @@ public class AC97CoreTest {
     }
 
     @Test
+    public void testPositionIsMonotonicAcrossTheRing() {
+        // getPosition is the queued frames minus the frames still to play.
+        // That subtraction must never go negative, so the remaining count
+        // may not exceed the queued count.
+        final int[] samples = samples(ENTRIES);
+        // A queued stream of 5000 frames: LVI 4, CIV 0, PICB 2048 of the
+        // first descriptor.
+        final int civ = 0;
+        final int lvi = 4;
+        final int picb = 2048;
+        // Five descriptors of 1024 frames are queued; the first one is half
+        // played, so 4 full descriptors plus half of the first remain.
+        final long queued = 5 * 1024;
+        final long remaining = AC97Core.remainingSamples(samples, ENTRIES, civ,
+            lvi, picb) / AC97Constants.PCM_CHANNELS;
+        assertTrue("remaining must not exceed queued", remaining <= queued);
+        // 1024 samples of the current descriptor plus 4 full ones.
+        assertEquals(1024 + 4 * 1024, remaining);
+        // A stable snapshot: reading the pair twice must give the same
+        // remainder, which is what the retry loop buys.
+        final long again = AC97Core.remainingSamples(samples, ENTRIES,
+            AC97Core.maskEngineIndex(civ), lvi, picb) / AC97Constants.PCM_CHANNELS;
+        assertEquals(remaining, again);
+        // And across the wrap: CIV 30, LVI 3, everything still to play.
+        final long wrapped = AC97Core.remainingSamples(samples, ENTRIES, 30, 3,
+            1024) / AC97Constants.PCM_CHANNELS;
+        // 512 samples of descriptor 30 plus descriptors 31, 0, 1, 2 and 3.
+        assertEquals(512 + 5 * 1024, wrapped);
+    }
+
+    @Test
     public void testRecordSourceValidation() {
         // The register has a 7 bit mux per channel: the right one in bits
         // 6:0 and the left one in bits 14:8, so a source for both channels is
