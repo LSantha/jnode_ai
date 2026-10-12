@@ -50,6 +50,11 @@ def _pid_alive(pid):
         return False
 
 
+def _owns(pid):
+    """pid is alive AND really is a kdb_mux (recycled pids do not count)."""
+    return jp.pid_owns(pid, "kdb_mux.py")
+
+
 def read_pid(paths):
     try:
         with open(paths.kdb_mux_pid) as f:
@@ -61,7 +66,7 @@ def read_pid(paths):
 def acquire_pidfile(paths):
     """True when this process now owns the instance's KDB mux slot."""
     existing = read_pid(paths)
-    if existing and _pid_alive(existing):
+    if existing and _owns(existing):
         return False
     try:
         os.makedirs(os.path.dirname(paths.kdb_mux_pid), exist_ok=True)

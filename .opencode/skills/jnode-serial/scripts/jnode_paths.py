@@ -261,24 +261,65 @@ def _pid_alive(pid):
         return False
 
 
-def safe_kill_pid(pid, needle, sig=15):
-    """SIGTERM `pid` only if its /proc cmdline still mentions `needle`.
-
-    A stale pid file can name a recycled pid; killing it would take out
-    an unrelated process. Returns True when the signal was sent.
-    """
-    try:
-        with open("/proc/%d/cmdline" % int(pid), "rb") as f:
-            cmd = f.read().replace(b"\0", b" ").decode("utf-8", "replace")
-    except (OSError, TypeError, ValueError):
-        return False
-    if needle not in cmd:
-        return False
+def _signal(pid, sig):
     try:
         os.kill(int(pid), sig)
         return True
     except (OSError, TypeError, ValueError):
         return False
+
+
+def pid_owns(pid, needle):
+    """True only if `pid` is alive AND really is a `needle` process.
+
+    Matches argv[0]'s basename (or argv[1] for `python3 script.py`), so
+    a `tail -f .../serial_mux.py` is not mistaken for the mux. Without
+    /proc (macOS, masked containers) identity cannot be proven; fall
+    back to the existence check rather than declaring a live process
+    stale -- the two-mux wedge is worse than a stale kill on a platform
+    this code does not support.
+    """
+    try:
+        pid = int(pid)
+    except (TypeError, ValueError):
+        return False
+    # test-only: let a test suite stand a pid in for a real qemu-system
+    # without needing a VM (the CLI is a subprocess, so an in-process
+    # monkeypatch cannot reach it)
+    fake = os.environ.get("JNODE_TEST_FAKE_QEMU_PID")
+    if fake and needle == "qemu-system":
+        try:
+            if pid == int(fake) and _pid_alive(pid):
+                return True
+        except ValueError:
+            pass
+    try:
+        with open("/proc/%d/cmdline" % pid, "rb") as f:
+            argv = [a for a in f.read().split(b"\0") if a]
+    except FileNotFoundError:
+        return _pid_alive(pid)
+    except (OSError, TypeError, ValueError):
+        return False
+    if not argv:
+        return False
+    a0 = os.path.basename(argv[0].decode("utf-8", "replace"))
+    if needle in a0:
+        return True
+    # `python3 /path/script.py`: exact basename, so a `-c` code string
+    # that merely mentions the needle does not match
+    if len(argv) > 1 and a0.split(".")[0].startswith("python"):
+        return needle == os.path.basename(
+            argv[1].decode("utf-8", "replace"))
+    return False
+
+
+def safe_kill_pid(pid, needle, sig=15):
+    """Signal `pid` only if it is really a `needle` process.
+
+    A stale pid file can name a recycled pid; killing it would take out
+    an unrelated process. Returns True when the signal was sent.
+    """
+    return pid_owns(pid, needle) and _signal(pid, sig)
 
 
 def _vbox_binary():
@@ -324,7 +365,10 @@ def entry_live(entry):
     if hyp == "qemu":
         pid = entry.get("vm_pid") or entry.get("pid")
         if pid:
-            return _pid_alive(pid)
+            # identity, not just liveness: a recycled pid makes --list,
+            # --resolve, --alloc and start_qemu.sh --stop act on a
+            # phantom (and kill an innocent)
+            return pid_owns(pid, "qemu-system")
         return os.path.exists(entry.get("agent_sock") or "")
     if hyp == "vbox":
         if _vbox_running(entry.get("vm")):

@@ -107,10 +107,26 @@ if [ "$STOP" = "1" ]; then
     echo "ERROR: instance '$INSTANCE' is hypervisor=$HYP (use jnode-vbox for VirtualBox)"
     exit 1
   fi
-  if [ -n "$PID" ] && kill -0 "$PID" 2>/dev/null; then
-    kill "$PID" 2>/dev/null || true
-    for _ in $(seq 1 20); do kill -0 "$PID" 2>/dev/null || break; sleep 0.5; done
-    kill -9 "$PID" 2>/dev/null || true
+  # --stop is the post-crash recovery path, so the entry is often stale
+  # and vm_pid may name a recycled pid: only signal a process that is
+  # really qemu-system
+  qemu_kill() {
+    python3 -c "
+import sys
+sys.path.insert(0, '$(dirname "$PATHS_PY")')
+import jnode_paths as jp
+sys.exit(0 if jp.safe_kill_pid(int('$1'), 'qemu-system', int('$2')) else 1)"
+  }
+  qemu_owns() {
+    python3 -c "
+import sys
+sys.path.insert(0, '$(dirname "$PATHS_PY")')
+import jnode_paths as jp
+sys.exit(0 if jp.pid_owns(int('$1'), 'qemu-system') else 1)"
+  }
+  if [ -n "$PID" ] && qemu_kill "$PID" 15; then
+    for _ in $(seq 1 20); do qemu_owns "$PID" || break; sleep 0.5; done
+    qemu_kill "$PID" 9 || true
     echo "stopped qemu pid $PID (instance $INSTANCE)"
   else
     echo "instance '$INSTANCE': no running qemu pid"

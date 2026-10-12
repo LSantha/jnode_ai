@@ -127,10 +127,11 @@ def mux_pid(paths):
     try:
         with open(paths.mux_pid, "r") as f:
             pid = int(f.read().strip())
-        os.kill(pid, 0)
-        return pid
     except (OSError, ValueError):
         return None
+    # a recycled-but-live pid is not the mux: --status would lie and
+    # ensure_mux() would skip the start (the two-mux wedge)
+    return pid if jp.pid_owns(pid, "serial_mux.py") else None
 
 
 def _read_status(paths):
@@ -168,20 +169,21 @@ def stop_mux(paths):
     pid = mux_pid(paths)
     if pid is None:
         print("mux not running (instance %s)" % paths.id)
-        return
-    if not jp.safe_kill_pid(pid, "serial_mux.py"):
-        # stale pid file: the named process is not the mux (pid reuse)
-        print("mux not running (stale pid file, instance %s)" % paths.id)
+        # mux_pid() refuses recycled pids; drop any stale claim
         try:
             os.unlink(paths.mux_pid)
         except OSError:
             pass
         return
-    try:
-        os.kill(pid, 15)
-    except OSError as e:
-        print("ERROR signalling mux: %s" % e)
-        sys.exit(1)
+    if not jp.safe_kill_pid(pid, "serial_mux.py"):
+        print("mux not running (stale pid file, instance %s, pid %d)"
+              % (paths.id, pid))
+        try:
+            os.unlink(paths.mux_pid)
+        except OSError:
+            pass
+        return
+    # safe_kill_pid already sent SIGTERM; just wait for the exit
     for _ in range(50):
         time.sleep(0.2)
         if mux_pid(paths) is None:

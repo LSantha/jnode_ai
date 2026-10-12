@@ -29,8 +29,14 @@ class Guest(object):
         self.id = instance_id
         self.state_dir = str(state_dir)
         self.sock = os.path.join(self.state_dir, instance_id, "agent.sock")
+        # run under a qemu-system argv[1] so entry_live()'s identity
+        # check (pid_owns(pid, "qemu-system"), exact basename match)
+        # sees this as a live VM
+        stub = os.path.join(self.state_dir, "qemu-system")
+        if not os.path.exists(stub):
+            os.symlink(FAKE_GUEST, stub)
         self.proc = subprocess.Popen(
-            [sys.executable, FAKE_GUEST, self.sock],
+            [sys.executable, stub, self.sock],
             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         deadline = time.time() + 10
         while not os.path.exists(self.sock):
@@ -306,6 +312,76 @@ def test_duplicate_instance_flag_is_error(world):
     r = _run(state, "--instance", "t8", "--instance", "t8", "date")
     assert r.returncode == 2
     assert "--instance given twice" in r.stdout
+
+
+def test_serial_stop_ignores_recycled_pid(world):
+    """--stop must not signal an unrelated process whose pid recycled
+    into mux.pid, and must drop the stale claim."""
+    state, make = world
+    make("t9")
+    pidfile = state / "t9" / "mux" / "mux.pid"
+    pidfile.parent.mkdir(parents=True, exist_ok=True)
+    victim = subprocess.Popen([sys.executable, "-c",
+                               "import time; time.sleep(120)"])
+    try:
+        pidfile.write_text("%d\n" % victim.pid)
+        r = _run(state, "--instance", "t9", "--stop")
+        assert victim.poll() is None, "unrelated pid was killed"
+        assert not pidfile.exists()
+        assert "not running" in r.stdout
+    finally:
+        victim.kill()
+        victim.wait()
+
+
+def test_status_and_start_self_heal_recycled_mux_pid(world):
+    """A recycled-but-live pid in mux.pid is not the mux: --status must
+    not report it, and a command must start a fresh mux instead of
+    hanging for the full deadline (the two-mux wedge)."""
+    state, make = world
+    make("t10")
+    pidfile = state / "t10" / "mux" / "mux.pid"
+    pidfile.parent.mkdir(parents=True, exist_ok=True)
+    victim = subprocess.Popen([sys.executable, "-c",
+                               "import time; time.sleep(120)"])
+    try:
+        pidfile.write_text("%d\n" % victim.pid)
+        r = _run(state, "--instance", "t10", "--status")
+        assert "mux: not running" in r.stdout
+        r = _run(state, "--instance", "t10", "date")
+        assert r.returncode == 0, r.stdout + r.stderr
+        assert "OUT:date" in r.stdout
+        assert victim.poll() is None, "unrelated pid was killed"
+    finally:
+        victim.kill()
+        victim.wait()
+
+
+def test_qemu_stop_ignores_stale_vm_pid(world):
+    """--stop is the post-crash recovery path: a stale entry whose
+    vm_pid recycled must be cleaned up without killing the innocent."""
+    state, _ = world
+    script = os.path.join(HERE, "..", "..", "jnode-qemu", "scripts",
+                          "start_qemu.sh")
+    victim = subprocess.Popen([sys.executable, "-c",
+                               "import time; time.sleep(120)"])
+    try:
+        env = _env(state)
+        r = subprocess.run(
+            [sys.executable, PATHS_PY, "--register", "--instance", "stale1",
+             "--hypervisor", "qemu", "--vm-name", "JNode x86",
+             "--vm-pid", str(victim.pid), "--state", "ready"],
+            capture_output=True, text=True, timeout=30, env=env)
+        assert r.returncode == 0, r.stdout + r.stderr
+        r = subprocess.run(["bash", script, "--stop", "--instance", "stale1"],
+                           capture_output=True, text=True, timeout=60,
+                           env=env)
+        assert r.returncode == 0, r.stdout + r.stderr
+        assert victim.poll() is None, "unrelated pid was killed"
+        assert "no running qemu pid" in r.stdout
+    finally:
+        victim.kill()
+        victim.wait()
 
 
 def test_write_keeps_earlier_commands(world):

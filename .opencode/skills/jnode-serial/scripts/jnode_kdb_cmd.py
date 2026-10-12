@@ -26,7 +26,6 @@ Commands:
 """
 
 import os
-import signal
 import socket
 import subprocess
 import sys
@@ -92,7 +91,7 @@ def send_kdb_command(sock, cmd):
 
 def start_mux(paths):
     existing = kdbmux.read_pid(paths)
-    if existing and kdbmux._pid_alive(existing):
+    if existing and kdbmux._owns(existing):
         print("kdb mux already running (pid %d, instance %s)"
               % (existing, paths.id))
     else:
@@ -108,24 +107,23 @@ def start_mux(paths):
 
 def stop_mux(paths):
     pid = kdbmux.read_pid(paths)
-    if not pid or not kdbmux._pid_alive(pid):
+    # identity check: a recycled pid in kdb_mux.pid must never be
+    # signalled, let alone SIGKILLed
+    if not pid or not jp.pid_owns(pid, "kdb_mux.py"):
         print("kdb mux not running (instance %s)" % paths.id)
         try:
             os.unlink(paths.kdb_mux_pid)
         except OSError:
             pass
         return 0
-    try:
-        os.kill(pid, signal.SIGTERM)
-    except OSError as e:
-        print("ERROR: cannot signal kdb mux pid %d: %s" % (pid, e))
-        return 1
+    jp.safe_kill_pid(pid, "kdb_mux.py")
     for _ in range(20):
         if not kdbmux._pid_alive(pid):
             break
         time.sleep(0.25)
     if kdbmux._pid_alive(pid):
-        os.kill(pid, signal.SIGKILL)
+        # re-check identity: SIGKILL cannot be undone
+        jp.safe_kill_pid(pid, "kdb_mux.py", sig=9)
     try:
         os.unlink(paths.kdb_mux_pid)
     except OSError:

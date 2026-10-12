@@ -201,3 +201,24 @@ def test_kdb_sigterm_removes_pidfile(kdb_world):
     assert _wait_for(lambda: not os.path.exists(pidfile)), \
         "pid file survived SIGTERM"
     assert _wait_for(lambda: not _pid_alive(pid))
+
+
+def test_kdb_stop_ignores_recycled_pid(kdb_world):
+    """--stop must not signal -- let alone SIGKILL -- an unrelated
+    process whose pid recycled into kdb_mux.pid."""
+    state, guest = kdb_world
+    pidfile = _field(state, "kdb_mux_pid")
+    os.makedirs(os.path.dirname(pidfile), exist_ok=True)
+    victim = subprocess.Popen([sys.executable, "-c",
+                               "import time; time.sleep(120)"])
+    try:
+        with open(pidfile, "w") as f:
+            f.write("%d\n" % victim.pid)
+        r = _run(state, "--instance", "k1", "--stop")
+        assert r.returncode == 0, r.stdout + r.stderr
+        assert victim.poll() is None, "unrelated pid was killed"
+        assert not os.path.exists(pidfile)
+        assert "not running" in r.stdout
+    finally:
+        victim.kill()
+        victim.wait()

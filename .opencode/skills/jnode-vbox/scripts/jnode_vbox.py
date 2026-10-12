@@ -208,7 +208,8 @@ def stop_mux(paths):
     # pipe (same F2 as in start_qemu.sh --stop); paths.mux_pid covers
     # both the legacy and the namespaced layout. safe_kill_pid checks
     # the /proc cmdline, so a stale pid file cannot SIGTERM a recycled
-    # (unrelated) pid.
+    # (unrelated) pid -- and any stale claim is dropped, matching
+    # serial_cmd.stop_mux.
     for pidfile, needle in ((paths.mux_pid, "serial_mux.py"),
                             (paths.kdb_mux_pid, "kdb_mux.py")):
         try:
@@ -216,7 +217,11 @@ def stop_mux(paths):
                 pid = int(f.read().strip())
         except (OSError, ValueError):
             continue
-        jp.safe_kill_pid(pid, needle)
+        if not jp.safe_kill_pid(pid, needle):
+            try:
+                os.unlink(pidfile)
+            except OSError:
+                pass
 
 
 def cmd_stop(a):

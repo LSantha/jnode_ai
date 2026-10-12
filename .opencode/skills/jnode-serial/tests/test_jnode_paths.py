@@ -15,9 +15,10 @@ sys.path.insert(0, SCRIPTS)
 
 import jnode_paths as jp  # noqa: E402
 
-# captured before the isolated_state fixture patches jp's copy; the CLI
-# subprocess under test runs the same real function
+# captured before the isolated_state fixture patches jp's copies; the
+# CLI subprocess under test runs the same real functions
 _real_legacy_sock_busy = jp._legacy_sock_busy
+_real_pid_owns = jp.pid_owns
 
 
 @pytest.fixture(autouse=True)
@@ -30,6 +31,10 @@ def isolated_state(tmp_path, monkeypatch):
     # a leftover /tmp/jnode.serial2 on the test host must not flip
     # alloc_instance()'s hand-started-VM check
     monkeypatch.setattr(jp, "_legacy_sock_busy", lambda: False)
+    # the pytest process stands in for a live qemu-system (tests use
+    # vm_pid=os.getpid() for that); _cli subprocesses inherit this env,
+    # so the real pid_owns sees the same substitution
+    monkeypatch.setenv("JNODE_TEST_FAKE_QEMU_PID", str(os.getpid()))
     return state
 
 
@@ -412,9 +417,46 @@ def test_safe_kill_pid_checks_cmdline():
     """safe_kill_pid must not signal a pid whose /proc cmdline lacks the
     needle (recycled pid from a stale pid file). sig=0 = existence-only."""
     me = os.getpid()
-    assert jp.safe_kill_pid(me, "pytest", sig=0) is True
+    assert jp.safe_kill_pid(me, "python", sig=0) is True
     assert jp.safe_kill_pid(me, "definitely-not-in-any-cmdline") is False
     # dead pid
     child = subprocess.Popen([sys.executable, "-c", "pass"])
     child.wait()
     assert jp.safe_kill_pid(child.pid, "python", sig=0) is False
+
+
+def test_pid_owns_matches_argv_not_substrings():
+    """The predicate must match argv[0]/argv[1], not the whole cmdline:
+    a `tail -f .../serial_mux.py` is not the mux."""
+    child = subprocess.Popen([sys.executable, "-c",
+                              "import time; time.sleep(120)"])
+    try:
+        me = os.getpid()
+        assert _real_pid_owns(me, "python") is True      # argv[0]
+        assert _real_pid_owns(me, "pytest") is False     # `python -m pytest`
+        # -c code mentioning the needle must not match argv[1]
+        assert _real_pid_owns(child.pid, "time.sleep") is False
+        assert _real_pid_owns(child.pid, "python") is True
+    finally:
+        child.kill()
+        child.wait()
+
+
+def test_pid_owns_without_proc_falls_back_to_liveness(monkeypatch):
+    """No /proc (macOS, masked containers): identity cannot be proven,
+    so fall back to the existence check -- a live process is never
+    declared stale (the two-mux wedge is the worse failure)."""
+    child = subprocess.Popen([sys.executable, "-c",
+                              "import time; time.sleep(120)"])
+    try:
+        def no_proc(path, *args, **kwargs):
+            raise FileNotFoundError(path)
+
+        monkeypatch.setattr(jp, "open", no_proc, raising=False)
+        assert _real_pid_owns(child.pid, "serial_mux.py") is True
+        dead = subprocess.Popen([sys.executable, "-c", "pass"])
+        dead.wait()
+        assert _real_pid_owns(dead.pid, "serial_mux.py") is False
+    finally:
+        child.kill()
+        child.wait()
