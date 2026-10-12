@@ -281,6 +281,33 @@ def test_control_flags_honoured_in_any_position(world):
     assert "mutually exclusive" in r.stdout
 
 
+def test_mux_sigterm_removes_pidfile(world):
+    """SIGTERM must drop mux.pid; a stale pid file makes ensure_mux()
+    skip the start and hang every serial_cmd for the full deadline."""
+    state, make = world
+    make("t7")
+    r = _run(state, "--instance", "t7", "date")
+    assert r.returncode == 0, r.stdout + r.stderr
+    pidfile = state / "t7" / "mux" / "mux.pid"
+    assert pidfile.exists()
+    pid = int(pidfile.read_text().strip())
+    os.kill(pid, 15)
+    deadline = time.time() + 10
+    while pidfile.exists() and time.time() < deadline:
+        time.sleep(0.1)
+    assert not pidfile.exists(), "mux.pid survived SIGTERM"
+
+
+def test_duplicate_instance_flag_is_error(world):
+    """`--instance a --instance b` must not leak the second one through
+    as a guest command."""
+    state, make = world
+    make("t8")
+    r = _run(state, "--instance", "t8", "--instance", "t8", "date")
+    assert r.returncode == 2
+    assert "--instance given twice" in r.stdout
+
+
 def test_write_keeps_earlier_commands(world):
     """`serial_cmd date --write PATH` must run date AND write the file."""
     state, make = world

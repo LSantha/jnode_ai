@@ -342,19 +342,35 @@ def test_vbox_refuses_live_instance(monkeypatch, capsys):
 
 def test_vbox_refuse_names_vm_and_advice(monkeypatch, capsys):
     """The self-conflict case (same VM name) must get 'stop that VM',
-    not the generic 'pick another id'."""
+    not the generic 'pick another id' -- and the advice must name the
+    launcher that actually owns the hypervisor."""
     mod = _load_jnode_vbox()
-    _register("vb-rt", vm_pid=os.getpid(), vm="JNode")
+    # the instance is live because its vbox VM "JNode" is running
+    monkeypatch.setattr(jp, "_vbox_running", lambda name: name == "JNode")
+    _register("vb-rt", hypervisor="vbox", vm_pid=os.getpid(), vm="JNode")
 
     paths = jp.Paths("vb-rt")
     assert mod.refuse_live_instance(paths, name="JNode") is True
     out = capsys.readouterr().out
-    assert "live qemu VM (JNode)" in out
+    assert "live vbox VM (JNode)" in out
     assert "stop that VM first" in out
+    assert "jnode_vbox.py stop" in out or "stop --name JNode" in out
     # a foreign VM on the same instance: different advice
     assert mod.refuse_live_instance(paths, name="JNode2") is True
     out = capsys.readouterr().out
     assert "pick another id" in out
+
+
+def test_vbox_refuse_points_qemu_at_start_qemu(capsys):
+    """The advice for a live QEMU instance must be start_qemu.sh --stop,
+    never a jnode_vbox.py stop -- the vbox tool cannot stop QEMU."""
+    mod = _load_jnode_vbox()
+    _register("q-rt", hypervisor="qemu", vm_pid=os.getpid(), vm="JNode x86")
+    paths = jp.Paths("q-rt")
+    assert mod.refuse_live_instance(paths, name="JNode x86") is True
+    out = capsys.readouterr().out
+    assert "start_qemu.sh --stop --instance q-rt" in out
+    assert "stop --name" not in out
 
 
 def test_vbox_stop_requires_matching_name(monkeypatch):
@@ -373,3 +389,32 @@ def test_vbox_stop_requires_matching_name(monkeypatch):
     assert rc == 1
     # the live VM's entry must survive
     assert jp.read_entry("vb-1") == entry
+
+
+def test_vbox_stop_rejects_non_vbox_instance(monkeypatch):
+    """stop on a qemu-bound instance must refuse and point at
+    start_qemu.sh --stop: is_running() only queries VBoxManage, so a
+    live QEMU VM would otherwise fall through to 'not running' and get
+    unregistered (round-5 finding 1)."""
+    mod = _load_jnode_vbox()
+    entry = {"id": "q-s1", "hypervisor": "qemu", "vm": "JNode x86",
+             "agent_sock": "/tmp/nonexistent-agent.sock",
+             "vm_pid": os.getpid()}
+    jp.write_entry(entry)
+
+    a = argparse.Namespace(name="JNode x86", instance="q-s1")
+    rc = mod.cmd_stop(a)
+    assert rc == 1
+    assert jp.read_entry("q-s1") == entry
+
+
+def test_safe_kill_pid_checks_cmdline():
+    """safe_kill_pid must not signal a pid whose /proc cmdline lacks the
+    needle (recycled pid from a stale pid file). sig=0 = existence-only."""
+    me = os.getpid()
+    assert jp.safe_kill_pid(me, "pytest", sig=0) is True
+    assert jp.safe_kill_pid(me, "definitely-not-in-any-cmdline") is False
+    # dead pid
+    child = subprocess.Popen([sys.executable, "-c", "pass"])
+    child.wait()
+    assert jp.safe_kill_pid(child.pid, "python", sig=0) is False

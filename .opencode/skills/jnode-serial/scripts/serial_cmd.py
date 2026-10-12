@@ -169,6 +169,14 @@ def stop_mux(paths):
     if pid is None:
         print("mux not running (instance %s)" % paths.id)
         return
+    if not jp.safe_kill_pid(pid, "serial_mux.py"):
+        # stale pid file: the named process is not the mux (pid reuse)
+        print("mux not running (stale pid file, instance %s)" % paths.id)
+        try:
+            os.unlink(paths.mux_pid)
+        except OSError:
+            pass
+        return
     try:
         os.kill(pid, 15)
     except OSError as e:
@@ -468,6 +476,9 @@ def main():
 
     instance = None
     if "--instance" in args:
+        if args.count("--instance") > 1:
+            print("ERROR: --instance given twice")
+            sys.exit(2)
         i = args.index("--instance")
         if i + 1 >= len(args):
             print("ERROR: --instance needs an id")

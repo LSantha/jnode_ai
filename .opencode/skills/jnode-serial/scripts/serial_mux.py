@@ -44,9 +44,11 @@ Usage: serial_cmd.py starts this automatically; manual start:
     nohup python3 serial_mux.py [--instance ID] >/dev/null 2>&1 &
 """
 
+import atexit
 import json
 import os
 import select
+import signal
 import socket
 import subprocess
 import sys
@@ -155,13 +157,19 @@ def replug_pipe():
     if not replug_allowed():
         log("replug skipped (hypervisor=%s vm=%s)" % (HYP, VM))
         return False
+    # resolve the binary once: installs differ only in case, and a miss
+    # here would make the VirtualBox wedge recovery silently dead code
+    exe = jp._vbox_binary()
+    if not exe:
+        log("replug skipped: VBoxManage/vboxmanage not on PATH")
+        return False
     try:
-        subprocess.run(["vboxmanage", "controlvm", VM,
+        subprocess.run([exe, "controlvm", VM,
                         "changeuartmode2", "disconnected"],
                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                        timeout=30)
         time.sleep(1.0)
-        subprocess.run(["vboxmanage", "controlvm", VM,
+        subprocess.run([exe, "controlvm", VM,
                         "changeuartmode2", "server", SOCK],
                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                        timeout=30)
@@ -340,6 +348,27 @@ def main(argv=None):
     prune_respdir()
 
     pid = os.getpid()
+
+    def _cleanup_pidfile():
+        # drop our own claim; a SIGTERM'd mux must not leave a stale
+        # mux.pid behind (it would make ensure_mux() skip the start and
+        # hang every serial_cmd for the full deadline, or make a
+        # launcher SIGTERM whatever pid recycled the slot)
+        try:
+            with open(PIDFILE) as f:
+                if int(f.read().strip()) == os.getpid():
+                    os.unlink(PIDFILE)
+        except (OSError, ValueError):
+            pass
+
+    atexit.register(_cleanup_pidfile)
+
+    def _sigterm(_sig, _frame):
+        # Python does not unwind on SIGTERM without this, so atexit
+        # would never run; stop_mux() is only the backstop
+        raise SystemExit(143)
+
+    signal.signal(signal.SIGTERM, _sigterm)
     try:
         with open(PIDFILE, "w") as f:
             f.write(str(pid) + "\n")

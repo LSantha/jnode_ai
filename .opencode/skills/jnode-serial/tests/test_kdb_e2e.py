@@ -179,6 +179,15 @@ def test_kdb_bare_instance_prints_usage(kdb_world):
     assert "Usage" in r.stdout
 
 
+def test_kdb_duplicate_instance_flag(kdb_world):
+    """`--instance a --instance b` must error, not leak the second one
+    through as an Unknown KDB command."""
+    state, guest = kdb_world
+    r = _run(state, "--instance", "k1", "--instance", "k1", "p")
+    assert r.returncode == 2
+    assert "--instance given twice" in r.stdout
+
+
 def test_kdb_sigterm_removes_pidfile(kdb_world):
     """SIGTERM must unwind through main()'s finally and drop the pid
     file (stop_mux's unlink is only the backstop)."""

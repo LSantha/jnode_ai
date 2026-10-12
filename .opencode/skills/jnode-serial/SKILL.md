@@ -110,7 +110,8 @@ is a valid way to collect boot diagnostics.
 ## CI (GitHub Actions) pattern
 
 ```sh
-sh .opencode/skills/jnode-qemu/scripts/start_qemu.sh --instance ci --wait-ready 240 simple "$ISO"
+# start_qemu.sh is bash-only (arrays); do not run it under sh/dash
+bash .opencode/skills/jnode-qemu/scripts/start_qemu.sh --instance ci --wait-ready 240 simple "$ISO"
 python3 .opencode/skills/jnode-serial/scripts/serial_cmd.py --instance ci --wait 300 "date"
 python3 .opencode/skills/jnode-serial/scripts/serial_cmd.py --instance ci --stop
 ```

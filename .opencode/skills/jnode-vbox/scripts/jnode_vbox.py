@@ -29,7 +29,6 @@ For the legacy "default" instance the pipes stay at the historical
 
 import argparse
 import os
-import signal
 import subprocess
 import sys
 import time
@@ -95,8 +94,13 @@ def refuse_live_instance(paths, name=None):
         print("ERROR: instance '%s' already has a live %s VM (%s)"
               % (paths.id, hyp, vm))
         if name is not None and name == vm:
-            print("       stop that VM first: %s stop --name %s "
-                  "--instance %s" % (sys.argv[0], vm, paths.id))
+            if hyp == "vbox":
+                print("       stop that VM first: %s stop --name %s "
+                      "--instance %s" % (sys.argv[0], vm, paths.id))
+            else:
+                # a QEMU instance: jnode-vbox stop only talks to VBoxManage
+                print("       stop it first: start_qemu.sh --stop "
+                      "--instance %s" % paths.id)
         else:
             print("       stop it (jnode_paths.py --list) or pick another "
                   "id (--instance)")
@@ -202,21 +206,33 @@ def cmd_start(a):
 def stop_mux(paths):
     # tear the muxes down too, or they idle forever with a dead UART
     # pipe (same F2 as in start_qemu.sh --stop); paths.mux_pid covers
-    # both the legacy and the namespaced layout
-    for pidfile in (paths.mux_pid, paths.kdb_mux_pid):
+    # both the legacy and the namespaced layout. safe_kill_pid checks
+    # the /proc cmdline, so a stale pid file cannot SIGTERM a recycled
+    # (unrelated) pid.
+    for pidfile, needle in ((paths.mux_pid, "serial_mux.py"),
+                            (paths.kdb_mux_pid, "kdb_mux.py")):
         try:
             with open(pidfile) as f:
                 pid = int(f.read().strip())
-            os.kill(pid, signal.SIGTERM)
         except (OSError, ValueError):
-            pass
+            continue
+        jp.safe_kill_pid(pid, needle)
 
 
 def cmd_stop(a):
     paths = jp.resolve_paths(a.instance)
     # a wrong --name (typo, or the "other VM" of a two-VM setup) must
-    # not unregister a different VM's entry and kill its muxes
+    # not unregister a different VM's entry and kill its muxes; and a
+    # non-vbox instance must never be stopped through the vbox tool --
+    # is_running() only queries VBoxManage, so a live QEMU VM would
+    # fall through to "not running" and get unregistered anyway
     entry = jp.read_entry(paths.id)
+    if entry and entry.get("hypervisor") not in (None, "vbox"):
+        print("ERROR: instance '%s' is hypervisor=%s"
+              % (paths.id, entry.get("hypervisor")))
+        print("       stop it with: start_qemu.sh --stop --instance %s"
+              % paths.id)
+        return 1
     if entry and entry.get("vm") and entry["vm"] != a.name:
         print("ERROR: instance '%s' is bound to VM '%s', not '%s'"
               % (paths.id, entry["vm"], a.name))

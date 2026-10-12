@@ -142,6 +142,9 @@ def main():
 
     instance = None
     if "--instance" in args:
+        if args.count("--instance") > 1:
+            print("ERROR: --instance given twice")
+            sys.exit(2)
         i = args.index("--instance")
         if i + 1 >= len(args):
             print("ERROR: --instance needs an id")

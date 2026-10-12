@@ -261,6 +261,26 @@ def _pid_alive(pid):
         return False
 
 
+def safe_kill_pid(pid, needle, sig=15):
+    """SIGTERM `pid` only if its /proc cmdline still mentions `needle`.
+
+    A stale pid file can name a recycled pid; killing it would take out
+    an unrelated process. Returns True when the signal was sent.
+    """
+    try:
+        with open("/proc/%d/cmdline" % int(pid), "rb") as f:
+            cmd = f.read().replace(b"\0", b" ").decode("utf-8", "replace")
+    except (OSError, TypeError, ValueError):
+        return False
+    if needle not in cmd:
+        return False
+    try:
+        os.kill(int(pid), sig)
+        return True
+    except (OSError, TypeError, ValueError):
+        return False
+
+
 def _vbox_binary():
     # installs differ only in case; a miss here would make every vbox
     # entry read back as dead (the quiet form of the vm/vm_name bug)
