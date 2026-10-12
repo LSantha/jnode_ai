@@ -84,33 +84,40 @@ def register(paths, name, state):
     jp.write_entry(entry)
 
 
-def refuse_live_instance(paths):
+def refuse_live_instance(paths, name=None):
     """Same guard start_qemu.sh has: never bind config/start to an
     instance whose VM is still alive, or autodetect would overwrite its
     registry entry and hand its pipes to this VM."""
     entry = jp.read_entry(paths.id)
     if jp.entry_live(entry):
+        vm = (entry or {}).get("vm") or "unknown"
         hyp = (entry or {}).get("hypervisor") or "unknown"
-        print("ERROR: instance '%s' already has a live %s VM"
-              % (paths.id, hyp))
-        print("       pick another id (--instance) or stop that VM first "
-              "(jnode_paths.py --list)")
+        print("ERROR: instance '%s' already has a live %s VM (%s)"
+              % (paths.id, hyp, vm))
+        if name is not None and name == vm:
+            print("       stop that VM first: %s stop --name %s "
+                  "--instance %s" % (sys.argv[0], vm, paths.id))
+        else:
+            print("       stop it (jnode_paths.py --list) or pick another "
+                  "id (--instance)")
         return True
     return False
 
 
 def cmd_config(a):
     paths = jp.resolve_paths(a.instance)
-    if refuse_live_instance(paths):
+    # is_running first so the self-conflict case (same VM, same
+    # instance) gets the VM-naming message below, not the generic guard
+    if is_running(a.name):
+        print("ERROR: %s is running; stop it before reconfiguring" % a.name)
+        return 1
+    if refuse_live_instance(paths, name=a.name):
         return 1
     d = info(a.name)
     if not d:
         print("creating VM %s" % a.name)
         vbox("createvm", "--name", a.name, "--ostype", "Other", "--register")
         d = info(a.name)
-    if is_running(a.name):
-        print("ERROR: %s is running; stop it before reconfiguring" % a.name)
-        return 1
     common = ["modifyvm", a.name,
               "--memory", str(a.memory),
               "--acpi", "on", "--ioapic", "on",
@@ -151,10 +158,12 @@ def cmd_config(a):
 
 def cmd_start(a):
     paths = jp.resolve_paths(a.instance)
-    if refuse_live_instance(paths):
-        return 1
+    # is_running first so the self-conflict case (same VM, same
+    # instance) gets the VM-naming message below, not the generic guard
     if is_running(a.name):
         print("ERROR: %s already running" % a.name)
+        return 1
+    if refuse_live_instance(paths, name=a.name):
         return 1
     if not info(a.name):
         print("ERROR: VM %s does not exist (run config first)" % a.name)
@@ -205,6 +214,15 @@ def stop_mux(paths):
 
 def cmd_stop(a):
     paths = jp.resolve_paths(a.instance)
+    # a wrong --name (typo, or the "other VM" of a two-VM setup) must
+    # not unregister a different VM's entry and kill its muxes
+    entry = jp.read_entry(paths.id)
+    if entry and entry.get("vm") and entry["vm"] != a.name:
+        print("ERROR: instance '%s' is bound to VM '%s', not '%s'"
+              % (paths.id, entry["vm"], a.name))
+        print("       stop it with: %s stop --name %s --instance %s"
+              % (sys.argv[0], entry["vm"], paths.id))
+        return 1
     if not is_running(a.name):
         print("%s is not running" % a.name)
         jp.unregister(paths.id)
@@ -236,9 +254,12 @@ def cmd_status(a):
         return 1
     print("vm:        %s (%s)" % (a.name, d.get("VMState")))
     print("instance:  %s" % paths.id)
+    entry = jp.read_entry(paths.id)
+    if entry and entry.get("vm") and entry["vm"] != a.name:
+        print("note:      instance '%s' is bound to VM '%s'"
+              % (paths.id, entry["vm"]))
     print("kdb pipe:  %s (%s)" % (paths.kdb_sock, d.get("uartmode1")))
     print("agent pipe:%s (%s)" % (paths.agent_sock, d.get("uartmode2")))
-    entry = jp.read_entry(paths.id)
     if entry:
         print("registry:  hypervisor=%s state=%s"
               % (entry.get("hypervisor"), entry.get("state")))

@@ -3,6 +3,7 @@
 Run:  python3 -m pytest .opencode/skills/jnode-serial/tests/ -q
 """
 
+import argparse
 import os
 import subprocess
 import sys
@@ -13,6 +14,10 @@ SCRIPTS = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "scripts
 sys.path.insert(0, SCRIPTS)
 
 import jnode_paths as jp  # noqa: E402
+
+# captured before the isolated_state fixture patches jp's copy; the CLI
+# subprocess under test runs the same real function
+_real_legacy_sock_busy = jp._legacy_sock_busy
 
 
 @pytest.fixture(autouse=True)
@@ -237,26 +242,14 @@ def test_cli_register_list_unregister(tmp_path):
     assert not (sd / "instances" / "qemu-9.json").exists()
 
 
-def _host_legacy_busy():
-    """Mirror of the real _legacy_sock_busy for CLI subprocesses: the
-    legacy socket counts only when something actually holds it."""
-    path = "/tmp/jnode.serial2"
-    if not os.path.exists(path):
-        return False
-    try:
-        with open("/proc/net/unix") as f:
-            return any(line.split()[-1] == path
-                       for line in f if line.split())
-    except OSError:
-        return True
-
-
 def test_cli_alloc_and_probe(tmp_path):
     sd = tmp_path / "state"
     r = _cli("--alloc", state_dir=sd)
     # a hand-started VM holding the legacy default socket must not be
-    # handed out; a leftover socket FILE must not block 'default'
-    if _host_legacy_busy():
+    # handed out; a leftover socket FILE must not block 'default'.
+    # The subprocess runs the real _legacy_sock_busy, so the condition
+    # must too (both sides same code, no mirrored scan to drift)
+    if _real_legacy_sock_busy():
         assert r.returncode == 0 and r.stdout.strip() == "qemu-1"
     else:
         assert r.returncode == 0 and r.stdout.strip() == "default"
@@ -345,3 +338,38 @@ def test_vbox_refuses_live_instance(monkeypatch, capsys):
     # a dead entry is free to take over
     _register("qemu-dead", vm_pid=None)
     assert mod.refuse_live_instance(jp.Paths("qemu-dead")) is False
+
+
+def test_vbox_refuse_names_vm_and_advice(monkeypatch, capsys):
+    """The self-conflict case (same VM name) must get 'stop that VM',
+    not the generic 'pick another id'."""
+    mod = _load_jnode_vbox()
+    _register("vb-rt", vm_pid=os.getpid(), vm="JNode")
+
+    paths = jp.Paths("vb-rt")
+    assert mod.refuse_live_instance(paths, name="JNode") is True
+    out = capsys.readouterr().out
+    assert "live qemu VM (JNode)" in out
+    assert "stop that VM first" in out
+    # a foreign VM on the same instance: different advice
+    assert mod.refuse_live_instance(paths, name="JNode2") is True
+    out = capsys.readouterr().out
+    assert "pick another id" in out
+
+
+def test_vbox_stop_requires_matching_name(monkeypatch):
+    """stop --name JNode2 on an instance bound to a live JNode must
+    error and leave the entry alone, not unregister the live VM."""
+    mod = _load_jnode_vbox()
+    # a live vbox VM on instance vb-1 (pid self = live; hypervisor
+    # only matters for the message, the vm key for the binding check)
+    entry = {"id": "vb-1", "hypervisor": "vbox", "vm": "JNode",
+             "agent_sock": "/tmp/nonexistent-agent.sock",
+             "vm_pid": os.getpid()}
+    jp.write_entry(entry)
+
+    a = argparse.Namespace(name="JNode2", instance="vb-1")
+    rc = mod.cmd_stop(a)
+    assert rc == 1
+    # the live VM's entry must survive
+    assert jp.read_entry("vb-1") == entry

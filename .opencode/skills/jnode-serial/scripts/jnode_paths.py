@@ -49,6 +49,7 @@ import argparse
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 import time
@@ -260,12 +261,21 @@ def _pid_alive(pid):
         return False
 
 
+def _vbox_binary():
+    # installs differ only in case; a miss here would make every vbox
+    # entry read back as dead (the quiet form of the vm/vm_name bug)
+    return (shutil.which("VBoxManage") or shutil.which("vboxmanage"))
+
+
 def _vbox_running(vm_name):
     if not vm_name:
         return False
+    exe = _vbox_binary()
+    if not exe:
+        return False
     try:
         out = subprocess.run(
-            ["vboxmanage", "showvminfo", vm_name, "--machinereadable"],
+            [exe, "showvminfo", vm_name, "--machinereadable"],
             stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
             timeout=15).stdout.decode("utf-8", "replace")
     except (OSError, subprocess.SubprocessError):

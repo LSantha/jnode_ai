@@ -495,8 +495,12 @@ def main():
     # args[0] (`--timeout 5 --status` used to ship `--status` to the
     # guest). Normalise it to args[0] and reject stray commands.
     CTRL = ("--status", "--stop", "--restart", "--interrupt", "--suspend")
-    ctrl = next((a for a in args if a in CTRL), None)
-    if ctrl is not None:
+    ctrl_flags = [a for a in args if a in CTRL]
+    if len(ctrl_flags) > 1:
+        print("ERROR: %s are mutually exclusive" % " + ".join(ctrl_flags))
+        sys.exit(2)
+    if ctrl_flags:
+        ctrl = ctrl_flags[0]
         stray, skip = [], 0
         for a in args:
             if skip:

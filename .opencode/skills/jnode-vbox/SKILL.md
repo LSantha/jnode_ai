@@ -106,4 +106,11 @@ VBoxManage modifyvm <name> --uartmode2 server /tmp/jnode.serial2
 - Stale settings file after a failed `unregistervm`:
   `VBoxManage unregistervm <name> --delete` (VM powered off), else remove
   `~/VirtualBox VMs/<name>/`.
-- `config` on a running VM is refused - stop first.
+- A VM must be stopped before reconfiguring: `config` and `start` refuse
+  a running VM of the same name, and both refuse any instance whose
+  registered VM is still live (autodetect would otherwise hand a second
+  VM the live one's pipes).
+- `stop`/`status` verify the instance is bound to the VM named with
+  `--name`; a mismatched `--name` errors instead of unregistering the
+  wrong instance. `--name` must match the name the instance was
+  registered under.

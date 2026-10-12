@@ -275,6 +275,10 @@ def test_control_flags_honoured_in_any_position(world):
     r = _run(state, "--instance", "t6d", "--status", "date")
     assert r.returncode == 2
     assert "takes no commands" in r.stdout
+    # two control flags are mutually exclusive, not first-wins
+    r = _run(state, "--instance", "t6d", "--stop", "--status")
+    assert r.returncode == 2
+    assert "mutually exclusive" in r.stdout
 
 
 def test_write_keeps_earlier_commands(world):
