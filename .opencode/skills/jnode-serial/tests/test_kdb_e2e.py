@@ -1,6 +1,6 @@
-"""KDB mux single-instance guard (PR #761 review finding 4).
+"""KDB mux single-instance guard.
 
-kdb_mux.py now owns a per-instance pid file so two `--mux` invocations
+kdb_mux.py owns a per-instance pid file so two `--mux` invocations
 cannot leave two daemons on the same FIFO/UART1 socket, and
 `jnode_kdb_cmd.py --stop` tears the holder down (the launchers' teardown
 only ever stopped the serial mux).
@@ -155,14 +155,40 @@ def test_kdb_mux_pidfile_not_stale_claim(kdb_world):
     # craft a stale pid file owned by nobody, at the instance's real path
     pidfile = _field(state, "kdb_mux_pid")
     os.makedirs(os.path.dirname(pidfile), exist_ok=True)
+    # spawn-and-reap a child so the pid is guaranteed dead on any host
+    child = subprocess.Popen([sys.executable, "-c", "pass"])
+    child.wait()
     with open(pidfile, "w") as f:
-        f.write("999999\n")
+        f.write("%d\n" % child.pid)
     r = _run(state, "--instance", "k1", "--mux")
     assert r.returncode == 0, r.stdout + r.stderr
     assert "kdb mux started" in r.stdout
     # wait for the child to *replace* the stale claim
     assert _wait_for(
-        lambda: open(pidfile).read().strip() not in ("", "999999"))
+        lambda: open(pidfile).read().strip() not in ("", str(child.pid)))
     pid = int(open(pidfile).read().strip())
-    assert pid != 999999
+    assert pid != child.pid
     assert _pid_alive(pid)
+
+
+def test_kdb_bare_instance_prints_usage(kdb_world):
+    """A bare `--instance X` must print usage, not exit 0 silently."""
+    state, guest = kdb_world
+    r = _run(state, "--instance", "k1")
+    assert r.returncode == 2
+    assert "Usage" in r.stdout
+
+
+def test_kdb_sigterm_removes_pidfile(kdb_world):
+    """SIGTERM must unwind through main()'s finally and drop the pid
+    file (stop_mux's unlink is only the backstop)."""
+    state, guest = kdb_world
+    r = _run(state, "--instance", "k1", "--mux")
+    assert r.returncode == 0, r.stdout + r.stderr
+    pidfile = _field(state, "kdb_mux_pid")
+    assert _wait_for(lambda: os.path.exists(pidfile))
+    pid = int(open(pidfile).read().strip())
+    os.kill(pid, 15)
+    assert _wait_for(lambda: not os.path.exists(pidfile)), \
+        "pid file survived SIGTERM"
+    assert _wait_for(lambda: not _pid_alive(pid))

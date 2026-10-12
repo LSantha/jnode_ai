@@ -162,6 +162,11 @@ def main():
     if args and args[0] == "--stop":
         sys.exit(stop_mux(paths))
 
+    if not args:
+        # a bare `--instance X`: report usage, not a silent exit 0
+        print(__doc__.strip())
+        sys.exit(2)
+
     commands = args
     for cmd in commands:
         if cmd not in KDB_COMMANDS:

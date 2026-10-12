@@ -39,9 +39,7 @@ import os
 import re
 import sys
 import time
-import socket
 import subprocess
-import signal
 import pytest
 
 # ---------------------------------------------------------------------------

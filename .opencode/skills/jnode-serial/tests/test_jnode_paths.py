@@ -237,17 +237,30 @@ def test_cli_register_list_unregister(tmp_path):
     assert not (sd / "instances" / "qemu-9.json").exists()
 
 
+def _host_legacy_busy():
+    """Mirror of the real _legacy_sock_busy for CLI subprocesses: the
+    legacy socket counts only when something actually holds it."""
+    path = "/tmp/jnode.serial2"
+    if not os.path.exists(path):
+        return False
+    try:
+        with open("/proc/net/unix") as f:
+            return any(line.split()[-1] == path
+                       for line in f if line.split())
+    except OSError:
+        return True
+
+
 def test_cli_alloc_and_probe(tmp_path):
     sd = tmp_path / "state"
     r = _cli("--alloc", state_dir=sd)
-    # a leftover /tmp/jnode.serial2 on the host means a hand-started VM
-    # owns the legacy default socket, so alloc must skip it
-    if os.path.exists("/tmp/jnode.serial2"):
+    # a hand-started VM holding the legacy default socket must not be
+    # handed out; a leftover socket FILE must not block 'default'
+    if _host_legacy_busy():
         assert r.returncode == 0 and r.stdout.strip() == "qemu-1"
     else:
         assert r.returncode == 0 and r.stdout.strip() == "default"
-    # --probe reads the legacy socket path, which is host-global: a
-    # hand-started VM (or leftover socket) on /tmp/jnode.serial2 flips it
+    # --probe reads the legacy socket path, which is host-global
     r = _cli("--probe", "--instance", "default", state_dir=sd)
     assert "agent_sock=" in r.stdout
     assert r.returncode == (0 if os.path.exists("/tmp/jnode.serial2") else 1)
@@ -287,10 +300,7 @@ def test_cli_resolve(isolated_state):
     assert r.returncode == 0 and r.stdout.strip() == "qemu-7"
 
 
-def test_vbox_register_writes_vm_key(monkeypatch):
-    """PR #761 review finding 1: jnode_vbox.register() must write the
-    registry key "vm" -- entry_live(), --list/--is-live and
-    serial_mux.configure() all read entry["vm"], not "vm_name"."""
+def _load_jnode_vbox():
     import importlib.util
     vbox_path = os.path.abspath(os.path.join(
         os.path.dirname(__file__), "..", "..", "jnode-vbox", "scripts",
@@ -299,6 +309,14 @@ def test_vbox_register_writes_vm_key(monkeypatch):
                                                   vbox_path)
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
+    return mod
+
+
+def test_vbox_register_writes_vm_key(monkeypatch):
+    """jnode_vbox.register() must write the registry key "vm" --
+    entry_live(), --list/--is-live and serial_mux.configure() all read
+    entry["vm"]; a different key makes a running VM read back as dead."""
+    mod = _load_jnode_vbox()
 
     paths = jp.Paths("vbox-rt")
     mod.register(paths, "JNode-RT", "ready")
@@ -309,3 +327,21 @@ def test_vbox_register_writes_vm_key(monkeypatch):
     assert jp.entry_live(entry) is True
     assert "vbox-rt" in [i for i, _ in jp.live_entries()]
     assert "vbox-rt" not in jp.prune_stale()
+
+
+def test_vbox_refuses_live_instance(monkeypatch, capsys):
+    """config/start must not bind to an instance whose VM is still
+    alive: autodetect over a live foreign VM would overwrite its
+    registry entry and hand its pipes over."""
+    mod = _load_jnode_vbox()
+    # a live qemu instance, as if start_qemu.sh had just booted it
+    _register("qemu-live", vm_pid=os.getpid())
+
+    paths = jp.Paths("qemu-live")
+    assert mod.refuse_live_instance(paths) is True
+    out = capsys.readouterr().out
+    assert "already has a live qemu VM" in out
+
+    # a dead entry is free to take over
+    _register("qemu-dead", vm_pid=None)
+    assert mod.refuse_live_instance(jp.Paths("qemu-dead")) is False

@@ -156,9 +156,9 @@ def test_oneshot_without_mux(world):
 
 
 def test_oneshot_survives_stale_prompt(world):
-    """Regression for CI finding F1: the guest may emit the prompt twice
-    (spontaneous console-open prompt, then a reply to the probe newline).
-    The leftover prompt must not be mistaken for the end of the command."""
+    """The guest may emit the prompt twice (spontaneous console-open
+    prompt, then a reply to the probe newline). The leftover prompt must
+    not be mistaken for the end of the command."""
     state, make = world
     guest = make("t4c")
     _run(state, "--instance", "t4c", "--stop")
@@ -198,8 +198,8 @@ def test_env_var_selects_instance(world):
 
 
 def test_qemu_stop_unknown_instance_is_graceful(world):
-    """Regression for CI finding F4: --stop on a never-registered
-    instance exits 0 with a hint, not an error."""
+    """--stop on a never-registered instance exits 0 with a hint, not
+    an error."""
     state, _ = world
     script = os.path.join(HERE, "..", "..", "jnode-qemu", "scripts",
                           "start_qemu.sh")
@@ -243,8 +243,8 @@ def test_missing_instance_socket_is_a_clean_error(world):
 
 
 def test_instance_flag_alone_is_usage_not_traceback(world):
-    """PR #761 review finding 3: a bare `--instance X` must print usage,
-    not die with an IndexError traceback."""
+    """A bare `--instance X` must print usage, not die with an
+    IndexError traceback."""
     state, make = world
     make("t6a")
     r = _run(state, "--instance", "t6a")
@@ -260,6 +260,21 @@ def test_list_flag_works_after_instance(world):
     r = _run(state, "--instance", "t6b", "--list")
     assert r.returncode == 0, r.stdout + r.stderr
     assert "t6b" in r.stdout
+
+
+def test_control_flags_honoured_in_any_position(world):
+    """`--timeout 5 --status` is a status request, not a guest command."""
+    state, make = world
+    make("t6d")
+    r = _run(state, "--timeout", "5", "--instance", "t6d", "--status")
+    # mux is not running here: rc is 1, but the flag must be parsed as a
+    # status request (mux: not running), never shipped to the guest
+    assert "instance: t6d" in r.stdout
+    assert "takes no commands" not in r.stdout
+    # a control flag mixed with real commands is an error, not a guest run
+    r = _run(state, "--instance", "t6d", "--status", "date")
+    assert r.returncode == 2
+    assert "takes no commands" in r.stdout
 
 
 def test_write_keeps_earlier_commands(world):

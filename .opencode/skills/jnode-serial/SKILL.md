@@ -44,6 +44,8 @@ Inspect/manage with the CLI:
 python3 scripts/jnode_paths.py --list          # registered instances
 python3 scripts/jnode_paths.py --env --instance qemu-2   # shell exports
 python3 scripts/jnode_paths.py --alloc --prefix qemu     # free id
+python3 scripts/jnode_paths.py --resolve   # the single live id
+                                           # (exit 1 none, exit 2 several)
 python3 scripts/jnode_paths.py --probe --instance qemu-2 # socket present?
 python3 scripts/jnode_paths.py --is-live --instance qemu-2
 python3 scripts/jnode_paths.py --prune         # forget dead entries

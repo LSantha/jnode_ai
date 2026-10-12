@@ -38,6 +38,8 @@ CLI (shell friendly):
     python3 jnode_paths.py --field agent_sock [--instance ID]
     python3 jnode_paths.py --list
     python3 jnode_paths.py --alloc --prefix qemu
+    python3 jnode_paths.py --resolve            # the single live id
+                                                # (exit 1 none, 2 several)
     python3 jnode_paths.py --register --instance ID --hypervisor qemu \
         --vm-name NAME [--vm-pid PID] [--iso PATH] [--state ready]
     python3 jnode_paths.py --unregister --instance ID
@@ -341,15 +343,31 @@ def resolve_paths(explicit=None):
 
 def _legacy_sock_busy():
     """A hand-started VM may own the legacy default socket without ever
-    registering; never hand 'default' out while that socket exists."""
-    return os.path.exists(Paths(DEFAULT_INSTANCE).agent_sock)
+    registering; never hand 'default' out while that socket is actually
+    in use. A mere leftover socket FILE (hard-killed VM) is not busy --
+    checking /proc/net/unix avoids both the collision and the
+    connect-probe that would steal the guest console's single client
+    slot."""
+    path = Paths(DEFAULT_INSTANCE).agent_sock
+    if not os.path.exists(path):
+        return False
+    try:
+        with open("/proc/net/unix") as f:
+            for line in f:
+                parts = line.split()
+                if parts and parts[-1] == path:
+                    return True
+        return False
+    except OSError:
+        # no /proc: stay conservative
+        return True
 
 
 def alloc_instance(prefix="qemu"):
     """First free id: "default" when free, else <prefix>-1, -2, ...
 
     Serialized with a lock file so two concurrent launchers cannot pick
-    the same id (PR #761 review nit).
+    the same id.
     """
     import fcntl
     os.makedirs(STATE_DIR, exist_ok=True)

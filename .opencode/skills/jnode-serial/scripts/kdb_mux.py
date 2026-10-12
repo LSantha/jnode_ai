@@ -30,6 +30,7 @@ or simply:  python3 jnode_kdb_cmd.py W        (starts this automatically)
 
 import os
 import select
+import signal
 import socket
 import sys
 import time
@@ -120,7 +121,6 @@ def run(paths):
         except OSError as e:
             print("kdb_mux: fifo: %s" % e, file=sys.stderr)
             return 1
-        buf = b""
         dead = False
         while not dead:
             r, _, _ = select.select([sock, fifo], [], [], 0.2)
@@ -191,6 +191,13 @@ def main(argv=None):
         print("kdb_mux.py: a kdb mux is already running for instance %s "
               "(pid %d)" % (paths.id, read_pid(paths)), file=sys.stderr)
         return 0
+
+    # Python does not unwind on SIGTERM, so without this handler the
+    # finally-block below would never remove the pid file on a normal
+    # `kill -TERM` (jnode_kdb_cmd.stop_mux's unlink is the backstop)
+    def _sigterm(_sig, _frame):
+        raise SystemExit(143)
+    signal.signal(signal.SIGTERM, _sigterm)
     try:
         return run(paths)
     finally:

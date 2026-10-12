@@ -44,8 +44,12 @@ PICKER = os.path.join(HERE, "vbox_grub_pick.py")
 
 
 def vbox(*args, check=True):
-    r = subprocess.run(["VBoxManage"] + [str(a) for a in args],
-                       capture_output=True, text=True)
+    try:
+        r = subprocess.run(["VBoxManage"] + [str(a) for a in args],
+                           capture_output=True, text=True)
+    except FileNotFoundError:
+        raise RuntimeError("VBoxManage not found -- install VirtualBox "
+                           "or run this on a host that has it")
     if check and r.returncode != 0:
         raise RuntimeError("VBoxManage %s failed: %s"
                            % (" ".join(str(a) for a in args),
@@ -71,17 +75,34 @@ def is_running(name):
 
 def register(paths, name, state):
     entry = jp.read_entry(paths.id) or {"id": paths.id}
-    # the registry key is "vm" -- jnode_paths.entry_live(), --list/--is-live
+    # the registry key is "vm": jnode_paths.entry_live(), --list/--is-live
     # and serial_mux.configure() all read entry["vm"], so anything else
-    # makes a running VM read back as dead (PR #761 review finding 1)
+    # makes a running VM read back as dead
     entry.update(hypervisor="vbox", vm=name, state=state,
                  agent_sock=paths.agent_sock, boot_log=paths.boot_log,
                  kdb_sock=paths.kdb_sock)
     jp.write_entry(entry)
 
 
+def refuse_live_instance(paths):
+    """Same guard start_qemu.sh has: never bind config/start to an
+    instance whose VM is still alive, or autodetect would overwrite its
+    registry entry and hand its pipes to this VM."""
+    entry = jp.read_entry(paths.id)
+    if jp.entry_live(entry):
+        hyp = (entry or {}).get("hypervisor") or "unknown"
+        print("ERROR: instance '%s' already has a live %s VM"
+              % (paths.id, hyp))
+        print("       pick another id (--instance) or stop that VM first "
+              "(jnode_paths.py --list)")
+        return True
+    return False
+
+
 def cmd_config(a):
     paths = jp.resolve_paths(a.instance)
+    if refuse_live_instance(paths):
+        return 1
     d = info(a.name)
     if not d:
         print("creating VM %s" % a.name)
@@ -130,6 +151,8 @@ def cmd_config(a):
 
 def cmd_start(a):
     paths = jp.resolve_paths(a.instance)
+    if refuse_live_instance(paths):
+        return 1
     if is_running(a.name):
         print("ERROR: %s already running" % a.name)
         return 1

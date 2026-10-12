@@ -141,6 +141,8 @@ def main():
             sys.exit(2)
     print("entry %d selected, booting" % args.entry)
     send_scancodes(args.vm, SC_ENTER)
+    # success: drop the scratch dir (failure paths above keep it for debug)
+    shutil.rmtree(tmp, ignore_errors=True)
     sys.exit(0)
 
 

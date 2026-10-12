@@ -368,10 +368,10 @@ def oneshot(paths, cmds, timeout):
         sock.close()
         return 1
 
-    # F1 fix: the guest may emit the prompt twice (spontaneous console-open
-    # prompt plus the reply to our probe newline). Consume any stale bytes
-    # now, otherwise the command loop below breaks on a leftover prompt
-    # and silently drops the command output.
+    # The guest may emit the prompt twice (spontaneous console-open
+    # prompt plus the reply to our probe newline). Consume any stale
+    # bytes now, otherwise the command loop below breaks on a leftover
+    # prompt and silently drops the command output.
     drain_quiet(sock)
 
     rc = 0
@@ -476,9 +476,8 @@ def main():
         del args[i:i + 2]
 
     # --list does not need a live instance; accept it in any position
-    # (it used to be checked only as args[0], so `--instance X --list`
-    # shipped `--list` to the guest shell).
-    if args and args[0] == "--list":
+    # (`--timeout 5 --list` used to ship `--list` to the guest shell).
+    if "--list" in args:
         sys.exit(jp.main(["--list"]))
 
     if not args:
@@ -491,6 +490,29 @@ def main():
     except jp.InstanceError as e:
         print("ERROR: %s" % e)
         sys.exit(2)
+
+    # A control flag is honoured wherever it appears, not only as
+    # args[0] (`--timeout 5 --status` used to ship `--status` to the
+    # guest). Normalise it to args[0] and reject stray commands.
+    CTRL = ("--status", "--stop", "--restart", "--interrupt", "--suspend")
+    ctrl = next((a for a in args if a in CTRL), None)
+    if ctrl is not None:
+        stray, skip = [], 0
+        for a in args:
+            if skip:
+                skip = 0
+                continue
+            if a in ("--timeout", "--wait"):
+                skip = 1
+            elif a in CTRL or a == "--oneshot":
+                pass
+            else:
+                stray.append(a)
+        if stray:
+            print("ERROR: %s takes no commands (got: %s)"
+                  % (ctrl, " ".join(stray)))
+            sys.exit(2)
+        args = [ctrl]
 
     if args[0] == "--status":
         show_status(paths)

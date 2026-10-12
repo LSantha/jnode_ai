@@ -82,7 +82,7 @@ if [ "$STOP" = "1" ]; then
   if [ -z "$INSTANCE" ]; then
     # keep --resolve's rc: 1 = none live, 2 = several live. Collapsing
     # them (2>/dev/null + if !) made an ambiguous bare --stop print the
-    # false "no live registered instance" line (review finding).
+    # false "no live registered instance" line.
     INSTANCE=$(python3 "$PATHS_PY" --resolve 2>&1) && RESOLVE_RC=0 || RESOLVE_RC=$?
     if [ "$RESOLVE_RC" != "0" ]; then
       if [ "$RESOLVE_RC" = "2" ]; then
@@ -118,8 +118,8 @@ if [ "$STOP" = "1" ]; then
   python3 "$PATHS_PY" --unregister --instance "$INSTANCE"
   eval "$(python3 "$PATHS_PY" --env --instance "$INSTANCE")"
   rm -f "$JNODE_AGENT_SOCK" "$JNODE_MONITOR_SOCK" "$JNODE_KDB_SOCK"
-  # F2 fix: tear the muxes down too, or they idle forever with a dead
-  # socket (serial mux + KDB mux; review finding 4)
+  # tear the muxes down too, or they idle forever with a dead
+  # socket (serial mux + KDB mux)
   python3 "$SERIAL_SCRIPTS/serial_cmd.py" --stop --instance "$INSTANCE" >/dev/null 2>&1 || true
   python3 "$SERIAL_SCRIPTS/jnode_kdb_cmd.py" --stop --instance "$INSTANCE" >/dev/null 2>&1 || true
   exit 0
