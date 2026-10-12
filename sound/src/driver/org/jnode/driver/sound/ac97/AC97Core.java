@@ -203,9 +203,17 @@ public final class AC97Core implements AC97Constants, IRQHandler {
     private int playbackFramesPerBuffer;
 
     /**
-     * Sample rate in use (valid for 48000 and for VRA capable codecs).
+     * Sample rate of the PCM DAC (playback), guarded by the playback lock.
      */
-    private int sampleRate;
+    private int playbackSampleRate;
+
+    /**
+     * Sample rate of the PCM ADC (capture), guarded by the capture lock. The
+     * DAC and ADC have separate rate registers, so the two are tracked
+     * separately and one engine opening does not change the rate of the
+     * other.
+     */
+    private int captureSampleRate;
 
     /**
      * Does the codec support variable rate audio?
@@ -497,7 +505,7 @@ public final class AC97Core implements AC97Constants, IRQHandler {
      */
     public final void setSampleRate(int rate) {
         synchronized (playbackLock) {
-            selectSampleRate(rate);
+            selectSampleRate(rate, true);
         }
     }
 
@@ -505,7 +513,18 @@ public final class AC97Core implements AC97Constants, IRQHandler {
      * Gets the sample rate of the PCM DAC in use.
      */
     public final int getSampleRate() {
-        return sampleRate;
+        synchronized (playbackLock) {
+            return playbackSampleRate;
+        }
+    }
+
+    /**
+     * Gets the sample rate the ADC is recording at.
+     */
+    public final int getCaptureSampleRate() {
+        synchronized (captureLock) {
+            return captureSampleRate;
+        }
     }
 
     /**
@@ -524,7 +543,7 @@ public final class AC97Core implements AC97Constants, IRQHandler {
     public final int getPlaybackLatencyMs() {
         synchronized (playbackLock) {
             return (int) (((long) bdl.getEntryCount()
-                * playbackFramesPerBuffer * 1000L) / sampleRate);
+                * playbackFramesPerBuffer * 1000L) / playbackSampleRate);
         }
     }
 
@@ -917,7 +936,7 @@ public final class AC97Core implements AC97Constants, IRQHandler {
             }
             resetCaptureEngine();
             captureStallRecoveries = 0;
-            selectSampleRate(rate);
+            selectSampleRate(rate, false);
             // Default record path: the dedicated microphone input at 0 dB
             // gain. openCapture() overrides it for whatever the caller wants
             // to record from.
@@ -1008,6 +1027,14 @@ public final class AC97Core implements AC97Constants, IRQHandler {
                     rearmCaptureDescriptor(captureLastHandled);
                     captureLastHandled = nextIndex(captureLastHandled, count);
                     captureReadOffset = 0;
+                }
+                // A close, or a release of the driver, while waiting must be
+                // noticed: otherwise the read restarts an engine that has just
+                // been stopped, and copies out of a ring that has just been
+                // released.
+                if (!captureOpen) {
+                    throw new IllegalStateException(
+                        "AC'97 capture was closed while reading");
                 }
                 final int completed = completedCaptureCount(captureCurrentIndex,
                     captureLastHandled, count);
@@ -1135,6 +1162,11 @@ public final class AC97Core implements AC97Constants, IRQHandler {
      *         should give up on the recording
      */
     private boolean tryRecoverCapture() {
+        // Never recover a stream that has been closed or released under us;
+        // the caller notices and stops.
+        if (!captureOpen) {
+            return true;
+        }
         final long now = System.currentTimeMillis();
         if (!hasStalled(captureLastProgress, now)) {
             return true;
@@ -1172,9 +1204,15 @@ public final class AC97Core implements AC97Constants, IRQHandler {
     }
 
     /**
-     * Selects the sample rate for both DAC and ADC.
+     * Selects the sample rate of one engine, writing only that engine's rate
+     * register so that opening capture does not change the playback rate and
+     * the other way round.
+     *
+     * @param rate   the requested rate
+     * @param isPlayback true for the DAC, false for the ADC
+     * @return the rate in use
      */
-    private void selectSampleRate(int rate) {
+    private int selectSampleRate(int rate, boolean isPlayback) {
         if (rate <= 0) {
             throw new IllegalArgumentException("Invalid sample rate " + rate);
         }
@@ -1192,16 +1230,24 @@ public final class AC97Core implements AC97Constants, IRQHandler {
             throw new IllegalArgumentException(
                 "Codec has no variable rate audio support");
         }
-        this.sampleRate = rate;
+        if (isPlayback) {
+            playbackSampleRate = rate;
+        } else {
+            captureSampleRate = rate;
+        }
         if (variableRate) {
             // Variable rate is enabled in the extended audio control
             // register, after which every rate register is writable.
             outCodec(NAM_EXTENDED_AUDIO_STATUS_CTRL, NAM_EAC_VRA);
         }
-        outCodec(NAM_PCM_FRONT_DAC_RATE, rate);
-        // The ADC rate register only matters on codecs with variable rate
-        // capture; on a fixed rate codec the write is ignored.
-        outCodec(NAM_PCM_LR_ADC_RATE, rate);
+        if (isPlayback) {
+            outCodec(NAM_PCM_FRONT_DAC_RATE, rate);
+        } else {
+            // The ADC rate register only matters on codecs with variable rate
+            // capture; on a fixed rate codec the write is ignored.
+            outCodec(NAM_PCM_LR_ADC_RATE, rate);
+        }
+        return rate;
     }
 
     public final void close() {
@@ -1441,8 +1487,10 @@ public final class AC97Core implements AC97Constants, IRQHandler {
         if (variableRate) {
             outCodec(NAM_EXTENDED_AUDIO_STATUS_CTRL, NAM_EAC_VRA);
         }
-        this.sampleRate = SAMPLE_RATE_48000;
+        this.playbackSampleRate = SAMPLE_RATE_48000;
+        this.captureSampleRate = SAMPLE_RATE_48000;
         outCodec(NAM_PCM_FRONT_DAC_RATE, SAMPLE_RATE_48000);
+        outCodec(NAM_PCM_LR_ADC_RATE, SAMPLE_RATE_48000);
 
         final int id1 = inCodec(NAM_VENDOR_ID1);
         final int id2 = inCodec(NAM_VENDOR_ID2);

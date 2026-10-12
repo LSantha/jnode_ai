@@ -79,6 +79,12 @@ public interface AC97API extends DeviceAPI {
     public int getSampleRate();
 
     /**
+     * Gets the sample rate the PCM ADC records at. It is independent of the
+     * playback rate, so capture can run at another rate than playback.
+     */
+    public int getCaptureSampleRate();
+
+    /**
      * Selects the sample rate of the PCM DAC. Allowed while playback is open;
      * the change takes effect with the next written buffer.
      *

@@ -93,7 +93,8 @@ public class AC97InfoCommand extends AbstractCommand {
         out.println("ac97info: ring=" + api.getPlaybackBufferSize()
             + " frames per buffer, " + api.getPlaybackLatencyMs() + "ms deep");
         out.println("ac97info: format=" + api.getSpeakerFormat() + " rate="
-            + api.getSampleRate() + "Hz (variable rate supported="
+            + api.getSampleRate() + "Hz recordRate=" + api.getCaptureSampleRate()
+            + "Hz (variable rate supported="
             + api.isVariableRateSupported() + ")");
         out.println("ac97info: capture open=" + api.isCaptureOpen()
             + ", buffers waiting=" + api.getCapturedBuffers()

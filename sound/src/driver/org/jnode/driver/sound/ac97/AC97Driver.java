@@ -153,6 +153,14 @@ public class AC97Driver extends Driver implements AC97API, AC97Constants {
         return c.getSampleRate();
     }
 
+    public int getCaptureSampleRate() {
+        final AC97Core c = core;
+        if (c == null) {
+            return 0;
+        }
+        return c.getCaptureSampleRate();
+    }
+
     public void setSampleRate(int rate) {
         final AC97Core c = core;
         if (c == null) {
