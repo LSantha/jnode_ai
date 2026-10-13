@@ -411,6 +411,91 @@ def test_qemu_stop_never_executes_crafted_vm_pid(world):
     assert "no running qemu pid" in r.stdout
 
 
+def test_qemu_start_refuses_unregistered_socket_owner(world):
+    """--is-live is registry-blind: an unregistered VM (hand-started,
+    or registration lost) holding the agent socket must still block a
+    start -- otherwise the rm -f below the guard unlinks its live
+    socket and the new QEMU re-binds the path (the id collision this
+    launcher exists to prevent)."""
+    state, _ = world
+    script = os.path.join(HERE, "..", "..", "jnode-qemu", "scripts",
+                          "start_qemu.sh")
+    env = _env(state)
+    r = subprocess.run([sys.executable, PATHS_PY, "--mkdir",
+                        "--instance", "tsock"],
+                       capture_output=True, text=True, timeout=30, env=env)
+    assert r.returncode == 0, r.stdout + r.stderr
+    r = subprocess.run([sys.executable, PATHS_PY, "--field", "agent_sock",
+                        "--instance", "tsock"],
+                       capture_output=True, text=True, timeout=30, env=env)
+    sock_path = r.stdout.strip()
+    listener = subprocess.Popen(
+        [sys.executable, "-c",
+         "import socket,sys,time\n"
+         "s = socket.socket(socket.AF_UNIX)\n"
+         "s.bind(sys.argv[1]); s.listen(1)\n"
+         "time.sleep(120)", sock_path])
+    try:
+        deadline = time.time() + 5
+        while time.time() < deadline and not os.path.exists(sock_path):
+            time.sleep(0.1)
+        assert os.path.exists(sock_path), "listener never bound"
+        r = subprocess.run(["bash", script, "--instance", "tsock"],
+                           capture_output=True, text=True, timeout=60,
+                           env=env)
+        assert r.returncode == 1, r.stdout + r.stderr
+        assert "already in use" in r.stdout + r.stderr
+        assert listener.poll() is None, "unregistered VM was disturbed"
+        assert os.path.exists(sock_path), "live agent socket was unlinked"
+    finally:
+        listener.kill()
+        listener.wait()
+
+
+def test_qemu_start_dry_run_tolerates_leftover_socket(world):
+    """A leftover socket FILE (hard-killed VM, no listener) must not
+    block a new start -- only a live listener does."""
+    state, _ = world
+    script = os.path.join(HERE, "..", "..", "jnode-qemu", "scripts",
+                          "start_qemu.sh")
+    env = _env(state)
+    r = subprocess.run([sys.executable, PATHS_PY, "--mkdir",
+                        "--instance", "tleft"],
+                       capture_output=True, text=True, timeout=30, env=env)
+    assert r.returncode == 0, r.stdout + r.stderr
+    r = subprocess.run([sys.executable, PATHS_PY, "--field", "agent_sock",
+                        "--instance", "tleft"],
+                       capture_output=True, text=True, timeout=30, env=env)
+    sock_path = r.stdout.strip()
+    s = socket.socket(socket.AF_UNIX)
+    s.bind(sock_path)
+    s.close()  # leaves the path behind, no listener
+    assert os.path.exists(sock_path)
+    iso = state / "dummy.iso"
+    iso.write_bytes(b"")
+    r = subprocess.run(["bash", script, "--instance", "tleft", "--dry-run",
+                        str(iso)],
+                       capture_output=True, text=True, timeout=60, env=env)
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert "instance:  tleft" in r.stdout
+
+
+def test_grub_pick_reports_menu_gone_not_timeout(tmp_path):
+    """wait_band also bails the moment the boot log moves: on a
+    timeout-0 ISO the 25s search never runs -- the failure reason must
+    say the menu is gone, not that it timed out."""
+    grub = os.path.join(HERE, "..", "..", "jnode-qemu", "scripts",
+                        "grub_pick.py")
+    log = tmp_path / "boot.log"
+    log.write_text("Serial console available\n")
+    r = subprocess.run([sys.executable, grub, "--monitor", "/nonexistent.sock",
+                        "--entry", "1", "--boot-log", str(log)],
+                       capture_output=True, text=True, timeout=30)
+    assert r.returncode == 4, r.stdout + r.stderr
+    assert "menu is gone" in r.stderr
+    assert "never appeared within" not in r.stderr
+
+
 def test_serial_mux_single_instance_guard(world):
     """Two concurrent serial_mux starts must leave one mux, not two on
     the same FIFO + guest socket; a later start is idempotent."""

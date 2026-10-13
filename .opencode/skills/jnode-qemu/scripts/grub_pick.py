@@ -157,6 +157,16 @@ def main():
         print("ERROR: %s" % e, file=sys.stderr)
         sys.exit(3)
     if band is None:
+        # wait_band also bails the moment the boot log moves: on a
+        # timeout-0 ISO the kernel starts immediately, the menu never
+        # shows and the full --timeout search never ran -- say so
+        # (exit 4) instead of blaming the timeout
+        if args.boot_log and os.path.exists(args.boot_log) and \
+                os.path.getsize(args.boot_log) > 0:
+            print("ERROR: kernel already printing -- the GRUB menu is "
+                  "gone (timeout-0 ISO? entry selection needs a menu "
+                  "with timeout > 0)", file=sys.stderr)
+            sys.exit(4)
         print("ERROR: GRUB menu never appeared within %.0fs" % args.timeout,
               file=sys.stderr)
         print("       last screendump: %s (pnmtopng it to inspect)" % ppm,

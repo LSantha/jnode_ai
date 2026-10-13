@@ -76,8 +76,8 @@ fi
 
 # ---------------------------------------------------------------- instance
 # --stop resolves the running instance instead of allocating a free id
-# (a bare --stop used to allocate a fresh id and silently no-op; review
-# finding 2). --alloc only ever runs on the start path.
+# (a bare --stop used to allocate a fresh id and silently no-op).
+# --alloc only ever runs on the start path.
 if [ "$STOP" = "1" ]; then
   if [ -z "$INSTANCE" ]; then
     # keep --resolve's rc: 1 = none live, 2 = several live. Collapsing
@@ -157,6 +157,18 @@ fi
 if python3 "$PATHS_PY" --is-live --instance "$INSTANCE" >/dev/null 2>&1; then
   echo "ERROR: instance '$INSTANCE' already has a live VM"
   echo "       pick another id (--instance) or stop it (--stop)"
+  exit 1
+fi
+
+# --is-live is registry-based: a hand-started VM (or a live one whose
+# entry was lost) reads dead, and the rm -f further down would unlink
+# its live agent socket while the new QEMU re-binds the path -- the id
+# collision this script exists to prevent. Autodetect already gets this
+# protection from alloc_instance; only a positively detected listener
+# refuses here, and a leftover socket FILE (hard-killed VM) does not.
+if python3 "$PATHS_PY" --sock-busy --instance "$INSTANCE"; then
+  echo "ERROR: instance '$INSTANCE': the agent socket is already in use"
+  echo "       stop the VM holding it (jnode_paths.py --list) or pick another id (--instance)"
   exit 1
 fi
 

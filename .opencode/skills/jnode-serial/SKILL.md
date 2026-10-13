@@ -38,6 +38,10 @@ existing tooling (`tests/jdwp`, `local/*.sh`, older skills) keeps working:
 
 `JNODE_STATE_DIR` relocates the state root (replaces `/tmp/jnode`).
 
+Mux pid files are claimed under flock; each claim leaves a permanent
+`<pidfile>.lock` sidecar next to the pid file — flock needs a stable
+inode, so it is a normal artifact, not litter (do not clean it up).
+
 Inspect/manage with the CLI:
 
 ```sh
@@ -51,6 +55,8 @@ python3 scripts/jnode_paths.py --resolve   # the single live id
 # safe_kill_pid always prove identity via /proc)
 python3 scripts/jnode_paths.py --probe --instance qemu-2 # socket present?
 python3 scripts/jnode_paths.py --is-live --instance qemu-2
+python3 scripts/jnode_paths.py --sock-busy --instance qemu-2
+                    # exit 0 = live listener holds the agent socket
 python3 scripts/jnode_paths.py --prune         # forget dead entries
 ```
 

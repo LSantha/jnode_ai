@@ -5,6 +5,7 @@ Run:  python3 -m pytest .opencode/skills/jnode-serial/tests/ -q
 
 import argparse
 import os
+import socket
 import subprocess
 import sys
 
@@ -482,3 +483,40 @@ def test_fake_qemu_pid_does_not_reach_kill_path(monkeypatch):
     finally:
         child.kill()
         child.wait()
+
+
+def test_sock_busy_cli():
+    """--sock-busy: a live listener refuses (exit 0); a leftover socket
+    FILE from a hard-killed VM does not (exit 1) -- /proc/net/unix is
+    the difference, no connect-probe needed."""
+    paths = jp.Paths("tb1")
+    os.makedirs(os.path.dirname(paths.agent_sock), exist_ok=True)
+    assert jp.main(["--sock-busy", "--instance", "tb1"]) == 1
+    s = socket.socket(socket.AF_UNIX)
+    s.bind(paths.agent_sock)
+    s.listen(1)
+    try:
+        assert jp.main(["--sock-busy", "--instance", "tb1"]) == 0
+    finally:
+        s.close()
+    # close() leaves the path behind: hard-killed-VM leftover file
+    assert os.path.exists(paths.agent_sock)
+    assert jp.main(["--sock-busy", "--instance", "tb1"]) == 1
+
+
+def test_entry_live_legacy_pid_proves_identity(tmp_path):
+    """Old-format entries (pid, no hypervisor) were QEMU VMs: entry_live
+    must prove identity, so a recycled pid does not keep one "live"."""
+    exe = tmp_path / "qemu-system"
+    exe.symlink_to(sys.executable)
+    qemu = subprocess.Popen([str(exe), "-c", "import time; time.sleep(120)"])
+    other = subprocess.Popen([sys.executable, "-c",
+                              "import time; time.sleep(120)"])
+    try:
+        assert jp.entry_live({"pid": qemu.pid}) is True
+        assert jp.entry_live({"pid": other.pid}) is False
+        assert jp.entry_live({"pid": 999999}) is False
+    finally:
+        for p in (qemu, other):
+            p.kill()
+            p.wait()

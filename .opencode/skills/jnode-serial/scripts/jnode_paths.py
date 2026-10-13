@@ -299,10 +299,12 @@ def pid_owns(pid, needle, fake=None):
     try:
         with open("/proc/%d/cmdline" % pid, "rb") as f:
             argv = [a for a in f.read().split(b"\0") if a]
-    except (FileNotFoundError, PermissionError):
-        return _pid_alive(pid)
     except (OSError, TypeError, ValueError):
-        # /proc unreadable: never report a live process as stale
+        # /proc unreadable (no /proc, hidepid=2, another uid):
+        # FileNotFoundError/PermissionError are OSError subclasses;
+        # identity cannot be proven either way, so fall back to the
+        # existence check -- never report a live process as stale, the
+        # two-mux wedge / id reuse is the worse failure
         return _pid_alive(pid)
     if not argv:
         return False
@@ -414,7 +416,9 @@ def entry_live(entry):
         # instance id becomes reusable.
         return False
     if entry.get("pid"):
-        return _pid_alive(entry["pid"])
+        # pre-instance-model entries were QEMU: prove identity, so a
+        # recycled pid does not keep a dead entry "live"
+        return pid_owns(entry["pid"], "qemu-system")
     return os.path.exists(entry.get("agent_sock") or "")
 
 
@@ -452,14 +456,17 @@ def resolve_paths(explicit=None):
     return Paths(resolve_instance(explicit))
 
 
-def _legacy_sock_busy():
-    """A hand-started VM may own the legacy default socket without ever
-    registering; never hand 'default' out while that socket is actually
-    in use. A mere leftover socket FILE (hard-killed VM) is not busy --
-    checking /proc/net/unix avoids both the collision and the
+def _sock_busy(path, unreadable_busy=True):
+    """True when something holds `path` as a live unix socket.
+
+    A mere leftover socket FILE (hard-killed VM) is not busy --
+    /proc/net/unix distinguishes it from a real listener without the
     connect-probe that would steal the guest console's single client
-    slot."""
-    path = Paths(DEFAULT_INSTANCE).agent_sock
+    slot. `unreadable_busy` is the answer for "cannot tell": alloc
+    stays conservative (True), while a start-time guard may only refuse
+    on positive proof (False), or it would newly block platforms where
+    /proc/net/unix is unreadable.
+    """
     if not os.path.exists(path):
         return False
     try:
@@ -470,8 +477,14 @@ def _legacy_sock_busy():
                     return True
         return False
     except OSError:
-        # no /proc: stay conservative
-        return True
+        return unreadable_busy
+
+
+def _legacy_sock_busy():
+    """A hand-started VM may own the legacy default socket without ever
+    registering; never hand 'default' out while that socket is actually
+    in use."""
+    return _sock_busy(Paths(DEFAULT_INSTANCE).agent_sock)
 
 
 def alloc_instance(prefix="qemu"):
@@ -548,6 +561,10 @@ def _build_parser():
                    help="exit 0 when the instance's agent socket is present")
     p.add_argument("--is-live", action="store_true",
                    help="exit 0 when the instance's VM is still running")
+    p.add_argument("--sock-busy", action="store_true",
+                   help="exit 0 when a live listener holds this "
+                        "instance's agent socket (exit 1 idle; used by "
+                        "start_qemu.sh before rm -f'ing the socket)")
     return p
 
 
@@ -626,6 +643,19 @@ def main(argv=None):
         live = entry_live(read_entry(paths.id))
         print("instance=%s %s" % (paths.id, "live" if live else "dead"))
         return 0 if live else 1
+
+    if args.sock_busy:
+        try:
+            paths = resolve_paths(args.instance)
+        except InstanceError as e:
+            print("ERROR: %s" % e, file=sys.stderr)
+            return 2
+        # quiet, like --is-live's failure half: the caller (the
+        # start_qemu.sh guard) prints the human message, and an
+        # unreadable /proc/net/unix counts as idle -- a start guard
+        # may only refuse on positive proof
+        return 0 if _sock_busy(paths.agent_sock,
+                               unreadable_busy=False) else 1
 
     if args.register:
         try:

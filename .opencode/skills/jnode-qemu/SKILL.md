@@ -48,6 +48,14 @@ full              UART1 -> KDB socket + boot log, UART2 -> agent console
 Extra QEMU args: set `JNODE_QEMU_ARGS`; memory: `JNODE_QEMU_MEM`
 (default 1024). KVM is used when available (`accel=kvm:tcg`).
 
+A start refuses (exit 1) when the instance already has a live VM, and
+also when something holds the agent socket **without** a registry
+entry — a hand-started VM reads dead to the registry check, but its
+socket must not be unlinked and rebound (the id collision this
+launcher exists to prevent; `--alloc` applies the same protection on
+autodetect). A leftover socket *file* from a hard-killed VM does not
+block a new start.
+
 The launcher backgrounds QEMU itself (`</dev/null >launch.log 2>&1 &`)
 so it never blocks the caller; launch stderr lands in the instance's
 `qemu.log` (`/tmp/qemu_launch.log` for default).
