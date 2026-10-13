@@ -6,6 +6,7 @@ protocol on a unix socket, exactly what the mux expects.
 Run:  python3 -m pytest .opencode/skills/jnode-serial/tests/ -q
 """
 
+import json
 import os
 import socket
 import subprocess
@@ -382,6 +383,69 @@ def test_qemu_stop_ignores_stale_vm_pid(world):
     finally:
         victim.kill()
         victim.wait()
+
+
+def test_qemu_stop_never_executes_crafted_vm_pid(world):
+    """The registry's vm_pid reaches Python via sys.argv, never the
+    program text: a crafted / non-numeric value must stop cleanly with
+    no execution and no traceback."""
+    state, _ = world
+    script = os.path.join(HERE, "..", "..", "jnode-qemu", "scripts",
+                          "start_qemu.sh")
+    env = _env(state)
+    pwn = state / "PWNED"
+    payload = ("1'), 'qemu-system') or __import__('os').system('touch %s"
+               % pwn) + "' or jp.safe_kill_pid(int('1"
+    # hand-edit the registry directly: --register's --vm-pid is int-typed,
+    # the injection threat is a stale/planted entry file
+    instdir = state / "instances"
+    instdir.mkdir(parents=True, exist_ok=True)
+    (instdir / "evil1.json").write_text(json.dumps(
+        {"id": "evil1", "hypervisor": "qemu", "vm": "JNode x86",
+         "vm_pid": payload, "state": "ready"}))
+    r = subprocess.run(["bash", script, "--stop", "--instance", "evil1"],
+                       capture_output=True, text=True, timeout=60, env=env)
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert not pwn.exists(), "crafted vm_pid executed"
+    assert "Traceback" not in r.stderr
+    assert "no running qemu pid" in r.stdout
+
+
+def test_serial_mux_single_instance_guard(world):
+    """Two concurrent serial_mux starts must leave one mux, not two on
+    the same FIFO + guest socket; a later start is idempotent."""
+    state, make = world
+    make("t11")
+    env = _env(state)
+    mux = os.path.join(SCRIPTS, "serial_mux.py")
+    procs = [subprocess.Popen([sys.executable, mux, "--instance", "t11"],
+                              env=env, stdout=subprocess.DEVNULL,
+                              stderr=subprocess.DEVNULL)
+             for _ in range(2)]
+    try:
+        deadline = time.time() + 15
+        while time.time() < deadline:
+            if sum(1 for p in procs if p.poll() is None) <= 1:
+                break
+            time.sleep(0.2)
+        alive = [p for p in procs if p.poll() is None]
+        assert len(alive) <= 1, "two serial muxes running on one FIFO"
+        # idempotent: a later start reports, does not error or double up
+        r = subprocess.run([sys.executable, mux, "--instance", "t11"],
+                           env=env, capture_output=True, text=True,
+                           timeout=30)
+        assert r.returncode == 0, r.stdout + r.stderr
+        assert "already running" in r.stdout + r.stderr
+        assert sum(1 for p in procs if p.poll() is None) <= 1
+    finally:
+        for p in procs:
+            if p.poll() is None:
+                p.terminate()
+        for p in procs:
+            try:
+                p.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                p.kill()
 
 
 def test_write_keeps_earlier_commands(world):

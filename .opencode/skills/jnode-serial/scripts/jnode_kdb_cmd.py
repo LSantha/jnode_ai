@@ -109,7 +109,7 @@ def stop_mux(paths):
     pid = kdbmux.read_pid(paths)
     # identity check: a recycled pid in kdb_mux.pid must never be
     # signalled, let alone SIGKILLed
-    if not pid or not jp.pid_owns(pid, "kdb_mux.py"):
+    if not pid or not kdbmux._owns(pid):
         print("kdb mux not running (instance %s)" % paths.id)
         try:
             os.unlink(paths.kdb_mux_pid)

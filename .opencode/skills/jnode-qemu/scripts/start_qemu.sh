@@ -109,24 +109,25 @@ if [ "$STOP" = "1" ]; then
   fi
   # --stop is the post-crash recovery path, so the entry is often stale
   # and vm_pid may name a recycled pid: only signal a process that is
-  # really qemu-system
-  qemu_kill() {
-    python3 -c "
-import sys
-sys.path.insert(0, '$(dirname "$PATHS_PY")')
+  # really qemu-system. The pid reaches Python via sys.argv -- a crafted
+  # registry value must not splice into the program text -- and one
+  # interpreter owns the whole TERM -> wait -> KILL sequence.
+  if [ -n "$PID" ] && python3 -c "
+import sys, time
+sys.path.insert(0, sys.argv[2])
 import jnode_paths as jp
-sys.exit(0 if jp.safe_kill_pid(int('$1'), 'qemu-system', int('$2')) else 1)"
-  }
-  qemu_owns() {
-    python3 -c "
-import sys
-sys.path.insert(0, '$(dirname "$PATHS_PY")')
-import jnode_paths as jp
-sys.exit(0 if jp.pid_owns(int('$1'), 'qemu-system') else 1)"
-  }
-  if [ -n "$PID" ] && qemu_kill "$PID" 15; then
-    for _ in $(seq 1 20); do qemu_owns "$PID" || break; sleep 0.5; done
-    qemu_kill "$PID" 9 || true
+try:
+    pid = int(sys.argv[1])
+except ValueError:
+    sys.exit(1)
+if not jp.safe_kill_pid(pid, 'qemu-system', 15):
+    sys.exit(1)
+for _ in range(20):
+    if not jp.pid_owns(pid, 'qemu-system'):
+        break
+    time.sleep(0.5)
+jp.safe_kill_pid(pid, 'qemu-system', 9)
+sys.exit(0)" "$PID" "$(dirname "$PATHS_PY")"; then
     echo "stopped qemu pid $PID (instance $INSTANCE)"
   else
     echo "instance '$INSTANCE': no running qemu pid"

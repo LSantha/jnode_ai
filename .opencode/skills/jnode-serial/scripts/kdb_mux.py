@@ -65,16 +65,7 @@ def read_pid(paths):
 
 def acquire_pidfile(paths):
     """True when this process now owns the instance's KDB mux slot."""
-    existing = read_pid(paths)
-    if existing and _owns(existing):
-        return False
-    try:
-        os.makedirs(os.path.dirname(paths.kdb_mux_pid), exist_ok=True)
-        with open(paths.kdb_mux_pid, "w") as f:
-            f.write("%d\n" % os.getpid())
-    except OSError:
-        pass
-    return True
+    return jp.acquire_pid_slot(paths.kdb_mux_pid, "kdb_mux.py")
 
 
 def log_line(path, data):

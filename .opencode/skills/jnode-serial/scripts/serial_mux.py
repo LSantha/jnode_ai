@@ -348,6 +348,18 @@ def main(argv=None):
     prune_respdir()
 
     pid = os.getpid()
+    # single-instance guard (same invariant as kdb_mux.acquire_pidfile,
+    # plus flock): two concurrent serial_cmd starts must not leave two
+    # muxes on one FIFO + guest socket
+    if not jp.acquire_pid_slot(PIDFILE, "serial_mux.py"):
+        try:
+            with open(PIDFILE) as f:
+                owner = f.read().strip()
+        except OSError:
+            owner = "?"
+        print("a serial mux is already running (pid %s, instance %s)"
+              % (owner, paths.id))
+        sys.exit(0)
 
     def _cleanup_pidfile():
         # drop our own claim; a SIGTERM'd mux must not leave a stale
@@ -369,11 +381,6 @@ def main(argv=None):
         raise SystemExit(143)
 
     signal.signal(signal.SIGTERM, _sigterm)
-    try:
-        with open(PIDFILE, "w") as f:
-            f.write(str(pid) + "\n")
-    except OSError:
-        pass
 
     fifo = os.open(FIFO, os.O_RDONLY | os.O_NONBLOCK)
     log("started pid=%d instance=%s sock=%s hyp=%s vm=%s"

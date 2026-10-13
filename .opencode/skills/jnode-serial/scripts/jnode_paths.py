@@ -269,24 +269,27 @@ def _signal(pid, sig):
         return False
 
 
-def pid_owns(pid, needle):
+def pid_owns(pid, needle, fake=None):
     """True only if `pid` is alive AND really is a `needle` process.
 
     Matches argv[0]'s basename (or argv[1] for `python3 script.py`), so
     a `tail -f .../serial_mux.py` is not mistaken for the mux. Without
-    /proc (macOS, masked containers) identity cannot be proven; fall
-    back to the existence check rather than declaring a live process
-    stale -- the two-mux wedge is worse than a stale kill on a platform
-    this code does not support.
+    /proc (macOS, masked containers) or with /proc unreadable (hidepid,
+    another uid) identity cannot be proven; fall back to the existence
+    check rather than declaring a live process stale -- the two-mux
+    wedge is worse than a stale kill on a platform this code does not
+    support.
+
+    `fake` is a test-only stand-in pid accepted as "a live qemu-system"
+    (the skill's tests run the CLI as a subprocess, so an in-process
+    monkeypatch cannot reach it). Callers that may signal -- i.e.
+    safe_kill_pid -- never pass it; only entry_live's read path does,
+    via the JNODE_TEST_FAKE_QEMU_PID env var.
     """
     try:
         pid = int(pid)
     except (TypeError, ValueError):
         return False
-    # test-only: let a test suite stand a pid in for a real qemu-system
-    # without needing a VM (the CLI is a subprocess, so an in-process
-    # monkeypatch cannot reach it)
-    fake = os.environ.get("JNODE_TEST_FAKE_QEMU_PID")
     if fake and needle == "qemu-system":
         try:
             if pid == int(fake) and _pid_alive(pid):
@@ -296,10 +299,11 @@ def pid_owns(pid, needle):
     try:
         with open("/proc/%d/cmdline" % pid, "rb") as f:
             argv = [a for a in f.read().split(b"\0") if a]
-    except FileNotFoundError:
+    except (FileNotFoundError, PermissionError):
         return _pid_alive(pid)
     except (OSError, TypeError, ValueError):
-        return False
+        # /proc unreadable: never report a live process as stale
+        return _pid_alive(pid)
     if not argv:
         return False
     a0 = os.path.basename(argv[0].decode("utf-8", "replace"))
@@ -320,6 +324,37 @@ def safe_kill_pid(pid, needle, sig=15):
     an unrelated process. Returns True when the signal was sent.
     """
     return pid_owns(pid, needle) and _signal(pid, sig)
+
+
+def acquire_pid_slot(pidfile, needle):
+    """Atomically claim `pidfile` for this process.
+
+    flock serialises the check-then-act against concurrent launchers;
+    a live owner (`pid_owns`) refuses, a stale claim is overwritten.
+    Returns True when this process now owns the slot. An unclaimable
+    file (read-only fs) behaves like before the guard: proceed.
+    """
+    import fcntl
+    lock = pidfile + ".lock"
+    try:
+        os.makedirs(os.path.dirname(pidfile), exist_ok=True)
+        with open(lock, "w") as lf:
+            fcntl.flock(lf, fcntl.LOCK_EX)
+            try:
+                try:
+                    with open(pidfile) as f:
+                        existing = int(f.read().strip())
+                except (OSError, ValueError):
+                    existing = None
+                if existing is not None and pid_owns(existing, needle):
+                    return False
+                with open(pidfile, "w") as f:
+                    f.write("%d\n" % os.getpid())
+                return True
+            finally:
+                fcntl.flock(lf, fcntl.LOCK_UN)
+    except OSError:
+        return True
 
 
 def _vbox_binary():
@@ -367,8 +402,10 @@ def entry_live(entry):
         if pid:
             # identity, not just liveness: a recycled pid makes --list,
             # --resolve, --alloc and start_qemu.sh --stop act on a
-            # phantom (and kill an innocent)
-            return pid_owns(pid, "qemu-system")
+            # phantom (and kill an innocent). This is the only reader
+            # that accepts the JNODE_TEST_FAKE_QEMU_PID stand-in.
+            return pid_owns(pid, "qemu-system",
+                            fake=os.environ.get("JNODE_TEST_FAKE_QEMU_PID"))
         return os.path.exists(entry.get("agent_sock") or "")
     if hyp == "vbox":
         if _vbox_running(entry.get("vm")):

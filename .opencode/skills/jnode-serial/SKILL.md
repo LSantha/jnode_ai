@@ -46,6 +46,9 @@ python3 scripts/jnode_paths.py --env --instance qemu-2   # shell exports
 python3 scripts/jnode_paths.py --alloc --prefix qemu     # free id
 python3 scripts/jnode_paths.py --resolve   # the single live id
                                            # (exit 1 none, exit 2 several)
+# test-only: JNODE_TEST_FAKE_QEMU_PID=<pid> makes entry_live() accept
+# that pid as "a live qemu-system" (read path only -- --stop and
+# safe_kill_pid always prove identity via /proc)
 python3 scripts/jnode_paths.py --probe --instance qemu-2 # socket present?
 python3 scripts/jnode_paths.py --is-live --instance qemu-2
 python3 scripts/jnode_paths.py --prune         # forget dead entries

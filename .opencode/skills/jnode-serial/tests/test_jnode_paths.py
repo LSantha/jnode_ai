@@ -442,21 +442,43 @@ def test_pid_owns_matches_argv_not_substrings():
         child.wait()
 
 
-def test_pid_owns_without_proc_falls_back_to_liveness(monkeypatch):
-    """No /proc (macOS, masked containers): identity cannot be proven,
-    so fall back to the existence check -- a live process is never
-    declared stale (the two-mux wedge is the worse failure)."""
+@pytest.mark.parametrize("err", [FileNotFoundError, PermissionError])
+def test_pid_owns_without_proc_falls_back_to_liveness(monkeypatch, err):
+    """No /proc (macOS, masked containers) or an unreadable /proc
+    (hidepid, another uid): identity cannot be proven, so fall back to
+    the existence check -- a live process is never declared stale (the
+    two-mux wedge is the worse failure)."""
     child = subprocess.Popen([sys.executable, "-c",
                               "import time; time.sleep(120)"])
     try:
         def no_proc(path, *args, **kwargs):
-            raise FileNotFoundError(path)
+            raise err(path)
 
         monkeypatch.setattr(jp, "open", no_proc, raising=False)
         assert _real_pid_owns(child.pid, "serial_mux.py") is True
         dead = subprocess.Popen([sys.executable, "-c", "pass"])
         dead.wait()
         assert _real_pid_owns(dead.pid, "serial_mux.py") is False
+    finally:
+        child.kill()
+        child.wait()
+
+
+def test_fake_qemu_pid_does_not_reach_kill_path(monkeypatch):
+    """JNODE_TEST_FAKE_QEMU_PID substitutes on entry_live's read path
+    only; safe_kill_pid / pid_owns always prove identity, so a stray
+    export cannot turn --stop into a plain kill."""
+    child = subprocess.Popen([sys.executable, "-c",
+                              "import time; time.sleep(120)"])
+    try:
+        monkeypatch.setenv("JNODE_TEST_FAKE_QEMU_PID", str(child.pid))
+        _register("q-env", vm_pid=child.pid)
+        # read path: entry_live accepts the stand-in
+        assert jp.entry_live(jp.read_entry("q-env")) is True
+        # kill path: still refused -- not a real qemu-system
+        assert jp.safe_kill_pid(child.pid, "qemu-system", sig=0) is False
+        # pid_owns ignores the env entirely unless the caller passes it
+        assert jp.pid_owns(child.pid, "qemu-system") is False
     finally:
         child.kill()
         child.wait()
