@@ -119,6 +119,13 @@ public final class BufferDescriptorList implements AC97Constants {
     private final int frameSize;
 
     /**
+     * Size of one sample buffer in bytes, the extent the DMA engine covers
+     * from the buffer address. A buffer that starts below the 4 GB limit and
+     * ends above it is not reachable by the 32 bit pointer in a descriptor.
+     */
+    private final int bufferBytes;
+
+    /**
      * The format this list was built for.
      */
     private final PcmFormat format;
@@ -169,7 +176,7 @@ public final class BufferDescriptorList implements AC97Constants {
         // Carve the block up. The BDL comes first because it must be aligned
         // to BDL_ALIGN; claiming it first wastes at most BDL_ALIGN bytes.
         final int bdlBytes = entryCount * BDL_ENTRY_SIZE;
-        final int bufferBytes = framesPerBuffer * frameSize;
+        this.bufferBytes = framesPerBuffer * frameSize;
         try {
             this.descriptors = memory.claimChildResource(bdlBytes, BDL_ALIGN);
             this.buffers = new MemoryResource[entryCount];
@@ -181,10 +188,12 @@ public final class BufferDescriptorList implements AC97Constants {
             this.memory.release();
             throw ex;
         }
-        if (descriptors.getAddress().toLong() > 0xFFFFFFFFL) {
+        try {
+            validateDmaBounds("descriptor list", descriptors.getAddress()
+                .toLong(), bdlBytes);
+        } catch (IllegalStateException ex) {
             this.memory.release();
-            throw new ResourceNotFreeException(
-                "Buffer descriptor list is above the 4GB DMA limit");
+            throw new ResourceNotFreeException(ex.getMessage());
         }
     }
 
@@ -208,6 +217,35 @@ public final class BufferDescriptorList implements AC97Constants {
      * list.
      *
      * @param index index of the descriptor
+     */
+    /**
+     * Checks that a block the DMA engine will cover by its 32 bit address
+     * stays below the 4 GB limit of that address. Starting below the limit is
+     * not enough: a block that crosses the boundary is partly unreachable,
+     * and the controller would read it as garbage PCM.
+     *
+     * @param what what is being checked, for the message
+     * @param start physical address of the block
+     * @param size size of the block in bytes
+     * @throws IllegalStateException if the block is not DMA reachable
+     */
+    static void validateDmaBounds(String what, long start, long size) {
+        if (size <= 0) {
+            throw new IllegalArgumentException(
+                "size of a DMA block must be positive: " + size);
+        }
+        final long end = start + size - 1;
+        if ((start < 0) || (end > 0xFFFFFFFFL)) {
+            throw new IllegalStateException(what + " " + NumberUtils.hex(start)
+                + " plus " + size + " bytes is not below the 4GB DMA limit");
+        }
+    }
+
+    /**
+     * Offset of a descriptor in the list, in bytes.
+     *
+     * @param index the descriptor index
+     * @return the byte offset of the descriptor
      */
     public static int descriptorOffset(int index) {
         return index * BDL_ENTRY_SIZE;
@@ -346,14 +384,14 @@ public final class BufferDescriptorList implements AC97Constants {
     public final void setDescriptor(int index, int samples, boolean interrupt) {
         testIndex(index);
         validateSampleCount(samples, wordsPerBuffer);
-        // BDBAR and the descriptor pointer are 32 bit registers, so the
-        // buffer must be below 4 GB. toInt() would silently truncate a
-        // higher address, hence the check on the full 64 bit value.
+        // BDBAR and the descriptor pointer are 32 bit registers, so the whole
+        // buffer must stay below 4 GB. A buffer that starts below the limit
+        // and ends above it is out of reach even though toInt() of its start
+        // would look fine, hence the check on the full 64 bit value and the
+        // size.
         final Address address = buffers[index].getAddress();
-        if (address.toLong() > 0xFFFFFFFFL) {
-            throw new IllegalStateException("Buffer address above 4GB: "
-                + NumberUtils.hex(address.toLong()));
-        }
+        validateDmaBounds("buffer " + index + " address", address.toLong(),
+            bufferBytes);
         final int ofs = descriptorOffset(index);
         // Little endian, sample pointer followed by control &amp; length word.
         descriptors.setInt(ofs, address.toInt());

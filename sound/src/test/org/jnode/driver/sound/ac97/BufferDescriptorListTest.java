@@ -45,6 +45,67 @@ public class BufferDescriptorListTest {
     private static final int FRAMES_PER_BUFFER = 1024;
 
     @Test
+    public void testDmaBlocksMustStayBelowTheLimit() {
+        // The descriptor pointer is a 32 bit register, so a block that ends
+        // above 4 GB is partly unreachable even when it starts below it.
+        final long limit = 0xFFFFFFFFL;
+        // Starting at the limit is fine for an empty block, but every block
+        // is at least one byte.
+        BufferDescriptorList.validateDmaBounds("block", 0, 1);
+        BufferDescriptorList.validateDmaBounds("block", limit - 4095, 4096);
+        BufferDescriptorList.validateDmaBounds("block", limit, 1);
+        // A several megabyte ring in the low DMA zone: reachable.
+        BufferDescriptorList.validateDmaBounds("ring", 0x4000000L, 0x1000000);
+        try {
+            BufferDescriptorList.validateDmaBounds("block", limit, 2);
+            fail("expected an exception for a block crossing the limit");
+        } catch (IllegalStateException ex) {
+            assertTrue("message must name the block: " + ex.getMessage(),
+                ex.getMessage().startsWith("block "));
+        }
+        // A block that starts just below the limit and runs past it is worse
+        // than one above it, because its start looks fine when truncated.
+        try {
+            BufferDescriptorList.validateDmaBounds("buffer", 0xFFFFF000L,
+                0x2000);
+            fail("expected an exception for a block crossing the limit");
+        } catch (IllegalStateException ex) {
+            assertTrue("message must name the extent: " + ex.getMessage(),
+                ex.getMessage().contains("plus 8192 bytes"));
+        }
+        // An address above the limit is reported, not truncated.
+        try {
+            BufferDescriptorList.validateDmaBounds("descriptor list",
+                0x100000000L, 8);
+            fail("expected an exception for a block above the limit");
+        } catch (IllegalStateException ex) {
+            assertTrue("message must name the address: " + ex.getMessage(),
+                ex.getMessage().contains("100000000"));
+        }
+        // A block with no extent is a broken call, not a DMA block.
+        try {
+            BufferDescriptorList.validateDmaBounds("block", 0, 0);
+            fail("expected an exception for an empty block");
+        } catch (IllegalArgumentException ex) {
+            // expected
+        }
+    }
+
+    @Test
+    public void testSizedWindowFitsInTheLowDmaZone() {
+        // The geometry the driver asks for must itself be below the limit, or
+        // the allocator can never satisfy it: 32 buffers of 1024 frames is
+        // well within it.
+        final int bufferBytes = 1024 * 4;
+        final int total = BufferDescriptorList.BDL_ALIGN
+            + BufferDescriptorList.BDL_MAX_ENTRIES * 8
+            + BufferDescriptorList.BDL_MAX_ENTRIES * (8 + bufferBytes);
+        assertTrue("the default ring must fit below 4GB",
+            total < 0xFFFFFFFFL);
+        BufferDescriptorList.validateDmaBounds("ring", 0, total);
+    }
+
+    @Test
     public void testDescriptorOffsets() {
         assertEquals(0, BufferDescriptorList.descriptorOffset(0));
         assertEquals(8, BufferDescriptorList.descriptorOffset(1));
