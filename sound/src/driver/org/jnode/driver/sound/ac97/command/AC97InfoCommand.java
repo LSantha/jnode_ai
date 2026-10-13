@@ -46,7 +46,7 @@ public class AC97InfoCommand extends AbstractCommand {
             "frames per playback sample buffer, 1..2048");
 
     private final IntegerArgument argMicGain =
-        new IntegerArgument("mic-gain", Argument.OPTIONAL,
+        new IntegerArgument("mic-gain", Argument.OPTIONAL, 0, 15,
             "microphone gain in 1.5 dB steps above the input gain, 0..15");
 
     private final IntegerArgument argDevice = new IntegerArgument(

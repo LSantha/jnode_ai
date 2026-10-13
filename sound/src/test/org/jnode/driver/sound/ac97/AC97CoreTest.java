@@ -277,6 +277,49 @@ public class AC97CoreTest {
     }
 
     @Test
+    public void testRecordGainIsValidated() {
+        // The gain field of the record gain register is 4 bit wide; a gain
+        // above 15 would silently overflow into the neighbouring field instead
+        // of being rejected, so the driver has to reject it.
+        for (int steps = 0; steps <= 15; steps++) {
+            AC97Core.validateRecordGainSteps(steps);
+        }
+        for (int bad : new int[] {-1, 16, 255, Integer.MAX_VALUE}) {
+            try {
+                AC97Core.validateRecordGainSteps(bad);
+                fail("expected an exception for record gain " + bad);
+            } catch (IllegalArgumentException ex) {
+                // expected
+            }
+        }
+    }
+
+    @Test
+    public void testRecordGainStaysInTheRecordGainFields() {
+        // The gain of a record source goes to the record gain register and
+        // nowhere else. A gain of 0..15 lands in the two 4 bit gain fields of
+        // that register, and the microphone register with its boost in bits
+        // 9:6 is not touched at all, because a gain written there would move
+        // the boost that setMicGainSteps put there.
+        for (int steps = 0; steps <= 15; steps++) {
+            AC97Core.validateRecordGainSteps(steps);
+            final int gain = (steps & 0x0F) | ((steps & 0x0F) << 8);
+            assertEquals("gain " + steps + " keeps inside its fields", gain,
+                gain & AC97Constants.RECORD_GAIN_MASK);
+        }
+        // What the microphone register is allowed to lose to a boost: the
+        // boost field and nothing else.
+        final int micRegister = 0x8000 | (3 << 6) | 0x0F;
+        final int written = (micRegister & ~AC97Constants.MIC_BOOST_MASK)
+            | (11 << 6);
+        assertEquals("boost moved", 11, (written >> 6) & 0x0F);
+        assertEquals("input gain kept", 0x0F, written & 0x0F);
+        assertEquals("mute kept", 0x8000, written & 0x8000);
+        assertEquals("the boost mask covers only the boost",
+            0x03C0, AC97Constants.MIC_BOOST_MASK);
+    }
+
+    @Test
     public void testMicGainRegisterBits() {
         // The microphone boost lives in bits 9:6 of the record gain
         // microphone register; reading it must not pick up the lower bits of

@@ -200,6 +200,20 @@ public interface AC97Constants extends PCIConstants {
     public static final int RECORD_GAIN_0DB = 0x0000;
 
     /**
+     * Mask of the two 4 bit gain fields of a record gain register, left in
+     * bits 4:0 and right in bits 12:8.
+     */
+    public static final int RECORD_GAIN_MASK = 0x0F0F;
+
+    /**
+     * Mask of the microphone boost field of the microphone record gain
+     * register (bits 9:6). It is the one part of that register a microphone
+     * boost setting is allowed to change; a record gain written to the same
+     * register would move it.
+     */
+    public static final int MIC_BOOST_MASK = 0x03C0;
+
+    /**
      * Mask of one channel of the record select register, which is a 3 bit
      * source code per channel in bits 2:0 and bits 6:4.
      */

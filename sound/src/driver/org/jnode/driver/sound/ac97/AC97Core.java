@@ -600,6 +600,25 @@ public final class AC97Core implements AC97Constants, IRQHandler {
      *
      * @param steps the gain steps
      */
+    /**
+     * Checks that a record gain is one the record gain register can hold: the
+     * gain field is 4 bit wide per channel and steps above 15 would overflow
+     * into the next field instead of being rejected.
+     *
+     * @param steps gain in 1.5 dB steps, 0..15
+     */
+    public static void validateRecordGainSteps(int steps) {
+        if ((steps < 0) || (steps > 15)) {
+            throw new IllegalArgumentException(
+                "Invalid record gain " + steps + ", 0..15 only");
+        }
+    }
+
+    /**
+     * Checks that a microphone boost is one the microphone register can hold.
+     *
+     * @param steps the boost steps
+     */
     public static void validateMicGainSteps(int steps) {
         if ((steps < 0) || (steps > 15)) {
             throw new IllegalArgumentException("Invalid mic gain " + steps);
@@ -623,7 +642,7 @@ public final class AC97Core implements AC97Constants, IRQHandler {
     public final void setMicGainSteps(int steps) {
         validateMicGainSteps(steps);
         final int value = readCodecRegister(NAM_RECORD_GAIN_MIC);
-        writeCodecRegister(NAM_RECORD_GAIN_MIC, (value & ~0x03C0)
+        writeCodecRegister(NAM_RECORD_GAIN_MIC, (value & ~MIC_BOOST_MASK)
             | ((steps & 0x0F) << 6));
     }
 
@@ -960,18 +979,26 @@ public final class AC97Core implements AC97Constants, IRQHandler {
      * written to the record select register; both channels carry the same 3
      * bit source code, so the caller passes the already duplicated value
      * (see the RECORD_SELECT_* constants).
+     * <p>
+     * The gain goes to the record gain register only. The microphone has a
+     * register of its own, and its bits 9:6 are the microphone boost, which
+     * belongs to {@link #setMicGainSteps(int)}; writing a record gain there
+     * would silently move that boost, so the microphone register is left
+     * alone.
      *
      * @param select    the record select value, e.g. RECORD_SELECT_MIC
      * @param gainSteps gain in 1.5 dB steps per channel, 0 is maximum gain
      *                   and RECORD_GAIN_0DB
+     * @throws IllegalArgumentException if the select value or the gain is out
+     *         of range
      */
     public final void setRecordSource(int select, int gainSteps) {
         validateRecordSource(select);
+        validateRecordGainSteps(gainSteps);
         synchronized (captureLock) {
             outCodec(NAM_RECORD_SELECT, select);
             final int gain = (gainSteps & 0x0F) | ((gainSteps & 0x0F) << 8);
             outCodec(NAM_RECORD_GAIN, gain);
-            outCodec(NAM_RECORD_GAIN_MIC, gain);
         }
     }
 

@@ -78,8 +78,8 @@ public class AC97CaptureCommand extends AbstractCommand {
         new IntegerArgument("rate", Argument.OPTIONAL, "sample rate in Hz");
 
     private final IntegerArgument argGain =
-        new IntegerArgument("gain", Argument.OPTIONAL,
-            "record gain in 1.5 dB steps, 0 is maximum gain");
+        new IntegerArgument("gain", Argument.OPTIONAL, 0, 15,
+            "record gain in 1.5 dB steps above the input gain, 0 is maximum gain");
 
     private static final class SourceArgument extends EnumArgument<Source> {
         SourceArgument(String label, int flags, String description) {
