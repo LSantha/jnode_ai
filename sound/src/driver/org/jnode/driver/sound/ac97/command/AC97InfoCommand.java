@@ -49,9 +49,12 @@ public class AC97InfoCommand extends AbstractCommand {
         new IntegerArgument("mic-gain", Argument.OPTIONAL,
             "microphone gain in 1.5 dB steps above the input gain, 0..15");
 
+    private final IntegerArgument argDevice = new IntegerArgument(
+        "device", Argument.OPTIONAL, "index of the AC'97 device to use");
+
     public AC97InfoCommand() {
         super("shows and tunes the AC'97 playback ring");
-        registerArguments(argBufferSize, argMicGain);
+        registerArguments(argBufferSize, argMicGain, argDevice);
     }
 
     public static void main(String[] args) throws Exception {
@@ -61,9 +64,11 @@ public class AC97InfoCommand extends AbstractCommand {
     @Override
     public void execute() {
         final PrintWriter out = getOutput().getPrintWriter();
-        final AC97API api = AC97Utils.findDevice();
+        final int deviceIndex = argDevice.isSet() ? argDevice.getValue()
+            : 0;
+        final AC97API api = AC97Utils.findDevice(deviceIndex);
         if (api == null) {
-            out.println("ac97info: no AC'97 device found");
+            out.println("ac97info: " + AC97Utils.describeNoDevice(deviceIndex));
             exit(1);
             return;
         }

@@ -215,6 +215,58 @@ public class WavFileTest {
     }
 
     @Test
+    public void testParseFindsTheDataChunkAfterMetadata() {
+        // A WAV with a LIST metadata chunk after the format chunk must still
+        // be parsed: the data offset is past the metadata, and the samples
+        // after the data chunk header are the ones to convert. The parser
+        // used to stop at the canonical data offset of 44 bytes, which is the
+        // middle of the metadata in such a file.
+        final byte[] canonical = WavFile.createHeader(24, 48000, 2, 16);
+        // The format chunk occupies 12..36, so a metadata chunk starts at the
+        // offset the canonical data chunk header would use.
+        final int metaOffset = 36;      // where the canonical data header sits
+        final int dataHeader = metaOffset + 16;       // behind the padded metadata chunk
+        final int dataOffset = dataHeader + 8;        // payload, behind the data header
+        final byte[] extended = new byte[dataOffset + 24];
+        // "RIFF....WAVE"
+        System.arraycopy(canonical, 0, extended, 0, 12);
+        // "fmt " chunk header plus the 16 payload bytes
+        System.arraycopy(canonical, 12, extended, 12, 24);
+        // "LIST", 8 byte payload, padded to 16
+        extended[metaOffset] = 'L';
+        extended[metaOffset + 1] = 'I';
+        extended[metaOffset + 2] = 'S';
+        extended[metaOffset + 3] = 'T';
+        putInt(extended, metaOffset + 4, 8);
+        extended[metaOffset + 8] = 'I';
+        extended[metaOffset + 9] = 'N';
+        extended[metaOffset + 10] = 'F';
+        extended[metaOffset + 11] = 'O';
+        // "data" chunk header plus the 24 payload bytes
+        extended[dataHeader] = 'd';
+        extended[dataHeader + 1] = 'a';
+        extended[dataHeader + 2] = 't';
+        extended[dataHeader + 3] = 'a';
+        putInt(extended, dataHeader + 4, 24);
+        for (int i = 0; i < 24; i++) {
+            extended[dataOffset + i] = (byte) (i * 7);
+        }
+        final WavFile.Format format = WavFile.parseFormat(extended,
+            extended.length);
+        assertEquals(2, format.getChannels());
+        assertEquals(48000, format.getSampleRate());
+        assertEquals(24, format.getDataLength());
+        assertEquals("the data chunk must be found after the metadata",
+            dataOffset, format.getDataOffset());
+        // The payload really starts where the format says, and it converts.
+        assertEquals(0, extended[dataOffset] & 0xFF);
+        assertEquals(7, extended[dataOffset + 1] & 0xFF);
+        final byte[] dst = new byte[24];
+        assertEquals(24, WavFile.convertToStereo16(extended, dataOffset,
+            24, dst, 0, 2, 16));
+    }
+
+    @Test
     public void testConversionIsIdentityForStereoSixteen() {
         final byte[] src = {0x34, 0x12, 0x78, 0x56, (byte) 0xCD, (byte) 0xAB,
             0x00, 0x00};

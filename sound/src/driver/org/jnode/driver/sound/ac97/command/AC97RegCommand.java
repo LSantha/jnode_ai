@@ -66,9 +66,12 @@ public class AC97RegCommand extends AbstractCommand {
         new IntegerArgument("value", Argument.OPTIONAL,
             "the 16 bit value for --set");
 
+    private final IntegerArgument argDevice = new IntegerArgument(
+        "device", Argument.OPTIONAL, "index of the AC'97 device to use");
+
     public AC97RegCommand() {
         super("reads and writes the AC'97 codec registers");
-        registerArguments(argGet, argSet, argValue);
+        registerArguments(argGet, argSet, argValue, argDevice);
     }
 
     public static void main(String[] args) throws Exception {
@@ -78,9 +81,11 @@ public class AC97RegCommand extends AbstractCommand {
     @Override
     public void execute() {
         final PrintWriter out = getOutput().getPrintWriter();
-        final AC97API api = AC97Utils.findDevice();
+        final int deviceIndex = argDevice.isSet() ? argDevice.getValue()
+            : 0;
+        final AC97API api = AC97Utils.findDevice(deviceIndex);
         if (api == null) {
-            out.println("ac97reg: no AC'97 device found");
+            out.println("ac97reg: " + AC97Utils.describeNoDevice(deviceIndex));
             exit(1);
             return;
         }

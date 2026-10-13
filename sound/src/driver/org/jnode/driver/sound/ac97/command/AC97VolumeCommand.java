@@ -60,9 +60,12 @@ public class AC97VolumeCommand extends AbstractCommand {
     private final IntegerArgument argLevel = new IntegerArgument(
         "level", Argument.OPTIONAL, "volume in percent, 0..100");
 
+    private final IntegerArgument argDevice = new IntegerArgument(
+        "device", Argument.OPTIONAL, "index of the AC'97 device to use");
+
     public AC97VolumeCommand() {
         super("reads and sets the AC'97 mixer volumes");
-        registerArguments(argMute, argUnmute, argLevel);
+        registerArguments(argMute, argUnmute, argLevel, argDevice);
     }
 
     public static void main(String[] args) throws Exception {
@@ -72,9 +75,11 @@ public class AC97VolumeCommand extends AbstractCommand {
     @Override
     public void execute() {
         final PrintWriter out = getOutput().getPrintWriter();
-        final AC97API api = AC97Utils.findDevice();
+        final int deviceIndex = argDevice.isSet() ? argDevice.getValue()
+            : 0;
+        final AC97API api = AC97Utils.findDevice(deviceIndex);
         if (api == null) {
-            out.println("ac97volume: no AC'97 device found");
+            out.println("ac97volume: " + AC97Utils.describeNoDevice(deviceIndex));
             exit(1);
             return;
         }

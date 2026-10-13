@@ -35,6 +35,7 @@ import org.jnode.shell.AbstractCommand;
 import org.jnode.util.TimeoutException;
 import org.jnode.shell.syntax.Argument;
 import org.jnode.shell.syntax.FileArgument;
+import org.jnode.shell.syntax.IntegerArgument;
 
 /**
  * Shell command that plays a PCM WAV file through the AC'97 codec.
@@ -57,9 +58,12 @@ public class AC97WavCommand extends AbstractCommand {
     private final FileArgument argFile = new FileArgument(
         "file", Argument.MANDATORY, "the WAV file to play");
 
+    private final IntegerArgument argDevice = new IntegerArgument(
+        "device", Argument.OPTIONAL, "index of the AC'97 device to use");
+
     public AC97WavCommand() {
         super("plays a PCM WAV file through the AC'97 codec");
-        registerArguments(argFile);
+        registerArguments(argFile, argDevice);
     }
 
     public static void main(String[] args) throws Exception {
@@ -70,9 +74,11 @@ public class AC97WavCommand extends AbstractCommand {
     public void execute() {
         final PrintWriter out = getOutput().getPrintWriter();
         final File file = argFile.getValue();
-        final AC97API api = AC97Utils.findDevice();
+        final int deviceIndex = argDevice.isSet() ? argDevice.getValue()
+            : 0;
+        final AC97API api = AC97Utils.findDevice(deviceIndex);
         if (api == null) {
-            out.println("ac97wav: no AC'97 device found");
+            out.println("ac97wav: " + AC97Utils.describeNoDevice(deviceIndex));
             exit(1);
             return;
         }
@@ -84,23 +90,12 @@ public class AC97WavCommand extends AbstractCommand {
         boolean opened = false;
         try {
             in = new FileInputStream(file);
-            // A canonical header is 44 bytes. Files with extra metadata are
-            // retried with a bigger buffer, and the parse stops at the data
-            // chunk, so only the data chunk is played.
-            WavFile.Format format = null;
-            byte[] header = new byte[WavFile.HEADER_SIZE];
-            int headerLength = readFully(in, header, header.length);
-            int buffered = 0;
-            try {
-                format = WavFile.parseFormat(header, headerLength);
-            } catch (IllegalArgumentException ex) {
-                if (headerLength < WavFile.HEADER_SIZE) {
-                    throw ex;
-                }
-                header = new byte[WavFile.MAX_HEADER_SIZE];
-                headerLength = readFully(in, header, header.length);
-                format = WavFile.parseFormat(header, headerLength);
-            }
+            // A canonical header is 44 bytes; a file with metadata chunks
+            // behind the format chunk is read again with a wider buffer, and
+            // the bytes already read are kept, so the second parse still sees
+            // the header from the start of the file.
+            final Header header = readHeader(in);
+            final WavFile.Format format = header.getFormat();
             out.println("ac97wav: " + file.getPath() + " is " + format);
             // A file plays at its own rate if the codec can reach it, and is
             // resampled to 48000 Hz otherwise; the AC'97 DAC cannot play
@@ -126,12 +121,9 @@ public class AC97WavCommand extends AbstractCommand {
             // because the header is longer than 44 bytes or because a whole
             // chunk was read, are played before the rest of the data chunk.
             long remaining = format.getDataLength();
-            if (format.getDataOffset() < headerLength) {
-                buffered = headerLength - format.getDataOffset();
-                if (buffered > format.getDataLength()) {
-                    buffered = format.getDataLength();
-                }
-                played += playBuffer(api, format, header,
+            if (header.getBuffered() > 0) {
+                final int buffered = header.getBuffered();
+                played += playBuffer(api, format, header.getBytes(),
                     format.getDataOffset(), buffered, pcm, converter, resampled,
                     out);
                 remaining -= buffered;
@@ -151,8 +143,13 @@ public class AC97WavCommand extends AbstractCommand {
                 remaining -= read;
             }
             api.drain();
+            // The duration of the played audio comes from the rate the codec
+            // played it at: a converted file is resampled, so the frames that
+            // were written are frames of the playback rate, not frames of the
+            // source rate. Dividing by the source rate reports a file as
+            // longer than it sounds.
             out.println("ac97wav: played " + played + " frames ("
-                + (played * 1000 / format.getSampleRate()) + "ms)");
+                + playedMillis(played, playRate) + "ms)");
         } catch (IllegalArgumentException ex) {
             out.println("ac97wav: " + ex.getMessage());
             exit(1);
@@ -212,6 +209,18 @@ public class AC97WavCommand extends AbstractCommand {
     }
 
     /**
+     * Wall clock milliseconds that the given number of played frames take at
+     * the given playback rate.
+     *
+     * @param frames frames written to the codec
+     * @param rate the rate the codec plays them at
+     * @return the duration in milliseconds
+     */
+    static int playedMillis(int frames, int rate) {
+        return (int) (((long) frames * 1000) / rate);
+    }
+
+    /**
      * Gets the rate the codec will play at for a file of the given rate: the
      * file rate when the codec supports it, otherwise 48000 Hz, the only rate
      * every AC'97 codec has.
@@ -237,11 +246,106 @@ public class AC97WavCommand extends AbstractCommand {
     }
 
     /**
-     * Reads exactly the requested number of bytes, or up to that many if the
-     * stream ends first. A short read is not the end of the stream, so a file
-     * that delivers its data in small pieces still plays completely.
+     * The header of a WAV file as it was read from the file: the bytes, how
+     * many of them belong to the header, and the parsed format.
      */
-    private int readFully(InputStream in, byte[] buffer, int count)
+    static final class Header {
+
+        private final byte[] bytes;
+
+        private final int length;
+
+        private final WavFile.Format format;
+
+        /**
+         * @param bytes the bytes that were read for the header
+         * @param length how many of them the file holds
+         * @param format the format parsed from them
+         */
+        Header(byte[] bytes, int length, WavFile.Format format) {
+            this.bytes = bytes;
+            this.length = length;
+            this.format = format;
+        }
+
+        byte[] getBytes() {
+            return bytes;
+        }
+
+        WavFile.Format getFormat() {
+            return format;
+        }
+
+        /**
+         * PCM bytes of the data chunk that were read while reading the header,
+         * which happens when the header is longer than the canonical 44 bytes.
+         *
+         * @return the number of bytes to play from {@link #getBytes()}
+         */
+        int getBuffered() {
+            long buffered = length - format.getDataOffset();
+            if (buffered > format.getDataLength()) {
+                buffered = format.getDataLength();
+            }
+            return (int) buffered;
+        }
+    }
+
+    /**
+     * Reads the header of a WAV file and parses its format.
+     * <p>
+     * A canonical header is 44 bytes. A file with metadata chunks behind the
+     * format chunk does not parse inside those bytes, so the header is read
+     * again into a wider buffer that starts with the bytes already read:
+     * appending behind them keeps the RIFF header at the start of the parse
+     * instead of hiding it behind byte 44.
+     *
+     * @param in the WAV file, positioned at its first byte
+     * @return the header, its bytes and its format
+     * @throws IOException if the file cannot be read
+     * @throws IllegalArgumentException if the file is not a playable WAV file
+     */
+    static Header readHeader(InputStream in) throws IOException {
+        final byte[] header = new byte[WavFile.HEADER_SIZE];
+        int headerLength = readFully(in, header, header.length);
+        try {
+            return new Header(header, headerLength,
+                WavFile.parseFormat(header, headerLength));
+        } catch (IllegalArgumentException ex) {
+            if (headerLength < WavFile.HEADER_SIZE) {
+                // The file is too short to be a WAV file at all.
+                throw ex;
+            }
+        }
+        // The rest of the header is read behind the bytes already read. The
+        // read fills a buffer of its own, which is then copied into place,
+        // because the file read of the system library writes its data to the
+        // start of the buffer it is given and would overwrite the header that
+        // has to be kept.
+        final byte[] wide = new byte[WavFile.MAX_HEADER_SIZE];
+        System.arraycopy(header, 0, wide, 0, headerLength);
+        final int extraLength = WavFile.MAX_HEADER_SIZE - headerLength;
+        final byte[] extraBytes = new byte[extraLength];
+        final int extra = readFully(in, extraBytes, extraLength);
+        System.arraycopy(extraBytes, 0, wide, headerLength, extra);
+        headerLength += extra;
+        return new Header(wide, headerLength, WavFile.parseFormat(wide,
+            headerLength));
+    }
+
+    /**
+     * Reads exactly the requested number of bytes into the start of the
+     * buffer, or up to that many if the stream ends first. A short read is not
+     * the end of the stream, so a file that delivers its data in small pieces
+     * still plays completely.
+     *
+     * @param in the stream to read from
+     * @param buffer the buffer to read into
+     * @param count how many bytes to read
+     * @return the number of bytes read, less than asked for at the end of the
+     *         stream
+     */
+    private static int readFully(InputStream in, byte[] buffer, int count)
         throws IOException {
         int length = 0;
         while (length < count) {
