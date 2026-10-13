@@ -343,6 +343,30 @@ public class AC97Driver extends Driver implements AC97API, AC97Constants {
         return c.getCodecErrors();
     }
 
+    public int getFifoErrors() {
+        final AC97Core c = core;
+        if (c == null) {
+            throw new IllegalStateException("AC'97 device is not started");
+        }
+        return c.getFifoErrors();
+    }
+
+    public int getLastValidBuffers() {
+        final AC97Core c = core;
+        if (c == null) {
+            throw new IllegalStateException("AC'97 device is not started");
+        }
+        return c.getLastValidBuffers();
+    }
+
+    public int getCaptureInterrupts() {
+        final AC97Core c = core;
+        if (c == null) {
+            throw new IllegalStateException("AC'97 device is not started");
+        }
+        return c.getCaptureInterrupts();
+    }
+
     public int getPlaybackBufferSize() {
         final AC97Core c = core;
         if (c == null) {

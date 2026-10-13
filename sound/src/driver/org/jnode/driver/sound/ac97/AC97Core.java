@@ -287,6 +287,25 @@ public final class AC97Core implements AC97Constants, IRQHandler {
     private volatile int codecErrors;
 
     /**
+     * Playback FIFO error interrupts seen. Read by ac97info; the IRQ handler
+     * only counts, because logging allocates on a path that runs with
+     * interrupts disabled.
+     */
+    private volatile int fifoErrors;
+
+    /**
+     * Playback interrupts raised for a last valid buffer, counted the same
+     * way as {@link #fifoErrors}.
+     */
+    private volatile int lastValidBuffers;
+
+    /**
+     * Capture engine interrupts seen, counted the same way as
+     * {@link #fifoErrors}.
+     */
+    private volatile int captureInterrupts;
+
+    /**
      * Lock protecting the playback ring state below and the DMA registers
      * of the PCM out engine. It is shared with the interrupt handler.
      */
@@ -1353,11 +1372,14 @@ public final class AC97Core implements AC97Constants, IRQHandler {
             // The playback interrupt is latched in the global status too.
             outNabmDword(GLOB_STA, inNabmDword(GLOB_STA) & GLOB_STA_POINT);
 
+            // Counting is all an interrupt handler may do: log4j can allocate
+            // and take locks, which is not affordable with interrupts
+            // disabled. ac97info reports the counters.
             if ((status & SR_FIFOE) != 0) {
-                log.debug("AC'97 FIFO error");
+                fifoErrors++;
             }
             if ((status & SR_LVBCI) != 0) {
-                log.debug("AC'97 last valid buffer completed");
+                lastValidBuffers++;
             }
 
             synchronized (playbackLock) {
@@ -1370,6 +1392,7 @@ public final class AC97Core implements AC97Constants, IRQHandler {
         // The capture engine raises its own interrupt on the same line.
         final int inStatus = inNabmWord(PCM_IN_SR);
         if ((inStatus & SR_INT_MASK) != 0) {
+            captureInterrupts++;
             outNabmWord(PCM_IN_SR, SR_INT_MASK);
             outNabmDword(GLOB_STA, inNabmDword(GLOB_STA) & GLOB_STA_PIINT);
             synchronized (captureLock) {
@@ -1985,6 +2008,31 @@ public final class AC97Core implements AC97Constants, IRQHandler {
      */
     public int getCodecErrors() {
         return codecErrors;
+    }
+
+    /**
+     * Gets the number of playback FIFO errors since the driver started. A
+     * rising count while audio plays means the CPU cannot feed the ring.
+     */
+    public int getFifoErrors() {
+        return fifoErrors;
+    }
+
+    /**
+     * Gets the number of playback interrupts that reported a last valid buffer
+     * since the driver started. One per stream played is normal; more means
+     * playback ran dry.
+     */
+    public int getLastValidBuffers() {
+        return lastValidBuffers;
+    }
+
+    /**
+     * Gets the number of capture engine interrupts since the driver started,
+     * which is the heartbeat a working capture path shows.
+     */
+    public int getCaptureInterrupts() {
+        return captureInterrupts;
     }
 
     private int inNamRaw(int offset) {

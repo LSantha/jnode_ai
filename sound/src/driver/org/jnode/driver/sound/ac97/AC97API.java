@@ -273,6 +273,22 @@ public interface AC97API extends DeviceAPI {
     public int getCodecErrors();
 
     /**
+     * Gets the number of playback FIFO errors since the driver started.
+     */
+    public int getFifoErrors();
+
+    /**
+     * Gets the number of playback interrupts that reported a last valid buffer
+     * since the driver started.
+     */
+    public int getLastValidBuffers();
+
+    /**
+     * Gets the number of capture engine interrupts since the driver started.
+     */
+    public int getCaptureInterrupts();
+
+    /**
      * Gets the number of stereo frames per playback sample buffer.
      */
     public int getPlaybackBufferSize();
