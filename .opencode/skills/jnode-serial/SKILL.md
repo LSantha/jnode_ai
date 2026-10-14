@@ -1,242 +1,153 @@
 ---
 name: jnode-serial
-description: Interact with JNode via VirtualBox serial console (automatic agent mode)
+description: Agent console, serial boot log, and KDB over serial for JNode VMs (QEMU and VirtualBox) - one persistent mux client per VM instance, instance-namespaced sockets, works locally and in CI
 license: MIT
 ---
 
-## What I do
+## What this is
 
-**VirtualBox-only skill.** This provides interaction with JNode's **implicit serial console** (starts automatically via `SerialConsolePlugin`). It:
+The **transport** layer for talking to a running JNode, shared by the
+`jnode-qemu` and `jnode-vbox` skills (and usable standalone). One command
+client (`serial_cmd.py`) drives JNode's implicit serial agent console
+(`SerialConsolePlugin`) over a per-VM unix socket/pipe; a persistent mux
+daemon holds the single client connection; optional KDB tooling drives the
+kernel debugger on UART1. Everything is keyed by an **instance id** so many
+VMs (QEMU/VirtualBox, local/GitHub-Actions) run side by side without path
+collisions.
 
-1. Holds ONE persistent client on the Unix socket at `/tmp/jnode.serial2` (VirtualBox pipe server)
-2. Multiplexes agent commands through that single connection
-3. Self-heals the pipe without power cycles
+Paths and instance logic live in `scripts/jnode_paths.py` (importable, and
+a CLI).
 
-## When to use me
+## Instance model
 
-Use this skill when you need to:
+Instance id resolution: `--instance` flag > `$JNODE_INSTANCE` env >
+auto (`default` when free, else `qemu-1`, `qemu-2`, ...).
 
-- Run commands on a running JNode instance in **VirtualBox** via serial console
-- Test JNode shell commands interactively
-- Debug JNode without VGA console access
+The legacy **`default` instance keeps the historical fixed paths** so
+existing tooling (`tests/jdwp`, `local/*.sh`, older skills) keeps working:
 
-## How the implicit console works
+| resource        | default instance     | any other id            |
+|-----------------|----------------------|-------------------------|
+| agent socket    | `/tmp/jnode.serial2` | `/tmp/jnode/<id>/agent.sock` |
+| boot log        | `/tmp/qemu_serial.log` | `/tmp/jnode/<id>/boot.log` |
+| KDB socket      | `/tmp/jnode.kdb`     | `/tmp/jnode/<id>/kdb.sock` |
+| QEMU monitor    | `/tmp/qemu_monitor.sock` | `/tmp/jnode/<id>/monitor.sock` |
+| mux files       | `/tmp/jnode_serial_*` (fifo `cmd.fifo`, `req/`, `resp/`, `mux.*`) | `/tmp/jnode/<id>/mux/...` |
+| KDB mux files   | `/tmp/kdb_*`         | `/tmp/jnode/<id>/kdb/...` |
+| registry entry  | `/tmp/jnode/instances/default.json` | same dir, `<id>.json` |
 
-`SerialConsolePlugin` (`org.jnode.shell.command.driver.console.SerialConsolePlugin`) starts **automatically** during boot:
+`JNODE_STATE_DIR` relocates the state root (replaces `/tmp/jnode`).
 
-1. `startPlugin()` is called by the plugin system at startup
-2. Opens `serial1` (COM2/UART2, I/O 0x2f8) at 115200 baud
-3. Creates a `SerialAgentConsole` with raw text mode (no VT100, no local echo)
-4. Starts a `CommandShell` thread with prompt `[JNODE_AGENT_READY]`
-5. Thread is daemon — dies with the system
+Mux pid files are claimed under flock; each claim leaves a permanent
+`<pidfile>.lock` sidecar next to the pid file — flock needs a stable
+inode, so it is a normal artifact, not litter (do not clean it up).
 
-**No manual activation needed.** Unlike the `serialconsole` shell command (which requires typing `serialconsole -p serial1 -b 115200 -a`), the plugin starts automatically as soon as boot completes. The shell is ready when the socket appears and responds to commands.
+Inspect/manage with the CLI:
 
-## Prerequisites
-
-1. JNode VM must be running in VirtualBox with serial port configured:
-
-   ```
-   UART 2: I/O address: 0x02f8, IRQ: 3, attached to pipe (server) '/tmp/jnode.serial2', 16550A
-   ```
-
-2. Plugin must be included in the build (it is, by default, in `default.jgz` and `full.jgz`)
-
-3. Confirm the serial console is ready:
-
-   ```bash
-   ls -la /tmp/jnode.serial2
-   # Should show: srwxrwxr-x ... /tmp/jnode.serial2
-   python3 .opencode/skills/jnode-serial/scripts/serial_cmd.py "date"
-   # Should return the date followed by completion
-   ```
-
-## How to use
-
-```bash
-skill({ name: "jnode-serial" })
+```sh
+python3 scripts/jnode_paths.py --list          # registered instances
+python3 scripts/jnode_paths.py --env --instance qemu-2   # shell exports
+python3 scripts/jnode_paths.py --alloc --prefix qemu     # free id
+python3 scripts/jnode_paths.py --resolve   # the single live id
+                                           # (exit 1 none, exit 2 several)
+# test-only: JNODE_TEST_FAKE_QEMU_PID=<pid> makes entry_live() accept
+# that pid as "a live qemu-system" (read path only -- --stop and
+# safe_kill_pid always prove identity via /proc)
+python3 scripts/jnode_paths.py --probe --instance qemu-2 # socket present?
+python3 scripts/jnode_paths.py --is-live --instance qemu-2
+python3 scripts/jnode_paths.py --sock-busy --instance qemu-2
+                    # exit 0 = a process holds the agent socket
+                    # (unix listener or FIFO open)
+python3 scripts/jnode_paths.py --prune         # forget dead entries
 ```
 
-**Always use `serial_cmd.py`.** It talks to the persistent `serial_mux.py` proxy (started automatically), which holds the single pipe client. The proxy waits for the `[JNODE_AGENT_READY]` prompt with no silence timeout, so long compiles and runs just work. Output streams as it arrives.
+Two VMs never share an instance: reconfiguring a VM's UARTs to an
+instance's paths is what binds them (QEMU launchers do it implicitly,
+`jnode_vbox.py config --instance ...` for VirtualBox).
 
-```bash
-S=.opencode/skills/jnode-serial/scripts
-python3 $S/serial_cmd.py "date" "echo hello" "pwd"
-python3 $S/serial_cmd.py "javac /jnode/tmp/ox/Big.java"   # multi-minute OK
+## Running commands
+
+```sh
+python3 scripts/serial_cmd.py --wait 300 "date"        # wait for shell
+python3 scripts/serial_cmd.py "ls /jnode" "date"       # batch, one round-trip
+python3 scripts/serial_cmd.py --instance qemu-2 "date"
+python3 scripts/serial_cmd.py --oneshot "date"         # no mux, direct connect
+python3 scripts/serial_cmd.py --status                 # mux pid/link/cmd count
+python3 scripts/serial_cmd.py --stop | --restart       # mux lifecycle
+python3 scripts/serial_cmd.py --interrupt              # Ctrl-C the guest shell
 ```
 
-Do NOT open your own connections to `/tmp/jnode.serial2` while the mux runs (single-client pipe — a second client gets an immediate EOF). If you must use a raw one-shot connection, stop the mux first: `python3 $S/serial_cmd.py --stop`.
+The mux is auto-started on first use. On VirtualBox only ONE client may
+hold the UART pipe; the mux reconnects with backoff until the guest opens
+COM2 (entry "all plugins" can take 3-6 minutes on VBox), then the status
+flips to `link=up`. `--wait N` retries for N seconds; fail-fast otherwise.
 
-## Why the mux exists (root cause, validated 2026-09)
+Batch output is captured per command; the batch status line
+(`[batch OK 2]`) is the exit signal (0 all OK).
 
-One connection per command (`jnode_agent_cmd.py` legacy pattern) eventually wedges VirtualBox's pipe server: new attaches get an immediate FIN/EOF while the guest stays healthy (VGA shell alive, `serial-console` thread ASLEEP on input, `/tmp/jnode_com1.log` quiet). `VBox.log` shows `NamedPipe0: only single connection supported` — VBox believes a client is still connected and refuses all new ones forever. Closing mid-output (the old 10s silence timeout tearing down a `javac`) makes it more likely, but any connect/disconnect cycling triggers it after ~4-8 commands. Only a power cycle used to clear it.
+## Boot log and readiness
 
-Two changes fix this with no guest changes:
+Launchers wire UART1 to a per-instance boot log. JNode prints
+`Serial console available on serial1 at 115200 baud` when the agent
+console is up ("serial1" is the JNode device name - it may be COM1 or COM2
+depending on how the hypervisor numbered the ports). Readiness =
+that marker in the boot log AND a successful `serial_cmd.py --wait`.
 
-1. **Never disconnect** — `serial_mux.py` holds one pipe client for the whole session (same pattern as the stable `kdb_mux.py` on UART1), so the stuck state is never entered. 30+ consecutive commands including multi-minute `javac` run with zero stalls.
-2. **Runtime replug recovery** — if the link ever drops (mux killed, host reboot), the mux reconnects itself, and if VBox FINs new attaches (the stuck signature) it runs `vboxmanage controlvm JNode changeuartmode2 disconnected` + `server /tmp/jnode.serial2`, which resets the pipe server with the VM still running. No power cycle needed. You can also run this by hand:
+## KDB over serial
 
-   ```bash
-   vboxmanage controlvm "JNode" changeuartmode2 disconnected
-   sleep 1
-   vboxmanage controlvm "JNode" changeuartmode2 server /tmp/jnode.serial2
-   ```
+UART1 doubles as the kernel debugger when the ISO boots with `kdb`:
 
-## Mux management
-
-```bash
-S=.opencode/skills/jnode-serial/scripts
-python3 $S/serial_cmd.py --status    # mux pid + link state + command count
-python3 $S/serial_cmd.py --stop      # stop the mux (frees the pipe)
-python3 $S/serial_cmd.py --restart   # stop + start (also clears a stuck pipe)
-python3 $S/serial_cmd.py --timeout 1800 "javac ..."  # per-batch deadline (default 1200s)
-python3 $S/serial_cmd.py --interrupt # Ctrl-C the running command (ETX -> guest job control)
-python3 $S/serial_cmd.py --suspend   # Ctrl-Z: unblock shell, command keeps running in background
-tail -n 50 /tmp/jnode_serial_mux.log  # proxy log (connects, replugs, errors)
+```sh
+python3 scripts/jnode_kdb_cmd.py --instance qemu-kdb p   # ping
+python3 scripts/jnode_kdb_cmd.py --instance qemu-kdb t   # thread info
+python3 scripts/jnode_kdb_cmd.py --instance qemu-kdb T W # traces
+python3 scripts/jnode_kdb_cmd.py --mux                   # start persistent holder
+python3 scripts/jnode_kdb_cmd.py --stop                  # stop the holder
 ```
 
-Ctrl-C/Ctrl-Z are delivered through the held connection and translated by
-the guest into job-control key events (same as VGA). The mux also replugs
-the pipe server itself if a batch is in flight but zero bytes arrive for
-180s (silent VBox UART freeze) — check the mux log for `replugging pipe`.
+`--mux` is idempotent: it refuses to start a second holder for an
+instance (single pid file), and `--stop` tears the holder down.
 
-## Usage examples
+Commands: `h/?` help, `p` ping, `t`/`T` current thread, `q`/`r` ready
+queue, `w`/`W` waiting threads, `v` verify states, `l` load queue.
+Responses are compact XML (`<ping/>`, `<currentthread .../>`).
+`kdb_mux.py` holds the socket and forwards one-char commands from
+`<kdb_dir>/cmd.fifo`, logging replies to `<kdb_dir>/resp.log`.
 
-```bash
-S=.opencode/skills/jnode-serial/scripts
-# Fast commands return as soon as the prompt comes back
-python3 $S/serial_cmd.py "date" "echo hello" "pwd"
+UART1 also carries the full kernel boot log; connecting early and reading
+is a valid way to collect boot diagnostics.
 
-# Long-running commands stream output; no silence timeout
-python3 $S/serial_cmd.py "ping 192.168.1.1"
+## CI (GitHub Actions) pattern
 
-# Multiple commands in sequence (one batch, one after another)
-python3 $S/serial_cmd.py "ifconfig" "route" "resolver"
-
-# Compile and run on the box (full-plugins boot entry has javac)
-python3 $S/serial_cmd.py "javac /jnode/tmp/ox/Hi.java" "java -cp /jnode/tmp/ox Hi"
+```sh
+# start_qemu.sh is bash-only (arrays); do not run it under sh/dash
+bash .opencode/skills/jnode-qemu/scripts/start_qemu.sh --instance ci --wait-ready 240 simple "$ISO"
+python3 .opencode/skills/jnode-serial/scripts/serial_cmd.py --instance ci --wait 300 "date"
+python3 .opencode/skills/jnode-serial/scripts/serial_cmd.py --instance ci --stop
 ```
 
-## Key files
-
-- `scripts/serial_mux.py` — persistent single-client proxy daemon (auto-started by the client; command queue, prompt framing, reconnect + VBox replug recovery)
-- `scripts/serial_cmd.py` — agent CLI client (same UX as the legacy script, plus `--write`, `--timeout`, `--status`, `--stop`, `--restart`)
-- `scripts/jnode_agent_cmd.py` — LEGACY one-shot script (one connection per call). Kept for compatibility (other skills reference it). Prefer `serial_cmd.py`: every legacy call cycles the pipe and risks the VBox stall above.
-
-## Multi-line file writes
-
-There is **no heredoc and no `>>` append** on JNode — `RedirectingInterpreter` only handles `<`, `>`, `|`. But a full multi-line file can still be written in **a single serial command**, because the shell tokenizer converts backslash escapes inside quoted strings into real characters before `echo` runs:
-
-```bash
-# One command -> real multi-line file
-S=.opencode/skills/jnode-serial/scripts
-python3 $S/serial_cmd.py \
-  "echo 'public class Hi {
-  public static void main(String[] a){
-    System.out.println(\"hi\");
-  }
-}' > /tmp/Hi.java"
-```
-
-The `\n`, `\t`, `\b`, `\r` escape sequences each become the real byte. Verified with `wc -c` (byte counts match exactly) and `javac` + `java`.
-
-### Escaping rules for content
-
-Wrap the whole content in **single quotes**; single quotes protect `>`, `<`, `|`, `&`, `"` from the redirection parser. Escape only these characters *inside* the content:
-
-| Source char | Send as | Why |
-| ----------- | ------- | --- |
-| `\`         | `\\`    | tokenizer consumes a backslash + the following char |
-| `'`         | `\'`    | prevents the quote from toggling full-escape mode |
-| newline     | `\n`    | becomes a real newline byte |
-| tab         | `\t`    | becomes a real tab byte |
-| CR          | `\r`    | becomes a real carriage-return byte |
-
-`echo` always appends a trailing newline (`EchoCommand` `println()`), so a file written this way is `content + '\n'` (hence `wc -c` = content bytes + 1).
-
-### Known limits (validated 2026-08)
-
-- Single `echo` writes are **byte-exact up to ~64KB** per command (verified: 2/8/16/64KB all wrote exactly `content + 1` newline). The **~8KB cap seen in earlier tests was a test-harness artifact** (real newlines in the Python payload), not a JNode limit.
-- **~128KB+/`argv` limit (validated):** a single echo of ~138KB failed at the *host* with `OSError: [Errno 7] Argument list too long` (Linux `subprocess` argv cap) before reaching JNode. But `--write` (chunked) writes **195KB files byte-exact** (md5 matches). Keep one `echo` ≤ 8KB in practice and let `--write` chunk the rest.
-- **md5sum trustworthy for large files:** an earlier suspicion that JNode's `md5sum` misreports ~130KB files was **not reproduced** — a 134KB and a 195KB file each matched the host md5 exactly. The old discrepancy was the harness's char-boundary chunking, not `md5sum`.
-- **Persistence:** files survive VM power-cycle/reboot (195KB file md5-matched after restart). One pre-crash file (`Hello.class`) came back **zero-filled** after an unclean reboot — re-verify critical files with `wc -c`/`md5sum` after a restart.
-- **Byte-exactness requires line-boundary chunking**: `echo` appends a trailing newline per command, so splitting content mid-line inserts a stray `\n` (a 25-chunk file gained 25 bytes / 24 bogus lines). Chunk only between whole lines.
-- **Do not send CR bytes raw**; send `\r` instead.
-- A single-quoted arg containing `\'`, `\\` plus `>`, `|`, `&` etc. has thrown `Uncaught exception ... shouldn't happen` on JNode and killed the serial session — keep tricky mixed content short and prefer the agent helper (`--write`) below.
-
-### The agent helper does this for you
-
-`serial_cmd.py` has a `--write` mode that escapes stdin content and writes it via **line-boundary-safe chunking** (whole-line chunks, then `cat part0 ... > target`), so multi-part files stay byte-exact:
-
-```bash
-printf 'line1\nline2\n' | python3 $S/serial_cmd.py --write /path/to/file
-```
-
-It reports the expected size and runs `wc -c` to verify. Use this for large or quote-heavy files instead of hand-writing `echo` lines. `--write` returns `content-size` when the source ends with a newline, otherwise `content-size + 1` (echo's trailing `\n` is the only allowed discrepancy).
-
-> **Newline rule (validated 2026-08):** `echo` ALWAYS appends a `\n`, even when the content already ends with one (`echo 'a\nb\n'` → 5 bytes). The helper strips the trailing newline from each chunk so `--write` is byte-exact in both cases. A raw one-shot `echo '...' > file` is byte-exact only when the content does NOT end with a newline.
-
-## Important notes
-
-1. **Implicit console** - `SerialConsolePlugin` starts automatically; do NOT run `serialconsole` manually (it will conflict)
-2. **Single client** - Only ONE connection at a time to the serial pipe; that client is the mux. All commands go through `serial_cmd.py`.
-3. **State persists in the shell** - The JNode shell is one persistent process; `cd` and `classpath --add` survive across calls (verified). Commands don't: there is no `&&`, send multiple commands as separate arguments of one batch.
-4. **JNode shell has no `&&`** - use separate commands
-5. **No silence timeout** - the mux waits for the prompt however long the command takes (up to `--timeout`, default 1200s). Silent multi-minute `javac` runs are fine.
-
-## Boot entry selection
-
-GRUB menu is VGA-only (not serial). To select a non-default entry (e.g. "all plugins", which has on-VM `javac`), use scancode injection:
-
-```bash
-# Start VM
-vboxmanage startvm "JNode" --type headless
-
-# Wait for GRUB (4s for BIOS + GRUB load)
-sleep 4
-# Press SPACE to stop timeout
-vboxmanage controlvm "JNode" keyboardputscancode 39 B9
-
-sleep 1
-# Press DOWN once (entry 1 = all plugins)
-vboxmanage controlvm "JNode" keyboardputscancode 50 D0
-
-sleep 1
-# Press ENTER to boot
-vboxmanage controlvm "JNode" keyboardputscancode 1C 9C
-```
-
-Scancodes: `0x39` (SPACE), `0x50` (DOWN), `0x1C` (ENTER) — each followed by the break code (`make + 0x80`).
+Log the section banners yourself (`echo "::group::boot"` etc.); the
+scripts are quiet and exit non-zero on failure. GH runners have QEMU +
+socat, no VirtualBox.
 
 ## Troubleshooting
 
-### Pipe not found
+- `link=down` in `--status`: mux is (re)connecting - normal before the
+  guest opens its COM port; it self-heals, or use `--stop` to recycle.
+- VBox: a second concurrent client on the agent pipe gets FIN/RST -
+  always go through the mux (`--oneshot` only when no mux holds it).
+- Guest wedged (no prompt): `serial_cmd.py --interrupt`, or KDB `W` to
+  see which threads wait on the serial console.
+- `pkill -f` matches the caller's own `bash -c` line - kill by PID or use
+  a `[f]` bracket regex.
+- Nothing on the socket: check the instance (`--list`), the boot log, and
+  that the VM's UART2 really points at this instance's paths
+  (`jnode_vbox.py status` or the QEMU command line).
 
-```bash
-ls -la /tmp/jnode.serial2
-```
+## Tests
 
-If missing:
-
-1. Check JNode VM is running: `vboxmanage list runningvms`
-2. Check serial port config: `vboxmanage showvminfo "JNode" | grep -i uart`
-3. If the socket was deleted while VM is running, VirtualBox does NOT recreate it — reattach at runtime without rebooting:
-
-   ```bash
-   vboxmanage controlvm "JNode" changeuartmode2 server /tmp/jnode.serial2
-   ```
-
-### "Broken pipe" / immediate-EOF errors
-
-- Pipe only supports ONE client at a time, and that client is the mux.
-- Don't connect anything else (no legacy script, no raw sockets) while the mux runs — check with `python3 $S/serial_cmd.py --status`.
-- If the mux itself reports the link stuck (immediate FIN on attach), it replugs the UART automatically; manual recovery is the `changeuartmode2 disconnected` + `server ...` pair above, or `serial_cmd.py --restart`.
-
-### Commands fail
-
-- Wait for full boot (the `[JNODE_AGENT_READY]` prompt confirms readiness; the mux handshake waits for it automatically)
-- Try simple commands first: `date`, `echo hello`
-
-### Serial console stops responding
-
-- May have been unloaded via `plugin --unload org.jnode.shell.command.driver.console` — reloading is broken in JNode, restart the VM
+`tests/fake_guest.py` emulates the agent protocol (CRLF output,
+`\n[JNODE_AGENT_READY]\n` prompt). `tests/test_serial_e2e.py` boots fake
+guests on instance sockets and covers mux/oneshot/wait/status/two
+parallel instances; `tests/test_jnode_paths.py` covers the path/registry
+model. Run: `python3 -m pytest .opencode/skills/jnode-serial/tests/ -q`.

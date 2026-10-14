@@ -107,7 +107,7 @@ telnet localhost 4444
 
 Commands: `help`, `bt`, `mem`, `threads`, `isolates`, `plugins`, `devices`
 
-See [jnode-interact skill](https://github.com/LSantha/jnode_ai/blob/master/.opencode/skills/jnode-interact/SKILL.md) for QEMU serial interaction.
+See [jnode-qemu](https://github.com/LSantha/jnode_ai/blob/master/.opencode/skills/jnode-qemu/SKILL.md), [jnode-vbox](https://github.com/LSantha/jnode_ai/blob/master/.opencode/skills/jnode-vbox/SKILL.md) and [jnode-serial](https://github.com/LSantha/jnode_ai/blob/master/.opencode/skills/jnode-serial/SKILL.md) skills for VM boot and serial interaction.
 
 ### JDWP (Java Debug Wire Protocol)
 

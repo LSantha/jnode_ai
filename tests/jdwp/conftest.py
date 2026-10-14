@@ -39,9 +39,7 @@ import os
 import re
 import sys
 import time
-import socket
 import subprocess
-import signal
 import pytest
 
 # ---------------------------------------------------------------------------
@@ -53,11 +51,12 @@ SKILLS_DIR = os.path.abspath(os.path.expanduser(
     "~/.config/opencode/skills"
 ))
 
-# Try multiple paths for jnode_agent_cmd.py (jnode-serial or jnode-interact skill)
+# serial_cmd.py from the jnode-serial skill (instance-aware serial client;
+# the legacy default instance keeps /tmp/jnode.serial2)
 _JNODE_AGENT_CANDIDATES = [
-    os.path.join(SKILLS_DIR, "jnode-serial", "scripts", "jnode_agent_cmd.py"),
-    os.path.join(SKILLS_DIR, "jnode-interact", "scripts", "jnode_agent_cmd.py"),
-    os.path.join(ROOT_DIR, ".opencode/skills/jnode-interact/scripts/jnode_agent_cmd.py"),
+    os.path.join(ROOT_DIR, ".opencode/skills/jnode-serial/scripts",
+                 "serial_cmd.py"),
+    os.path.join(SKILLS_DIR, "jnode-serial", "scripts", "serial_cmd.py"),
 ]
 JNODE_AGENT_CMD = next(
     (p for p in _JNODE_AGENT_CANDIDATES if os.path.exists(p)),
@@ -116,19 +115,40 @@ def _build_env():
 # ---------------------------------------------------------------------------
 
 def _run_serial_cmd(cmd, timeout=10):
-    """Run a command via the serial console agent script."""
+    """Run a command via the serial console agent script.
+
+    The suite is hard-wired to the legacy default instance
+    (/tmp/jnode.serial2), so pin --instance default: autodetect would
+    refuse to choose once a second instance is live. --timeout keeps the
+    client's own batch deadline below this fixture's subprocess timeout,
+    so a slow command returns a clean ERROR instead of TimeoutExpired
+    killing the client and leaving the batch in flight on the guest.
+    """
     if not os.path.exists(JNODE_AGENT_CMD):
         pytest.fail(
-            f"jnode_agent_cmd.py not found at {JNODE_AGENT_CMD}. "
-            "Ensure the jnode-serial or jnode-interact skill is installed."
+            f"serial_cmd.py not found at {JNODE_AGENT_CMD}. "
+            "Ensure the jnode-serial skill is present in the repo."
         )
-    result = subprocess.run(
-        [sys.executable, JNODE_AGENT_CMD, cmd],
-        capture_output=True,
-        text=True,
-        timeout=timeout,
-    )
-    return result.stdout.strip()
+    try:
+        result = subprocess.run(
+            [sys.executable, JNODE_AGENT_CMD, "--instance", "default",
+             "--timeout", str(max(1.0, timeout - 2.0)), cmd],
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+        )
+    except subprocess.TimeoutExpired:
+        pytest.fail(
+            f"serial_cmd.py timed out after {timeout}s for {cmd!r}; "
+            "the batch may still be running on the guest"
+        )
+    # drop the client's own status lines (waiting/batch/heartbeat),
+    # keep the guest output
+    def _client_line(ln):
+        return (ln.startswith("[waiting ") or ln.startswith("[batch ")
+                or re.match(r"^\[\d+(\.\d+)?s still running", ln))
+    lines = [ln for ln in result.stdout.splitlines() if not _client_line(ln)]
+    return "\n".join(lines).strip()
 
 
 def _run_jdb_agent_cmd(cmd, timeout=120):
