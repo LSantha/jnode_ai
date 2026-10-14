@@ -277,6 +277,68 @@ public class AC97CoreTest {
     }
 
     @Test
+    public void testPcmRangeMustBeUsable() {
+        // These are the calls a shell command can make by mistake, and the
+        // API is the only place that can reject them before the engine moves
+        // data. A negative length used to pass the frame size check, because
+        // -4 is a multiple of 4, and would write outside the caller's array.
+        final int frameSize = AC97Constants.PCM_FRAME_SIZE;
+        AC97Core.validatePcmRange(new byte[frameSize * 4], 0, frameSize * 4,
+            frameSize);
+        AC97Core.validatePcmRange(new byte[frameSize * 4], frameSize * 3,
+            frameSize, frameSize);
+        // An empty range is legal and must stay legal: a caller with nothing
+        // to write has not done anything wrong.
+        AC97Core.validatePcmRange(new byte[frameSize * 4], 0, 0, frameSize);
+        // An empty range is in bounds wherever it starts, so only the cases
+        // that carry data are expected to fail.
+        final int[][] bad = {{-1, 0}, {0, -1}, {0, frameSize - 1},
+            {0, frameSize + 1}};
+        for (int[] range : bad) {
+            try {
+                AC97Core.validatePcmRange(new byte[frameSize * 4], range[0],
+                    range[1], frameSize);
+                fail("expected an exception for offset " + range[0]
+                    + " length " + range[1]);
+            } catch (IllegalArgumentException ex) {
+                // expected
+            }
+        }
+        // A range that fits the frame size but overruns the array.
+        try {
+            AC97Core.validatePcmRange(new byte[frameSize * 2], frameSize * 2,
+                frameSize, frameSize);
+            fail("expected an exception for a range outside the buffer");
+        } catch (IllegalArgumentException ex) {
+            assertTrue("the message must name the range: " + ex,
+                ex.getMessage().contains("8..12"));
+        }
+        // No array at all.
+        try {
+            AC97Core.validatePcmRange(null, 0, frameSize, frameSize);
+            fail("expected an exception for no buffer");
+        } catch (IllegalArgumentException ex) {
+            // expected
+        }
+    }
+
+    @Test
+    public void testPcmRangeChecksWholeFramesOfTheFormat() {
+        // The engine is pinned to 16 bit stereo, which is four bytes a frame,
+        // but the check must honour whatever format the stream carries.
+        final int frameSize = PcmFormat.STEREO_16.getFrameSize();
+        assertEquals(4, frameSize);
+        AC97Core.validatePcmRange(new byte[8], 0, 8, frameSize);
+        try {
+            AC97Core.validatePcmRange(new byte[8], 0, 6, frameSize);
+            fail("expected an exception for a partial frame");
+        } catch (IllegalArgumentException ex) {
+            assertTrue("the message must name the frame size: " + ex,
+                ex.getMessage().contains("4 byte frame size"));
+        }
+    }
+
+    @Test
     public void testRecordGainIsValidated() {
         // The gain field of the record gain register is 4 bit wide; a gain
         // above 15 would silently overflow into the neighbouring field instead

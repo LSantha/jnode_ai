@@ -878,11 +878,12 @@ public final class AC97Core implements AC97Constants, IRQHandler {
             frameSize = speakerFormat.getFrameSize();
             wordsPerFrame = speakerFormat.getWordsPerFrame();
         }
-        if ((length % frameSize) != 0) {
-            throw new IllegalArgumentException("Length must be a multiple of"
-                + " the " + frameSize + " byte frame size of the "
-                + speakerFormat + " format");
-        }
+        // Validate the range before anything else touches it: a negative
+        // offset or length silently walks off the array in the copy loop, and
+        // a length that overruns the array hands the engine memory the caller
+        // never offered. The frame size check that used to be here cannot
+        // catch any of those.
+        validatePcmRange(pcm, offset, length, frameSize);
         synchronized (playbackLock) {
             if (!playing) {
                 throw new IllegalStateException("AC'97 playback is not open");
@@ -1060,10 +1061,11 @@ public final class AC97Core implements AC97Constants, IRQHandler {
      */
     public final int readCapture(byte[] pcm, int offset, int length)
         throws InterruptedException, TimeoutException {
-        if ((length & (PCM_FRAME_SIZE - 1)) != 0) {
-            throw new IllegalArgumentException(
-                "Length must be a multiple of the stereo frame size");
-        }
+        // A length that is not a multiple of the frame size would stop the
+        // reader inside a frame, and a negative length passes the old check
+        // because -4 is a multiple of 4, so the copy loop would write outside
+        // the array. The range check catches both.
+        validatePcmRange(pcm, offset, length, PCM_FRAME_SIZE);
         synchronized (captureLock) {
             if (!captureOpen) {
                 throw new IllegalStateException("AC'97 capture is not open");
@@ -1648,6 +1650,41 @@ public final class AC97Core implements AC97Constants, IRQHandler {
     // Playback ring arithmetic. Static so that it can be unit tested
     // without a PCI device.
     // ------------------------------------------------------------------
+
+    /**
+     * Checks a PCM range at the API boundary: the array must be there, the
+     * offset and the length must be non negative, the range must fit inside
+     * the array and the length must hold whole frames. Everything past this
+     * point is about the state of the hardware, so a caller should hear about
+     * a bad range first and not part way through the stream.
+     *
+     * @param pcm       the array the caller handed over
+     * @param offset    offset of the first frame in the array
+     * @param length    number of bytes in the range
+     * @param frameSize size of one frame, in bytes
+     * @throws IllegalArgumentException if the range is not usable
+     */
+    static void validatePcmRange(byte[] pcm, int offset, int length,
+        int frameSize) {
+        if (pcm == null) {
+            throw new IllegalArgumentException("No PCM buffer");
+        }
+        if (offset < 0) {
+            throw new IllegalArgumentException("Negative offset " + offset);
+        }
+        if (length < 0) {
+            throw new IllegalArgumentException("Negative length " + length);
+        }
+        if ((length % frameSize) != 0) {
+            throw new IllegalArgumentException("Length must be a multiple of"
+                + " the " + frameSize + " byte frame size");
+        }
+        if (offset + length > pcm.length) {
+            throw new IllegalArgumentException("PCM range " + offset + ".."
+                + (offset + length) + " is outside the " + pcm.length
+                + " byte buffer");
+        }
+    }
 
     /**
      * Masks a value into the range of the CIV, LVI and PIV index registers,
