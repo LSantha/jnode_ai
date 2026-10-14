@@ -365,6 +365,14 @@ public final class AC97Core implements AC97Constants, IRQHandler {
     private boolean captureOpen;
 
     /**
+     * Set once the device is released. Every method that touches the hardware
+     * checks it first, so that a caller holding an API reference after the
+     * driver stopped fails with a predictable exception instead of reading a
+     * released register.
+     */
+    private volatile boolean terminated;
+
+    /**
      * Index of the last descriptor handed to the controller for filling
      * (the value programmed into PCM_IN_LVI).
      */
@@ -529,6 +537,8 @@ public final class AC97Core implements AC97Constants, IRQHandler {
      * @throws IllegalArgumentException on an unsupported rate
      */
     public final void setSampleRate(int rate) {
+        checkNotTerminated();
+
         synchronized (playbackLock) {
             selectSampleRate(rate, true);
         }
@@ -538,6 +548,8 @@ public final class AC97Core implements AC97Constants, IRQHandler {
      * Gets the sample rate of the PCM DAC in use.
      */
     public final int getSampleRate() {
+        checkNotTerminated();
+
         synchronized (playbackLock) {
             return playbackSampleRate;
         }
@@ -547,6 +559,8 @@ public final class AC97Core implements AC97Constants, IRQHandler {
      * Gets the sample rate the ADC is recording at.
      */
     public final int getCaptureSampleRate() {
+        checkNotTerminated();
+
         synchronized (captureLock) {
             return captureSampleRate;
         }
@@ -556,6 +570,8 @@ public final class AC97Core implements AC97Constants, IRQHandler {
      * Gets the number of stereo frames per playback sample buffer.
      */
     public final int getPlaybackBufferSize() {
+        checkNotTerminated();
+
         synchronized (playbackLock) {
             return playbackFramesPerBuffer;
         }
@@ -566,6 +582,8 @@ public final class AC97Core implements AC97Constants, IRQHandler {
      * latency of a stream plus the room a producer has to run ahead.
      */
     public final int getPlaybackLatencyMs() {
+        checkNotTerminated();
+
         synchronized (playbackLock) {
             return (int) (((long) bdl.getEntryCount()
                 * playbackFramesPerBuffer * 1000L) / playbackSampleRate);
@@ -583,6 +601,8 @@ public final class AC97Core implements AC97Constants, IRQHandler {
      * @param framesPerBuffer 1..2048 stereo frames per buffer
      */
     public final void setPlaybackBufferSize(int framesPerBuffer) {
+        checkNotTerminated();
+
         if ((framesPerBuffer < 1) || (framesPerBuffer > MAX_FRAMES_PER_BUFFER)) {
             throw new IllegalArgumentException("Invalid buffer size "
                 + framesPerBuffer);
@@ -649,6 +669,8 @@ public final class AC97Core implements AC97Constants, IRQHandler {
      * codec boost register has it.
      */
     public final int getMicGainSteps() {
+        checkNotTerminated();
+
         return (readCodecRegister(NAM_RECORD_GAIN_MIC) >> 6) & 0x0F;
     }
 
@@ -659,6 +681,8 @@ public final class AC97Core implements AC97Constants, IRQHandler {
      * @param steps 0..15
      */
     public final void setMicGainSteps(int steps) {
+        checkNotTerminated();
+
         validateMicGainSteps(steps);
         final int value = readCodecRegister(NAM_RECORD_GAIN_MIC);
         writeCodecRegister(NAM_RECORD_GAIN_MIC, (value & ~MIC_BOOST_MASK)
@@ -672,6 +696,8 @@ public final class AC97Core implements AC97Constants, IRQHandler {
      * @return the 16 bit register value
      */
     public final int readCodecRegister(int index) {
+        checkNotTerminated();
+
         validateCodecRegisterIndex(index);
         return inCodec(index);
     }
@@ -683,6 +709,8 @@ public final class AC97Core implements AC97Constants, IRQHandler {
      * @param value the 16 bit register value
      */
     public final void writeCodecRegister(int index, int value) {
+        checkNotTerminated();
+
         validateCodecRegisterIndex(index);
         outCodec(index, value);
     }
@@ -693,6 +721,8 @@ public final class AC97Core implements AC97Constants, IRQHandler {
      * logging and for manufacturer specific code.
      */
     public final int getCodecId() {
+        checkNotTerminated();
+
         return (inCodec(NAM_VENDOR_ID1) << 16)
             | (inCodec(NAM_VENDOR_ID2) & 0xFFFF);
     }
@@ -714,6 +744,8 @@ public final class AC97Core implements AC97Constants, IRQHandler {
      * Gets the master output volume as the codec currently has it.
      */
     public final MixerVolume getMasterVolume() {
+        checkNotTerminated();
+
         return MixerVolume.fromRegister(inCodec(NAM_MASTER_VOLUME));
     }
 
@@ -722,6 +754,8 @@ public final class AC97Core implements AC97Constants, IRQHandler {
      * register, so the change takes effect without a gap between them.
      */
     public final void setMasterVolume(MixerVolume volume) {
+        checkNotTerminated();
+
         outCodec(NAM_MASTER_VOLUME, volume.toRegister());
     }
 
@@ -730,6 +764,8 @@ public final class AC97Core implements AC97Constants, IRQHandler {
      * driver writes next to the master volume.
      */
     public final MixerVolume getPcmVolume() {
+        checkNotTerminated();
+
         return MixerVolume.fromRegister(inCodec(NAM_PCM_OUT_VOLUME));
     }
 
@@ -737,6 +773,8 @@ public final class AC97Core implements AC97Constants, IRQHandler {
      * Sets the volume of the PCM path.
      */
     public final void setPcmVolume(MixerVolume volume) {
+        checkNotTerminated();
+
         outCodec(NAM_PCM_OUT_VOLUME, volume.toRegister());
     }
 
@@ -744,6 +782,8 @@ public final class AC97Core implements AC97Constants, IRQHandler {
      * Gets the sample format the PCM out engine currently plays.
      */
     public final PcmFormat getSpeakerFormat() {
+        checkNotTerminated();
+
         synchronized (playbackLock) {
             return speakerFormat;
         }
@@ -797,6 +837,8 @@ public final class AC97Core implements AC97Constants, IRQHandler {
      * Gets the volume of the headphone output, if the codec has one.
      */
     public final MixerVolume getHeadphoneVolume() {
+        checkNotTerminated();
+
         return MixerVolume.fromRegister(inCodec(NAM_HEADPHONE_VOLUME));
     }
 
@@ -804,6 +846,8 @@ public final class AC97Core implements AC97Constants, IRQHandler {
      * Sets the volume of the headphone output.
      */
     public final void setHeadphoneVolume(MixerVolume volume) {
+        checkNotTerminated();
+
         outCodec(NAM_HEADPHONE_VOLUME, volume.toRegister());
     }
 
@@ -811,6 +855,8 @@ public final class AC97Core implements AC97Constants, IRQHandler {
      * Does the codec support variable rate audio?
      */
     public final boolean isVariableRateSupported() {
+        checkNotTerminated();
+
         return variableRate;
     }
 
@@ -829,6 +875,8 @@ public final class AC97Core implements AC97Constants, IRQHandler {
      * @param rate sample rate in Hz
      */
     public final void open(int rate) {
+        checkNotTerminated();
+
         synchronized (playbackLock) {
             if (playing) {
                 throw new IllegalStateException("AC'97 playback already open");
@@ -872,6 +920,8 @@ public final class AC97Core implements AC97Constants, IRQHandler {
      */
     public final void write(byte[] pcm, int offset, int length)
         throws InterruptedException, TimeoutException {
+        checkNotTerminated();
+
         final int frameSize;
         final int wordsPerFrame;
         synchronized (playbackLock) {
@@ -952,6 +1002,8 @@ public final class AC97Core implements AC97Constants, IRQHandler {
      * @throws TimeoutException     when the DMA engine stalls
      */
     public final void drain() throws InterruptedException, TimeoutException {
+        checkNotTerminated();
+
         synchronized (playbackLock) {
             if (!playing) {
                 throw new IllegalStateException("AC'97 playback is not open");
@@ -972,6 +1024,8 @@ public final class AC97Core implements AC97Constants, IRQHandler {
      * right away.
      */
     public final void openCapture(int rate) {
+        checkNotTerminated();
+
         synchronized (captureLock) {
             if (captureOpen) {
                 throw new IllegalStateException("AC'97 capture already open");
@@ -1013,6 +1067,8 @@ public final class AC97Core implements AC97Constants, IRQHandler {
      *         of range
      */
     public final void setRecordSource(int select, int gainSteps) {
+        checkNotTerminated();
+
         validateRecordSource(select);
         validateRecordGainSteps(gainSteps);
         synchronized (captureLock) {
@@ -1027,6 +1083,11 @@ public final class AC97Core implements AC97Constants, IRQHandler {
      * stays claimed for the next openCapture.
      */
     public final void closeCapture() {
+        // Closing is what a shutdown path does, so it stays safe after the
+        // device is stopped: release() has already stopped the engine.
+        if (terminated) {
+            return;
+        }
         synchronized (captureLock) {
             captureOpen = false;
             stopCaptureEngine();
@@ -1061,6 +1122,8 @@ public final class AC97Core implements AC97Constants, IRQHandler {
      */
     public final int readCapture(byte[] pcm, int offset, int length)
         throws InterruptedException, TimeoutException {
+        checkNotTerminated();
+
         // A length that is not a multiple of the frame size would stop the
         // reader inside a frame, and a negative length passes the old check
         // because -4 is a multiple of 4, so the copy loop would write outside
@@ -1305,6 +1368,12 @@ public final class AC97Core implements AC97Constants, IRQHandler {
     }
 
     public final void close() {
+        // Closing is what a shutdown path does, so it stays safe after the
+        // device is stopped: release() has already stopped the engines and
+        // there is nothing to close.
+        if (terminated) {
+            return;
+        }
         synchronized (playbackLock) {
             if (playing) {
                 log.debug("AC'97 playback closed");
@@ -1326,6 +1395,10 @@ public final class AC97Core implements AC97Constants, IRQHandler {
      * returning data from a released ring.
      */
     public final void release() {
+        // Nothing may enter the hardware paths from here on: set the flag
+        // first, so that a straggler fails on the flag and does not follow the
+        // resources out.
+        terminated = true;
         synchronized (playbackLock) {
             stopEngine();
             playing = false;
@@ -1417,6 +1490,8 @@ public final class AC97Core implements AC97Constants, IRQHandler {
      * from whole descriptors.
      */
     public final int getQueuedFrames() {
+        checkNotTerminated();
+
         synchronized (playbackLock) {
             if (!playing) {
                 return 0;
@@ -1434,6 +1509,8 @@ public final class AC97Core implements AC97Constants, IRQHandler {
      * computed from, which is at most one buffer.
      */
     public final int getPosition() {
+        checkNotTerminated();
+
         synchronized (playbackLock) {
             if (!playing) {
                 return (int) totalQueuedFrames;
@@ -1970,6 +2047,20 @@ public final class AC97Core implements AC97Constants, IRQHandler {
                 throw new TimeoutException("AC'97 DMA engine halted");
             }
             throw new TimeoutException("AC'97 DMA engine stalled");
+        }
+    }
+
+    /**
+     * Fails when the device has been released. The driver can be stopped while
+     * a command still holds the API, and touching a released register or a
+     * released DMA block is a corruption; this turns it into an error the
+     * caller can catch.
+     *
+     * @throws IllegalStateException if the device is stopped
+     */
+    final void checkNotTerminated() {
+        if (terminated) {
+            throw new IllegalStateException("AC'97 device has been stopped");
         }
     }
 
