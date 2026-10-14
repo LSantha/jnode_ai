@@ -1045,6 +1045,12 @@ public final class AC97Core implements AC97Constants, IRQHandler {
             // Start the controller. There is nothing to prebuffer like the
             // playback engine, because every descriptor is already armed.
             startCaptureEngine();
+            // The reader starts where the controller is. The register box
+            // reset does not necessarily move the engine back to the first
+            // descriptor, and a capture that starts in the middle of the ring
+            // would read the buffers the previous stream left behind until
+            // the controller reaches them.
+            startCaptureReadingAtTheController();
         }
     }
 
@@ -1211,6 +1217,11 @@ public final class AC97Core implements AC97Constants, IRQHandler {
         final int count = captureBdl.getEntryCount();
         final int samples = BufferDescriptorList.samplesForFrames(CAPTURE_FRAMES_PER_BUFFER);
         captureBdl.clear();
+        // The sample buffers keep whatever the last stream wrote into them,
+        // and a capture starts by reading a ring that the controller has not
+        // reached yet, so the buffers are zeroed: a recording must never begin
+        // with the tail of the previous one.
+        captureBdl.clearSamples();
         for (int i = 0; i < count; i++) {
             captureBdl.setDescriptor(i, samples, true);
         }
@@ -1223,6 +1234,38 @@ public final class AC97Core implements AC97Constants, IRQHandler {
         captureLastHandled = 0;
         captureReadOffset = 0;
         captureLastProgress = System.currentTimeMillis();
+    }
+
+    /**
+     * Puts the capture reader on the descriptor the controller is filling, so
+     * that the first buffer it hands out was written after the stream was
+     * opened rather than by the stream before it.
+     * <p>
+     * The engine index is not reset by the register box reset, so a capture
+     * that follows another one starts wherever the controller stopped, in the
+     * middle of the ring. The descriptors behind that position still hold the
+     * audio of the previous stream, and a reader starting at the first
+     * descriptor counts them as recorded, which is how a recording ends up
+     * beginning with the end of the recording before it. Starting the reader
+     * on the controller's own position makes the reader wait for the buffer
+     * the controller is filling, which is fresh by definition.
+     * <p>
+     * Must be called with the capture lock held, with the engine started, and
+     * before the first read. The interrupt handler corrects the index from
+     * the hardware register on every interrupt from there on.
+     * <p>
+     * The last valid index is moved to the descriptor behind the controller's
+     * own, because the engine stops once it has filled everything up to that
+     * register: with the whole ring armed it may have nothing left to fill,
+     * and then it would wait for a reader that is waiting for it.
+     */
+    private final void startCaptureReadingAtTheController() {
+        final int index = maskEngineIndex(inNabmByte(PCM_IN_CIV));
+        final int count = captureBdl.getEntryCount();
+        captureCurrentIndex = index;
+        captureLastHandled = index;
+        captureReadOffset = 0;
+        rearmCaptureDescriptor(nextIndex(index, count));
     }
 
     /**

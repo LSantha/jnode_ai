@@ -278,6 +278,39 @@ public class AC97CoreTest {
     }
 
     @Test
+    public void testCaptureReaderStartsWhereTheControllerIs() {
+        // The register box reset does not move the engine back to the first
+        // descriptor, so a capture that follows another one starts wherever
+        // the controller stopped, in the middle of the ring. The descriptors
+        // behind that still hold the previous stream's audio, and a reader
+        // that counted them as recorded would start a recording with the end
+        // of the recording before it.
+        final int count = AC97Core.CAPTURE_ENTRY_COUNT;
+        for (int civ = 0; civ < count; civ++) {
+            // Starting the reader on the controller's own position means the
+            // ring reads as empty, so the reader waits for the buffer the
+            // controller is filling now, which was written after the open.
+            assertEquals("a reader on the controller's index waits for it", 0,
+                AC97Core.completedCaptureCount(civ, civ, count));
+            // The controller moves on: the buffer it finished becomes
+            // readable, and the one it is filling does not.
+            assertEquals("the finished buffer is readable", 1, AC97Core
+                .completedCaptureCount(civ + 1, civ, count));
+            // A reader left on the first descriptor instead would count every
+            // buffer the previous stream left behind the controller, which is
+            // the stale audio this guards against.
+            final int stale = AC97Core.completedCaptureCount(civ, 0, count);
+            assertTrue("the reader must not count unread buffers", stale <= civ);
+        }
+        // And the wrap: once the controller has come all the way round, the
+        // count stays honest rather than reporting the ring as empty.
+        assertEquals("a full cycle reads as nothing new", 0, AC97Core
+            .completedCaptureCount(count + 1, 1, count));
+        assertEquals("the fill after a cycle is readable", 1, AC97Core
+            .completedCaptureCount(count + 2, 1, count));
+    }
+
+    @Test
     public void testFrameAccessorsSurviveADayOfAudio() {
         // A frame count is about position in a stream, not a small number: an
         // int holds about 12 hours of 48 kHz stereo, which is a day of a

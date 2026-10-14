@@ -531,6 +531,21 @@ public final class BufferDescriptorList implements AC97Constants {
     }
 
     /**
+     * Zeroes the sample buffers behind the descriptors. The descriptors are
+     * what points at them, so a capture ring that is armed without clearing
+     * them hands out whatever the previous stream left behind: the recipient
+     * hears the tail of the last recording as the beginning of the next one.
+     * A buffer the controller has not filled yet then reads as silence instead
+     * of as stale audio.
+     */
+    public final void clearSamples() {
+        final byte[] zeros = new byte[framesPerBuffer * frameSize];
+        for (int i = 0; i < entryCount; i++) {
+            buffers[i].setBytes(zeros, 0, 0, zeros.length);
+        }
+    }
+
+    /**
      * Release the DMA memory. The child resources (the descriptor list and
      * the sample buffers) are released together with the parent block.
      */
