@@ -21,6 +21,7 @@
 package org.jnode.driver.sound.ac97;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.fail;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
@@ -274,6 +275,41 @@ public class AC97CoreTest {
         assertEquals(170, (AC97Core.DEFAULT_ENTRY_COUNT * 256 * 1000) / 48000);
         // The buffer size is bounded so a caller cannot claim an absurd ring.
         assertEquals(2048, AC97Core.MAX_FRAMES_PER_BUFFER);
+    }
+
+    @Test
+    public void testFrameAccessorsSurviveADayOfAudio() {
+        // A frame count is about position in a stream, not a small number: an
+        // int holds about 12 hours of 48 kHz stereo, which is a day of a
+        // machine left playing audio. The long accessors are what a caller
+        // needs, and the int ones are kept for compatibility and truncate.
+        final long hours = 24;
+        final long frames = (long) AC97Constants.SAMPLE_RATE_48000 * 3600
+            * hours;
+        assertTrue("a day of frames must not fit in an int",
+            frames > Integer.MAX_VALUE);
+        // The int position of such a stream wraps, which is why the API
+        // carries the long forms.
+        final int truncated = (int) frames;
+        assertTrue("the int position of a long stream wraps", truncated < 0);
+        // The API carries the long accessors and nothing that truncates:
+        // a caller cannot ask for a position that wraps.
+        try {
+            assertEquals(long.class, AC97API.class
+                .getMethod("getPositionLong").getReturnType());
+            assertEquals(long.class, AC97API.class
+                .getMethod("getQueuedFramesLong").getReturnType());
+        } catch (NoSuchMethodException ex) {
+            fail("the long frame accessors are missing from the API");
+        }
+        for (String gone : new String[] {"getPosition", "getQueuedFrames"}) {
+            try {
+                AC97API.class.getMethod(gone);
+                fail("the wrapping " + gone + "() accessors are still there");
+            } catch (NoSuchMethodException ex) {
+                // expected: they truncate, so they are gone
+            }
+        }
     }
 
     @Test

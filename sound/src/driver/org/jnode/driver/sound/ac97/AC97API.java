@@ -116,15 +116,24 @@ public interface AC97API extends DeviceAPI {
     /**
      * Gets the number of stereo frames that are queued in the internal ring
      * but not yet played. The value is sample accurate.
+     * <p>
+     * The count is a long because an int frame count runs out after a little
+     * over 12 hours of 48 kHz stereo, which a machine left playing audio
+     * reaches in a day.
+     *
+     * @return frames queued and not yet played
      */
-    public int getQueuedFrames();
+    public long getQueuedFramesLong();
 
     /**
      * Gets the number of stereo frames the DAC has played since
      * {@link #open}. This is the playback position; it never decreases and
-     * never runs past the data queued with {@link #write}.
+     * never runs past the data queued with {@link #write}, and it is a long
+     * for the same reason as {@link #getQueuedFramesLong()}.
+     *
+     * @return frames played since the stream was opened
      */
-    public int getPosition();
+    public long getPositionLong();
 
     /**
      * Waits until the DMA engine has played every frame written so far. The

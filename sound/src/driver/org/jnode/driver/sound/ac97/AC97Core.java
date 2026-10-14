@@ -1488,15 +1488,21 @@ public final class AC97Core implements AC97Constants, IRQHandler {
      * yet played by the DMA engine. The value is sample accurate, because
      * it is derived from the controller position (CIV and PICB) rather than
      * from whole descriptors.
+     * <p>
+     * The count is a long because a frame count of an int runs out after a
+     * little over 12 hours of 48 kHz stereo, which a machine left playing
+     * audio reaches in a day.
+     *
+     * @return frames queued and not yet played
      */
-    public final int getQueuedFrames() {
+    public final long getQueuedFramesLong() {
         checkNotTerminated();
 
         synchronized (playbackLock) {
             if (!playing) {
                 return 0;
             }
-            return (int) remainingFrames();
+            return remainingFrames();
         }
     }
 
@@ -1507,15 +1513,17 @@ public final class AC97Core implements AC97Constants, IRQHandler {
      * never decreases and never runs past the queued data. It is sample
      * accurate up to the interval between the two register reads it is
      * computed from, which is at most one buffer.
+     *
+     * @return frames played since the stream was opened
      */
-    public final int getPosition() {
+    public final long getPositionLong() {
         checkNotTerminated();
 
         synchronized (playbackLock) {
             if (!playing) {
-                return (int) totalQueuedFrames;
+                return totalQueuedFrames;
             }
-            return (int) Math.max(0, totalQueuedFrames - remainingFrames());
+            return Math.max(0, totalQueuedFrames - remainingFrames());
         }
     }
 

@@ -178,20 +178,20 @@ public class AC97Driver extends Driver implements AC97API, AC97Constants {
         c.write(pcm, offset, length);
     }
 
-    public int getQueuedFrames() {
+    public long getQueuedFramesLong() {
         final AC97Core c = core;
         if (c == null) {
             return 0;
         }
-        return c.getQueuedFrames();
+        return c.getQueuedFramesLong();
     }
 
-    public int getPosition() {
+    public long getPositionLong() {
         final AC97Core c = core;
         if (c == null) {
             return 0;
         }
-        return c.getPosition();
+        return c.getPositionLong();
     }
 
     public void drain() throws InterruptedException, TimeoutException {
