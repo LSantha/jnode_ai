@@ -22,6 +22,7 @@ package org.jnode.driver.sound.ac97;
 
 import org.jnode.driver.sound.ac97.command.AC97CaptureCommandTest;
 import org.jnode.driver.sound.ac97.command.AC97CommandSyntaxTest;
+import org.jnode.driver.sound.ac97.command.AC97VolumeCommandTest;
 import org.jnode.driver.sound.ac97.command.AC97WavCommandTest;
 
 import org.junit.runner.RunWith;
@@ -52,6 +53,7 @@ import org.junit.runners.Suite;
     PcmFormatTest.class,
     AC97CaptureCommandTest.class,
     AC97CommandSyntaxTest.class,
+    AC97VolumeCommandTest.class,
     AC97WavCommandTest.class,
     CaptureLevelsTest.class
 })

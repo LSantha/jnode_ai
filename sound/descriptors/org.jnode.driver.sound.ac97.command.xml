@@ -89,6 +89,7 @@
         <option argLabel="mute" shortName="m" longName="mute" description="mute the outputs"/>
         <option argLabel="unmute" shortName="u" longName="unmute" description="unmute the outputs"/>
         <option argLabel="level" shortName="l" longName="level" description="volume in percent, 0..100"/>
+        <option argLabel="output" shortName="o" longName="output" description="mixer output to change: master, pcm or headphone"/>
         <option argLabel="device" shortName="d" longName="device" description="index of the AC'97 device to use"/>
       </optionSet>
     </syntax>
