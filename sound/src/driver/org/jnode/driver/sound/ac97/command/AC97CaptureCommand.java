@@ -28,6 +28,7 @@ import java.io.PrintWriter;
 import org.jnode.driver.sound.ac97.AC97API;
 import org.jnode.driver.sound.ac97.AC97Constants;
 import org.jnode.driver.sound.ac97.AC97Utils;
+import org.jnode.driver.sound.ac97.CaptureLevels;
 import org.jnode.driver.sound.ac97.WavFile;
 import org.jnode.shell.AbstractCommand;
 import org.jnode.shell.CommandLine.Token;
@@ -77,8 +78,8 @@ public class AC97CaptureCommand extends AbstractCommand {
         new IntegerArgument("rate", Argument.OPTIONAL, "sample rate in Hz");
 
     private final IntegerArgument argGain =
-        new IntegerArgument("gain", Argument.OPTIONAL,
-            "record gain in 1.5 dB steps, 0 is maximum gain");
+        new IntegerArgument("gain", Argument.OPTIONAL, 0, 15,
+            "record gain in 1.5 dB steps above the input gain, 0 is maximum gain");
 
     private static final class SourceArgument extends EnumArgument<Source> {
         SourceArgument(String label, int flags, String description) {
@@ -109,9 +110,12 @@ public class AC97CaptureCommand extends AbstractCommand {
         "file", Argument.OPTIONAL, "write the recording as a WAV file to this"
             + " path");
 
+    private final IntegerArgument argDevice = new IntegerArgument(
+        "device", Argument.OPTIONAL, "index of the AC'97 device to use");
+
     public AC97CaptureCommand() {
         super("records from the AC'97 codec and reports the input level");
-        registerArguments(argDuration, argRate, argGain, argSource, argFile);
+        registerArguments(argDuration, argRate, argGain, argSource, argFile, argDevice);
     }
 
     /**
@@ -143,16 +147,17 @@ public class AC97CaptureCommand extends AbstractCommand {
         final Source source = argSource.isSet() ? argSource.getValue() : Source.MIC;
 
         final PrintWriter out = getOutput().getPrintWriter();
-        final AC97API api = AC97Utils.findDevice();
+        final int deviceIndex = argDevice.isSet() ? argDevice.getValue()
+            : 0;
+        final AC97API api = AC97Utils.findDevice(deviceIndex);
         if (api == null) {
-            out.println("ac97capture: no AC'97 device found");
+            out.println("ac97capture: " + AC97Utils.describeNoDevice(deviceIndex));
             exit(1);
             return;
         }
 
         final int frameSize = AC97Constants.PCM_FRAME_SIZE;
         final int totalFrames = (int) (((long) rate * durationMs) / 1000);
-        final int windowFrames = rate / 10;
         final byte[] chunk = new byte[4096];
         // The whole recording is kept so that it can be written out as a WAV
         // file afterwards; the duration argument bounds the memory used.
@@ -161,14 +166,14 @@ public class AC97CaptureCommand extends AbstractCommand {
         out.println("ac97capture: recording " + durationMs + "ms at " + rate
             + "Hz, source=" + source + " gain=" + gainSteps);
         int recorded = 0;
-        int windowSamples = 0;
-        double windowSquares = 0;
-        int windowPeak = 0;
-        int windowClips = 0;
-        int totalClips = 0;
-        int totalPeak = 0;
+        // The levels of the recording are windowed, so that a user testing
+        // the microphone sees what it hears every 100ms while it records.
+        final CaptureLevels levels = new CaptureLevels(rate / 10,
+            AC97Constants.PCM_CHANNELS);
+        boolean opened = false;
         try {
             api.openCapture(rate);
+            opened = true;
             api.setRecordSource(source.select(), gainSteps);
             while (recorded < totalFrames) {
                 final int frames = Math.min(chunk.length / frameSize, totalFrames
@@ -177,42 +182,27 @@ public class AC97CaptureCommand extends AbstractCommand {
                 System.arraycopy(chunk, 0, recording, recorded * frameSize,
                     frames * frameSize);
                 recorded += frames;
-                for (int i = 0; i + 1 < frames * frameSize; i += 2) {
-                    final int sample = (chunk[i] & 0xFF) | (chunk[i + 1] << 8);
-                    final int abs = sample < 0 ? -sample : sample;
-                    windowSquares += (double) sample * sample;
-                    windowSamples++;
-                    if (abs > windowPeak) {
-                        windowPeak = abs;
-                    }
-                    if (abs > totalPeak) {
-                        totalPeak = abs;
-                    }
-                    if (abs >= 32767) {
-                        windowClips++;
-                    }
-                }
-                if (windowSamples >= windowFrames) {
-                    reportWindow(out, recorded, windowSamples, windowSquares,
-                        windowPeak, windowClips);
-                    totalClips += windowClips;
-                    windowSamples = 0;
-                    windowSquares = 0;
-                    windowPeak = 0;
-                    windowClips = 0;
+                levels.add(chunk, 0, frames * frameSize);
+                if (levels.isWindowComplete()) {
+                    out.println(levels.takeWindow(recorded));
                 }
             }
-            if (windowSamples > 0) {
-                reportWindow(out, recorded, windowSamples, windowSquares,
-                    windowPeak, windowClips);
-                totalClips += windowClips;
+            // Whatever is left of a window at the end of the recording is
+            // still worth a report: a short capture has nothing else to show.
+            if (levels.hasWindow()) {
+                out.println(levels.takeWindow(recorded));
             }
         } catch (InterruptedException ex) {
             out.println("ac97capture: interrupted");
         } catch (Exception ex) {
             out.println("ac97capture: failed: " + ex);
         } finally {
-            api.closeCapture();
+            // Only close a capture this command opened; the PCM in engine is
+            // exclusive, so a close after a failed open would stop whoever
+            // holds it.
+            if (opened) {
+                api.closeCapture();
+            }
         }
         if (recorded == 0) {
             out.println("ac97capture: no audio recorded");
@@ -220,13 +210,13 @@ public class AC97CaptureCommand extends AbstractCommand {
             return;
         }
         out.println("ac97capture: recorded " + recorded + " frames ("
-            + (recorded * 1000 / rate) + "ms), peak=" + totalPeak
-            + ", clipped=" + totalClips);
+            + (recorded * 1000 / rate) + "ms), peak=" + levels.getTotalPeak()
+            + ", clipped=" + levels.getTotalClips());
         if (argFile.isSet()) {
             writeWav(out, argFile.getValue(), recording, recorded * frameSize,
                 rate);
         }
-        if (totalPeak == 0) {
+        if (levels.isSilent()) {
             out.println("ac97capture: input is digital silence - check the"
                 + " record source, the gain and the host audio input");
         }
@@ -263,40 +253,21 @@ public class AC97CaptureCommand extends AbstractCommand {
     }
 
     /**
-     * Prints one level report line: root mean square, its dBFS equivalent, the
-     * peak sample and the number of clipped samples of the window.
-     */
-    private void reportWindow(PrintWriter out, int frames, int samples,
-        double squares, int peak, int clips) {
-        out.println(formatLevel(frames, samples, squares, peak, clips));
-    }
-
-    /**
      * Formats one level report line, e.g.
      * <code>ac97capture: 4800 frames rms=16384 (-6.0 dBFS) peak=23170 clips=0</code>.
-     * Static and pure so that the level arithmetic can be unit tested.
+     * <p>
+     * The arithmetic, the windowing and the clipping rules live in
+     * {@link CaptureLevels}, which the host test suite covers.
      *
      * @param frames  frames recorded so far
      * @param samples samples in the window
      * @param squares sum of the squared sample values of the window
      * @param peak    largest absolute sample value of the window
      * @param clips   clipped samples in the window
+     * @return the report line
      */
-    static String formatLevel(int frames, int samples, double squares, int peak,
-        int clips) {
-        final double rms = samples > 0 ? Math.sqrt(squares / samples) : 0.0;
-        final String level;
-        if (rms < 1.0) {
-            level = "silent";
-        } else {
-            // dBFS: the full scale root mean square of a 16 bit signal is
-            // 32768, so a square wave at full level reads 0 dBFS and a
-            // sine wave at full level reads -3.0 dBFS.
-            final double dbfs = 20.0 * Math.log(rms / 32768.0) / Math.log(10.0);
-            final int whole = (int) (dbfs * 10.0);
-            level = (whole / 10) + "." + Math.abs(whole % 10) + " dBFS";
-        }
-        return "ac97capture: " + frames + " frames rms=" + (int) rms + " ("
-            + level + ") peak=" + peak + " clips=" + clips;
+    static String formatLevel(int frames, int samples, double squares,
+        int peak, int clips) {
+        return CaptureLevels.formatLevel(frames, samples, squares, peak, clips);
     }
 }

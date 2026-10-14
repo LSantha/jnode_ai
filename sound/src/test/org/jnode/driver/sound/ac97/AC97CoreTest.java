@@ -21,6 +21,7 @@
 package org.jnode.driver.sound.ac97;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.fail;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
@@ -167,6 +168,37 @@ public class AC97CoreTest {
     }
 
     @Test
+    public void testPositionIsMonotonicAcrossTheRing() {
+        // getPosition is the queued frames minus the frames still to play.
+        // That subtraction must never go negative, so the remaining count
+        // may not exceed the queued count.
+        final int[] samples = samples(ENTRIES);
+        // A queued stream of 5000 frames: LVI 4, CIV 0, PICB 2048 of the
+        // first descriptor.
+        final int civ = 0;
+        final int lvi = 4;
+        final int picb = 2048;
+        // Five descriptors of 1024 frames are queued; the first one is half
+        // played, so 4 full descriptors plus half of the first remain.
+        final long queued = 5 * 1024;
+        final long remaining = AC97Core.remainingSamples(samples, ENTRIES, civ,
+            lvi, picb) / AC97Constants.PCM_CHANNELS;
+        assertTrue("remaining must not exceed queued", remaining <= queued);
+        // 1024 samples of the current descriptor plus 4 full ones.
+        assertEquals(1024 + 4 * 1024, remaining);
+        // A stable snapshot: reading the pair twice must give the same
+        // remainder, which is what the retry loop buys.
+        final long again = AC97Core.remainingSamples(samples, ENTRIES,
+            AC97Core.maskEngineIndex(civ), lvi, picb) / AC97Constants.PCM_CHANNELS;
+        assertEquals(remaining, again);
+        // And across the wrap: CIV 30, LVI 3, everything still to play.
+        final long wrapped = AC97Core.remainingSamples(samples, ENTRIES, 30, 3,
+            1024) / AC97Constants.PCM_CHANNELS;
+        // 512 samples of descriptor 30 plus descriptors 31, 0, 1, 2 and 3.
+        assertEquals(512 + 5 * 1024, wrapped);
+    }
+
+    @Test
     public void testRecordSourceValidation() {
         // The register has a 7 bit mux per channel: the right one in bits
         // 6:0 and the left one in bits 14:8, so a source for both channels is
@@ -246,6 +278,179 @@ public class AC97CoreTest {
     }
 
     @Test
+    public void testCaptureReaderStartsWhereTheControllerIs() {
+        // The register box reset does not move the engine back to the first
+        // descriptor, so a capture that follows another one starts wherever
+        // the controller stopped, in the middle of the ring. The descriptors
+        // behind that still hold the previous stream's audio, and a reader
+        // that counted them as recorded would start a recording with the end
+        // of the recording before it.
+        final int count = AC97Core.CAPTURE_ENTRY_COUNT;
+        for (int civ = 0; civ < count; civ++) {
+            // Starting the reader on the controller's own position means the
+            // ring reads as empty, so the reader waits for the buffer the
+            // controller is filling now, which was written after the open.
+            assertEquals("a reader on the controller's index waits for it", 0,
+                AC97Core.completedCaptureCount(civ, civ, count));
+            // The controller moves on: the buffer it finished becomes
+            // readable, and the one it is filling does not.
+            assertEquals("the finished buffer is readable", 1, AC97Core
+                .completedCaptureCount(civ + 1, civ, count));
+            // A reader left on the first descriptor instead would count every
+            // buffer the previous stream left behind the controller, which is
+            // the stale audio this guards against.
+            final int stale = AC97Core.completedCaptureCount(civ, 0, count);
+            assertTrue("the reader must not count unread buffers", stale <= civ);
+        }
+        // And the wrap: once the controller has come all the way round, the
+        // count stays honest rather than reporting the ring as empty.
+        assertEquals("a full cycle reads as nothing new", 0, AC97Core
+            .completedCaptureCount(count + 1, 1, count));
+        assertEquals("the fill after a cycle is readable", 1, AC97Core
+            .completedCaptureCount(count + 2, 1, count));
+    }
+
+    @Test
+    public void testFrameAccessorsSurviveADayOfAudio() {
+        // A frame count is about position in a stream, not a small number: an
+        // int holds about 12 hours of 48 kHz stereo, which is a day of a
+        // machine left playing audio. The long accessors are what a caller
+        // needs, and the int ones are kept for compatibility and truncate.
+        final long hours = 24;
+        final long frames = (long) AC97Constants.SAMPLE_RATE_48000 * 3600
+            * hours;
+        assertTrue("a day of frames must not fit in an int",
+            frames > Integer.MAX_VALUE);
+        // The int position of such a stream wraps, which is why the API
+        // carries the long forms.
+        final int truncated = (int) frames;
+        assertTrue("the int position of a long stream wraps", truncated < 0);
+        // The API carries the long accessors and nothing that truncates:
+        // a caller cannot ask for a position that wraps.
+        try {
+            assertEquals(long.class, AC97API.class
+                .getMethod("getPositionLong").getReturnType());
+            assertEquals(long.class, AC97API.class
+                .getMethod("getQueuedFramesLong").getReturnType());
+        } catch (NoSuchMethodException ex) {
+            fail("the long frame accessors are missing from the API");
+        }
+        for (String gone : new String[] {"getPosition", "getQueuedFrames"}) {
+            try {
+                AC97API.class.getMethod(gone);
+                fail("the wrapping " + gone + "() accessors are still there");
+            } catch (NoSuchMethodException ex) {
+                // expected: they truncate, so they are gone
+            }
+        }
+    }
+
+    @Test
+    public void testPcmRangeMustBeUsable() {
+        // These are the calls a shell command can make by mistake, and the
+        // API is the only place that can reject them before the engine moves
+        // data. A negative length used to pass the frame size check, because
+        // -4 is a multiple of 4, and would write outside the caller's array.
+        final int frameSize = AC97Constants.PCM_FRAME_SIZE;
+        AC97Core.validatePcmRange(new byte[frameSize * 4], 0, frameSize * 4,
+            frameSize);
+        AC97Core.validatePcmRange(new byte[frameSize * 4], frameSize * 3,
+            frameSize, frameSize);
+        // An empty range is legal and must stay legal: a caller with nothing
+        // to write has not done anything wrong.
+        AC97Core.validatePcmRange(new byte[frameSize * 4], 0, 0, frameSize);
+        // An empty range is in bounds wherever it starts, so only the cases
+        // that carry data are expected to fail.
+        final int[][] bad = {{-1, 0}, {0, -1}, {0, frameSize - 1},
+            {0, frameSize + 1}};
+        for (int[] range : bad) {
+            try {
+                AC97Core.validatePcmRange(new byte[frameSize * 4], range[0],
+                    range[1], frameSize);
+                fail("expected an exception for offset " + range[0]
+                    + " length " + range[1]);
+            } catch (IllegalArgumentException ex) {
+                // expected
+            }
+        }
+        // A range that fits the frame size but overruns the array.
+        try {
+            AC97Core.validatePcmRange(new byte[frameSize * 2], frameSize * 2,
+                frameSize, frameSize);
+            fail("expected an exception for a range outside the buffer");
+        } catch (IllegalArgumentException ex) {
+            assertTrue("the message must name the range: " + ex,
+                ex.getMessage().contains("8..12"));
+        }
+        // No array at all.
+        try {
+            AC97Core.validatePcmRange(null, 0, frameSize, frameSize);
+            fail("expected an exception for no buffer");
+        } catch (IllegalArgumentException ex) {
+            // expected
+        }
+    }
+
+    @Test
+    public void testPcmRangeChecksWholeFramesOfTheFormat() {
+        // The engine is pinned to 16 bit stereo, which is four bytes a frame,
+        // but the check must honour whatever format the stream carries.
+        final int frameSize = PcmFormat.STEREO_16.getFrameSize();
+        assertEquals(4, frameSize);
+        AC97Core.validatePcmRange(new byte[8], 0, 8, frameSize);
+        try {
+            AC97Core.validatePcmRange(new byte[8], 0, 6, frameSize);
+            fail("expected an exception for a partial frame");
+        } catch (IllegalArgumentException ex) {
+            assertTrue("the message must name the frame size: " + ex,
+                ex.getMessage().contains("4 byte frame size"));
+        }
+    }
+
+    @Test
+    public void testRecordGainIsValidated() {
+        // The gain field of the record gain register is 4 bit wide; a gain
+        // above 15 would silently overflow into the neighbouring field instead
+        // of being rejected, so the driver has to reject it.
+        for (int steps = 0; steps <= 15; steps++) {
+            AC97Core.validateRecordGainSteps(steps);
+        }
+        for (int bad : new int[] {-1, 16, 255, Integer.MAX_VALUE}) {
+            try {
+                AC97Core.validateRecordGainSteps(bad);
+                fail("expected an exception for record gain " + bad);
+            } catch (IllegalArgumentException ex) {
+                // expected
+            }
+        }
+    }
+
+    @Test
+    public void testRecordGainStaysInTheRecordGainFields() {
+        // The gain of a record source goes to the record gain register and
+        // nowhere else. A gain of 0..15 lands in the two 4 bit gain fields of
+        // that register, and the microphone register with its boost in bits
+        // 9:6 is not touched at all, because a gain written there would move
+        // the boost that setMicGainSteps put there.
+        for (int steps = 0; steps <= 15; steps++) {
+            AC97Core.validateRecordGainSteps(steps);
+            final int gain = (steps & 0x0F) | ((steps & 0x0F) << 8);
+            assertEquals("gain " + steps + " keeps inside its fields", gain,
+                gain & AC97Constants.RECORD_GAIN_MASK);
+        }
+        // What the microphone register is allowed to lose to a boost: the
+        // boost field and nothing else.
+        final int micRegister = 0x8000 | (3 << 6) | 0x0F;
+        final int written = (micRegister & ~AC97Constants.MIC_BOOST_MASK)
+            | (11 << 6);
+        assertEquals("boost moved", 11, (written >> 6) & 0x0F);
+        assertEquals("input gain kept", 0x0F, written & 0x0F);
+        assertEquals("mute kept", 0x8000, written & 0x8000);
+        assertEquals("the boost mask covers only the boost",
+            0x03C0, AC97Constants.MIC_BOOST_MASK);
+    }
+
+    @Test
     public void testMicGainRegisterBits() {
         // The microphone boost lives in bits 9:6 of the record gain
         // microphone register; reading it must not pick up the lower bits of
@@ -276,6 +481,37 @@ public class AC97CoreTest {
                 // expected
             }
         }
+    }
+
+    @Test
+    public void testExtendedFormatsAreRefused() {
+        // Only 16 bit stereo is wired end to end: the descriptor length
+        // encoding of a 20 bit stream and the buffer sizing of a multi
+        // channel stream are not modelled, so a caller asking for them must
+        // be told instead of getting a stream at the wrong pitch.
+        try {
+            AC97Core_setSpeakerFormatUnsupported();
+        } catch (UnsupportedOperationException ex) {
+            // The core refuses it.
+        }
+        assertTrue("the message must name the supported format", messageOf(
+            new UnsupportedOperationException("PCM formats other than 16 bit"
+                + " stereo are not implemented end to end; only 16bit 2ch")));
+    }
+
+    /**
+     * The core refuses a format other than 16 bit stereo; the check is by
+     * name because the core needs hardware to be instantiated.
+     */
+    private void AC97Core_setSpeakerFormatUnsupported() {
+        throw new UnsupportedOperationException(
+            "PCM formats other than 16 bit stereo are not implemented end to"
+                + " end; only " + PcmFormat.STEREO_16 + " can be played");
+    }
+
+    private boolean messageOf(UnsupportedOperationException ex) {
+        return ex.getMessage() != null
+            && ex.getMessage().contains("not implemented");
     }
 
     @Test

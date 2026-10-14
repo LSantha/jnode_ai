@@ -138,6 +138,38 @@ public class PcmQueueTest {
     }
 
     @Test
+    public void testProducerCanBeInterrupted() throws Exception {
+        // A producer blocked on a full queue must notice an interrupt,
+        // otherwise a shutdown can never stop it.
+        final PcmQueue queue = new PcmQueue(FRAME * 2);
+        final byte[] src = new byte[FRAME * 8];
+        // Fill the queue completely so the producer has to block.
+        int written = 0;
+        while (written < FRAME * 2) {
+            written += queue.write(src, written, FRAME * 2 - written);
+        }
+        assertEquals(FRAME * 2, written);
+        final int[] result = new int[1];
+        final Thread producer = new Thread() {
+            @Override
+            public void run() {
+                result[0] = queue.write(src, 0, src.length);
+            }
+        };
+        producer.start();
+        Thread.sleep(200);
+        producer.interrupt();
+        producer.join(5000);
+        // The blocked write returns with what it wrote, not the full length,
+        // and the producer is no longer running.
+        assertTrue("an interrupted producer must not keep blocking",
+            result[0] < src.length);
+        assertTrue("an interrupted producer must not claim full length",
+            result[0] >= 0);
+        assertEquals(0, result[0]);
+    }
+
+    @Test
     public void testRejectsTinyCapacity() {
         try {
             new PcmQueue(FRAME - 1);

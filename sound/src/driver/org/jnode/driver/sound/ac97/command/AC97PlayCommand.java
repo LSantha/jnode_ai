@@ -20,6 +20,8 @@
 
 package org.jnode.driver.sound.ac97.command;
 
+import java.io.PrintWriter;
+
 import org.jnode.driver.sound.ac97.AC97Utils;
 import org.jnode.shell.AbstractCommand;
 import org.jnode.shell.syntax.Argument;
@@ -28,7 +30,7 @@ import org.jnode.shell.syntax.IntegerArgument;
 /**
  * Shell command that plays a square wave tone through the AC'97 codec.
  * <p>
- * Usage: <code>ac97play [-f frequency] [-l duration]</code>.
+ * Usage: <code>ac97play [-d device] [frequency] [duration]</code>.
  *
  * @author JNode contributors
  */
@@ -44,9 +46,12 @@ public class AC97PlayCommand extends AbstractCommand {
     private final IntegerArgument argDuration = new IntegerArgument(
         "duration", Argument.OPTIONAL, "duration in milliseconds");
 
+    private final IntegerArgument argDevice = new IntegerArgument(
+        "device", Argument.OPTIONAL, "index of the AC'97 device to use");
+
     public AC97PlayCommand() {
         super("plays a tone through the AC'97 codec");
-        registerArguments(argFrequency, argDuration);
+        registerArguments(argFrequency, argDuration, argDevice);
     }
 
     public static void main(String[] args) throws Exception {
@@ -55,10 +60,19 @@ public class AC97PlayCommand extends AbstractCommand {
 
     @Override
     public void execute() {
+        final PrintWriter out = getOutput().getPrintWriter();
         final int frequency = argFrequency.isSet() ? argFrequency.getValue()
             : DEFAULT_FREQUENCY;
         final int duration = argDuration.isSet() ? argDuration.getValue()
             : DEFAULT_DURATION;
-        AC97Utils.playTone(frequency, duration);
+        final int deviceIndex = argDevice.isSet() ? argDevice.getValue() : 0;
+        if (AC97Utils.findDevice(deviceIndex) == null) {
+            // The tone helper only logs, but a command has to tell the user
+            // what went wrong.
+            out.println("ac97play: " + AC97Utils.describeNoDevice(deviceIndex));
+            exit(1);
+            return;
+        }
+        AC97Utils.playTone(frequency, duration, deviceIndex);
     }
 }

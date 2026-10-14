@@ -46,12 +46,15 @@ public class AC97InfoCommand extends AbstractCommand {
             "frames per playback sample buffer, 1..2048");
 
     private final IntegerArgument argMicGain =
-        new IntegerArgument("mic-gain", Argument.OPTIONAL,
+        new IntegerArgument("mic-gain", Argument.OPTIONAL, 0, 15,
             "microphone gain in 1.5 dB steps above the input gain, 0..15");
+
+    private final IntegerArgument argDevice = new IntegerArgument(
+        "device", Argument.OPTIONAL, "index of the AC'97 device to use");
 
     public AC97InfoCommand() {
         super("shows and tunes the AC'97 playback ring");
-        registerArguments(argBufferSize, argMicGain);
+        registerArguments(argBufferSize, argMicGain, argDevice);
     }
 
     public static void main(String[] args) throws Exception {
@@ -61,9 +64,11 @@ public class AC97InfoCommand extends AbstractCommand {
     @Override
     public void execute() {
         final PrintWriter out = getOutput().getPrintWriter();
-        final AC97API api = AC97Utils.findDevice();
+        final int deviceIndex = argDevice.isSet() ? argDevice.getValue()
+            : 0;
+        final AC97API api = AC97Utils.findDevice(deviceIndex);
         if (api == null) {
-            out.println("ac97info: no AC'97 device found");
+            out.println("ac97info: " + AC97Utils.describeNoDevice(deviceIndex));
             exit(1);
             return;
         }
@@ -93,12 +98,16 @@ public class AC97InfoCommand extends AbstractCommand {
         out.println("ac97info: ring=" + api.getPlaybackBufferSize()
             + " frames per buffer, " + api.getPlaybackLatencyMs() + "ms deep");
         out.println("ac97info: format=" + api.getSpeakerFormat() + " rate="
-            + api.getSampleRate() + "Hz (variable rate supported="
+            + api.getSampleRate() + "Hz recordRate=" + api.getCaptureSampleRate()
+            + "Hz (variable rate supported="
             + api.isVariableRateSupported() + ")");
         out.println("ac97info: capture open=" + api.isCaptureOpen()
             + ", buffers waiting=" + api.getCapturedBuffers()
             + ", microphone gain=" + api.getMicGainSteps() + " steps");
         out.println("ac97info: codec id=0x"
-            + Integer.toHexString(api.getCodecId()));
+            + Integer.toHexString(api.getCodecId()) + " codecErrors="
+            + api.getCodecErrors() + " fifoErrors=" + api.getFifoErrors()
+            + " lastValidBuffers=" + api.getLastValidBuffers()
+            + " captureInterrupts=" + api.getCaptureInterrupts());
     }
 }

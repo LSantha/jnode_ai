@@ -26,7 +26,10 @@ import org.jnode.driver.sound.ac97.AC97API;
 import org.jnode.driver.sound.ac97.AC97Utils;
 import org.jnode.driver.sound.ac97.MixerVolume;
 import org.jnode.shell.AbstractCommand;
+import org.jnode.shell.CommandLine.Token;
+import org.jnode.shell.syntax.CommandSyntaxException;
 import org.jnode.shell.syntax.Argument;
+import org.jnode.shell.syntax.EnumArgument;
 import org.jnode.shell.syntax.FlagArgument;
 import org.jnode.shell.syntax.IntegerArgument;
 
@@ -42,13 +45,56 @@ import org.jnode.shell.syntax.IntegerArgument;
 public class AC97VolumeCommand extends AbstractCommand {
 
     /** The outputs whose volume can be changed. */
-    private enum Output {
-        /** master output */
+    enum Output {
+        /** master output, the volume everything else is mixed into */
         MASTER,
         /** pcm path, the samples written to the driver */
         PCM,
-        /** headphone output */
+        /** headphone output, the front panel jacks */
         HEADPHONE
+    }
+
+    /**
+     * The output selector of the command line, matched case insensitively
+     * against the constant names, so that "headphone" and "HEADPHONE" both
+     * select the headphone output.
+     */
+    private static final class OutputArgument extends EnumArgument<Output> {
+        OutputArgument(String label, int flags, String description) {
+            super(label, flags, Output.class, description);
+        }
+
+        @Override
+        protected String argumentKind() {
+            return "mixer output";
+        }
+
+        /**
+         * Matches the output case insensitively, so that "headphone" and
+         * "HEADPHONE" both work: the underlying EnumArgument matches the
+         * declared enum constant names only, which are upper case.
+         */
+        @Override
+        protected Output doAccept(Token token, int flags)
+            throws CommandSyntaxException {
+            return acceptOutput(token.text);
+        }
+    }
+
+    /**
+     * Parses a mixer output name case insensitively.
+     *
+     * @param text the name from the command line
+     * @return the output it names
+     * @throws CommandSyntaxException if no output has that name
+     */
+    static Output acceptOutput(String text) throws CommandSyntaxException {
+        for (Output output : Output.values()) {
+            if (output.name().equalsIgnoreCase(text)) {
+                return output;
+            }
+        }
+        throw new CommandSyntaxException("not a valid <mixer output>: " + text);
     }
 
     private final FlagArgument argMute = new FlagArgument(
@@ -60,9 +106,16 @@ public class AC97VolumeCommand extends AbstractCommand {
     private final IntegerArgument argLevel = new IntegerArgument(
         "level", Argument.OPTIONAL, "volume in percent, 0..100");
 
+    private final OutputArgument argOutput = new OutputArgument(
+        "output", Argument.OPTIONAL,
+        "mixer output to change: master, pcm or headphone");
+
+    private final IntegerArgument argDevice = new IntegerArgument(
+        "device", Argument.OPTIONAL, "index of the AC'97 device to use");
+
     public AC97VolumeCommand() {
         super("reads and sets the AC'97 mixer volumes");
-        registerArguments(argMute, argUnmute, argLevel);
+        registerArguments(argMute, argUnmute, argLevel, argOutput, argDevice);
     }
 
     public static void main(String[] args) throws Exception {
@@ -72,9 +125,11 @@ public class AC97VolumeCommand extends AbstractCommand {
     @Override
     public void execute() {
         final PrintWriter out = getOutput().getPrintWriter();
-        final AC97API api = AC97Utils.findDevice();
+        final int deviceIndex = argDevice.isSet() ? argDevice.getValue()
+            : 0;
+        final AC97API api = AC97Utils.findDevice(deviceIndex);
         if (api == null) {
-            out.println("ac97volume: no AC'97 device found");
+            out.println("ac97volume: " + AC97Utils.describeNoDevice(deviceIndex));
             exit(1);
             return;
         }
@@ -83,25 +138,38 @@ public class AC97VolumeCommand extends AbstractCommand {
             exit(1);
             return;
         }
-        if (!argLevel.isSet() && !argMute.isSet() && !argUnmute.isSet()) {
-            // No change requested: report the current state.
-            report(out, "master", api.getMasterVolume());
-            report(out, "pcm", api.getPcmVolume());
-            report(out, "headphone", api.getHeadphoneVolume());
-            return;
-        }
+        // Without a selector the command keeps its old shape: it sets the
+        // outputs a user expects to change together, the master and the pcm
+        // path, and reports everything the codec has. With a selector only
+        // that output is touched, so the headphone can be set on its own.
+        final boolean changeMute = argMute.isSet() || argUnmute.isSet();
         final boolean mute = argMute.isSet();
         final int steps = argLevel.isSet() ? MixerVolume.percentToSteps(
             argLevel.getValue()) : -1;
-        apply(out, Output.MASTER, api, steps, mute, argMute.isSet()
-            || argUnmute.isSet());
-        apply(out, Output.PCM, api, steps, mute, argMute.isSet()
-            || argUnmute.isSet());
-        // A change is only useful when it is audible, so the setting is
-        // reported back from the codec.
-        report(out, "master", api.getMasterVolume());
-        report(out, "pcm", api.getPcmVolume());
-        report(out, "headphone", api.getHeadphoneVolume());
+        if (argOutput.isSet()) {
+            final Output output = argOutput.getValue();
+            if (!argLevel.isSet() && !changeMute) {
+                report(out, output, getVolume(api, output));
+                return;
+            }
+            apply(out, output, api, steps, mute, changeMute);
+            // A change is only useful when it is audible, so the setting is
+            // reported back from the codec.
+            report(out, output, getVolume(api, output));
+            return;
+        }
+        if (!argLevel.isSet() && !changeMute) {
+            // No change requested: report the current state.
+            report(out, Output.MASTER, api.getMasterVolume());
+            report(out, Output.PCM, api.getPcmVolume());
+            report(out, Output.HEADPHONE, api.getHeadphoneVolume());
+            return;
+        }
+        apply(out, Output.MASTER, api, steps, mute, changeMute);
+        apply(out, Output.PCM, api, steps, mute, changeMute);
+        report(out, Output.MASTER, api.getMasterVolume());
+        report(out, Output.PCM, api.getPcmVolume());
+        report(out, Output.HEADPHONE, api.getHeadphoneVolume());
     }
 
     /**
@@ -117,6 +185,18 @@ public class AC97VolumeCommand extends AbstractCommand {
             volume = volume.level(steps, steps);
         }
         setVolume(api, output, volume);
+    }
+
+    private void report(PrintWriter out, Output output, MixerVolume volume) {
+        report(out, name(output), volume);
+    }
+
+    /**
+     * The name the codec calls the output by, lower case like the command
+     * line selector.
+     */
+    private static String name(Output output) {
+        return output.name().toLowerCase();
     }
 
     private void report(PrintWriter out, String name, MixerVolume volume) {

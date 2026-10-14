@@ -70,7 +70,8 @@ public final class PcmQueue {
      * @param offset  offset in the source array
      * @param length  number of bytes to append
      * @return the number of bytes actually appended, which is less than
-     *         requested when the queue was closed while waiting
+     *         requested when the queue was closed or filling it was
+     *         interrupted while waiting
      */
     public int write(byte[] src, int offset, int length) {
         int written = 0;
@@ -81,7 +82,12 @@ public final class PcmQueue {
                     if (closed) {
                         return written;
                     }
-                    waitQuietly();
+                    if (!waitQuietly()) {
+                        // Interrupted: report what was written so a producer
+                        // that is shutting down can stop instead of blocking
+                        // until somebody drains this queue.
+                        return written;
+                    }
                 }
                 if (closed) {
                     return written;
@@ -156,11 +162,22 @@ public final class PcmQueue {
         return closed;
     }
 
-    private void waitQuietly() {
+    /**
+     * Waits for room in the queue, or for an interrupt request.
+     * <p/>
+     * An interrupt is preserved and reported to the producer, so a producer
+     * that wants to stop is not blocked forever on a queue nobody drains.
+     *
+     * @return false when the calling thread was interrupted, so the
+     *         producer can give up
+     */
+    private boolean waitQuietly() {
         try {
             wait(100);
+            return true;
         } catch (InterruptedException ex) {
-            // A blocked producer stays blocked; the close path wakes it.
+            Thread.currentThread().interrupt();
+            return false;
         }
     }
 }

@@ -54,6 +54,9 @@
   <extension point="org.jnode.shell.syntaxes">
     <syntax alias="ac97play">
       <sequence description="Play a tone with a given frequency and duration">
+        <optionSet>
+          <option argLabel="device" shortName="d" longName="device" description="index of the AC'97 device to use"/>
+        </optionSet>
         <argument argLabel="frequency" description="tone frequency in Hz"/>
         <argument argLabel="duration" description="duration in milliseconds"/>
       </sequence>
@@ -62,6 +65,7 @@
       <optionSet>
         <option argLabel="buffer-size" shortName="b" longName="buffer-size" description="frames per playback sample buffer, 1..2048"/>
         <option argLabel="mic-gain" shortName="m" longName="mic-gain" description="microphone gain in 1.5 dB steps, 0..15"/>
+        <option argLabel="device" shortName="d" longName="device" description="index of the AC'97 device to use"/>
       </optionSet>
     </syntax>
     <syntax alias="ac97reg">
@@ -69,16 +73,24 @@
         <option argLabel="get" shortName="g" longName="get" description="read a single register by index"/>
         <option argLabel="set" shortName="s" longName="set" description="write a register by index"/>
         <option argLabel="value" shortName="v" longName="value" description="the 16 bit value for --set"/>
+        <option argLabel="device" shortName="d" longName="device" description="index of the AC'97 device to use"/>
       </optionSet>
     </syntax>
     <syntax alias="ac97wav">
-      <argument argLabel="file" description="the WAV file to play"/>
+      <sequence description="Play a WAV file through the AC'97 codec">
+        <optionSet>
+          <option argLabel="device" shortName="d" longName="device" description="index of the AC'97 device to use"/>
+        </optionSet>
+        <argument argLabel="file" description="the WAV file to play"/>
+      </sequence>
     </syntax>
     <syntax alias="ac97volume">
       <optionSet>
         <option argLabel="mute" shortName="m" longName="mute" description="mute the outputs"/>
         <option argLabel="unmute" shortName="u" longName="unmute" description="unmute the outputs"/>
         <option argLabel="level" shortName="l" longName="level" description="volume in percent, 0..100"/>
+        <option argLabel="output" shortName="o" longName="output" description="mixer output to change: master, pcm or headphone"/>
+        <option argLabel="device" shortName="d" longName="device" description="index of the AC'97 device to use"/>
       </optionSet>
     </syntax>
     <syntax alias="ac97capture">
@@ -88,6 +100,7 @@
         <option argLabel="gain" shortName="g" longName="gain" description="record gain in 1.5 dB steps, 0 is maximum gain"/>
         <option argLabel="source" shortName="s" longName="source" description="record source: mic or line"/>
         <option argLabel="file" shortName="f" longName="file" description="write the recording as a WAV file to this path"/>
+        <option argLabel="device" longName="device" description="index of the AC'97 device to use"/>
       </optionSet>
     </syntax>
   </extension>

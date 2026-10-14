@@ -106,9 +106,29 @@ public final class BufferDescriptorList implements AC97Constants {
     private final int framesPerBuffer;
 
     /**
-     * Number of 16-bit samples per sample buffer.
+     * Number of 16-bit words per sample buffer, which is what the buffer
+     * descriptor length field counts and what the buffer holds for any
+     * format a 16 bit wide descriptor can describe.
      */
-    private final int samplesPerBuffer;
+    private final int wordsPerBuffer;
+
+    /**
+     * Size of one sample frame in bytes, from the format this list was
+     * created for.
+     */
+    private final int frameSize;
+
+    /**
+     * Size of one sample buffer in bytes, the extent the DMA engine covers
+     * from the buffer address. A buffer that starts below the 4 GB limit and
+     * ends above it is not reachable by the 32 bit pointer in a descriptor.
+     */
+    private final int bufferBytes;
+
+    /**
+     * The format this list was built for.
+     */
+    private final PcmFormat format;
 
     /**
      * Create a new descriptor list, but do not program the hardware yet.
@@ -119,18 +139,28 @@ public final class BufferDescriptorList implements AC97Constants {
      * @throws ResourceNotFreeException if the DMA memory cannot be claimed
      */
     public BufferDescriptorList(ResourceOwner owner, int entryCount,
-        int framesPerBuffer) throws ResourceNotFreeException {
+        int framesPerBuffer, PcmFormat format) throws ResourceNotFreeException {
         if ((entryCount < 1) || (entryCount > BDL_MAX_ENTRIES)) {
             throw new IllegalArgumentException("Invalid entryCount " + entryCount);
         }
+        if (framesPerBuffer < 1) {
+            throw new IllegalArgumentException("Invalid framesPerBuffer "
+                + framesPerBuffer);
+        }
+        if (format == null) {
+            throw new IllegalArgumentException("No sample format");
+        }
         this.framesPerBuffer = framesPerBuffer;
-        this.samplesPerBuffer = framesPerBuffer * PCM_CHANNELS;
-        if (samplesPerBuffer > BD_MAX_SAMPLES) {
-            throw new IllegalArgumentException("Buffer too large: " + samplesPerBuffer);
+        this.format = format;
+        this.frameSize = format.getFrameSize();
+        this.wordsPerBuffer = framesPerBuffer * format.getWordsPerFrame();
+        if (wordsPerBuffer > BD_MAX_SAMPLES) {
+            throw new IllegalArgumentException("Buffer too large: "
+                + wordsPerBuffer);
         }
         this.entryCount = entryCount;
 
-        final int total = totalSize(entryCount, framesPerBuffer);
+        final int total = totalSize(entryCount, framesPerBuffer, format);
 
         final ResourceManager rm;
         try {
@@ -146,7 +176,7 @@ public final class BufferDescriptorList implements AC97Constants {
         // Carve the block up. The BDL comes first because it must be aligned
         // to BDL_ALIGN; claiming it first wastes at most BDL_ALIGN bytes.
         final int bdlBytes = entryCount * BDL_ENTRY_SIZE;
-        final int bufferBytes = framesPerBuffer * PCM_FRAME_SIZE;
+        this.bufferBytes = framesPerBuffer * frameSize;
         try {
             this.descriptors = memory.claimChildResource(bdlBytes, BDL_ALIGN);
             this.buffers = new MemoryResource[entryCount];
@@ -158,10 +188,29 @@ public final class BufferDescriptorList implements AC97Constants {
             this.memory.release();
             throw ex;
         }
-        if (descriptors.getAddress().toLong() > 0xFFFFFFFFL) {
+        try {
+            validateDmaBounds("descriptor list", descriptors.getAddress()
+                .toLong(), bdlBytes);
+        } catch (IllegalStateException ex) {
             this.memory.release();
-            throw new ResourceNotFreeException(
-                "Buffer descriptor list is above the 4GB DMA limit");
+            throw new ResourceNotFreeException(ex.getMessage());
+        }
+        // The descriptor list must also sit on its own alignment boundary.
+        // The claim asks for the alignment, but the requirement is the
+        // controller's and not the allocator's, so it is verified instead of
+        // assumed: an allocator that searches in steps of its own is free to
+        // hand out an unaligned block, and a descriptor list that straddles
+        // the boundary is a random playback glitch waiting to be found.
+        try {
+            checkAligned("descriptor list", descriptors.getAddress()
+                .toLong(), BDL_ALIGN);
+            for (int i = 0; i < entryCount; i++) {
+                checkAligned("sample buffer " + i, buffers[i].getAddress()
+                    .toLong(), BUFFER_ALIGN);
+            }
+        } catch (IllegalStateException ex) {
+            this.memory.release();
+            throw new ResourceNotFreeException(ex.getMessage());
         }
     }
 
@@ -185,6 +234,64 @@ public final class BufferDescriptorList implements AC97Constants {
      * list.
      *
      * @param index index of the descriptor
+     */
+    /**
+     * Checks that an address the controller requires to be aligned sits on its
+     * alignment boundary. The descriptor list needs to be aligned to its entry
+     * size rounded up, because the hardware reads whole descriptors, and a
+     * sample buffer is read into with the alignment the controller uses.
+     * <p>
+     * The realisation is the allocator's, the requirement is not, so the class
+     * checks what it was given instead of depending on how the allocator
+     * searches: a block on a wrong boundary is refused with the address and the
+     * boundary instead of failing later as a playback glitch.
+     *
+     * @param what what is being checked, for the message
+     * @param address the physical address of the block
+     * @param align the alignment the block must meet, a power of two
+     * @throws IllegalStateException if the block is not aligned enough
+     * @throws IllegalArgumentException if the alignment is not a power of two
+     */
+    static void checkAligned(String what, long address, int align) {
+        if ((align < 2) || ((align & (align - 1)) != 0)) {
+            throw new IllegalArgumentException(
+                "invalid alignment " + align + ", a power of two expected");
+        }
+        if ((address & (align - 1)) != 0) {
+            throw new IllegalStateException(what + " at "
+                + NumberUtils.hex(address) + " is not " + align
+                + " byte aligned");
+        }
+    }
+
+    /**
+     * Checks that a block the DMA engine will cover by its 32 bit address
+     * stays below the 4 GB limit of that address. Starting below the limit is
+     * not enough: a block that crosses the boundary is partly unreachable,
+     * and the controller would read it as garbage PCM.
+     *
+     * @param what what is being checked, for the message
+     * @param start physical address of the block
+     * @param size size of the block in bytes
+     * @throws IllegalStateException if the block is not DMA reachable
+     */
+    static void validateDmaBounds(String what, long start, long size) {
+        if (size <= 0) {
+            throw new IllegalArgumentException(
+                "size of a DMA block must be positive: " + size);
+        }
+        final long end = start + size - 1;
+        if ((start < 0) || (end > 0xFFFFFFFFL)) {
+            throw new IllegalStateException(what + " " + NumberUtils.hex(start)
+                + " plus " + size + " bytes is not below the 4GB DMA limit");
+        }
+    }
+
+    /**
+     * Offset of a descriptor in the list, in bytes.
+     *
+     * @param index the descriptor index
+     * @return the byte offset of the descriptor
      */
     public static int descriptorOffset(int index) {
         return index * BDL_ENTRY_SIZE;
@@ -253,9 +360,10 @@ public final class BufferDescriptorList implements AC97Constants {
      * @param entryCount      number of descriptors
      * @param framesPerBuffer number of stereo frames per sample buffer
      */
-    public static int totalSize(int entryCount, int framesPerBuffer) {
+    public static int totalSize(int entryCount, int framesPerBuffer,
+        PcmFormat format) {
         final int bdlBytes = entryCount * BDL_ENTRY_SIZE;
-        final int bufferBytes = framesPerBuffer * PCM_FRAME_SIZE;
+        final int bufferBytes = framesPerBuffer * format.getFrameSize();
         return BDL_ALIGN + bdlBytes + (entryCount * (BUFFER_ALIGN + bufferBytes));
     }
 
@@ -267,10 +375,25 @@ public final class BufferDescriptorList implements AC97Constants {
     }
 
     /**
-     * Gets the number of 16-bit samples per sample buffer.
+     * Gets the number of 16-bit words per sample buffer, which is what the
+     * buffer descriptor length field counts.
      */
-    public final int getSamplesPerBuffer() {
-        return samplesPerBuffer;
+    public final int getWordsPerBuffer() {
+        return wordsPerBuffer;
+    }
+
+    /**
+     * Gets the size of one sample frame in bytes.
+     */
+    public final int getFrameSize() {
+        return frameSize;
+    }
+
+    /**
+     * Gets the sample format of this list.
+     */
+    public final PcmFormat getFormat() {
+        return format;
     }
 
     /**
@@ -306,15 +429,15 @@ public final class BufferDescriptorList implements AC97Constants {
      */
     public final void setDescriptor(int index, int samples, boolean interrupt) {
         testIndex(index);
-        validateSampleCount(samples, samplesPerBuffer);
-        // BDBAR and the descriptor pointer are 32 bit registers, so the
-        // buffer must be below 4 GB. toInt() would silently truncate a
-        // higher address, hence the check on the full 64 bit value.
+        validateSampleCount(samples, wordsPerBuffer);
+        // BDBAR and the descriptor pointer are 32 bit registers, so the whole
+        // buffer must stay below 4 GB. A buffer that starts below the limit
+        // and ends above it is out of reach even though toInt() of its start
+        // would look fine, hence the check on the full 64 bit value and the
+        // size.
         final Address address = buffers[index].getAddress();
-        if (address.toLong() > 0xFFFFFFFFL) {
-            throw new IllegalStateException("Buffer address above 4GB: "
-                + NumberUtils.hex(address.toLong()));
-        }
+        validateDmaBounds("buffer " + index + " address", address.toLong(),
+            bufferBytes);
         final int ofs = descriptorOffset(index);
         // Little endian, sample pointer followed by control &amp; length word.
         descriptors.setInt(ofs, address.toInt());
@@ -344,11 +467,11 @@ public final class BufferDescriptorList implements AC97Constants {
      * @param src     source PCM data (16-bit stereo, little endian)
      * @param srcOfs  offset in the source array
      * @param length  number of bytes to copy, at most
-     *                {@link #getFramesPerBuffer()} * PCM_FRAME_SIZE
+     *                {@link #getFramesPerBuffer()} * getFrameSize()
      */
     public final void copyToBuffer(int index, byte[] src, int srcOfs, int length) {
         testIndex(index);
-        final int max = framesPerBuffer * PCM_FRAME_SIZE;
+        final int max = framesPerBuffer * frameSize;
         if ((length < 0) || (length > max)) {
             throw new IllegalArgumentException("Invalid length " + length);
         }
@@ -380,7 +503,7 @@ public final class BufferDescriptorList implements AC97Constants {
     public final void copyFromBuffer(int index, int srcOfs, byte[] dst,
         int dstOfs, int length) {
         testIndex(index);
-        final int max = framesPerBuffer * PCM_FRAME_SIZE - srcOfs;
+        final int max = framesPerBuffer * frameSize - srcOfs;
         if ((length < 0) || (length > max)) {
             throw new IllegalArgumentException("Invalid length " + length
                 + " (max " + max + ')');
@@ -405,6 +528,21 @@ public final class BufferDescriptorList implements AC97Constants {
      */
     public final void clear() {
         descriptors.setInt(0, 0, entryCount * 2);
+    }
+
+    /**
+     * Zeroes the sample buffers behind the descriptors. The descriptors are
+     * what points at them, so a capture ring that is armed without clearing
+     * them hands out whatever the previous stream left behind: the recipient
+     * hears the tail of the last recording as the beginning of the next one.
+     * A buffer the controller has not filled yet then reads as silence instead
+     * of as stale audio.
+     */
+    public final void clearSamples() {
+        final byte[] zeros = new byte[framesPerBuffer * frameSize];
+        for (int i = 0; i < entryCount; i++) {
+            buffers[i].setBytes(zeros, 0, 0, zeros.length);
+        }
     }
 
     /**

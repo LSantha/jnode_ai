@@ -54,7 +54,10 @@ public class Ac97ConstantsTest {
         assertEquals(0x00, AC97Constants.NAM_RESET);
         assertEquals(0x02, AC97Constants.NAM_MASTER_VOLUME);
         assertEquals(0x04, AC97Constants.NAM_HEADPHONE_VOLUME);
-        assertEquals(0x08, AC97Constants.NAM_PC_BEEP_VOLUME);
+        assertEquals(0x08, AC97Constants.NAM_MASTER_TONE);
+        // PC beep is 0x0A, which is the offset the classic no-sound trap
+        // comes from: it is not 0x08.
+        assertEquals(0x0A, AC97Constants.NAM_PC_BEEP_VOLUME);
         assertEquals(0x18, AC97Constants.NAM_PCM_OUT_VOLUME);
         assertEquals(0x1A, AC97Constants.NAM_RECORD_SELECT);
         assertEquals(0x1C, AC97Constants.NAM_RECORD_GAIN);
@@ -138,7 +141,7 @@ public class Ac97ConstantsTest {
         assertEquals(0x80000000, AC97Constants.BD_IOC);
         assertEquals(0x40000000, AC97Constants.BD_BUP);
         assertEquals(0x0000FFFF, AC97Constants.BD_LENGTH_MASK);
-        assertEquals(65536, AC97Constants.BD_MAX_SAMPLES);
+        assertEquals(65534, AC97Constants.BD_MAX_SAMPLES);
     }
 
     @Test
@@ -146,11 +149,20 @@ public class Ac97ConstantsTest {
         assertEquals(2, AC97Constants.PCM_BYTES_PER_SAMPLE);
         assertEquals(2, AC97Constants.PCM_CHANNELS);
         assertEquals(4, AC97Constants.PCM_FRAME_SIZE);
-        // Volume of 0 dB for both channels of a stereo volume register.
-        assertEquals(0x0808, AC97Constants.NAM_VOLUME_0DB);
+        // 0 dB in the AC'97 volume registers is an attenuation of zero,
+        // which is the loudest setting, not 8 steps of attenuation.
+        assertEquals(0x0000, AC97Constants.NAM_VOLUME_0DB);
+        // The PCM path default the driver initializes to: -12 dB per channel.
+        assertEquals(0x0808, AC97Constants.NAM_PCM_OUT_DEFAULT);
+        // The power register: the control bits are up, the status down;
+        // writing 0x000F would not power anything up.
+        assertEquals(0x0F00, AC97Constants.NAM_POWER_DOWN_PR_MASK);
+        assertEquals(0x000F, AC97Constants.NAM_POWER_STATUS_MASK);
+        assertEquals(0x8000, AC97Constants.NAM_POWER_EAPD);
+        // A 16 bit length field cannot encode 65536 samples, and only even
+        // counts are allowed.
+        assertEquals(65534, AC97Constants.BD_MAX_SAMPLES);
         assertEquals(0x8000, AC97Constants.NAM_VOLUME_MUTE);
-        assertEquals(0x000F, AC97Constants.NAM_POWER_UP);
-        assertEquals(0x0F00, AC97Constants.NAM_POWER_STATUS);
         assertEquals(0x0001, AC97Constants.NAM_EI_VRA);
         assertEquals(0x0001, AC97Constants.NAM_EAC_VRA);
     }

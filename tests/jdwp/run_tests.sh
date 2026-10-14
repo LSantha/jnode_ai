@@ -9,7 +9,7 @@
 #   - JNode ISO built: sh build.sh cd-x86-lite
 #   - VirtualBox VM named "JNode" with serial pipe and bridged networking
 #   - Python deps: pip install -r tests/jdwp/requirements.txt
-#   - Skills: jnode-interact, jnode-jdwp installed in ~/.config/opencode/skills/
+#   - Skills: jnode-serial (in-repo .opencode/skills/), jnode-jdwp (~/.config/opencode/skills/)
 #   - JDK with jdb on PATH
 #
 set -e

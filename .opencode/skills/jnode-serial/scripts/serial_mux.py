@@ -1,23 +1,25 @@
 #!/usr/bin/env python3
 """Persistent single-client proxy for the JNode serial agent console.
 
-Holds ONE connection to /tmp/jnode.serial2 (VirtualBox UART2 pipe server)
-for the whole session and multiplexes agent command batches through it.
+Holds ONE connection to the instance's agent socket for the whole session
+and multiplexes agent command batches through it. The socket comes from
+jnode_paths.py, so several VMs (VirtualBox or QEMU) can each have their own
+mux: /tmp/jnode.serial2 for the legacy "default" instance, or
+/tmp/jnode/<id>/agent.sock for any other id.
 
-Why: one connection per command eventually wedges the VBox pipe server
-("NamedPipe0: only single connection supported" in VBox.log, immediate
-FIN/EOF on every new attach while the guest stays healthy). Holding a
-single client avoids the stuck state entirely (same pattern as the stable
-kdb_mux.py on UART1).
+Why: one connection per command eventually wedges the VirtualBox pipe
+server ("NamedPipe0: only single connection supported" in VBox.log,
+immediate FIN/EOF on every new attach while the guest stays healthy).
+Holding a single client avoids the stuck state entirely (same pattern as
+the kdb_mux.py on UART1).
 
-Protocol (all files under /tmp, US-ASCII):
-  REQ dir  /tmp/jnode_serial_req/<reqid>.json   {cmds:[...], timeout:secs}
-  wakeup   FIFO /tmp/jnode_serial_cmd.fifo      client writes "<reqid>\\n"
-  RESP dir /tmp/jnode_serial_resp/<reqid>.out   mux appends command output
-           /tmp/jnode_serial_resp/<reqid>.done  "OK <n>" | "TIMEOUT <msg>"
-           | "ERROR <msg>"
-  status   /tmp/jnode_serial_mux.status         "pid link cmds=<n> ..."
-  log      /tmp/jnode_serial_mux.log            connects, replugs, errors
+Protocol (files under the instance's mux dir, US-ASCII):
+   REQ dir  <mux>/req/<reqid>.json     {cmds:[...], timeout:secs}
+   wakeup   FIFO <mux>/cmd.fifo        client writes "<reqid>\\n"
+   RESP dir <mux>/resp/<reqid>.out     mux appends command output
+            <mux>/resp/<reqid>.done    "OK <n>" | "TIMEOUT ..." | "ERROR ..."
+   status   <mux>/mux.status           "pid link cmds=<n> ..."
+   log      <mux>/mux.log              connects, replugs, errors
 
 Framing on the wire: each command is wrapped as
     echo __JSM_B_<id>__
@@ -29,24 +31,34 @@ The guest agent console does not echo input, so the capture is exactly
 the command's output. No silence timeout: a command completes on
 END-marker + prompt, however long that takes (up to the request timeout).
 
-Self-healing: on FIN/RST/EPIPE the mux reconnects with backoff. If new
-attaches are FINed immediately (the VBox stuck signature), it resets the
-pipe server at runtime (no power cycle):
-    vboxmanage controlvm JNode changeuartmode2 disconnected
-    vboxmanage controlvm JNode changeuartmode2 server /tmp/jnode.serial2
+Self-healing: on FIN/RST/EPIPE the mux reconnects with backoff. For a
+VirtualBox instance whose new attaches are FINed immediately (the stuck
+signature), it resets the pipe server at runtime (no power cycle):
+    vboxmanage controlvm <vm> changeuartmode2 disconnected
+    vboxmanage controlvm <vm> changeuartmode2 server <agent sock>
+QEMU needs no such trick -- its unix socket is recreated by QEMU itself,
+so the mux only reconnects (the hypervisor comes from the instance
+registry written by start_qemu.sh / jnode_vbox.py).
 
-Usage: nohup python3 serial_mux.py >/tmp/jnode_serial_mux.out 2>&1 &
-Clients should use serial_cmd.py (starts the mux automatically).
+Usage: serial_cmd.py starts this automatically; manual start:
+    nohup python3 serial_mux.py [--instance ID] >/dev/null 2>&1 &
 """
 
+import atexit
 import json
 import os
 import select
+import signal
 import socket
 import subprocess
 import sys
 import time
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import jnode_paths as jp  # noqa: E402
+
+# Filled in by configure(); module-level so the helpers below stay simple.
+PATHS = None
 SOCK = "/tmp/jnode.serial2"
 FIFO = "/tmp/jnode_serial_cmd.fifo"
 REQDIR = "/tmp/jnode_serial_req"
@@ -54,6 +66,7 @@ RESPDIR = "/tmp/jnode_serial_resp"
 LOG = "/tmp/jnode_serial_mux.log"
 PIDFILE = "/tmp/jnode_serial_mux.pid"
 STATUS = "/tmp/jnode_serial_mux.status"
+HYP = "unknown"
 VM = "JNode"
 
 PROMPT = b"[JNODE_AGENT_READY]"
@@ -66,13 +79,13 @@ RECONNECT_MAX_DELAY = 10.0
 REPLUG_AFTER_FINS = 3
 # Replug the pipe server if a batch is in flight but not a single byte
 # arrives for this long. The guest always answers a fresh command with the
-# BEGIN-marker echo within seconds, so total RX silence means the VBox UART
+# BEGIN-marker echo within seconds, so total RX silence means the UART
 # itself wedged (observed with no log line at all). Replug is harmless to
 # a healthy guest; the in-flight command is resent afterwards, bounded by
 # the resend budget, rate limit, and client-liveness checks
 # (MAX_RESENDS_PER_CMD et al).
 WEDGE_SILENCE = 180.0
-# Replug at most this often (seconds) to avoid hammering VBox.
+# Replug at most this often (seconds) to avoid hammering the hypervisor.
 REPLUG_MIN_INTERVAL = 15.0
 DEFAULT_REQ_TIMEOUT = 1200.0
 # Bound every resend path. The wait_begin prompt-resend and the reconnect
@@ -86,6 +99,35 @@ MIN_RESEND_INTERVAL = 2.0
 # Capture cap per command: an error flood can drown the END marker so the
 # command never completes; cut it off and ETX the guest instead.
 MAX_CAPTURE_BYTES = 512 * 1024
+
+
+def configure(instance_id):
+    """Load this instance's socket/IPC paths and hypervisor identity."""
+    global PATHS, SOCK, FIFO, REQDIR, RESPDIR, LOG, PIDFILE, STATUS, HYP, VM
+    PATHS = jp.paths_for(instance_id)
+    SOCK = PATHS.agent_sock
+    FIFO = PATHS.fifo
+    REQDIR = PATHS.req_dir
+    RESPDIR = PATHS.resp_dir
+    LOG = PATHS.mux_log
+    PIDFILE = PATHS.mux_pid
+    STATUS = PATHS.mux_status
+    entry = jp.read_entry(instance_id) or {}
+    HYP = entry.get("hypervisor") or "unknown"
+    VM = entry.get("vm") or "JNode"
+    return PATHS
+
+
+def replug_allowed():
+    """VirtualBox needs (and tolerates) an UART replug; QEMU does not."""
+    if HYP == "qemu":
+        return False
+    if HYP == "vbox":
+        return True
+    # Unknown (hand-started VM): only touch VirtualBox when the very VM
+    # name we would control is actually running, so a QEMU-only box never
+    # gets a stray vboxmanage against some unrelated VM.
+    return jp._vbox_running(VM)
 
 
 def log(msg):
@@ -107,14 +149,27 @@ def write_status(pid, link, cmds):
 
 
 def replug_pipe():
-    """Reset the VBox UART2 pipe server at runtime (VM keeps running)."""
+    """Reset the VirtualBox UART pipe server at runtime (VM keeps running).
+
+    No-op on QEMU (its unix socket does not wedge) and on hosts where the
+    VM named `VM` is not actually a running VirtualBox machine.
+    """
+    if not replug_allowed():
+        log("replug skipped (hypervisor=%s vm=%s)" % (HYP, VM))
+        return False
+    # resolve the binary once: installs differ only in case, and a miss
+    # here would make the VirtualBox wedge recovery silently dead code
+    exe = jp._vbox_binary()
+    if not exe:
+        log("replug skipped: VBoxManage/vboxmanage not on PATH")
+        return False
     try:
-        subprocess.run(["vboxmanage", "controlvm", VM,
+        subprocess.run([exe, "controlvm", VM,
                         "changeuartmode2", "disconnected"],
                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                        timeout=30)
         time.sleep(1.0)
-        subprocess.run(["vboxmanage", "controlvm", VM,
+        subprocess.run([exe, "controlvm", VM,
                         "changeuartmode2", "server", SOCK],
                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                        timeout=30)
@@ -254,8 +309,31 @@ def prune_respdir():
             pass
 
 
-def main():
-    for d in (REQDIR, RESPDIR):
+def main(argv=None):
+    argv = list(sys.argv[1:] if argv is None else argv)
+    if argv and argv[0] in ("-h", "--help"):
+        print("Usage: python3 serial_mux.py [--instance ID]")
+        print("       (normally started automatically by serial_cmd.py)")
+        sys.exit(0)
+    instance = None
+    if "--instance" in argv:
+        i = argv.index("--instance")
+        if i + 1 >= len(argv):
+            print("serial_mux.py: --instance needs an id", file=sys.stderr)
+            sys.exit(2)
+        instance = argv[i + 1]
+        del argv[i:i + 2]
+    if argv:
+        print("serial_mux.py: unknown arguments: %s" % " ".join(argv),
+              file=sys.stderr)
+        sys.exit(2)
+    try:
+        paths = configure(jp.resolve_instance(instance))
+    except jp.InstanceError as e:
+        print("serial_mux.py: %s" % e, file=sys.stderr)
+        sys.exit(2)
+
+    for d in paths.ipc_dirs:
         try:
             os.makedirs(d)
         except OSError:
@@ -270,14 +348,43 @@ def main():
     prune_respdir()
 
     pid = os.getpid()
-    try:
-        with open(PIDFILE, "w") as f:
-            f.write(str(pid) + "\n")
-    except OSError:
-        pass
+    # single-instance guard (same invariant as kdb_mux.acquire_pidfile,
+    # plus flock): two concurrent serial_cmd starts must not leave two
+    # muxes on one FIFO + guest socket
+    if not jp.acquire_pid_slot(PIDFILE, "serial_mux.py"):
+        try:
+            with open(PIDFILE) as f:
+                owner = f.read().strip()
+        except OSError:
+            owner = "?"
+        print("a serial mux is already running (pid %s, instance %s)"
+              % (owner, paths.id))
+        sys.exit(0)
+
+    def _cleanup_pidfile():
+        # drop our own claim; a SIGTERM'd mux must not leave a stale
+        # mux.pid behind (it would make ensure_mux() skip the start and
+        # hang every serial_cmd for the full deadline, or make a
+        # launcher SIGTERM whatever pid recycled the slot)
+        try:
+            with open(PIDFILE) as f:
+                if int(f.read().strip()) == os.getpid():
+                    os.unlink(PIDFILE)
+        except (OSError, ValueError):
+            pass
+
+    atexit.register(_cleanup_pidfile)
+
+    def _sigterm(_sig, _frame):
+        # Python does not unwind on SIGTERM without this, so atexit
+        # would never run; stop_mux() is only the backstop
+        raise SystemExit(143)
+
+    signal.signal(signal.SIGTERM, _sigterm)
 
     fifo = os.open(FIFO, os.O_RDONLY | os.O_NONBLOCK)
-    log("started pid=%d" % pid)
+    log("started pid=%d instance=%s sock=%s hyp=%s vm=%s"
+        % (pid, paths.id, SOCK, HYP, VM))
 
     def reopen_fifo(old):
         try:
@@ -615,8 +722,10 @@ def main():
                     if (link.consec_fins >= REPLUG_AFTER_FINS
                             and time.time() - link.last_replug
                             > REPLUG_MIN_INTERVAL):
-                        log("resetting pipe server via "
-                            "changeuartmode2")
+                        log("repeated immediate FINs; %s"
+                            % ("resetting pipe server via "
+                               "changeuartmode2" if replug_allowed()
+                               else "reconnect only (hypervisor=%s)" % HYP))
                         link.last_replug = time.time()
                         replug_pipe()
                         link.consec_fins = 0
@@ -631,9 +740,10 @@ def main():
 
         if cur is not None:
             if time.time() - last_rx > WEDGE_SILENCE:
-                log("RX silence %.0fs with batch %s in flight; "
-                    "replugging pipe server" % (time.time() - last_rx,
-                                                cur["reqid"]))
+                action = ("replugging pipe server" if replug_allowed()
+                          else "reconnecting (no UART replug on %s)" % HYP)
+                log("RX silence %.0fs with batch %s in flight; %s"
+                    % (time.time() - last_rx, cur["reqid"], action))
                 link.close()
                 write_status(pid, "down", cmd_count)
                 link.last_replug = time.time()

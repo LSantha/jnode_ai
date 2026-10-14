@@ -1,7 +1,7 @@
 # JDWP Integration Tests
 
 Integration tests for the JNode JDWP (Java Debug Wire Protocol) backend,
-driven by `jdb` via the `jdb_agent.py` and `jnode_agent_cmd.py` Python scripts.
+driven by `jdb` via the `jdb_agent.py` and `serial_cmd.py` (jnode-serial skill) Python scripts.
 
 ## Prerequisites
 
@@ -22,7 +22,7 @@ driven by `jdb` via the `jdb_agent.py` and `jnode_agent_cmd.py` Python scripts.
    - ISO attached to IDE Controller port 0, device 0
 
 4. **Skills installed** (from `~/.config/opencode/skills/`):
-   - `jnode-interact` (provides `jnode_agent_cmd.py`)
+   - `jnode-serial` in the repo (provides `serial_cmd.py`; legacy default instance = `/tmp/jnode.serial2`)
    - `jnode-jdwp` (provides `jdb_agent.py`)
 
 5. **JDK** with `jdb` on the host PATH (JDK 1.6–1.8 recommended)

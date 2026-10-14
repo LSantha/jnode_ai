@@ -44,17 +44,41 @@ public final class AC97Mixer implements AC97Constants {
     public static final int FRAMES_PER_CHUNK = 1024;
 
     /**
-     * Queue capacity of one voice, about 0.5s of audio at 48 kHz.
+     * Queue capacity of one voice, about one second of audio at 48 kHz.
      */
     public static final int VOICE_QUEUE_BYTES = 48000 * PCM_FRAME_SIZE;
+
+    /**
+     * Number of consecutive write failures after which the mixer thread
+     * backs off instead of looping at full speed.
+     */
+    public static final int MIXER_FAILURE_BACKOFF = 8;
+
+    /**
+     * Time the mixer thread sleeps once it backs off.
+     */
+    public static final int MIXER_FAILURE_BACKOFF_MS = 50;
 
     private final AC97API api;
     private final int sampleRate;
     private final MixerVoice[] voices;
     private final byte[] mixBuffer;
     private final byte[] frameBuffer;
-    private int voiceCount;
-    private boolean running;
+    /**
+     * Number of consecutive iterations in which writing the mixed chunk to
+     * the device failed. The mixer backs off once this grows, so a dead
+     * device cannot turn the mixer thread into a busy loop; the counter is
+     * read by ac97info and reset on the next progress.
+     */
+    private volatile int consecutiveFailures;
+
+    /**
+     * Number of voices in use. Only changed under the voice lock, and only
+     * ever read by the mixer thread while it holds it, but volatile so that a
+     * voice created after the last read is still seen.
+     */
+    private volatile int voiceCount;
+    private volatile boolean running;
     private Thread thread;
 
     /**
@@ -82,6 +106,14 @@ public final class AC97Mixer implements AC97Constants {
      */
     public int getSampleRate() {
         return sampleRate;
+    }
+
+    /**
+     * Gets the number of consecutive chunk write failures of the mixer
+     * thread. Zero while the device is healthy.
+     */
+    public int getConsecutiveFailures() {
+        return consecutiveFailures;
     }
 
     /**
@@ -209,7 +241,7 @@ public final class AC97Mixer implements AC97Constants {
 
         private final int id;
         private final PcmQueue queue;
-        private int gainSteps;
+        private volatile int gainSteps;
 
         private MixerVoice(int id) {
             this.id = id;
@@ -312,12 +344,24 @@ public final class AC97Mixer implements AC97Constants {
                     try {
                         api.write(mixBuffer, 0, FRAMES_PER_CHUNK
                             * PCM_FRAME_SIZE);
+                        consecutiveFailures = 0;
                     } catch (InterruptedException ex) {
                         Thread.currentThread().interrupt();
                         return;
                     } catch (Exception ex) {
                         // The write failed; the mixer keeps running so that a
-                        // later recovery can resume the stream.
+                        // later recovery can resume the stream, but it backs
+                        // off, because a device that never accepts a chunk
+                        // would otherwise turn this into a busy loop.
+                        consecutiveFailures++;
+                    }
+                    if (consecutiveFailures >= MIXER_FAILURE_BACKOFF) {
+                        try {
+                            Thread.sleep(MIXER_FAILURE_BACKOFF_MS);
+                        } catch (InterruptedException ex) {
+                            Thread.currentThread().interrupt();
+                            return;
+                        }
                     }
                 } else {
                     // Nothing to play: wait a little so that a busy loop

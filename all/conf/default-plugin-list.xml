@@ -43,7 +43,6 @@ The default list of (non-system) plugins to be included in the init-jar.
     <plugin id="org.classpath.ext.core"/>
     <plugin id="org.classpath.ext.xml"/>
     <plugin id="org.classpath.ext.jdwp"/>
-    <plugin id="org.classpath.ext.corba"/>
     <plugin id="org.classpath.ext.imageio"/>
     <plugin id="org.classpath.ext.management"/>
     <plugin id="org.classpath.ext.sql"/>

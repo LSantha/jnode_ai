@@ -62,18 +62,21 @@ jdb's expression parser cannot resolve class names until `VirtualMachine.allClas
 ## Running on Fresh VM
 
 ```bash
+# 0. Paths (run from the repo root)
+SERIAL=.opencode/skills/jnode-serial/scripts/serial_cmd.py
+
 # 1. Start VM
 VBoxManage startvm "JNode" --type headless
 
 # 2. Wait for boot (check serial)
-python3 ~/.config/opencode/skills/jnode-serial/scripts/jnode_agent_cmd.py "echo alive"
+python3 $SERIAL "echo alive"
 
 # 3. Configure network
-python3 ~/.config/opencode/skills/jnode-serial/scripts/jnode_agent_cmd.py "ifconfig eth-pci(0,3,0) 192.168.1.10 255.255.255.0"
-python3 ~/.config/opencode/skills/jnode-serial/scripts/jnode_agent_cmd.py "route --add default eth-pci(0,3,0) 192.168.1.1"
+python3 $SERIAL "ifconfig eth-pci(0,3,0) 192.168.1.10 255.255.255.0"
+python3 $SERIAL "route --add default eth-pci(0,3,0) 192.168.1.1"
 
 # 4. Start JDWP
-python3 ~/.config/opencode/skills/jnode-serial/scripts/jnode_agent_cmd.py "debug -p 2000"
+python3 $SERIAL "debug -p 2000"
 
 # 5. Run tests
 python3 -m pytest tests/jdwp/ -v
