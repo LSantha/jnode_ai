@@ -45,6 +45,53 @@ public class BufferDescriptorListTest {
     private static final int FRAMES_PER_BUFFER = 1024;
 
     @Test
+    public void testBlocksMustSitOnTheirAlignment() {
+        // The descriptor list and the sample buffers have to sit where the
+        // controller expects them. The allocator is only searched in steps of
+        // its own, so this is verified rather than assumed.
+        BufferDescriptorList.checkAligned("descriptor list",
+            0x40000000L, BufferDescriptorList.BDL_ALIGN);
+        BufferDescriptorList.checkAligned("sample buffer", 8,
+            BufferDescriptorList.BUFFER_ALIGN);
+        BufferDescriptorList.checkAligned("sample buffer", 0,
+            BufferDescriptorList.BUFFER_ALIGN);
+        // A boundary is a power of two by definition.
+        for (int align : new int[] {2, 8, 128, 4096, 0x10000}) {
+            BufferDescriptorList.checkAligned("block", 0, align);
+        }
+        try {
+            BufferDescriptorList.checkAligned("descriptor list",
+                0x40000008L, BufferDescriptorList.BDL_ALIGN);
+            fail("expected an exception for an unaligned list");
+        } catch (IllegalStateException ex) {
+            assertTrue("the message must name the address and the boundary: "
+                + ex.getMessage(),
+                ex.getMessage().contains("40000008")
+                    && ex.getMessage().contains("128"));
+        }
+        // A sample buffer on the wrong side of its 8 byte boundary is not a
+        // valid descriptor either.
+        try {
+            BufferDescriptorList.checkAligned("sample buffer", 0x10000004,
+                8);
+            fail("expected an exception for an unaligned buffer");
+        } catch (IllegalStateException ex) {
+            // expected
+        }
+        // An alignment that is not a power of two is a programming error, not
+        // a resource problem: -1 marks every address as aligned, which is
+        // how a boundary check silently stops working.
+        for (int align : new int[] {-1, -8, 0, 1, 3, 64 * 3}) {
+            try {
+                BufferDescriptorList.checkAligned("block", 0, align);
+                fail("expected an exception for alignment " + align);
+            } catch (IllegalArgumentException ex) {
+                // expected
+            }
+        }
+    }
+
+    @Test
     public void testDmaBlocksMustStayBelowTheLimit() {
         // The descriptor pointer is a 32 bit register, so a block that ends
         // above 4 GB is partly unreachable even when it starts below it.

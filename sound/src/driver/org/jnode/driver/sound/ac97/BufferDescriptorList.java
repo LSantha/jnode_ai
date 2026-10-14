@@ -195,6 +195,23 @@ public final class BufferDescriptorList implements AC97Constants {
             this.memory.release();
             throw new ResourceNotFreeException(ex.getMessage());
         }
+        // The descriptor list must also sit on its own alignment boundary.
+        // The claim asks for the alignment, but the requirement is the
+        // controller's and not the allocator's, so it is verified instead of
+        // assumed: an allocator that searches in steps of its own is free to
+        // hand out an unaligned block, and a descriptor list that straddles
+        // the boundary is a random playback glitch waiting to be found.
+        try {
+            checkAligned("descriptor list", descriptors.getAddress()
+                .toLong(), BDL_ALIGN);
+            for (int i = 0; i < entryCount; i++) {
+                checkAligned("sample buffer " + i, buffers[i].getAddress()
+                    .toLong(), BUFFER_ALIGN);
+            }
+        } catch (IllegalStateException ex) {
+            this.memory.release();
+            throw new ResourceNotFreeException(ex.getMessage());
+        }
     }
 
     /**
@@ -218,6 +235,35 @@ public final class BufferDescriptorList implements AC97Constants {
      *
      * @param index index of the descriptor
      */
+    /**
+     * Checks that an address the controller requires to be aligned sits on its
+     * alignment boundary. The descriptor list needs to be aligned to its entry
+     * size rounded up, because the hardware reads whole descriptors, and a
+     * sample buffer is read into with the alignment the controller uses.
+     * <p>
+     * The realisation is the allocator's, the requirement is not, so the class
+     * checks what it was given instead of depending on how the allocator
+     * searches: a block on a wrong boundary is refused with the address and the
+     * boundary instead of failing later as a playback glitch.
+     *
+     * @param what what is being checked, for the message
+     * @param address the physical address of the block
+     * @param align the alignment the block must meet, a power of two
+     * @throws IllegalStateException if the block is not aligned enough
+     * @throws IllegalArgumentException if the alignment is not a power of two
+     */
+    static void checkAligned(String what, long address, int align) {
+        if ((align < 2) || ((align & (align - 1)) != 0)) {
+            throw new IllegalArgumentException(
+                "invalid alignment " + align + ", a power of two expected");
+        }
+        if ((address & (align - 1)) != 0) {
+            throw new IllegalStateException(what + " at "
+                + NumberUtils.hex(address) + " is not " + align
+                + " byte aligned");
+        }
+    }
+
     /**
      * Checks that a block the DMA engine will cover by its 32 bit address
      * stays below the 4 GB limit of that address. Starting below the limit is
