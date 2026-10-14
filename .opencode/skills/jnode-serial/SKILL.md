@@ -56,7 +56,8 @@ python3 scripts/jnode_paths.py --resolve   # the single live id
 python3 scripts/jnode_paths.py --probe --instance qemu-2 # socket present?
 python3 scripts/jnode_paths.py --is-live --instance qemu-2
 python3 scripts/jnode_paths.py --sock-busy --instance qemu-2
-                    # exit 0 = live listener holds the agent socket
+                    # exit 0 = a process holds the agent socket
+                    # (unix listener or FIFO open)
 python3 scripts/jnode_paths.py --prune         # forget dead entries
 ```
 

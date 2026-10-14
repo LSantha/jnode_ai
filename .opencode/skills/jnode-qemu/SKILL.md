@@ -54,7 +54,10 @@ entry — a hand-started VM reads dead to the registry check, but its
 socket must not be unlinked and rebound (the id collision this
 launcher exists to prevent; `--alloc` applies the same protection on
 autodetect). A leftover socket *file* from a hard-killed VM does not
-block a new start.
+block a new start; a still-shutting-down VM gets a brief grace poll
+before the refusal. `--stop` applies the same rule: it never unlinks
+a socket another process holds (it says so), and a no-registry-entry
+stop reports when the socket is still taken instead of a clean no-op.
 
 The launcher backgrounds QEMU itself (`</dev/null >launch.log 2>&1 &`)
 so it never blocks the caller; launch stderr lands in the instance's

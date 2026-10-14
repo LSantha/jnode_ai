@@ -173,10 +173,18 @@ def cmd_start(a):
         print("ERROR: VM %s does not exist (run config first)" % a.name)
         return 1
     jp.makedirs_for(paths)
-    # stale pipe files make VirtualBox refuse to open the UART
+    # stale pipe files make VirtualBox refuse to open the UART -- but
+    # never unlink a path another process holds: a hand-started VM on
+    # the legacy default paths binds the same files, and the registry
+    # and VM-name checks above cannot see it
     for p in (paths.kdb_sock, paths.agent_sock):
-        if os.path.exists(p):
-            os.remove(p)
+        if not os.path.exists(p):
+            continue
+        if jp.path_held(p, unreadable_busy=False):
+            print("ERROR: %s is held by another process" % p)
+            print("       stop that VM first, or pick another id (--instance)")
+            return 1
+        os.remove(p)
     register(paths, a.name, "starting")
     vbox("startvm", a.name, "--type", "headless")
     print("VM %s started (instance %s)" % (a.name, paths.id))

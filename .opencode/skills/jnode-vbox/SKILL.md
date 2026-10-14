@@ -58,6 +58,10 @@ jnode_vbox.py status  --name VM [--instance ID]
   `vbox_grub_pick.py` (screenshots + keyboard scancodes, verified like
   the QEMU picker); `0`/omitted boots the ISO default and skips the
   picker, matching `start_qemu.sh`; `--wait-ready SECS` blocks on `serial_cmd.py --wait`.
+  A start also refuses when another process holds the instance's UART
+  pipe/socket files (e.g. a hand-started VM on the legacy default
+  paths) — they are never unlinked out from under a live holder; stale
+  files with no holder are still cleaned up.
 - `stop` sends ACPI poweroff, waits 15s, then forces `poweroff`
   (JNode guests often ignore ACPI).
 - `status` prints VM state, UART modes, and the registry entry.

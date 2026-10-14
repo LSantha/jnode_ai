@@ -504,6 +504,23 @@ def test_sock_busy_cli():
     assert jp.main(["--sock-busy", "--instance", "tb1"]) == 1
 
 
+def test_sock_busy_cli_detects_fifo_holder():
+    """A held FIFO (the VirtualBox UART pipe shape) counts as busy too
+    -- /proc/net/unix only knows unix sockets, so /proc/<pid>/fd is
+    the detector; a leftover FIFO with no holder does not."""
+    paths = jp.Paths("tb2")
+    os.makedirs(os.path.dirname(paths.agent_sock), exist_ok=True)
+    os.mkfifo(paths.agent_sock)
+    assert jp.main(["--sock-busy", "--instance", "tb2"]) == 1
+    fd = os.open(paths.agent_sock, os.O_RDONLY | os.O_NONBLOCK)
+    try:
+        assert jp.main(["--sock-busy", "--instance", "tb2"]) == 0
+    finally:
+        os.close(fd)
+    assert os.path.exists(paths.agent_sock)
+    assert jp.main(["--sock-busy", "--instance", "tb2"]) == 1
+
+
 def test_entry_live_legacy_pid_proves_identity(tmp_path):
     """Old-format entries (pid, no hypervisor) were QEMU VMs: entry_live
     must prove identity, so a recycled pid does not keep one "live"."""

@@ -40,6 +40,9 @@ CLI (shell friendly):
     python3 jnode_paths.py --alloc --prefix qemu
     python3 jnode_paths.py --resolve            # the single live id
                                                 # (exit 1 none, 2 several)
+    python3 jnode_paths.py --sock-busy [--instance ID]
+                                     # exit 0 = a process holds the
+                                     # agent socket (listener or FIFO)
     python3 jnode_paths.py --register --instance ID --hypervisor qemu \
         --vm-name NAME [--vm-pid PID] [--iso PATH] [--state ready]
     python3 jnode_paths.py --unregister --instance ID
@@ -472,6 +475,9 @@ def _sock_busy(path, unreadable_busy=True):
     try:
         with open("/proc/net/unix") as f:
             for line in f:
+                # last field is the full path; instance ids
+                # ([A-Za-z0-9._-]) and the fixed legacy paths contain
+                # no spaces, so field == path is exact
                 parts = line.split()
                 if parts and parts[-1] == path:
                     return True
@@ -480,11 +486,64 @@ def _sock_busy(path, unreadable_busy=True):
         return unreadable_busy
 
 
+def _fd_held(path):
+    """True when a process we can see has `path` open (FIFO or file).
+
+    Unix sockets never appear here -- their fds read back as
+    `socket:[inode]` -- so _sock_busy covers those via /proc/net/unix;
+    the two together detect every live holder kind the launchers
+    create (QEMU listen sockets, VirtualBox UART FIFOs). Returns None
+    when /proc itself is unreadable. Permission-denied on another
+    user's /proc/<pid>/fd is normal on a multi-user host and is NOT
+    "undetectable": counting it as such would make every start and
+    alloc refuse on every such host.
+    """
+    try:
+        pids = os.listdir("/proc")
+    except OSError:
+        return None
+    for pid in pids:
+        if not pid.isdigit():
+            continue
+        fd_dir = "/proc/%s/fd" % pid
+        try:
+            fds = os.listdir(fd_dir)
+        except OSError:
+            continue
+        for fd in fds:
+            try:
+                if os.readlink(os.path.join(fd_dir, fd)) == path:
+                    return True
+            except OSError:
+                continue
+    return False
+
+
+def path_held(path, unreadable_busy=True):
+    """True when another process holds `path`: a unix listener
+    (_sock_busy) or any visible open fd on it (_fd_held). A leftover
+    file with no holder is not held. `unreadable_busy` is the answer
+    for "cannot tell" (no /proc at all): alloc and other conservative
+    callers pass True; start guards pass False -- they may only refuse
+    on positive proof.
+    """
+    if not os.path.exists(path):
+        return False
+    if _sock_busy(path, unreadable_busy=False):
+        return True
+    held = _fd_held(path)
+    if held:
+        return True
+    if held is None:
+        return unreadable_busy
+    return False
+
+
 def _legacy_sock_busy():
     """A hand-started VM may own the legacy default socket without ever
     registering; never hand 'default' out while that socket is actually
-    in use."""
-    return _sock_busy(Paths(DEFAULT_INSTANCE).agent_sock)
+    in use (unix listener or FIFO holder alike)."""
+    return path_held(Paths(DEFAULT_INSTANCE).agent_sock)
 
 
 def alloc_instance(prefix="qemu"):
@@ -562,9 +621,9 @@ def _build_parser():
     p.add_argument("--is-live", action="store_true",
                    help="exit 0 when the instance's VM is still running")
     p.add_argument("--sock-busy", action="store_true",
-                   help="exit 0 when a live listener holds this "
-                        "instance's agent socket (exit 1 idle; used by "
-                        "start_qemu.sh before rm -f'ing the socket)")
+                   help="exit 0 when a process holds this instance's "
+                        "agent socket (listener or FIFO; exit 1 idle; "
+                        "used by the launchers before unlinking it)")
     return p
 
 
@@ -650,12 +709,12 @@ def main(argv=None):
         except InstanceError as e:
             print("ERROR: %s" % e, file=sys.stderr)
             return 2
-        # quiet, like --is-live's failure half: the caller (the
-        # start_qemu.sh guard) prints the human message, and an
-        # unreadable /proc/net/unix counts as idle -- a start guard
-        # may only refuse on positive proof
-        return 0 if _sock_busy(paths.agent_sock,
-                               unreadable_busy=False) else 1
+        # quiet, like --is-live's failure half: the callers (the
+        # start/stop guards in the launchers) print the human message,
+        # and an unreadable /proc counts as idle -- a guard may only
+        # refuse on positive proof
+        return 0 if path_held(paths.agent_sock,
+                              unreadable_busy=False) else 1
 
     if args.register:
         try:

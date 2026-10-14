@@ -98,6 +98,14 @@ if [ "$STOP" = "1" ]; then
   ENTRY_JSON=$(python3 "$PATHS_PY" --field registry_path --instance "$INSTANCE")
   if [ ! -f "$ENTRY_JSON" ]; then
     echo "instance '$INSTANCE': no registry entry, nothing to stop"
+    # the start guard refuses on a live holder with no entry (lost
+    # registration, hand-started VM): report the socket's true state
+    # instead of a clean no-op while it is actually taken
+    if python3 "$PATHS_PY" --sock-busy --instance "$INSTANCE"; then
+      echo "  note: something still holds the agent socket -- an unregistered"
+      echo "  VM (hand-started?); stop it outside this launcher, or start"
+      echo "  under another id (--instance)"
+    fi
     python3 "$PATHS_PY" --list || true
     exit 0
   fi
@@ -134,7 +142,15 @@ sys.exit(0)" "$PID" "$(dirname "$PATHS_PY")"; then
   fi
   python3 "$PATHS_PY" --unregister --instance "$INSTANCE"
   eval "$(python3 "$PATHS_PY" --env --instance "$INSTANCE")"
-  rm -f "$JNODE_AGENT_SOCK" "$JNODE_MONITOR_SOCK" "$JNODE_KDB_SOCK"
+  # a stale entry -- the normal case on this recovery path -- may share
+  # the socket with a VM this launcher never started: never unlink a
+  # path another process holds (a leftover file with no holder is
+  # removed as before, and a new start tolerates it either way)
+  if python3 "$PATHS_PY" --sock-busy --instance "$INSTANCE"; then
+    echo "note: agent socket still held by another process; left in place"
+  else
+    rm -f "$JNODE_AGENT_SOCK" "$JNODE_MONITOR_SOCK" "$JNODE_KDB_SOCK"
+  fi
   # tear the muxes down too, or they idle forever with a dead
   # socket (serial mux + KDB mux)
   python3 "$SERIAL_SCRIPTS/serial_cmd.py" --stop --instance "$INSTANCE" >/dev/null 2>&1 || true
@@ -164,8 +180,16 @@ fi
 # entry was lost) reads dead, and the rm -f further down would unlink
 # its live agent socket while the new QEMU re-binds the path -- the id
 # collision this script exists to prevent. Autodetect already gets this
-# protection from alloc_instance; only a positively detected listener
+# protection from alloc_instance; only a positively detected holder
 # refuses here, and a leftover socket FILE (hard-killed VM) does not.
+# A VM that is still shutting down holds the socket for a moment, so
+# poll briefly before refusing (manual kill + immediate restart).
+for _ in $(seq 1 4); do
+  if ! python3 "$PATHS_PY" --sock-busy --instance "$INSTANCE"; then
+    break
+  fi
+  sleep 0.5
+done
 if python3 "$PATHS_PY" --sock-busy --instance "$INSTANCE"; then
   echo "ERROR: instance '$INSTANCE': the agent socket is already in use"
   echo "       stop the VM holding it (jnode_paths.py --list) or pick another id (--instance)"
@@ -245,10 +269,19 @@ if [ "$ENTRY" != "0" ]; then
   done
   if [ ! -S "$JNODE_MONITOR_SOCK" ]; then
     echo "WARNING: monitor socket not ready, cannot select GRUB entry #${ENTRY}; boots default"
-  elif ! python3 "$SCRIPT_DIR/grub_pick.py" --monitor "$JNODE_MONITOR_SOCK" \
-          --entry "$ENTRY" --timeout "$GRUB_TIMEOUT" --boot-log "$JNODE_BOOT_LOG"; then
-    echo "WARNING: GRUB entry #${ENTRY} selection failed; VM may boot the default entry"
-    echo "         inspect: pnmtopng $JNODE_MONITOR_SOCK.last.ppm | display -"
+  else
+    PICK_RC=0
+    python3 "$SCRIPT_DIR/grub_pick.py" --monitor "$JNODE_MONITOR_SOCK" \
+        --entry "$ENTRY" --timeout "$GRUB_TIMEOUT" \
+        --boot-log "$JNODE_BOOT_LOG" || PICK_RC=$?
+    if [ "$PICK_RC" = "4" ]; then
+      # exit 4: wait_band bailed on a moving boot log before the first
+      # screendump -- no .last.ppm exists to inspect
+      echo "NOTE: GRUB menu already gone (timeout-0 ISO?); entry #${ENTRY} not sent -- boots entry 0"
+    elif [ "$PICK_RC" != "0" ]; then
+      echo "WARNING: GRUB entry #${ENTRY} selection failed; VM may boot the default entry"
+      echo "         inspect: pnmtopng $JNODE_MONITOR_SOCK.last.ppm | display -"
+    fi
   fi
 fi
 

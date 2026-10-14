@@ -480,6 +480,174 @@ def test_qemu_start_dry_run_tolerates_leftover_socket(world):
     assert "instance:  tleft" in r.stdout
 
 
+def test_qemu_stop_leaves_held_socket(world):
+    """--stop is the stale-entry recovery path: it must never unlink
+    the agent socket of a VM this launcher never started."""
+    state, _ = world
+    script = os.path.join(HERE, "..", "..", "jnode-qemu", "scripts",
+                          "start_qemu.sh")
+    env = _env(state)
+    r = subprocess.run([sys.executable, PATHS_PY, "--mkdir",
+                        "--instance", "tstop1"],
+                       capture_output=True, text=True, timeout=30, env=env)
+    assert r.returncode == 0, r.stdout + r.stderr
+    r = subprocess.run([sys.executable, PATHS_PY, "--field", "agent_sock",
+                        "--instance", "tstop1"],
+                       capture_output=True, text=True, timeout=30, env=env)
+    sock_path = r.stdout.strip()
+    listener = subprocess.Popen(
+        [sys.executable, "-c",
+         "import socket,sys,time\n"
+         "s = socket.socket(socket.AF_UNIX)\n"
+         "s.bind(sys.argv[1]); s.listen(1)\n"
+         "time.sleep(120)", sock_path])
+    try:
+        deadline = time.time() + 5
+        while time.time() < deadline and not os.path.exists(sock_path):
+            time.sleep(0.1)
+        assert os.path.exists(sock_path), "listener never bound"
+        # stale entry: registered with a pid that is dead, nothing to
+        # kill -- the normal case for the recovery path
+        dead = subprocess.Popen([sys.executable, "-c", "pass"])
+        dead.wait()
+        r = subprocess.run(
+            [sys.executable, PATHS_PY, "--register", "--instance",
+             "tstop1", "--hypervisor", "qemu", "--vm-name", "JNode",
+             "--vm-pid", str(dead.pid), "--state", "ready"],
+            capture_output=True, text=True, timeout=30, env=env)
+        assert r.returncode == 0, r.stdout + r.stderr
+        r = subprocess.run(["bash", script, "--stop", "--instance",
+                            "tstop1"],
+                           capture_output=True, text=True, timeout=60,
+                           env=env)
+        assert r.returncode == 0, r.stdout + r.stderr
+        assert "left in place" in r.stdout
+        assert listener.poll() is None, "foreign holder was disturbed"
+        assert os.path.exists(sock_path), "held socket was unlinked"
+    finally:
+        listener.kill()
+        listener.wait()
+
+
+def test_qemu_stop_no_entry_reports_held_socket(world):
+    """The state the start guard can produce (live holder, no registry
+    entry) must be reported by --stop, not reported as a clean no-op
+    while the socket is actually taken."""
+    state, _ = world
+    script = os.path.join(HERE, "..", "..", "jnode-qemu", "scripts",
+                          "start_qemu.sh")
+    env = _env(state)
+    r = subprocess.run([sys.executable, PATHS_PY, "--mkdir",
+                        "--instance", "tstop2"],
+                       capture_output=True, text=True, timeout=30, env=env)
+    assert r.returncode == 0, r.stdout + r.stderr
+    r = subprocess.run([sys.executable, PATHS_PY, "--field", "agent_sock",
+                        "--instance", "tstop2"],
+                       capture_output=True, text=True, timeout=30, env=env)
+    sock_path = r.stdout.strip()
+    listener = subprocess.Popen(
+        [sys.executable, "-c",
+         "import socket,sys,time\n"
+         "s = socket.socket(socket.AF_UNIX)\n"
+         "s.bind(sys.argv[1]); s.listen(1)\n"
+         "time.sleep(120)", sock_path])
+    try:
+        deadline = time.time() + 5
+        while time.time() < deadline and not os.path.exists(sock_path):
+            time.sleep(0.1)
+        assert os.path.exists(sock_path), "listener never bound"
+        r = subprocess.run(["bash", script, "--stop", "--instance",
+                            "tstop2"],
+                           capture_output=True, text=True, timeout=60,
+                           env=env)
+        assert r.returncode == 0, r.stdout + r.stderr  # no-op semantics
+        assert "holds the agent socket" in r.stdout
+        assert listener.poll() is None
+        assert os.path.exists(sock_path)
+    finally:
+        listener.kill()
+        listener.wait()
+
+
+_VBOX_START_DRIVER = """\
+import os, sys, types
+sys.path.insert(0, sys.argv[1])
+import jnode_vbox as jv
+# no VirtualBox in tests: a non-running VM state, and startvm is never
+# reached without passing the pipe guard under test
+jv.info = lambda name: {"VMState": "poweroff"}
+jv.vbox = lambda *a, **k: None
+a = types.SimpleNamespace(name=sys.argv[3], instance=sys.argv[2],
+                          entry=0, wait_ready=0)
+rc = jv.cmd_start(a)
+sys.exit(rc if rc else 0)
+"""
+
+
+def _vbox_cmd_start(state, instance, name="JNode-test"):
+    vbox_scripts = os.path.abspath(
+        os.path.join(HERE, "..", "..", "jnode-vbox", "scripts"))
+    return subprocess.run(
+        [sys.executable, "-c", _VBOX_START_DRIVER, vbox_scripts,
+         instance, name],
+        capture_output=True, text=True, timeout=60, env=_env(state))
+
+
+def test_vbox_start_refuses_held_agent_socket(world):
+    """cmd_start's stale-pipe cleanup must not unlink a path another
+    process holds (the hand-started-VM-on-legacy-default-paths
+    collision, reachable from the documented quick start)."""
+    state, _ = world
+    env = _env(state)
+    r = subprocess.run([sys.executable, PATHS_PY, "--mkdir",
+                        "--instance", "tvx1"],
+                       capture_output=True, text=True, timeout=30, env=env)
+    assert r.returncode == 0, r.stdout + r.stderr
+    r = subprocess.run([sys.executable, PATHS_PY, "--field", "agent_sock",
+                        "--instance", "tvx1"],
+                       capture_output=True, text=True, timeout=30, env=env)
+    sock_path = r.stdout.strip()
+    listener = subprocess.Popen(
+        [sys.executable, "-c",
+         "import socket,sys,time\n"
+         "s = socket.socket(socket.AF_UNIX)\n"
+         "s.bind(sys.argv[1]); s.listen(1)\n"
+         "time.sleep(120)", sock_path])
+    try:
+        deadline = time.time() + 5
+        while time.time() < deadline and not os.path.exists(sock_path):
+            time.sleep(0.1)
+        assert os.path.exists(sock_path), "listener never bound"
+        r = _vbox_cmd_start(state, "tvx1")
+        assert r.returncode == 1, r.stdout + r.stderr
+        assert "held by another process" in r.stdout + r.stderr
+        assert listener.poll() is None, "holder was disturbed"
+        assert os.path.exists(sock_path), "held path was unlinked"
+    finally:
+        listener.kill()
+        listener.wait()
+
+
+def test_vbox_start_removes_stale_pipe(world):
+    """A stale pipe FILE with no holder is still cleaned up -- the
+    guard must not block the normal path it exists to serve."""
+    state, _ = world
+    env = _env(state)
+    r = subprocess.run([sys.executable, PATHS_PY, "--mkdir",
+                        "--instance", "tvx2"],
+                       capture_output=True, text=True, timeout=30, env=env)
+    assert r.returncode == 0, r.stdout + r.stderr
+    r = subprocess.run([sys.executable, PATHS_PY, "--field", "agent_sock",
+                        "--instance", "tvx2"],
+                       capture_output=True, text=True, timeout=30, env=env)
+    sock_path = r.stdout.strip()
+    os.mkfifo(sock_path)  # leftover pipe, nobody holds it
+    assert os.path.exists(sock_path)
+    r = _vbox_cmd_start(state, "tvx2")
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert not os.path.exists(sock_path), "stale pipe not cleaned"
+
+
 def test_grub_pick_reports_menu_gone_not_timeout(tmp_path):
     """wait_band also bails the moment the boot log moves: on a
     timeout-0 ISO the 25s search never runs -- the failure reason must
