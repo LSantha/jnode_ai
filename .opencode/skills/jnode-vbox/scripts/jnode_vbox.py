@@ -4,7 +4,9 @@ VirtualBox lifecycle for JNode VMs (jnode-vbox skill).
 
 Wires both UARTs into the jnode-serial instance model (jnode_paths.py):
 
-  UART1 0x3F8 -> server pipe at <kdb_sock>     (KDB)
+  UART1 0x3F8 -> file at <boot_log>       (default: kernel/boot serial log;
+                 always captured, never wedges on an unread pipe)
+               -> server pipe at <kdb_sock>  (only with --kdb: KDB)
   UART2 0x2F8 -> server pipe at <agent_sock>   (agent console)
 
 so the shared serial_cmd.py / kdb_mux.py / jnode_kdb_cmd.py work
@@ -13,12 +15,22 @@ side as long as each uses its own --instance id (one VM per instance:
 the pipes are owned by whichever VM was configured last).
 
 Usage:
-    jnode_vbox.py config  --name VM [--iso FILE] [--instance ID] [--memory MB]
+    jnode_vbox.py config  --name VM [--iso FILE] [--instance ID] [--memory MB] [--kdb]
     jnode_vbox.py start   --name VM [--instance ID] [--entry N] [--wait-ready SECS]
     jnode_vbox.py stop    --name VM [--instance ID]
     jnode_vbox.py status  --name VM [--instance ID]
 
 config is idempotent and only touches VM settings (never disks).
+By default UART1 writes the guest serial/boot log to <boot_log> (a raw
+file VBox always reads into, so the guest never wedges on an unread
+pipe and the log is captured from the first byte); pass --kdb to switch
+UART1 to a server pipe at <kdb_sock> instead (the KDB tools need an
+interactive duplex endpoint -- VBox cannot tee a file and a pipe on one
+UART the way QEMU's chardev logfile= does).  To enable KDB on a
+running, file-logging VM without a reconfigure:
+
+    VBoxManage controlvm <vm> changeuartmode1 server <kdb_sock>
+
 start boots headless; --entry N picks a GRUB 0.97 menu entry through the
 verified vbox_grub_pick.py (scancodes + screenshot). stop does
 acpipowerbutton, then poweroff as a fallback.
@@ -127,9 +139,19 @@ def cmd_config(a):
               "--acpi", "on", "--ioapic", "on",
               "--boot1", "dvd", "--boot2", "disk",
               "--boot3", "none", "--boot4", "none",
-              "--uart1", "0x3F8", "4", "--uartmode1", "server", paths.kdb_sock,
-              "--uart2", "0x2F8", "3", "--uartmode2", "server",
-              paths.agent_sock]
+              "--uart1", "0x3F8", "4"]
+    if a.kdb:
+        # interactive duplex pipe: required for kdb_mux / jnode_kdb_cmd;
+        # the mux itself is the permanent reader (logs everything it
+        # reads), so the guest is not left writing into a void here
+        common += ["--uartmode1", "server", paths.kdb_sock]
+    else:
+        # default: raw file capture -- VBox itself is the permanent
+        # reader, so the guest never wedges on an unread pipe and the
+        # boot log is complete from the first byte; no KDB on this UART
+        common += ["--uartmode1", "file", paths.boot_log]
+    common += ["--uart2", "0x2F8", "3", "--uartmode2", "server",
+               paths.agent_sock]
     vbox(*common)
     if a.iso:
         d = info(a.name)
@@ -155,8 +177,12 @@ def cmd_config(a):
     jp.makedirs_for(paths)
     register(paths, a.name, "configured")
     print("instance %s -> %s" % (paths.id, a.name))
-    print("  kdb pipe:   %s (UART1 0x3F8)" % paths.kdb_sock)
-    print("  agent pipe: %s (UART2 0x2F8)" % paths.agent_sock)
+    if a.kdb:
+        print("  uart1 kdb pipe: %s (UART1 0x3F8, KDB mode)" % paths.kdb_sock)
+    else:
+        print("  uart1 boot log: %s (UART1 0x3F8, file mode -- pass "
+              "--kdb to enable KDB)" % paths.boot_log)
+    print("  agent pipe:     %s (UART2 0x2F8)" % paths.agent_sock)
     return 0
 
 
@@ -173,6 +199,14 @@ def cmd_start(a):
         print("ERROR: VM %s does not exist (run config first)" % a.name)
         return 1
     jp.makedirs_for(paths)
+    # truncate the boot log for this run (mirrors start_qemu.sh's
+    # `rm -f $JNODE_BOOT_LOG`); unlinking a log file is safe even if
+    # something has it open -- unlike the socket paths below, a reader
+    # holding the old inode is not a live endpoint
+    try:
+        os.remove(paths.boot_log)
+    except OSError:
+        pass
     # stale pipe files make VirtualBox refuse to open the UART -- but
     # never unlink a path another process holds: a hand-started VM on
     # the legacy default paths binds the same files, and the registry
@@ -287,8 +321,11 @@ def cmd_status(a):
     if entry and entry.get("vm") and entry["vm"] != a.name:
         print("note:      instance '%s' is bound to VM '%s'"
               % (paths.id, entry["vm"]))
-    print("kdb pipe:  %s (%s)" % (paths.kdb_sock, d.get("uartmode1")))
-    print("agent pipe:%s (%s)" % (paths.agent_sock, d.get("uartmode2")))
+    if d.get("uartmode1") == "file":
+        print("uart1 log:  %s (file)" % paths.boot_log)
+    else:
+        print("uart1 kdb:  %s (%s)" % (paths.kdb_sock, d.get("uartmode1")))
+    print("agent pipe: %s (%s)" % (paths.agent_sock, d.get("uartmode2")))
     if entry:
         print("registry:  hypervisor=%s state=%s"
               % (entry.get("hypervisor"), entry.get("state")))
@@ -307,6 +344,9 @@ def main():
         if name == "config":
             p.add_argument("--iso", default=None)
             p.add_argument("--memory", type=int, default=2048)
+            p.add_argument("--kdb", action="store_true",
+                           help="wire UART1 to a KDB server pipe "
+                                "(default: file boot log)")
         if name == "start":
             p.add_argument("--entry", type=int, default=0,
                            choices=range(6),

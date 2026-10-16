@@ -87,7 +87,9 @@ Batch output is captured per command; the batch status line
 
 ## Boot log and readiness
 
-Launchers wire UART1 to a per-instance boot log. JNode prints
+Launchers wire UART1 to a per-instance boot log (QEMU: `-serial file:`
+simple mode or a `logfile=` chardev; VirtualBox: `--uartmode1 file`, the
+default -- KDB needs `--kdb`/`changeuartmode1` there). JNode prints
 `Serial console available on serial1 at 115200 baud` when the agent
 console is up ("serial1" is the JNode device name - it may be COM1 or COM2
 depending on how the hypervisor numbered the ports). Readiness =
@@ -95,7 +97,10 @@ that marker in the boot log AND a successful `serial_cmd.py --wait`.
 
 ## KDB over serial
 
-UART1 doubles as the kernel debugger when the ISO boots with `kdb`:
+UART1 doubles as the kernel debugger when the ISO boots with `kdb`
+(QEMU full mode; on VirtualBox pass `--kdb` to `jnode_vbox.py config`,
+or flip a running file-mode VM with
+`VBoxManage controlvm <vm> changeuartmode1 server <kdb_sock>`):
 
 ```sh
 python3 scripts/jnode_kdb_cmd.py --instance qemu-kdb p   # ping
@@ -114,8 +119,10 @@ Responses are compact XML (`<ping/>`, `<currentthread .../>`).
 `kdb_mux.py` holds the socket and forwards one-char commands from
 `<kdb_dir>/cmd.fifo`, logging replies to `<kdb_dir>/resp.log`.
 
-UART1 also carries the full kernel boot log; connecting early and reading
-is a valid way to collect boot diagnostics.
+When UART1 is a pipe/socket (QEMU full, VBox `--kdb`), it also carries
+the full kernel boot log; connecting early and reading is a valid way
+to collect boot diagnostics. When UART1 is a file (QEMU simple, VBox
+default), read the boot log file instead.
 
 ## CI (GitHub Actions) pattern
 

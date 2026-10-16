@@ -648,6 +648,72 @@ def test_vbox_start_removes_stale_pipe(world):
     assert not os.path.exists(sock_path), "stale pipe not cleaned"
 
 
+_VBOX_CONFIG_DRIVER = """\
+import os, sys, types
+sys.path.insert(0, sys.argv[1])
+import jnode_vbox as jv
+calls = []
+jv.info = lambda name: {}
+jv.vbox = lambda *a, **k: calls.append(a)
+a = types.SimpleNamespace(name="JNode-cfg", instance=sys.argv[2],
+                          iso=None, memory=2048,
+                          kdb=(sys.argv[3] == "kdb"))
+rc = jv.cmd_config(a)
+for c in calls:
+    print("CALL " + " ".join(str(x) for x in c))
+sys.exit(rc if rc else 0)
+"""
+
+
+def _vbox_cmd_config(state, instance, kdb=False):
+    vbox_scripts = os.path.abspath(
+        os.path.join(HERE, "..", "..", "jnode-vbox", "scripts"))
+    return subprocess.run(
+        [sys.executable, "-c", _VBOX_CONFIG_DRIVER, vbox_scripts,
+         instance, "kdb" if kdb else "file"],
+        capture_output=True, text=True, timeout=60, env=_env(state))
+
+
+def _field(state, name, instance):
+    r = subprocess.run([sys.executable, PATHS_PY, "--field", name,
+                        "--instance", instance],
+                       capture_output=True, text=True, timeout=30,
+                       env=_env(state))
+    assert r.returncode == 0, r.stdout + r.stderr
+    return r.stdout.strip()
+
+
+def test_vbox_config_uart1_default_is_file_log(world):
+    """UART1 must default to a raw file boot log, not a KDB server
+    pipe: an unread pipe wedges the guest (VBox has no reader until a
+    client attaches, unlike QEMU's logfile= tee) and the log is the
+    always-on use while KDB is the rare one."""
+    state, _ = world
+    r = _vbox_cmd_config(state, "tvc1")
+    assert r.returncode == 0, r.stdout + r.stderr
+    modify = [ln for ln in r.stdout.splitlines() if ln.startswith("CALL modifyvm")]
+    assert len(modify) == 1, r.stdout + r.stderr
+    boot_log = _field(state, "boot_log", "tvc1")
+    kdb_sock = _field(state, "kdb_sock", "tvc1")
+    args = modify[0].split()
+    assert args[args.index("--uartmode1") + 1] == "file"
+    assert args[args.index("--uartmode1") + 2] == boot_log
+    assert kdb_sock not in args, "default config wired UART1 to the KDB pipe"
+
+
+def test_vbox_config_kdb_flag_selects_pipe(world):
+    """--kdb keeps the opt-in pipe layout: server at kdb_sock."""
+    state, _ = world
+    r = _vbox_cmd_config(state, "tvc2", kdb=True)
+    assert r.returncode == 0, r.stdout + r.stderr
+    modify = [ln for ln in r.stdout.splitlines() if ln.startswith("CALL modifyvm")]
+    assert len(modify) == 1, r.stdout + r.stderr
+    kdb_sock = _field(state, "kdb_sock", "tvc2")
+    args = modify[0].split()
+    assert args[args.index("--uartmode1") + 1] == "server"
+    assert args[args.index("--uartmode1") + 2] == kdb_sock
+
+
 def test_grub_pick_reports_menu_gone_not_timeout(tmp_path):
     """wait_band also bails the moment the boot log moves: on a
     timeout-0 ISO the 25s search never runs -- the failure reason must
