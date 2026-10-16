@@ -20,6 +20,8 @@
  
 package org.jnode.net.syntax;
 
+import java.util.StringTokenizer;
+
 import org.jnode.net.ipv4.IPv4Address;
 import org.jnode.net.ipv4.IPv4AddressAndMask;
 import org.jnode.shell.CommandLine.Token;
@@ -32,8 +34,6 @@ import org.jnode.shell.syntax.CommandSyntaxException;
  * <code>a.b.c.d/netmask</code>. The string "default" is a synonym for
  * "0.0.0.0". When no prefix length or netmask is given, the subnetmask of the
  * returned value is null, meaning "use the classful default".
- *
- * @author crawley@jnode.org
  */
 public class IPv4NetworkArgument extends Argument<IPv4AddressAndMask> {
 
@@ -62,20 +62,48 @@ public class IPv4NetworkArgument extends Argument<IPv4AddressAndMask> {
     }
 
     private IPv4Address parseAddress(String text) throws CommandSyntaxException {
+        final StringTokenizer tok = new StringTokenizer(text, ".");
+        if (tok.countTokens() != 4) {
+            throw new CommandSyntaxException("wrong number of components for an IPv4 address");
+        }
         try {
-            return new IPv4Address(text);
-        } catch (IllegalArgumentException ex) {
-            throw new CommandSyntaxException("invalid IPv4 address '" + text + "'");
+            final byte b1 = parseOctet(tok.nextToken());
+            final byte b2 = parseOctet(tok.nextToken());
+            final byte b3 = parseOctet(tok.nextToken());
+            final byte b4 = parseOctet(tok.nextToken());
+            return new IPv4Address(new byte[] {b1, b2, b3, b4}, 0);
+        } catch (NumberFormatException ex) {
+            throw new CommandSyntaxException("invalid component in IPv4 address '" + text + "'");
         }
     }
 
-    private IPv4Address parseMask(String text) throws CommandSyntaxException {
-        try {
-            return IPv4Address.fromPrefixLength(Integer.parseInt(text));
-        } catch (NumberFormatException ex) {
-            return parseAddress(text);
-        } catch (IllegalArgumentException ex) {
-            throw new CommandSyntaxException("invalid IPv4 subnetmask '" + text + "'");
+    private byte parseOctet(String str) {
+        final int v = Integer.parseInt(str);
+        if ((v >= 0) && (v < 256)) {
+            return (byte) v;
         }
+        throw new NumberFormatException(str);
+    }
+
+    private IPv4Address parseMask(String text) throws CommandSyntaxException {
+        final int prefixLength;
+        try {
+            prefixLength = Integer.parseInt(text);
+        } catch (NumberFormatException ex) {
+            return parseDottedMask(text);
+        }
+        try {
+            return IPv4Address.fromPrefixLength(prefixLength);
+        } catch (IllegalArgumentException ex) {
+            throw new CommandSyntaxException("invalid IPv4 prefix length '" + text + "'");
+        }
+    }
+
+    private IPv4Address parseDottedMask(String text) throws CommandSyntaxException {
+        final IPv4Address mask = parseAddress(text);
+        if (!IPv4Address.fromPrefixLength(mask.prefixLength()).equals(mask)) {
+            throw new CommandSyntaxException("non-contiguous IPv4 subnetmask '" + text + "'");
+        }
+        return mask;
     }
 }
