@@ -28,9 +28,13 @@ import org.jnode.driver.Device;
 import org.jnode.driver.DeviceUtils;
 import org.jnode.driver.net.NetDeviceAPI;
 import org.jnode.driver.net.NetworkException;
+import org.jnode.net.NoSuchProtocolException;
 import org.jnode.net.ethernet.EthernetConstants;
 import org.jnode.net.ipv4.IPv4Address;
 import org.jnode.net.ipv4.IPv4ProtocolAddressInfo;
+import org.jnode.net.ipv4.IPv4Route;
+import org.jnode.net.ipv4.layer.IPv4NetworkLayer;
+import org.jnode.net.util.NetUtils;
 
 /**
  * Utility class for implementing ifconfig.
@@ -66,6 +70,30 @@ final class Ifconfig {
         } else {
             addrInfo.add(address, netmask);
             addrInfo.setDefaultAddress(address, netmask);
+        }
+        addConnectedRoute(device, address, netmask);
+    }
+
+    /**
+     * Adds a connected (on-link) route for the subnet of the configured address.
+     *
+     * @param device
+     * @param address
+     * @param netmask
+     */
+    private static void addConnectedRoute(Device device, IPv4Address address, IPv4Address netmask) {
+        final IPv4Address subnet = address.and(netmask);
+        if (subnet.isAny()) {
+            return;
+        }
+        try {
+            final IPv4NetworkLayer ipNL =
+                (IPv4NetworkLayer) NetUtils.getNLM().getNetworkLayer(EthernetConstants.ETH_P_IP);
+            ipNL.getRoutingTable().add(new IPv4Route(subnet, netmask, null, device));
+        } catch (NetworkException ex) {
+            // No network layer manager (yet), so there is no routing table to update.
+        } catch (NoSuchProtocolException ex) {
+            // No IPv4 network layer (yet), so there is no routing table to update.
         }
     }
 

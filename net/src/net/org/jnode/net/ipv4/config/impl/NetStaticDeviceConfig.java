@@ -32,7 +32,6 @@ import org.jnode.net.arp.ARPHeader;
 import org.jnode.net.arp.ARPOperation;
 import org.jnode.net.ethernet.EthernetConstants;
 import org.jnode.net.ipv4.IPv4Address;
-import org.jnode.net.ipv4.IPv4ProtocolAddressInfo;
 
 /**
  * @author Ewout Prangsma (epr@users.sourceforge.net)
@@ -75,19 +74,7 @@ public class NetStaticDeviceConfig extends NetDeviceConfig {
             throw new NetworkException("Device is not a network device", ex);
         }
 
-        if (netmask == null) {
-            netmask = address.getDefaultSubnetmask();
-        }
-        IPv4ProtocolAddressInfo addrInfo =
-                (IPv4ProtocolAddressInfo) api.getProtocolAddressInfo(EthernetConstants.ETH_P_IP);
-        if (addrInfo == null) {
-            addrInfo = new IPv4ProtocolAddressInfo(address, netmask);
-            api.setProtocolAddressInfo(EthernetConstants.ETH_P_IP, addrInfo);
-        } else {
-            addrInfo.add(address, netmask);
-            addrInfo.setDefaultAddress(address, netmask);
-        }
-
+        Ifconfig.setDefault(device, address, netmask);
         sendGratuitousARP(api, address);
     }
 

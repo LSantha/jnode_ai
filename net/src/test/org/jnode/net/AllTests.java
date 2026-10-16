@@ -23,6 +23,7 @@ package org.jnode.net;
 import org.jnode.driver.net.lance.TxDescriptorRingTest;
 import org.jnode.net.arp.ARPHeaderTest;
 import org.jnode.net.ethernet.EthernetAddressTest;
+import org.jnode.net.ipv4.IPv4AddressTest;
 import org.jnode.net.ipv4.IPv4RoutingTableTest;
 import org.jnode.net.ipv4.icmp.ICMPTypeTest;
 import org.jnode.net.ipv4.tcp.TCPInChannelTest;
@@ -36,6 +37,7 @@ import org.junit.runners.Suite;
     TCPInChannelTest.class, //
     TCPOutChannelTest.class, //
     ICMPTypeTest.class, //
+    IPv4AddressTest.class, //
     IPv4RoutingTableTest.class, //
     ResolverImplTest.class, //
     ARPHeaderTest.class, //
