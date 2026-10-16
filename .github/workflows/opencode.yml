@@ -14,6 +14,8 @@ jobs:
       startsWith(github.event.comment.body, '/oc ')) &&
       !(startsWith(github.event.comment.body, '/oc triage') ||
       contains(github.event.comment.body, ' /oc triage')) &&
+      !(startsWith(github.event.comment.body, '/oc approve') ||
+      contains(github.event.comment.body, ' /oc approve')) &&
       !contains(github.event.comment.body, 'opencode.ai/s/') &&
       (github.event.comment.author_association == 'COLLABORATOR' || 
        github.event.comment.author_association == 'MEMBER' || 

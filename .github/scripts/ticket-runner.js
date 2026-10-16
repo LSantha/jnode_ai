@@ -153,18 +153,30 @@ module.exports = async ({ github, context, core }) => {
   async function handleIssueComment() {
     var comment = context.payload.comment || {};
     var body = (comment.body || "").trim();
-    if (body !== "/run" && !body.startsWith("/run ") && !body.startsWith("/run\n") && !body.startsWith("/run\r")) return;
+    var approveCmd = body.match(/^\/oc\s+approve(?:\s+(--force))?\s*$/i);
+    var isRun = body === "/run" || body.startsWith("/run ") || body.startsWith("/run\n") || body.startsWith("/run\r");
+    if (!isRun && !approveCmd) return;
 
     // Only collaborators/members/owners
     var assoc = comment.author_association || "";
     if (!["COLLABORATOR", "MEMBER", "OWNER"].includes(assoc)) {
-      core.info("Ignoring /run from non-collaborator: " + assoc);
+      core.info("Ignoring issue command from non-collaborator: " + assoc);
       return;
     }
 
     var issue = context.payload.issue;
     if (!issue) return;
     var issueNumber = issue.number;
+
+    // `/oc approve` is the maintainer's stand-in for a native GitHub approval on
+    // a PR they authored. GitHub refuses self-approval, which is the norm on a
+    // single-maintainer repo, so this command is the honest equivalent: it is
+    // PR-only and merges through the same approve-and-merge path as a native
+    // review, so it inherits the CI re-check (and the `--force` override).
+    if (approveCmd) {
+      await handleApproveCommand(issue, approveCmd[1] === "--force");
+      return;
+    }
 
     // Refuse if this is a PR context
     if (issue.pull_request) {
@@ -596,41 +608,7 @@ module.exports = async ({ github, context, core }) => {
     core.info("Ticket runner: human review on PR #" + prNumber + " for issue #" + found.issueNumber + ": " + reviewState);
 
     if (reviewState === "approved") {
-      // A human approval is an instruction to merge, not an override of CI.
-      // Re-check before merging: CI may have gone red since the merge gate last
-      // ran, so this one re-checks before merging. Deferring is cheap and the
-      // Java CI wakeup already re-enters REVIEW on green.
-      if (!(await h.isCIGreen(prNumber))) {
-        state.phase = "REVIEW";
-        state.review_in_progress = false;
-        state.review_pending_ci = true;
-        state.retries = 0;
-        state.history.push({ event: "human_approved_ci_red", timestamp: new Date().toISOString() });
-        await updateIssueState(found.issueNumber, state);
-        await github.rest.issues.createComment({
-          owner, repo, issue_number: prNumber,
-          body: "Human approval recorded, but Java CI is not green yet. Not merging. Will re-check and merge when CI completes."
-        });
-        core.info("Ticket runner: human approved PR #" + prNumber + " but CI is red; deferring merge.");
-        return;
-      }
-      state.phase = "MERGE";
-      state.history.push({ event: "human_approved", timestamp: new Date().toISOString() });
-      try {
-        await h.mergePR(prNumber);
-        state.phase = "DONE";
-        state.history.push({ event: "merged", pr: prNumber, timestamp: new Date().toISOString() });
-        await updateIssueState(found.issueNumber, state);
-        await closeIssueWithLabel(found.issueNumber);
-      } catch (err) {
-        core.error("Failed to merge PR #" + prNumber + ": " + err.message);
-        state.history.push({ event: "merge_failed", error: err.message, timestamp: new Date().toISOString() });
-        await updateIssueState(found.issueNumber, state);
-        await github.rest.issues.createComment({
-          owner, repo, issue_number: prNumber,
-          body: "⚠️ Ticket runner: failed to auto-merge PR #" + prNumber + ": " + err.message
-        });
-      }
+      await approveAndMerge(found.issueNumber, state, prNumber, false);
     } else if (reviewState === "changes_requested") {
       state.turn += 1;
       state.history.push({ event: "human_changes_requested", timestamp: new Date().toISOString() });
@@ -651,6 +629,86 @@ module.exports = async ({ github, context, core }) => {
         await h.triggerTask(prNumber, "/oc fix Address human review feedback.");
       }
     }
+  }
+
+  /**
+   * Merge an approved PR through the safety gate, shared by the native PR review
+   * path and the `/oc approve` command so the two cannot drift. A human approval
+   * (or its `/oc approve` equivalent) is an instruction to merge, not an override
+   * of CI: re-check isCIGreen before merging because CI may have gone red since
+   * the merge gate last ran. Deferring is cheap and the Java CI wakeup re-enters
+   * REVIEW on green. `force` is the deliberate emergency override.
+   */
+  async function approveAndMerge(issueNumber, state, prNumber, force) {
+    if (!force && !(await h.isCIGreen(prNumber))) {
+      state.phase = "REVIEW";
+      state.review_in_progress = false;
+      state.review_pending_ci = true;
+      state.retries = 0;
+      state.history.push({ event: "human_approved_ci_red", timestamp: new Date().toISOString() });
+      await updateIssueState(issueNumber, state);
+      await github.rest.issues.createComment({
+        owner, repo, issue_number: prNumber,
+        body: "Approval recorded, but Java CI is not green yet. Not merging. Will re-check and merge when CI completes."
+      });
+      core.info("Ticket runner: approval on PR #" + prNumber + " but CI is red; deferring merge.");
+      return;
+    }
+    state.phase = "MERGE";
+    state.history.push({
+      event: force ? "human_approved_forced" : "human_approved",
+      timestamp: new Date().toISOString()
+    });
+    try {
+      await h.mergePR(prNumber);
+      state.phase = "DONE";
+      state.history.push({ event: "merged", pr: prNumber, timestamp: new Date().toISOString() });
+      await updateIssueState(issueNumber, state);
+      await closeIssueWithLabel(issueNumber);
+    } catch (err) {
+      core.error("Failed to merge PR #" + prNumber + ": " + err.message);
+      state.history.push({ event: "merge_failed", error: err.message, timestamp: new Date().toISOString() });
+      await updateIssueState(issueNumber, state);
+      await github.rest.issues.createComment({
+        owner, repo, issue_number: prNumber,
+        body: "⚠️ Ticket runner: failed to auto-merge PR #" + prNumber + ": " + err.message
+      });
+    }
+  }
+
+  /**
+   * Handle `/oc approve` posted as a comment on a PR. Unlike the native review
+   * path this arrives through `handleIssueComment`, so it re-derives the ticket
+   * from the PR number and only acts on a HUMAN_REVIEW ticket - the phase that
+   * exists to wait for a human. That keeps the gate meaningful: an approval
+   * cannot short-circuit an in-flight agent review or a DEV run.
+   */
+  async function handleApproveCommand(issue, force) {
+    var prNumber = issue.number;
+    if (!issue.pull_request) {
+      await github.rest.issues.createComment({
+        owner, repo, issue_number: prNumber,
+        body: "⚠️ `/oc approve` is for pull requests. Post it on the PR you want to approve."
+      });
+      return;
+    }
+    core.info("Ticket runner: /oc approve on PR #" + prNumber + (force ? " (force)" : ""));
+    var found = await findIssueByPR(prNumber);
+    if (!found) {
+      await github.rest.issues.createComment({
+        owner, repo, issue_number: prNumber,
+        body: "⚠️ No ticket-runner state references PR #" + prNumber + "; cannot record an approval. Use a native GitHub review instead."
+      });
+      return;
+    }
+    if (found.state.phase !== "HUMAN_REVIEW") {
+      await github.rest.issues.createComment({
+        owner, repo, issue_number: prNumber,
+        body: "⚠️ `/oc approve` only applies while a ticket is in HUMAN_REVIEW; #" + found.issueNumber + " is in " + found.state.phase + "."
+      });
+      return;
+    }
+    await approveAndMerge(found.issueNumber, found.state, prNumber, force);
   }
 
   // ================================================================
