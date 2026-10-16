@@ -12,6 +12,8 @@
 
 'use strict';
 
+var isTriggerComment = require("./report-signals.js").isTriggerComment;
+
 /**
  * Both runners persist their state into an issue body, which GitHub caps at
  * 65536 characters, so history cannot grow without bound. A suppressed CI
@@ -68,7 +70,7 @@ module.exports = function createHelpers({ github, context, core }) {
     for (var i = comments.data.length - 1; i >= 0; i--) {
       var body = comments.data[i].body || "";
       // The review prompt itself quotes both verdicts; never read triggers as verdicts.
-      if (/(^|\s)\/(oc|run|orchestrate)(\s|$)/.test(body)) continue;
+      if (isTriggerComment(body)) continue;
       if (requestChangesRe.test(body)) return "request-changes";
       if (approveRe.test(body)) return "approve";
     }
@@ -233,13 +235,10 @@ module.exports = function createHelpers({ github, context, core }) {
   // Trailer shape produced by .github/hooks/prepare-commit-msg and by the
   // resolver skill's review summary. Bullet and bold markers are tolerated
   // because a reviewer may write the line as a list item or emphasise the key,
-  // which would otherwise hide an otherwise valid attribution.
-  var MODEL_TRAILER_RE = /^[ \t]*(?:[-*+][ \t]*)?\*{0,2}Assisted-by\*{0,2}:[ \t*]*([^\s*]+)/gim;
-
-  /** True when a body is an automation trigger, not a human or agent report. */
-  function isTriggerBody(body) {
-    return /(^|\s)\/(oc|run|orchestrate)(\s|$)/.test(body);
-  }
+  // which would otherwise hide an otherwise valid attribution. The value is
+  // restricted to a model-id charset so arbitrary comment prose can never be
+  // replayed verbatim into a commit message.
+  var MODEL_TRAILER_RE = /^[ \t]*(?:[-*+][ \t]*)?\*{0,2}Assisted-by\*{0,2}:[ \t*]*([A-Za-z0-9._:@/-]+)/gim;
 
   /**
    * Distinct model IDs advertised by `Assisted-by:` trailers on the PR's review
@@ -277,12 +276,12 @@ module.exports = function createHelpers({ github, context, core }) {
     var models = [];
     for (var j = 0; j < bodies.length; j++) {
       var body = bodies[j];
-      if (isTriggerBody(body)) continue;
+      if (isTriggerComment(body)) continue;
       MODEL_TRAILER_RE.lastIndex = 0;
       var m;
       while ((m = MODEL_TRAILER_RE.exec(body)) !== null) {
-        var id = m[1].replace(/^[*_`]+/, "").replace(/[*_`]+$/, "");
-        if (!id || seen[id]) continue;
+        var id = m[1];
+        if (seen[id]) continue;
         seen[id] = true;
         models.push(id);
       }
@@ -299,24 +298,29 @@ module.exports = function createHelpers({ github, context, core }) {
   }
 
   /**
-   * Compose the squash-merge message, reproducing what the repo's
+   * Compose the squash-merge message BODY, reproducing what the repo's
    * `squash_merge_commit_message = COMMIT_MESSAGES` setting would have produced
-   * (first commit subject as the title, every commit's text below it) and adding
-   * the `Reviewed-by:` trailer.
+   * and adding the `Reviewed-by:` trailer.
    *
-   * Passing `commit_message` to the merge API overrides that repo setting, so
-   * the body has to be rebuilt here or it is silently dropped. Returns null
+   * Only a body is produced, and that is what `commit_message` means on the
+   * merge API: it replaces the message body while the subject stays under the
+   * repo's `squash_merge_commit_title = COMMIT_OR_PR_TITLE` setting, which also
+   * appends the ` (#N)` reference. Putting the subject in here too would
+   * duplicate it in the merged commit. The first commit's subject is dropped
+   * because it is the one the title setting consumes; the remaining commits keep
+   * subject and body, matching what COMMIT_MESSAGES concatenates.
+   *
+   * Passing `commit_message` overrides the repo setting, so the body has to be
+   * rebuilt here or the Reviewed-by trailer cannot be added at all. Returns null
    * when there is nothing to attribute, which leaves the merge call untouched.
    */
-  function buildMergeMessage(commitMessages, models, fallbackTitle) {
+  function buildMergeMessage(commitMessages, models) {
     if (!Array.isArray(models) || models.length === 0) return null;
     var parts = [];
-    var title = "";
     var split = (Array.isArray(commitMessages) ? commitMessages : []).map(splitMessage);
     for (var i = 0; i < split.length; i++) {
       var chunk;
       if (i === 0) {
-        title = split[0].subject;
         chunk = split[0].body;
       } else {
         chunk = split[i].subject ? split[i].subject : "";
@@ -324,9 +328,8 @@ module.exports = function createHelpers({ github, context, core }) {
       }
       if (chunk) parts.push(chunk);
     }
-    if (!title) title = fallbackTitle || "Merge pull request";
     parts.push("Reviewed-by: " + models.join(", "));
-    return [title].concat(parts).join("\n\n");
+    return parts.join("\n\n");
   }
 
   /** Return true if the user object represents a bot. */
@@ -356,7 +359,7 @@ module.exports = function createHelpers({ github, context, core }) {
         if (Array.isArray(list)) {
           commitMessage = buildMergeMessage(list.map(function (c) {
             return (c && c.commit && c.commit.message) || "";
-          }), models, pr.data && pr.data.title);
+          }), models);
         } else {
           core.warning("mergePR: listCommits returned no data for PR #" + prNumber +
             "; merge will use the repository default message");
@@ -367,8 +370,10 @@ module.exports = function createHelpers({ github, context, core }) {
         prNumber + ": " + e.message);
       commitMessage = null;
     }
-    // Only override when there is something to add: an unnecessary commit_message
-    // would replace the repository's COMMIT_MESSAGES template for no reason.
+    // commit_message replaces the message BODY only; the subject stays under the
+    // repo's squash_merge_commit_title setting. Only override when there is
+    // something to add: an unnecessary commit_message would replace the
+    // repository's COMMIT_MESSAGES template for no reason.
     if (commitMessage) mergeArgs.commit_message = commitMessage;
     try {
       await github.rest.pulls.merge(mergeArgs);

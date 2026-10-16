@@ -7,7 +7,7 @@ function createCore() {
   return { info: () => {}, warning: () => {}, error: () => {} };
 }
 
-function createGithub({ reviews = [], comments = [], commits = [], prTitle = "#42 - Subject" } = {}) {
+function createGithub({ reviews = [], comments = [], commits = [] } = {}) {
   const calls = { merge: [], listComments: [], listReviews: [], listCommits: [], deleteRef: [] };
   let getCount = 0;
   const github = {
@@ -18,7 +18,7 @@ function createGithub({ reviews = [], comments = [], commits = [], prTitle = "#4
           return {
             data: {
               number: 99,
-              title: prTitle,
+              title: "#42 - Subject",
               head: { ref: "opencode/issue42-fix" },
               merged: getCount > 1
             }
@@ -122,6 +122,16 @@ test("collectReviewerModels survives a failing read and keeps the other source",
   assert.deepStrictEqual(await h.collectReviewerModels(99), ["from-comments"]);
 });
 
+test("collectReviewerModels only accepts a model id, not trailing prose", async () => {
+  // The value reaches a commit message verbatim, so the capture is restricted to
+  // the model-id charset; a sentence after the id is dropped, not truncated into
+  // something that looks like a model.
+  const { h } = helpersFor({
+    comments: [{ body: "Assisted-by: real-model, and here is a long explanation." }]
+  });
+  assert.deepStrictEqual(await h.collectReviewerModels(99), ["real-model"]);
+});
+
 test("collectReviewerModels returns an empty list when nothing advertises a model", async () => {
   const { h } = helpersFor({ reviews: [], comments: [{ body: "LGTM" }] });
   assert.deepStrictEqual(await h.collectReviewerModels(99), []);
@@ -129,19 +139,29 @@ test("collectReviewerModels returns an empty list when nothing advertises a mode
 
 test("buildMergeMessage returns null when there is no model to attribute", async () => {
   const { h } = helpersFor();
-  assert.strictEqual(h.buildMergeMessage([commit("subject")], [], "PR title"), null);
+  assert.strictEqual(h.buildMergeMessage([commit("subject")], []), null);
 });
 
 test("buildMergeMessage reproduces the single-commit squash body and appends the trailer", () => {
   const { h } = helpersFor();
   const msg = h.buildMergeMessage(
     ["#42 - Subject\n\nWhy it changed.\n\nAssisted-by: resolver-a"],
-    ["reviewer-b"],
-    "PR title"
+    ["reviewer-b"]
   );
   assert.strictEqual(
     msg,
-    "#42 - Subject\n\nWhy it changed.\n\nAssisted-by: resolver-a\n\nReviewed-by: reviewer-b"
+    "Why it changed.\n\nAssisted-by: resolver-a\n\nReviewed-by: reviewer-b"
+  );
+});
+
+test("buildMergeMessage never repeats the first commit subject", () => {
+  // commit_message replaces the message body only. The subject stays under the
+  // repo's squash_merge_commit_title setting, so emitting it here would leave
+  // the merged commit with the subject twice.
+  const { h } = helpersFor();
+  assert.strictEqual(
+    h.buildMergeMessage(["#42 - Subject\n\nBody."], ["reviewer-a"]).includes("#42 - Subject"),
+    false
   );
 });
 
@@ -149,21 +169,17 @@ test("buildMergeMessage reproduces a multi-commit squash body", () => {
   const { h } = helpersFor();
   const msg = h.buildMergeMessage(
     ["#42 - Subject\n\nFirst body.", "#42 - Second\n\nSecond body."],
-    ["reviewer-a", "reviewer-b"],
-    "PR title"
+    ["reviewer-a", "reviewer-b"]
   );
   assert.strictEqual(
     msg,
-    "#42 - Subject\n\nFirst body.\n\n#42 - Second\n\nSecond body.\n\nReviewed-by: reviewer-a, reviewer-b"
+    "First body.\n\n#42 - Second\n\nSecond body.\n\nReviewed-by: reviewer-a, reviewer-b"
   );
 });
 
-test("buildMergeMessage falls back to the PR title when there are no commits", () => {
+test("buildMergeMessage is just the trailer when no commit has a body", () => {
   const { h } = helpersFor();
-  assert.strictEqual(
-    h.buildMergeMessage([], ["reviewer-a"], "PR title"),
-    "PR title\n\nReviewed-by: reviewer-a"
-  );
+  assert.strictEqual(h.buildMergeMessage([], ["reviewer-a"]), "Reviewed-by: reviewer-a");
 });
 
 test("mergePR passes the composed commit_message when a reviewer model was advertised", async () => {
@@ -173,10 +189,8 @@ test("mergePR passes the composed commit_message when a reviewer model was adver
   });
   await h.mergePR(99);
   assert.strictEqual(calls.merge.length, 1);
-  assert.strictEqual(
-    calls.merge[0].commit_message,
-    "#42 - Subject\n\nBody.\n\nReviewed-by: reviewer-a"
-  );
+  assert.strictEqual("commit_title" in calls.merge[0], false);
+  assert.strictEqual(calls.merge[0].commit_message, "Body.\n\nReviewed-by: reviewer-a");
 });
 
 test("mergePR omits commit_message when no reviewer model is recorded", async () => {
