@@ -22,6 +22,7 @@ function createMocks(eventName, {
   commentBody = "/run",
   authorAssociation = "COLLABORATOR",
   isPR = false,
+  commentOnPR = false,
   issueNumber = 42,
   issueBody = "Original issue body description",
   issueLabels = [{ name: "kind/bug" }],
@@ -206,10 +207,13 @@ function createMocks(eventName, {
   };
 
   if (eventName === "issue_comment") {
+    // commentOnPR models a comment left on the pull request itself (the
+    // `/oc approve` shape): the event's issue.number is the PR number while the
+    // ticket state still lives on the linked issue.
     context.payload = {
       issue: {
-        number: issueNumber,
-        pull_request: isPR ? {} : undefined
+        number: commentOnPR ? prNumber : issueNumber,
+        pull_request: (isPR || commentOnPR) ? {} : undefined
       },
       comment: {
         body: commentBody,
@@ -697,6 +701,10 @@ test("ticket-runner.js event handling suite", async (t) => {
 
     assert.strictEqual(mocks.calls.createComment.length, 1);
     assert.ok(mocks.calls.createComment[0].body.includes("waiting for human approval on PR #99"));
+    assert.ok(
+      mocks.calls.createComment[0].body.includes("/oc approve"),
+      "the human is told about the command that works on their own PR, not only the disabled UI button"
+    );
   });
 
   await t.test("/run on a REVIEW ticket with red CI does not re-request review", async () => {
@@ -1186,6 +1194,240 @@ test("ticket-runner.js event handling suite", async (t) => {
     assert.strictEqual(state.phase, "FEEDBACK");
     assert.strictEqual(state.turn, 2);
     assert.ok(mocks.calls.createComment.some(c => c.issue_number === 99 && c.body.includes("/oc fix Address human review feedback.")));
+  });
+
+  await t.test("/oc approve on a HUMAN_REVIEW PR merges and closes the issue", async () => {
+    const initialBody = _replaceOrAppendStatus("Task", {
+      phase: "HUMAN_REVIEW",
+      pr: 99,
+      turn: 1,
+      max_turns: 3,
+      retries: 0,
+      started: new Date().toISOString(),
+      history: []
+    }, 42);
+
+    const mocks = createMocks("issue_comment", {
+      commentBody: "/oc approve",
+      commentOnPR: true,
+      issueBody: initialBody
+    });
+
+    await runTicketRunner(mocks);
+
+    const state = _parseState(mocks.getIssueBody());
+    assert.strictEqual(state.phase, "DONE", "the ticket is finished");
+    assert.deepStrictEqual(mocks.calls.mergePR, [99], "the PR is merged");
+    assert.ok(mocks.calls.addLabels.some(l => l.issue_number === 42 && l.labels.includes("agent/done")));
+  });
+
+  await t.test("/oc approve defers the merge while CI is red", async () => {
+    const initialBody = _replaceOrAppendStatus("Task", {
+      phase: "HUMAN_REVIEW",
+      pr: 99,
+      turn: 1,
+      max_turns: 3,
+      retries: 0,
+      started: new Date().toISOString(),
+      history: []
+    }, 42);
+
+    const mocks = createMocks("issue_comment", {
+      commentBody: "/oc approve",
+      commentOnPR: true,
+      issueBody: initialBody
+    });
+    mocks.setCheckRuns(["build", "test", "boot32", "boot64"].map(name => ({
+      name: name, status: "completed", conclusion: name === "boot64" ? "failure" : "success"
+    })));
+
+    await runTicketRunner(mocks);
+
+    const state = _parseState(mocks.getIssueBody());
+    assert.deepStrictEqual(mocks.calls.mergePR, [], "no merge on red CI");
+    assert.strictEqual(state.phase, "REVIEW", "parked back in REVIEW for the CI wakeup");
+    assert.strictEqual(state.review_pending_ci, true);
+    assert.ok(
+      mocks.calls.createComment.some(c => c.issue_number === 99 && c.body.includes("Java CI is not green")),
+      "the comment names CI as the reason"
+    );
+  });
+
+  await t.test("/oc approve --force merges even when CI is red", async () => {
+    const initialBody = _replaceOrAppendStatus("Task", {
+      phase: "HUMAN_REVIEW",
+      pr: 99,
+      turn: 1,
+      max_turns: 3,
+      retries: 0,
+      started: new Date().toISOString(),
+      history: []
+    }, 42);
+
+    const mocks = createMocks("issue_comment", {
+      commentBody: "/oc approve --force",
+      commentOnPR: true,
+      issueBody: initialBody
+    });
+    mocks.setCheckRuns([{ name: "build", status: "completed", conclusion: "failure" }]);
+
+    await runTicketRunner(mocks);
+
+    const state = _parseState(mocks.getIssueBody());
+    assert.strictEqual(state.phase, "DONE");
+    assert.deepStrictEqual(mocks.calls.mergePR, [99], "force bypasses the CI re-check");
+    assert.ok(
+      state.history.some(h => h.event === "human_approved_forced"),
+      "the forced approval is recorded distinctly for audit"
+    );
+  });
+
+  await t.test("/oc approve from a non-collaborator is ignored", async () => {
+    const initialBody = _replaceOrAppendStatus("Task", {
+      phase: "HUMAN_REVIEW",
+      pr: 99,
+      turn: 1,
+      max_turns: 3,
+      retries: 0,
+      started: new Date().toISOString(),
+      history: []
+    }, 42);
+
+    const mocks = createMocks("issue_comment", {
+      commentBody: "/oc approve",
+      commentOnPR: true,
+      authorAssociation: "NONE",
+      issueBody: initialBody
+    });
+
+    await runTicketRunner(mocks);
+
+    const state = _parseState(mocks.getIssueBody());
+    assert.deepStrictEqual(mocks.calls.mergePR, [], "no merge from a non-collaborator");
+    assert.strictEqual(state.phase, "HUMAN_REVIEW", "state untouched");
+  });
+
+  await t.test("/oc approve on a ticket that is not in HUMAN_REVIEW does not merge", async () => {
+    const initialBody = _replaceOrAppendStatus("Task", {
+      phase: "REVIEW",
+      pr: 99,
+      turn: 1,
+      max_turns: 3,
+      retries: 0,
+      started: new Date().toISOString(),
+      history: []
+    }, 42);
+
+    const mocks = createMocks("issue_comment", {
+      commentBody: "/oc approve",
+      commentOnPR: true,
+      issueBody: initialBody
+    });
+
+    await runTicketRunner(mocks);
+
+    const state = _parseState(mocks.getIssueBody());
+    assert.deepStrictEqual(mocks.calls.mergePR, [], "an approval cannot short-circuit an in-flight review");
+    assert.strictEqual(state.phase, "REVIEW");
+    assert.ok(
+      mocks.calls.createComment.some(c => c.issue_number === 99 && c.body.includes("only applies while a ticket is in HUMAN_REVIEW")),
+      "the refusal names the phase requirement"
+    );
+  });
+
+  await t.test("/oc approve on an issue (not a PR) is refused", async () => {
+    const mocks = createMocks("issue_comment", {
+      commentBody: "/oc approve",
+      issueNumber: 42
+    });
+
+    await runTicketRunner(mocks);
+
+    assert.deepStrictEqual(mocks.calls.mergePR, [], "nothing to merge from an issue");
+    assert.ok(
+      mocks.calls.createComment.some(c => c.issue_number === 42 && c.body.includes("is for pull requests")),
+      "the refusal points the human at the PR"
+    );
+  });
+
+  await t.test("/oc approve carrying an agent session link is ignored", async () => {
+    // The agent posts with GH_PAT, so its comments clear the collaborator gate
+    // (OWNER). The session link is the term that tells them apart; opencode.yml
+    // uses the same one. Without this an agent could quote the command this repo
+    // documents and merge its own HUMAN_REVIEW ticket.
+    const initialBody = _replaceOrAppendStatus("Task", {
+      phase: "HUMAN_REVIEW",
+      pr: 99,
+      turn: 1,
+      max_turns: 3,
+      retries: 0,
+      started: new Date().toISOString(),
+      history: []
+    }, 42);
+
+    const mocks = createMocks("issue_comment", {
+      commentBody: "/oc approve\n\n[opencode session](https://opencode.ai/s/abc123)",
+      commentOnPR: true,
+      issueBody: initialBody
+    });
+
+    await runTicketRunner(mocks);
+
+    const state = _parseState(mocks.getIssueBody());
+    assert.deepStrictEqual(mocks.calls.mergePR, [], "no merge from an agent-authored comment");
+    assert.strictEqual(state.phase, "HUMAN_REVIEW", "state untouched");
+  });
+
+  await t.test("an agent-authored /run carrying a session link starts nothing", async () => {
+    const mocks = createMocks("issue_comment", {
+      commentBody: "/run\n\n[opencode session](https://opencode.ai/s/abc123)"
+    });
+
+    await runTicketRunner(mocks);
+
+    assert.strictEqual(mocks.calls.updateIssue.length, 0, "no run started from an agent comment");
+  });
+
+  await t.test("/oc  approve with a double space is not dispatched, so it does nothing", async () => {
+    // The workflow trigger is startsWith('/oc approve'); the handler must agree,
+    // so a body neither one matches is handled by neither. It is an early
+    // return, not a refusal: no merge and no comment at all.
+    const initialBody = _replaceOrAppendStatus("Task", {
+      phase: "HUMAN_REVIEW",
+      pr: 99,
+      turn: 1,
+      max_turns: 3,
+      retries: 0,
+      started: new Date().toISOString(),
+      history: []
+    }, 42);
+
+    const mocks = createMocks("issue_comment", {
+      commentBody: "/oc  approve",
+      commentOnPR: true,
+      issueBody: initialBody
+    });
+
+    await runTicketRunner(mocks);
+
+    assert.deepStrictEqual(mocks.calls.mergePR, [], "no merge");
+    assert.strictEqual(mocks.calls.createComment.length, 0, "no comment: the handler never recognised the command");
+  });
+
+  await t.test("/oc approve with no ticket referencing the PR is refused with the reason", async () => {
+    const mocks = createMocks("issue_comment", {
+      commentBody: "/oc approve",
+      commentOnPR: true,
+      issueBody: "A body with no runner state at all"
+    });
+
+    await runTicketRunner(mocks);
+
+    assert.deepStrictEqual(mocks.calls.mergePR, [], "nothing merges when no ticket references the PR");
+    assert.ok(
+      mocks.calls.createComment.some(c => c.issue_number === 99 && c.body.includes("No ticket-runner ticket references PR #99")),
+      "the refusal states the real reason"
+    );
   });
 
   await t.test("REVIEW retry does not prompt on red CI", async () => {
