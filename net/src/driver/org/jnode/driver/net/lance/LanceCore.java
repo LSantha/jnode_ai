@@ -68,6 +68,7 @@ public class LanceCore extends AbstractDeviceCore implements IRQHandler, LanceCo
     // Note: Valid numbers are 2^x where x is 0..8 (1, 2, 4, 8, 16, .., 512)
     private static final int RX_DESCRIPTOR_LENGTH = 16;
     private static final int TX_DESCRIPTOR_LENGTH = 16;
+    private static final int INIT_POLL_RETRIES = 1000;
 
     /**
      * Device Driver
@@ -214,6 +215,12 @@ public class LanceCore extends AbstractDeviceCore implements IRQHandler, LanceCo
 
         // Initialize the device with the Initialization Block and enable interrupts
         io.setCSR(0, CSR0_INIT | CSR0_IENA);
+
+        for (int i = 0; i < INIT_POLL_RETRIES && (io.getCSR(0) & CSR0_IDON) == 0; i++) {
+        }
+
+        io.setCSR(15, 0);
+        io.setCSR(0, CSR0_STRT | CSR0_IENA);
     }
 
     /**

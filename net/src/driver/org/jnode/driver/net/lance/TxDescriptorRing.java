@@ -59,21 +59,21 @@ public class TxDescriptorRing extends DescriptorRing {
 
     public void transmit(SocketBuffer skbuf) {
         int retries = TX_DESCRIPTOR_RETRIES;
-        while (!txDescriptors[currentDescriptor].isOwnerSelf() && retries-- > 0) {
+        while (retries-- > 0) {
+            int index = currentDescriptor;
+            for (int i = 0; i < length; i++) {
+                final TxDescriptor des = txDescriptors[index];
+                if (des.isOwnerSelf()) {
+                    des.transmit(skbuf);
+                    currentDescriptor = index + 1 == length ? 0 : index + 1;
+                    return;
+                }
+                index = index + 1 == length ? 0 : index + 1;
+            }
             for (int i = 0; i < 100; i++) {
             }
         }
-
-        TxDescriptor des = txDescriptors[currentDescriptor];
-        if (des.isOwnerSelf()) {
-            des.transmit(skbuf);
-            currentDescriptor += 1;
-            if (currentDescriptor == length)
-                currentDescriptor = 0;
-            //log.info("Setup transmit descriptor with data of size " + skbuf.getSize());
-        } else {
-            log.error("Not owner of descriptor index " + currentDescriptor);
-        }
+        log.error("No free transmit descriptor in ring of " + length + " entries");
     }
 
     /*private TxDescriptor getAvailableDescriptor() {
