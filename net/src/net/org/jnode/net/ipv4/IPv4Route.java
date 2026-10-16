@@ -197,6 +197,43 @@ public class IPv4Route implements IPv4Constants {
     }
 
     /**
+     * Two routes are equal if they have the same destination, subnetmask, gateway and device.
+     * The flags and the use count are not part of the route identity.
+     *
+     * @see java.lang.Object#equals(java.lang.Object)
+     */
+    public boolean equals(Object obj) {
+        if (this == obj) {
+            return true;
+        }
+        if (!(obj instanceof IPv4Route)) {
+            return false;
+        }
+        final IPv4Route other = (IPv4Route) obj;
+        if (!destination.equals(other.destination) || !subnetmask.equals(other.subnetmask)) {
+            return false;
+        }
+        if ((gateway == null) != (other.gateway == null)) {
+            return false;
+        }
+        if ((gateway != null) && !gateway.equals(other.gateway)) {
+            return false;
+        }
+        return device == other.device;
+    }
+
+    /**
+     * @see java.lang.Object#hashCode()
+     */
+    public int hashCode() {
+        int hash = destination.hashCode();
+        hash = 31 * hash + subnetmask.hashCode();
+        hash = 31 * hash + ((gateway == null) ? 0 : gateway.hashCode());
+        hash = 31 * hash + System.identityHashCode(device);
+        return hash;
+    }
+
+    /**
      * Convert to a String representation
      * 
      * @see java.lang.Object#toString()

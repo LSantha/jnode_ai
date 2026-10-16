@@ -75,6 +75,20 @@ public interface IPv4ConfigurationService {
         throws NetworkException;
 
     /**
+     * Add a route with an explicit subnetmask.
+     * 
+     * @param target
+     * @param netmask The subnetmask of the target, or null to use the default
+     *            (classful) mask of the target address.
+     * @param gateway
+     * @param device
+     * @param persistent
+     * @throws NetworkException
+     */
+    public void addRoute(IPv4Address target, IPv4Address netmask, IPv4Address gateway,
+            Device device, boolean persistent) throws NetworkException;
+
+    /**
      * Delete a route
      * 
      * @param target
@@ -84,4 +98,17 @@ public interface IPv4ConfigurationService {
      */
     public void deleteRoute(IPv4Address target, IPv4Address gateway, Device device)
         throws NetworkException;
+
+    /**
+     * Delete a route with an explicit subnetmask.
+     * 
+     * @param target
+     * @param netmask The subnetmask of the target, or null to match on the
+     *            destination address only.
+     * @param gateway
+     * @param device
+     * @throws NetworkException
+     */
+    public void deleteRoute(IPv4Address target, IPv4Address netmask, IPv4Address gateway,
+            Device device) throws NetworkException;
 }
