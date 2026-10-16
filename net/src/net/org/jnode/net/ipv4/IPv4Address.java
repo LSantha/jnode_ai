@@ -336,7 +336,10 @@ public class IPv4Address implements ProtocolAddress, Serializable {
 
     /**
      * Gets the length of the network prefix (in bits) that is selected by this
-     * address when it is used as a subnet mask.
+     * address when it is used as a subnet mask. This simply counts the set bits,
+     * so the result is only a meaningful prefix length if this address is a
+     * contiguous mask such as "255.255.255.0". A non-contiguous address such as
+     * "255.255.0.255" is not a valid subnet mask.
      *
      * @return The number of set (1) bits in the first byte, plus the number of
      *         set bits in the following bytes.
