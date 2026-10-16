@@ -153,7 +153,10 @@ module.exports = async ({ github, context, core }) => {
   async function handleIssueComment() {
     var comment = context.payload.comment || {};
     var body = (comment.body || "").trim();
-    var approveCmd = body.match(/^\/oc\s+approve(?:\s+(--force))?\s*$/);
+    // Single literal space after `/oc`, matching the workflow trigger's
+    // startsWith('/oc approve'), so the handler and the dispatcher agree: a
+    // double space is handled by neither rather than by one of them.
+    var approveCmd = body.match(/^\/oc approve(?: (--force))?\s*$/);
     var isRun = body === "/run" || body.startsWith("/run ") || body.startsWith("/run\n") || body.startsWith("/run\r");
     if (!isRun && !approveCmd) return;
 

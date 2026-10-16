@@ -1388,6 +1388,32 @@ test("ticket-runner.js event handling suite", async (t) => {
     assert.strictEqual(mocks.calls.updateIssue.length, 0, "no run started from an agent comment");
   });
 
+  await t.test("/oc  approve with a double space is not dispatched, so it does nothing", async () => {
+    // The workflow trigger is startsWith('/oc approve'); the handler must agree,
+    // so a body neither one matches is handled by neither. It is an early
+    // return, not a refusal: no merge and no comment at all.
+    const initialBody = _replaceOrAppendStatus("Task", {
+      phase: "HUMAN_REVIEW",
+      pr: 99,
+      turn: 1,
+      max_turns: 3,
+      retries: 0,
+      started: new Date().toISOString(),
+      history: []
+    }, 42);
+
+    const mocks = createMocks("issue_comment", {
+      commentBody: "/oc  approve",
+      commentOnPR: true,
+      issueBody: initialBody
+    });
+
+    await runTicketRunner(mocks);
+
+    assert.deepStrictEqual(mocks.calls.mergePR, [], "no merge");
+    assert.strictEqual(mocks.calls.createComment.length, 0, "no comment: the handler never recognised the command");
+  });
+
   await t.test("/oc approve with no ticket referencing the PR is refused with the reason", async () => {
     const mocks = createMocks("issue_comment", {
       commentBody: "/oc approve",
