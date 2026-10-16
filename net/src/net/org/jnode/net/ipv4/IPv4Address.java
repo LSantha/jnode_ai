@@ -335,6 +335,43 @@ public class IPv4Address implements ProtocolAddress, Serializable {
     }
 
     /**
+     * Gets the length of the network prefix (in bits) that is selected by this
+     * address when it is used as a subnet mask.
+     *
+     * @return The number of set (1) bits in the first byte, plus the number of
+     *         set bits in the following bytes.
+     */
+    public int prefixLength() {
+        int result = 0;
+        for (int i = 0; i < length; i++) {
+            int b = address[i] & 0xFF;
+            while (b != 0) {
+                result += (b & 1);
+                b >>>= 1;
+            }
+        }
+        return result;
+    }
+
+    /**
+     * Create a subnetmask from a prefix length.
+     *
+     * @param prefixLength The number of leading bits that must be set, between
+     *        0 and 32.
+     * @throws IllegalArgumentException If the prefix length is out of range.
+     */
+    public static IPv4Address fromPrefixLength(int prefixLength) throws IllegalArgumentException {
+        if ((prefixLength < 0) || (prefixLength > 8 * length)) {
+            throw new IllegalArgumentException("Invalid prefix length " + prefixLength);
+        }
+        final byte[] mask = new byte[length];
+        for (int i = 0; i < prefixLength; i++) {
+            mask[i / 8] |= (byte) (0x80 >>> (i % 8));
+        }
+        return new IPv4Address(mask);
+    }
+
+    /**
      * Does this address matches a given mask?
      * @param mask
      */

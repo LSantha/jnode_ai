@@ -104,8 +104,14 @@ public class DHCPClient extends AbstractDHCPClient {
             throw new NetworkException(ex);
         }
         BOOTPHeader hdr = msg.getHeader();
-        cfg.configureDeviceStatic(device, new IPv4Address(hdr
-                .getYourIPAddress()), null, false);
+        final IPv4Address address = new IPv4Address(hdr.getYourIPAddress());
+        final byte[] maskValue = msg.getOption(DHCPMessage.SUBNET_MASK_OPTION);
+        final IPv4Address netmask =
+            (maskValue != null && maskValue.length >= 4) ? new IPv4Address(maskValue, 0) : null;
+        if (netmask != null) {
+            log.info("Got subnet mask: " + netmask);
+        }
+        cfg.configureDeviceStatic(device, address, netmask, false);
 
         // Add default route via router if provided
         byte[] routerValue = msg.getOption(DHCPMessage.ROUTER_OPTION);

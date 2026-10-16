@@ -22,6 +22,8 @@ package org.jnode.net;
 
 import org.jnode.net.arp.ARPHeaderTest;
 import org.jnode.net.ethernet.EthernetAddressTest;
+import org.jnode.net.ipv4.IPv4AddressTest;
+import org.jnode.net.ipv4.IPv4RoutingTableTest;
 import org.jnode.net.ipv4.icmp.ICMPTypeTest;
 import org.jnode.net.ipv4.tcp.TCPInChannelTest;
 import org.jnode.net.ipv4.tcp.TCPOutChannelTest;
@@ -36,6 +38,8 @@ import org.junit.runners.Suite;
     ICMPTypeTest.class, //
     ResolverImplTest.class, //
     ARPHeaderTest.class, //
-    EthernetAddressTest.class })
+    EthernetAddressTest.class, //
+    IPv4AddressTest.class, //
+    IPv4RoutingTableTest.class })
 public class AllTests {
 }
