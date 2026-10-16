@@ -153,7 +153,7 @@ module.exports = async ({ github, context, core }) => {
   async function handleIssueComment() {
     var comment = context.payload.comment || {};
     var body = (comment.body || "").trim();
-    var approveCmd = body.match(/^\/oc\s+approve(?:\s+(--force))?\s*$/i);
+    var approveCmd = body.match(/^\/oc\s+approve(?:\s+(--force))?\s*$/);
     var isRun = body === "/run" || body.startsWith("/run ") || body.startsWith("/run\n") || body.startsWith("/run\r");
     if (!isRun && !approveCmd) return;
 
@@ -161,6 +161,18 @@ module.exports = async ({ github, context, core }) => {
     var assoc = comment.author_association || "";
     if (!["COLLABORATOR", "MEMBER", "OWNER"].includes(assoc)) {
       core.info("Ignoring issue command from non-collaborator: " + assoc);
+      return;
+    }
+
+    // The collaborator gate above is not an agent guard: the agent posts with
+    // GH_PAT, so its comments arrive as the PAT owner (OWNER) and clear that
+    // check. Every agent comment embeds a session link, and opencode.yml already
+    // ignores those for the same reason. Without this, an agent that parks its
+    // own ticket in HUMAN_REVIEW could quote the `/oc approve` this repo
+    // documents and merge its own PR - the phase gate does not help, because
+    // HUMAN_REVIEW is exactly the phase the command acts on.
+    if (/opencode\.ai\/s\//.test(body)) {
+      core.info("Ticket runner: ignoring agent-authored issue command");
       return;
     }
 
@@ -242,7 +254,7 @@ module.exports = async ({ github, context, core }) => {
         core.info("Ticket runner: #" + issueNumber + " is waiting for human review.");
         await github.rest.issues.createComment({
           owner, repo, issue_number: issueNumber,
-          body: "Ticket runner is currently waiting for human approval on PR #" + state.pr + ". Approve or request changes via the PR Review UI."
+          body: "Ticket runner is currently waiting for human approval on PR #" + state.pr + ". Approve or request changes via the PR Review UI, or post `/oc approve` on the PR (the working path when you authored the PR and GitHub disables self-approval)."
         });
         return;
       }
@@ -697,7 +709,7 @@ module.exports = async ({ github, context, core }) => {
     if (!found) {
       await github.rest.issues.createComment({
         owner, repo, issue_number: prNumber,
-        body: "⚠️ No ticket-runner state references PR #" + prNumber + "; cannot record an approval. Use a native GitHub review instead."
+        body: "⚠️ No ticket-runner ticket references PR #" + prNumber + "; there is nothing to advance. `/oc approve` merges only ticket-runner PRs - link the PR to its issue (Closes #N on an issue tracked with `/run`)."
       });
       return;
     }
@@ -924,7 +936,7 @@ module.exports = async ({ github, context, core }) => {
         await updateIssueState(issueNumber, state);
         await github.rest.issues.createComment({
           owner, repo, issue_number: state.pr,
-          body: "Agent review passed. Awaiting human approval via native GitHub PR Review UI."
+          body: "Agent review passed. Awaiting human approval via native GitHub PR Review UI, or `/oc approve` on the PR."
         });
         core.info("Ticket runner: #" + issueNumber + " -> HUMAN_REVIEW");
       } else {
@@ -961,7 +973,7 @@ module.exports = async ({ github, context, core }) => {
           await updateIssueState(issueNumber, state);
           await github.rest.issues.createComment({
             owner, repo, issue_number: state.pr,
-            body: "Agent review passed but the diff touches a forbidden path (core/src/native/x86, jnode.properties, all/build.xml, or all/conf). This runner will not auto-merge it. Routing to HUMAN_REVIEW - if this must land, merge it yourself via the GitHub PR Review UI."
+            body: "Agent review passed but the diff touches a forbidden path (core/src/native/x86, jnode.properties, all/build.xml, or all/conf). This runner will not auto-merge it. Routing to HUMAN_REVIEW - if this must land, merge it yourself via the GitHub PR Review UI or `/oc approve` on the PR."
           });
           core.info("Ticket runner: #" + issueNumber + " -> HUMAN_REVIEW (forbidden path touched)");
         } else if (!diffSafe) {
@@ -975,7 +987,7 @@ module.exports = async ({ github, context, core }) => {
           await updateIssueState(issueNumber, state);
           await github.rest.issues.createComment({
             owner, repo, issue_number: state.pr,
-            body: "Agent review passed but the diff exceeds the auto-merge safety budget (isDiffSafe). Routing to HUMAN_REVIEW - approve via the GitHub PR Review UI to merge."
+            body: "Agent review passed but the diff exceeds the auto-merge safety budget (isDiffSafe). Routing to HUMAN_REVIEW - approve via the GitHub PR Review UI or `/oc approve` on the PR to merge."
           });
           core.info("Ticket runner: #" + issueNumber + " -> HUMAN_REVIEW (diff over auto-merge budget)");
         } else {

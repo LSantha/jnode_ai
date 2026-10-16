@@ -701,6 +701,10 @@ test("ticket-runner.js event handling suite", async (t) => {
 
     assert.strictEqual(mocks.calls.createComment.length, 1);
     assert.ok(mocks.calls.createComment[0].body.includes("waiting for human approval on PR #99"));
+    assert.ok(
+      mocks.calls.createComment[0].body.includes("/oc approve"),
+      "the human is told about the command that works on their own PR, not only the disabled UI button"
+    );
   });
 
   await t.test("/run on a REVIEW ticket with red CI does not re-request review", async () => {
@@ -1343,6 +1347,60 @@ test("ticket-runner.js event handling suite", async (t) => {
     assert.ok(
       mocks.calls.createComment.some(c => c.issue_number === 42 && c.body.includes("is for pull requests")),
       "the refusal points the human at the PR"
+    );
+  });
+
+  await t.test("/oc approve carrying an agent session link is ignored", async () => {
+    // The agent posts with GH_PAT, so its comments clear the collaborator gate
+    // (OWNER). The session link is the term that tells them apart; opencode.yml
+    // uses the same one. Without this an agent could quote the command this repo
+    // documents and merge its own HUMAN_REVIEW ticket.
+    const initialBody = _replaceOrAppendStatus("Task", {
+      phase: "HUMAN_REVIEW",
+      pr: 99,
+      turn: 1,
+      max_turns: 3,
+      retries: 0,
+      started: new Date().toISOString(),
+      history: []
+    }, 42);
+
+    const mocks = createMocks("issue_comment", {
+      commentBody: "/oc approve\n\n[opencode session](https://opencode.ai/s/abc123)",
+      commentOnPR: true,
+      issueBody: initialBody
+    });
+
+    await runTicketRunner(mocks);
+
+    const state = _parseState(mocks.getIssueBody());
+    assert.deepStrictEqual(mocks.calls.mergePR, [], "no merge from an agent-authored comment");
+    assert.strictEqual(state.phase, "HUMAN_REVIEW", "state untouched");
+  });
+
+  await t.test("an agent-authored /run carrying a session link starts nothing", async () => {
+    const mocks = createMocks("issue_comment", {
+      commentBody: "/run\n\n[opencode session](https://opencode.ai/s/abc123)"
+    });
+
+    await runTicketRunner(mocks);
+
+    assert.strictEqual(mocks.calls.updateIssue.length, 0, "no run started from an agent comment");
+  });
+
+  await t.test("/oc approve with no ticket referencing the PR is refused with the reason", async () => {
+    const mocks = createMocks("issue_comment", {
+      commentBody: "/oc approve",
+      commentOnPR: true,
+      issueBody: "A body with no runner state at all"
+    });
+
+    await runTicketRunner(mocks);
+
+    assert.deepStrictEqual(mocks.calls.mergePR, [], "nothing merges when no ticket references the PR");
+    assert.ok(
+      mocks.calls.createComment.some(c => c.issue_number === 99 && c.body.includes("No ticket-runner ticket references PR #99")),
+      "the refusal states the real reason"
     );
   });
 
