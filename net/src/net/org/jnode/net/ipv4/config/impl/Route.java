@@ -51,7 +51,29 @@ final class Route {
      */
     public static void addRoute(IPv4Address target, IPv4Address gateway, Device device)
         throws NetworkException {
+        addRoute(target, null, gateway, device);
+    }
 
+    /**
+     * Add a route
+     * 
+     * @param target
+     * @param netmask The subnetmask of the target, or null to use the default
+     *            (classful) mask of the target address.
+     * @param gateway
+     * @param device
+     * @throws NetworkException
+     */
+    public static void addRoute(IPv4Address target, IPv4Address netmask, IPv4Address gateway,
+            Device device) throws NetworkException {
+
+        final IPv4Address subnet;
+        if (netmask == null) {
+            netmask = target.getDefaultSubnetmask();
+            subnet = target;
+        } else {
+            subnet = target.and(netmask);
+        }
         if (device == null) {
             // Find the device ourselves
             final DeviceManager dm;
@@ -60,7 +82,7 @@ final class Route {
             } catch (NameNotFoundException ex) {
                 throw new NetworkException("Cannot find DeviceManager", ex);
             }
-            device = findDevice(dm, target, target.getDefaultSubnetmask());
+            device = findDevice(dm, target, netmask);
         }
 
         final IPv4NetworkLayer ipNL;
@@ -70,7 +92,7 @@ final class Route {
             throw new NetworkException("Cannot find IPv4 network layer", ex);
         }
         final IPv4RoutingTable rt = ipNL.getRoutingTable();
-        rt.add(new IPv4Route(target, null, gateway, device));
+        rt.add(new IPv4Route(subnet, netmask, gateway, device));
     }
 
     /**
@@ -83,6 +105,22 @@ final class Route {
      */
     public static void delRoute(IPv4Address target, IPv4Address gateway, Device device)
         throws NetworkException {
+        delRoute(target, null, gateway, device);
+    }
+
+    /**
+     * Delete a route
+     * 
+     * @param target
+     * @param netmask The subnetmask of the target, or null to match on the
+     *            destination address only.
+     * @param gateway
+     * @param device
+     * @throws NetworkException
+     */
+    public static void delRoute(IPv4Address target, IPv4Address netmask, IPv4Address gateway,
+            Device device) throws NetworkException {
+        final IPv4Address subnet = (netmask == null) ? target : target.and(netmask);
         final IPv4NetworkLayer ipNL;
         try {
             ipNL = (IPv4NetworkLayer) NetUtils.getNLM().getNetworkLayer(EthernetConstants.ETH_P_IP);
@@ -92,7 +130,10 @@ final class Route {
         final IPv4RoutingTable rt = ipNL.getRoutingTable();
 
         for (IPv4Route route : rt.entries()) {
-            if (!route.getDestination().equals(target)) {
+            if (!route.getDestination().equals(subnet)) {
+                continue;
+            }
+            if (netmask != null && !route.getSubnetmask().equals(netmask)) {
                 continue;
             }
             if (gateway != null) {
