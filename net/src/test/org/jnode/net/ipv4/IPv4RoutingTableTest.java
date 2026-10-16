@@ -29,6 +29,8 @@ import org.jnode.driver.Device;
 import org.jnode.driver.net.NetDeviceAPI;
 import org.junit.Test;
 
+import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertSame;
 import static org.junit.Assert.fail;
 
@@ -175,5 +177,81 @@ public class IPv4RoutingTableTest {
 
         assertSame(1, rt.getSize());
         assertSame(second, rt.search(new IPv4Address("10.0.3.12")));
+    }
+
+    @Test
+    public void testRemoveByValueRemovesEqualRoute() throws Exception {
+        final Device dev = createDevice("eth-test0");
+        final IPv4RoutingTable rt = new IPv4RoutingTable();
+        rt.add(new IPv4Route(new IPv4Address("10.0.3.0"), ON_LINK_MASK, dev));
+
+        rt.remove(new IPv4Route(new IPv4Address("10.0.3.0"), ON_LINK_MASK, dev));
+
+        assertSame(0, rt.getSize());
+    }
+
+    @Test
+    public void testRemoveByValueIgnoresRouteWithOtherMask() throws Exception {
+        final Device dev = createDevice("eth-test0");
+        final IPv4RoutingTable rt = new IPv4RoutingTable();
+        rt.add(new IPv4Route(new IPv4Address("10.0.3.0"), ON_LINK_MASK, dev));
+
+        rt.remove(new IPv4Route(new IPv4Address("10.0.3.0"), SUPER_MASK, dev));
+
+        assertSame(1, rt.getSize());
+    }
+
+    @Test
+    public void testRemoveByValueIgnoresRouteOfOtherDevice() throws Exception {
+        final Device dev0 = createDevice("eth-test0");
+        final Device dev1 = createDevice("eth-test1");
+        final IPv4RoutingTable rt = new IPv4RoutingTable();
+        rt.add(new IPv4Route(new IPv4Address("10.0.3.0"), ON_LINK_MASK, dev0));
+
+        rt.remove(new IPv4Route(new IPv4Address("10.0.3.0"), ON_LINK_MASK, dev1));
+
+        assertSame(1, rt.getSize());
+    }
+
+    @Test
+    public void testReAddressLeavesSingleRoutePerDevice() throws Exception {
+        final Device dev = createDevice("eth-test0");
+        final IPv4RoutingTable rt = new IPv4RoutingTable();
+        rt.add(new IPv4Route(new IPv4Address("10.0.2.0"), ON_LINK_MASK, dev));
+        rt.add(new IPv4Route(new IPv4Address("10.0.3.0"), ON_LINK_MASK, dev));
+
+        rt.remove(new IPv4Route(new IPv4Address("10.0.2.0"), ON_LINK_MASK, dev));
+
+        assertSame(1, rt.getSize());
+        assertEquals(new IPv4Address("10.0.3.0"), onlyRoute(rt).getDestination());
+    }
+
+    @Test
+    public void testEqualRoutesShareHashCode() throws Exception {
+        final Device dev = createDevice("eth-test0");
+        final IPv4Route route = new IPv4Route(new IPv4Address("10.0.3.0"), ON_LINK_MASK, dev);
+        final IPv4Route same = new IPv4Route(new IPv4Address("10.0.3.0"), ON_LINK_MASK, dev);
+        final IPv4Route otherMask = new IPv4Route(new IPv4Address("10.0.3.0"), SUPER_MASK, dev);
+
+        assertEquals(route, same);
+        assertEquals(route.hashCode(), same.hashCode());
+        assertFalse(route.equals(otherMask));
+        assertFalse(route.equals(null));
+        assertFalse(route.equals(new IPv4Address("10.0.3.0")));
+    }
+
+    @Test
+    public void testDownFlagIsNotPartOfRouteIdentity() throws Exception {
+        final Device dev = createDevice("eth-test0");
+        final IPv4Route down = new IPv4Route(new IPv4Address("10.0.3.0"), ON_LINK_MASK, dev);
+        down.setUp(false);
+        final IPv4Route up = new IPv4Route(new IPv4Address("10.0.3.0"), ON_LINK_MASK, dev);
+
+        assertEquals(down, up);
+    }
+
+    private IPv4Route onlyRoute(IPv4RoutingTable rt) {
+        assertEquals(1, rt.getSize());
+        return (IPv4Route) rt.entries().iterator().next();
     }
 }

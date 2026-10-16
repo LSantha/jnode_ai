@@ -33,6 +33,7 @@ import org.jnode.net.ethernet.EthernetConstants;
 import org.jnode.net.ipv4.IPv4Address;
 import org.jnode.net.ipv4.IPv4ProtocolAddressInfo;
 import org.jnode.net.ipv4.IPv4Route;
+import org.jnode.net.ipv4.IPv4RoutingTable;
 import org.jnode.net.ipv4.layer.IPv4NetworkLayer;
 import org.jnode.net.util.NetUtils;
 
@@ -68,6 +69,13 @@ final class Ifconfig {
             addrInfo = new IPv4ProtocolAddressInfo(address, netmask);
             api.setProtocolAddressInfo(EthernetConstants.ETH_P_IP, addrInfo);
         } else {
+            IPv4Address previousAddress = null;
+            IPv4Address previousNetmask = null;
+            if (addrInfo.getDefaultAddress() != null) {
+                previousAddress = (IPv4Address) addrInfo.getDefaultAddress();
+                previousNetmask = addrInfo.getSubnetMask(previousAddress);
+                removeConnectedRoute(device, previousAddress, previousNetmask);
+            }
             addrInfo.add(address, netmask);
             addrInfo.setDefaultAddress(address, netmask);
         }
@@ -82,18 +90,53 @@ final class Ifconfig {
      * @param netmask
      */
     private static void addConnectedRoute(Device device, IPv4Address address, IPv4Address netmask) {
+        final IPv4RoutingTable rt = getRoutingTable();
+        if (rt == null) {
+            return;
+        }
         final IPv4Address subnet = address.and(netmask);
         if (subnet.isAny()) {
             return;
         }
+        rt.add(new IPv4Route(subnet, netmask, null, device));
+    }
+
+    /**
+     * Removes the connected (on-link) route of a retired address. Without this a
+     * re-addressed interface keeps the connected route of its previous address.
+     *
+     * @param device
+     * @param address
+     * @param netmask
+     */
+    private static void removeConnectedRoute(Device device, IPv4Address address,
+            IPv4Address netmask) {
+        if ((address == null) || (netmask == null)) {
+            return;
+        }
+        final IPv4Address subnet = address.and(netmask);
+        if (subnet.isAny()) {
+            return;
+        }
+        final IPv4RoutingTable rt = getRoutingTable();
+        if (rt == null) {
+            return;
+        }
+        rt.remove(new IPv4Route(subnet, netmask, null, device));
+    }
+
+    /**
+     * Gets the IPv4 routing table, or null if the network stack is not (yet) available.
+     */
+    private static IPv4RoutingTable getRoutingTable() {
         try {
             final IPv4NetworkLayer ipNL =
                 (IPv4NetworkLayer) NetUtils.getNLM().getNetworkLayer(EthernetConstants.ETH_P_IP);
-            ipNL.getRoutingTable().add(new IPv4Route(subnet, netmask, null, device));
+            return ipNL.getRoutingTable();
         } catch (NetworkException ex) {
-            // No network layer manager (yet), so there is no routing table to update.
+            return null;
         } catch (NoSuchProtocolException ex) {
-            // No IPv4 network layer (yet), so there is no routing table to update.
+            return null;
         }
     }
 

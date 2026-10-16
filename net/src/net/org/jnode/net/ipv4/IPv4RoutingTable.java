@@ -77,8 +77,10 @@ public class IPv4RoutingTable {
 
     /**
      * Remove a given entry
-     * 
-     * @param entry
+     *
+     * @param entry The route to remove. It is matched by value (see
+     *            {@link IPv4Route#equals(Object)}), so an equal route that was not
+     *            added by this table instance is removed as well.
      */
     public void remove(IPv4Route entry) {
         entries.remove(entry);
