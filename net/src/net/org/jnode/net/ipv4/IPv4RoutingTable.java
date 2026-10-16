@@ -62,9 +62,11 @@ public class IPv4RoutingTable {
      * @param entry
      */
     public void add(IPv4Route entry) {
-        // Remove any existing route to the same destination via the same device before adding
+        // Remove any existing route to the same destination, prefix and gateway via the same
+        // device before adding. A different subnet mask is a different route, not a replacement.
         for (IPv4Route r : entries.toArray(new IPv4Route[0])) {
             if (r.getDestination().equals(entry.getDestination()) 
+                && r.getSubnetmask().equals(entry.getSubnetmask())
                 && (r.getGateway() == null) == (entry.getGateway() == null)
                 && (r.getGateway() == null || r.getGateway().equals(entry.getGateway()))
                 && r.getDevice() == entry.getDevice()) {
