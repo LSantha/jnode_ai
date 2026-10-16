@@ -70,6 +70,56 @@ public class PhiAssignQuad<T> extends AssignQuad<T> {
         return phi.getSources().toArray(new Operand[phi.getSources().size()]);
     }
 
+    /**
+     * Replaces every source equal to <code>oldSource</code> by <code>newSource</code>.
+     * <p/>
+     * Unlike {@link #getReferencedOps()}, which hands out a throwaway copy of the
+     * source list, this mutates the phi itself, so use renames performed by the
+     * optimization passes actually stick.
+     * <p/>
+     * A non-variable replacement is rejected and nothing is changed: deSSA
+     * casts every source to <code>Variable</code>, so a phi must never end up
+     * holding a constant.
+     *
+     * @param oldSource the source to replace
+     * @param newSource the replacement
+     * @return false when this phi reads <code>oldSource</code> and
+     *         <code>newSource</code> cannot be stored in a phi, in which case
+     *         nothing has been changed
+     */
+    public boolean replaceSource(Operand<T> oldSource, Operand<T> newSource) {
+        if (!(newSource instanceof Variable)) {
+            return !hasSource(oldSource);
+        }
+        List<Operand<T>> sources = phi.getSources();
+        for (int i = 0, n = sources.size(); i < n; i += 1) {
+            if (isSameOperand(sources.get(i), oldSource)) {
+                sources.set(i, newSource);
+            }
+        }
+        return true;
+    }
+
+    /**
+     * @return true when this phi reads <code>source</code>
+     */
+    public boolean hasSource(Operand<T> source) {
+        List<Operand<T>> sources = phi.getSources();
+        for (int i = 0, n = sources.size(); i < n; i += 1) {
+            if (isSameOperand(sources.get(i), source)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private static boolean isSameOperand(Operand<?> op, Operand<?> other) {
+        if (op == other) {
+            return true;
+        }
+        return op instanceof Variable && op.equals(other);
+    }
+
     public void doPass2() {
         //phi.simplify();
 

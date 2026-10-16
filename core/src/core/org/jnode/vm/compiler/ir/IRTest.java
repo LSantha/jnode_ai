@@ -208,6 +208,12 @@ public class IRTest {
         cfg.optimize();
         printCFG(cfg, "Optimized SSA (pass 2)");
 
+        cfg.simplifyAlgebraicExpressions();
+        printCFG(cfg, "Algebraic identities simplified");
+
+        cfg.eliminateCommonSubexpressions();
+        printCFG(cfg, "Common subexpressions eliminated");
+
         cfg.removeUnusedVars();
         printCFG(cfg, "Unused vars removed SSA");
 
