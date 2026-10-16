@@ -20,6 +20,7 @@
  
 package org.jnode.net;
 
+import org.jnode.driver.net.lance.TxDescriptorRingTest;
 import org.jnode.net.arp.ARPHeaderTest;
 import org.jnode.net.ethernet.EthernetAddressTest;
 import org.jnode.net.ipv4.icmp.ICMPTypeTest;
@@ -36,6 +37,7 @@ import org.junit.runners.Suite;
     ICMPTypeTest.class, //
     ResolverImplTest.class, //
     ARPHeaderTest.class, //
-    EthernetAddressTest.class })
+    EthernetAddressTest.class, //
+    TxDescriptorRingTest.class })
 public class AllTests {
 }
