@@ -110,10 +110,18 @@
             <option argLabel="del" shortName="d" longName="del"/>
           </alternatives>
           <argument argLabel="target"/>
-          <argument argLabel="device"/>
-          <optional>
-            <argument argLabel="gateway"/>
-          </optional>
+          <alternatives description="The device, optionally preceded by a gateway">
+            <sequence>
+              <argument argLabel="device"/>
+              <optional>
+                <argument argLabel="gateway"/>
+              </optional>
+            </sequence>
+            <sequence>
+              <argument argLabel="gateway"/>
+              <argument argLabel="device"/>
+            </sequence>
+          </alternatives>
         </sequence>
       </syntax>
       <syntax alias="rpcinfo">
