@@ -180,15 +180,16 @@ If you find yourself past 5 minutes still "looking into it", you have failed the
 ### 5.1 `code-fix` / `chore` / `test` PR
 
 - **Branch name** — `opencode/issue<N>-<YYYYMMDDHHMMSS>` (matches the convention of `c706daa1b`, `2b48d2c3b`, `7d7a73f42`).
-- **Commit message** — imperative mood, ≤ 72-char subject, body explains *why*:
+- **Commit message** — imperative mood, body explains *why*. Subject: `#<issue> - <Subject>`, counted ≤ 72 chars *in full* (the issue reference counts):
   ```
-  <Subject> (#<N>)
+  #<N> - <Subject>
 
   <body, ≤ 10 lines>
 
   Co-authored-by: LSantha <LSantha@users.noreply.github.com>
   ```
-- **PR title** — `Subject` only, or `Subject (Closes #<N>)`.
+  `#<N>` is the **issue** number. GitHub appends ` (#<PR>)` to the squash subject on its own, so the branch commit must **not** end in `(#<N>)` - that produced `... (#<issue>) (#<PR>)` on master (#757/#755/#765). One issue reference at the front, one PR reference appended by GitHub: `#751 - shell: expand pathname globs (#757)`. `(#<PR>)` (7 chars) plus `#<N> - ` (7) is 14 chars of scaffolding, so keep the description within ~58 chars.
+- **PR title** — `#<N> - <Subject>`, the same string as the commit subject. Do not repeat the issue number anywhere else in the title.
 - **PR body** — use this template:
   ```markdown
   ## Summary
