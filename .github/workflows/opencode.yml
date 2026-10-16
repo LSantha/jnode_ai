@@ -28,6 +28,11 @@ jobs:
     env:
       # This forces actions to use Node 24 and clears the warning
       FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+      # Single source for the model. Passed to the agent as `with: model` and
+      # read by .github/hooks/prepare-commit-msg to stamp each agent commit with
+      # an "Assisted-by: <model>" trailer. One place to change when the model
+      # changes, so the commit attribution cannot drift from the actual model.
+      OPENCODE_MODEL: opencode/space-bunny-free
     permissions:
       id-token: write
       contents: write
@@ -42,6 +47,9 @@ jobs:
         run: |
           git config user.name "opencode-agent"
           git config user.email "opencode-agent@users.noreply.github.com"
+          # Git does not clone hooks, and core.hooksPath defaults to .git/hooks,
+          # so point it at the tracked hooks dir to install the attribution hook.
+          git config core.hooksPath "$GITHUB_WORKSPACE/.github/hooks"
       - name: Clone wiki
         run: gh repo clone LSantha/jnode_ai.wiki .wiki
         env:
@@ -72,7 +80,7 @@ jobs:
           OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY }}
           OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
         with:
-          model: opencode/space-bunny-free
+          model: ${{ env.OPENCODE_MODEL }}
           variant: high
           use_github_token: true
 

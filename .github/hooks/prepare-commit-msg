@@ -1,0 +1,10 @@
+#!/bin/sh
+# Append an Assisted-by trailer naming the model that produced this commit.
+# Installed via core.hooksPath by the agent workflows; a no-op when
+# OPENCODE_MODEL is unset (local human commits) or on a merge commit, so it
+# never rewrites a message a person wrote.
+[ -n "$OPENCODE_MODEL" ] || exit 0
+[ "$2" = "merge" ] && exit 0
+msg_file="$1"
+grep -q '^Assisted-by:' "$msg_file" && exit 0
+printf '\nAssisted-by: %s\n' "$OPENCODE_MODEL" >> "$msg_file"

@@ -190,6 +190,7 @@ If you find yourself past 5 minutes still "looking into it", you have failed the
   ```
   `#<N>` is the **issue** number. GitHub appends ` (#<PR>)` to the squash subject on its own, so the branch commit must **not** end in `(#<N>)` - that produced `... (#<issue>) (#<PR>)` on master (#757/#755/#765). One issue reference at the front, one PR reference appended by GitHub: `#751 - shell: expand pathname globs (#757)`. `(#<PR>)` (7 chars) plus `#<N> - ` (7) is 14 chars of scaffolding, so keep the description within ~58 chars.
 - **PR title** — `#<N> - <Subject>`, the same string as the commit subject. Do not repeat the issue number anywhere else in the title.
+- **Model attribution is automatic.** Do not add it yourself: the agent workflows install `.github/hooks/prepare-commit-msg`, which appends `Assisted-by: <model>` to every commit made while `OPENCODE_MODEL` is set (the workflow env). The trailer flows into the squash commit body because the repo squashes with `COMMIT_MESSAGES`. A reviewer's model is not in any commit it makes (it makes none); it is recorded on the PR instead.
 - **PR body** — use this template:
   ```markdown
   ## Summary
