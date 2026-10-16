@@ -177,7 +177,9 @@ public class RedirectingInterpreter extends DefaultInterpreter implements
      * The input is parsed as a sequence of pipelines separated by '&&', '||' and
      * ';' operators with POSIX shell compatible semantics.  Each pipeline is a
      * sequence of commands separated by '|' with optional '&lt;' / '&gt;'
-     * redirections on each command.
+     * redirections on each command.  Unless we are completing, the argument
+     * tokens of each command have their pathname patterns expanded (see
+     * {@link DefaultInterpreter#expandPathPatterns}).
      * 
      * @param tokenizer the source of shell input tokens
      * @param sequence a list for accumulating the parsed pipelines and their
@@ -253,7 +255,8 @@ public class RedirectingInterpreter extends DefaultInterpreter implements
             CommandLine.Token[] argVec =
                     args.toArray(new CommandLine.Token[args.size()]);
 
-            CommandLine cl = new CommandLine(commandToken, argVec, null);
+            CommandLine cl = new CommandLine(commandToken,
+                    completing ? argVec : expandPathPatterns(argVec), null);
             currentPipeline.add(new CommandDescriptor(cl, from, to, pipeTo));
             if (pipelineTerminator != null) {
                 sequence.add(new SequenceDescriptor(currentPipeline, pendingOp));

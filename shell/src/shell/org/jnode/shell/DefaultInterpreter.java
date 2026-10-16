@@ -247,6 +247,8 @@ public class DefaultInterpreter implements CommandInterpreter {
      * '&&' executes the next command only if the previous return code is zero,
      * '||' executes the next command only if the previous return code is non-zero,
      * and ';' always executes the next command.  Operators are left-associative.
+     * Unless we are completing, the argument tokens of each command have
+     * their pathname patterns expanded (see {@link #expandPathPatterns}).
      *
      * @param tokenizer the token source
      * @param completing if {@code true}, a trailing operator is not an error;
@@ -277,7 +279,9 @@ public class DefaultInterpreter implements CommandInterpreter {
                     CommandLine.Token[] argTokens =
                             tokenList.toArray(new CommandLine.Token[tokenList.size()]);
                     res.add(new SequenceEntry(
-                            new CommandLine(commandToken, argTokens, null), pendingOp));
+                            new CommandLine(commandToken,
+                                    completing ? argTokens : expandPathPatterns(argTokens), null),
+                            pendingOp));
                     tokenList.clear();
                     commandToken = null;
                     pendingOp = token.text;
@@ -309,11 +313,66 @@ public class DefaultInterpreter implements CommandInterpreter {
         if (!expectCommand) {
             CommandLine.Token[] argTokens =
                     tokenList.toArray(new CommandLine.Token[tokenList.size()]);
-            CommandLine cmdLine = new CommandLine(commandToken, argTokens, null);
+            CommandLine cmdLine = new CommandLine(commandToken,
+                    completing ? argTokens : expandPathPatterns(argTokens), null);
             cmdLine.setArgumentAnticipated(tokenizer.whitespaceAfterLast());
             res.add(new SequenceEntry(cmdLine, pendingOp));
         }
         return res;
+    }
+
+    /**
+     * The pathname pattern flags used for argument expansion.  The quoting
+     * and escaping flags are omitted because the tokenizer has already
+     * processed quotes and backslash escapes; only '*', '?' and character
+     * classes need to be recognized at this point.
+     */
+    protected static final int EXPANSION_FLAGS = PathnamePattern.SORT_MATCHES
+            | PathnamePattern.HIDE_DOT_FILENAMES
+            | PathnamePattern.INCLUDE_DOT_AND_DOTDOT
+            | PathnamePattern.CHARACTER_CLASSES;
+
+    /**
+     * Expand any pathname patterns in a set of command line argument tokens.
+     * Expansion uses the current directory as the base for relative patterns,
+     * exactly as the bjorne interpreter does.  Tokens that were quoted or
+     * that contain escaped pattern meta-characters are left alone, and a
+     * pattern that matches nothing is passed through unexpanded.
+     *
+     * @param tokens the argument tokens of a command line
+     * @return the argument tokens, with pathname patterns replaced by the
+     *         matching pathnames
+     */
+    protected static CommandLine.Token[] expandPathPatterns(CommandLine.Token[] tokens) {
+        List<CommandLine.Token> res = new ArrayList<CommandLine.Token>(tokens.length);
+        for (CommandLine.Token token : tokens) {
+            expandPathPattern(token, res);
+        }
+        return res.toArray(new CommandLine.Token[res.size()]);
+    }
+
+    private static void expandPathPattern(CommandLine.Token token,
+            List<CommandLine.Token> res) {
+        String text = token.text;
+        if (token.tokenType != LITERAL || !PathnamePattern.isPattern(text, EXPANSION_FLAGS)) {
+            res.add(token);
+            return;
+        }
+        LinkedList<String> paths;
+        try {
+            paths = PathnamePattern.compilePathPattern(text, EXPANSION_FLAGS)
+                    .expand(new File("."));
+        } catch (IllegalArgumentException ex) {
+            res.add(token);
+            return;
+        }
+        if (paths.isEmpty()) {
+            res.add(token);
+        } else {
+            for (String path : paths) {
+                res.add(new CommandLine.Token(path, token.tokenType, token.start, token.end));
+            }
+        }
     }
 
     /**
@@ -544,6 +603,17 @@ public class DefaultInterpreter implements CommandInterpreter {
                                     break;
                                 default:
                                     token.append(ch);
+                            }
+                            // An escaped pathname pattern meta-character must
+                            // not be expanded, so mark the token as 'quoted'.
+                            switch (ch) {
+                                case '*':
+                                case '?':
+                                case '[':
+                                case ']':
+                                    type |= STRING;
+                                    break;
+                                default:
                             }
                             break;
 
