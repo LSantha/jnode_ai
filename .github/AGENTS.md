@@ -17,6 +17,7 @@ CI infrastructure, agent automation, and label conventions for JNode.
 | `scripts/ticket-runner.js` | JS state machine run by ticket-runner.yml. Drives single-ticket multi-turn DEV -> REVIEW -> FEEDBACK -> HUMAN_REVIEW -> MERGE loop, with `CANCELLED` as a terminal phase for issues closed mid-run. |
 | `scripts/orchestrator-helpers.js` | Shared GitHub REST helper functions used by orchestrator.js and ticket-runner.js. Also the merge safety gate (`isAutoMergeEligible`, `isDiffSafe`, `isCIGreen`) and `findPRsForSHA` for CI wakeups. |
 | `scripts/report-signals.js` | Shared report-predicates (`isRefusalComment`, `isNeedsInfoComment`, `isTriageComment`, `isTriageClearComment`, `isTriggerComment`) consumed by opencode-post-step.js and ticket-runner.js. The label decider and the auto-start gate must agree on what counts as a report; a per-file copy drifts and silently stalls tickets. |
+| `hooks/prepare-commit-msg` | Installed by `opencode.yml` via `core.hooksPath`; appends an `Assisted-by: <model>` trailer (from `OPENCODE_MODEL`) to every agent commit. No-op when the env is unset or on a merge commit, so it never touches a human message. |
 | `scripts/sync-labels.js` | One-shot label bootstrap. Idempotent. Use `--dry-run` to preview. |
 | `qemu/jnode.properties` | CI build profile (used by opencode.yml and ant.yml). |
 | `qemu/menu-ci-32.lst` | GRUB menu for CI 32-bit boot test (jnode32.gz + tests.jgz). |
