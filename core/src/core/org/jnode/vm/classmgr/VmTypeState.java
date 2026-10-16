@@ -45,5 +45,14 @@ public interface VmTypeState {
 
     // Shared specific states
     public static final char SST_INITIALIZED = 0x0100;
-    public static final char SST_INITIALIZING = ST_ALWAYS_INITIALIZED;
+    /*
+     * SST_INITIALIZING must be a bit of its own, distinct from both
+     * SST_INITIALIZED and ST_ALWAYS_INITIALIZED: it is set before <clinit>
+     * runs and the other two must stay clear for the whole of <clinit>,
+     * otherwise isInitialized() and isAlwaysInitialized() would report a
+     * type as ready while its static fields are still being written (and the
+     * JIT would then drop the class-init guard from every method compiled
+     * inside that window).
+     */
+    public static final char SST_INITIALIZING = 0x0400;
 }
