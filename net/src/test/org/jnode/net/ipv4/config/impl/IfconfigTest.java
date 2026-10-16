@@ -33,11 +33,12 @@ import java.lang.reflect.Proxy;
 
 import org.jnode.driver.Device;
 import org.jnode.driver.net.NetDeviceAPI;
-import org.jnode.emu.naming.BasicNameSpace;
 import org.jnode.naming.InitialNaming;
+import org.jnode.net.NetTestNaming;
 import org.jnode.net.NetworkLayer;
 import org.jnode.net.NetworkLayerManager;
 import org.jnode.net.ipv4.IPv4Address;
+import org.jnode.net.ipv4.IPv4ProtocolAddressInfo;
 import org.jnode.net.ipv4.IPv4Route;
 import org.jnode.net.ipv4.IPv4RoutingTable;
 import org.jnode.net.ipv4.layer.IPv4NetworkLayer;
@@ -51,21 +52,21 @@ import org.junit.Test;
  */
 public class IfconfigTest {
 
+    private static final IPv4Address ON_LINK_MASK = new IPv4Address("255.255.255.0");
+
     private IPv4RoutingTable rt;
     private Device dev;
+    private IPv4ProtocolAddressInfo[] addrInfo;
 
     @BeforeClass
     public static void initNaming() {
-        try {
-            InitialNaming.nameSet();
-        } catch (NullPointerException ex) {
-            InitialNaming.setNameSpace(new BasicNameSpace());
-        }
+        NetTestNaming.init();
     }
 
     @Before
     public void setUp() throws Exception {
         rt = new IPv4RoutingTable();
+        addrInfo = new IPv4ProtocolAddressInfo[1];
         dev = createDevice("eth-test0");
         bindNetworkLayerManager();
     }
@@ -94,11 +95,18 @@ public class IfconfigTest {
         return layer;
     }
 
-    private Device createDevice(String id) {
+    private Device createDevice(final String id) {
         final NetDeviceAPI api = (NetDeviceAPI) Proxy.newProxyInstance(
             NetDeviceAPI.class.getClassLoader(), new Class[] {NetDeviceAPI.class},
             new InvocationHandler() {
                 public Object invoke(Object proxy, Method method, Object[] args) {
+                    if ("getProtocolAddressInfo".equals(method.getName())) {
+                        return addrInfo[0];
+                    }
+                    if ("setProtocolAddressInfo".equals(method.getName())) {
+                        addrInfo[0] = (IPv4ProtocolAddressInfo) args[1];
+                        return null;
+                    }
                     return null;
                 }
             });
@@ -146,5 +154,57 @@ public class IfconfigTest {
         Ifconfig.setDefault(dev, address, mask);
 
         assertEquals(1, rt.getSize());
+    }
+
+    @Test
+    public void testSetDefaultInstallsConnectedRoute() throws Exception {
+        Ifconfig.setDefault(dev, new IPv4Address("10.0.2.15"), ON_LINK_MASK);
+
+        final IPv4Route route = onlyRoute();
+        assertEquals(new IPv4Address("10.0.2.0"), route.getDestination());
+        assertEquals(ON_LINK_MASK, route.getSubnetmask());
+        assertEquals(dev, route.getDevice());
+    }
+
+    @Test
+    public void testReAddressReplacesConnectedRoute() throws Exception {
+        Ifconfig.setDefault(dev, new IPv4Address("10.0.2.15"), ON_LINK_MASK);
+
+        Ifconfig.setDefault(dev, new IPv4Address("10.0.3.15"), ON_LINK_MASK);
+
+        final IPv4Route route = onlyRoute();
+        assertEquals(new IPv4Address("10.0.3.0"), route.getDestination());
+        assertEquals(ON_LINK_MASK, route.getSubnetmask());
+    }
+
+    @Test
+    public void testReAddressWithOtherMaskReplacesConnectedRoute() throws Exception {
+        Ifconfig.setDefault(dev, new IPv4Address("10.0.2.15"), ON_LINK_MASK);
+
+        Ifconfig.setDefault(dev, new IPv4Address("10.1.2.15"), new IPv4Address("255.255.0.0"));
+
+        final IPv4Route route = onlyRoute();
+        assertEquals(new IPv4Address("10.1.0.0"), route.getDestination());
+        assertEquals(new IPv4Address("255.255.0.0"), route.getSubnetmask());
+    }
+
+    @Test
+    public void testSetSameAddressTwiceKeepsSingleConnectedRoute() throws Exception {
+        Ifconfig.setDefault(dev, new IPv4Address("10.0.2.15"), ON_LINK_MASK);
+
+        Ifconfig.setDefault(dev, new IPv4Address("10.0.2.15"), ON_LINK_MASK);
+
+        assertEquals(new IPv4Address("10.0.2.0"), onlyRoute().getDestination());
+    }
+
+    @Test
+    public void testReAddressKeepsConnectedRouteOfOtherDevice() throws Exception {
+        final Device other = createDevice("eth-test1");
+        Ifconfig.setDefault(other, new IPv4Address("10.0.5.7"), ON_LINK_MASK);
+        Ifconfig.setDefault(dev, new IPv4Address("10.0.2.15"), ON_LINK_MASK);
+
+        Ifconfig.setDefault(dev, new IPv4Address("10.0.3.15"), ON_LINK_MASK);
+
+        assertEquals(2, rt.getSize());
     }
 }
