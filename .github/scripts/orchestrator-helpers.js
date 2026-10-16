@@ -230,6 +230,105 @@ module.exports = function createHelpers({ github, context, core }) {
     return true;
   }
 
+  // Trailer shape produced by .github/hooks/prepare-commit-msg and by the
+  // resolver skill's review summary. Bullet and bold markers are tolerated
+  // because a reviewer may write the line as a list item or emphasise the key,
+  // which would otherwise hide an otherwise valid attribution.
+  var MODEL_TRAILER_RE = /^[ \t]*(?:[-*+][ \t]*)?\*{0,2}Assisted-by\*{0,2}:[ \t*]*([^\s*]+)/gim;
+
+  /** True when a body is an automation trigger, not a human or agent report. */
+  function isTriggerBody(body) {
+    return /(^|\s)\/(oc|run|orchestrate)(\s|$)/.test(body);
+  }
+
+  /**
+   * Distinct model IDs advertised by `Assisted-by:` trailers on the PR's review
+   * and comment bodies, in first-seen order.
+   *
+   * The resolver models reach the squash body through commit trailers, but a
+   * reviewer makes no commit, so its model only ever exists as a line in the
+   * review summary comment. Review verdicts and `/oc approve` both arrive as
+   * issue comments rather than review objects, so both sources are scanned.
+   * Trigger comments are skipped for the same reason `getAgentReviewVerdict`
+   * skips them: they quote the skill text that spells the trailer out, and
+   * reading one would credit the human who typed the trigger.
+   */
+  async function collectReviewerModels(prNumber) {
+    var bodies = [];
+    var sources = [
+      function () { return github.rest.pulls.listReviews({ owner, repo, pull_number: prNumber, per_page: 100 }); },
+      function () { return github.rest.issues.listComments({ owner, repo, issue_number: prNumber, per_page: 100 }); }
+    ];
+    for (var s = 0; s < sources.length; s++) {
+      var res;
+      try {
+        res = await sources[s]();
+      } catch (e) {
+        core.warning("collectReviewerModels: read failed for PR #" + prNumber + ": " + e.message);
+        continue;
+      }
+      var list = res && res.data;
+      if (!Array.isArray(list)) continue;
+      for (var i = 0; i < list.length; i++) {
+        bodies.push((list[i] && list[i].body) || "");
+      }
+    }
+    var seen = {};
+    var models = [];
+    for (var j = 0; j < bodies.length; j++) {
+      var body = bodies[j];
+      if (isTriggerBody(body)) continue;
+      MODEL_TRAILER_RE.lastIndex = 0;
+      var m;
+      while ((m = MODEL_TRAILER_RE.exec(body)) !== null) {
+        var id = m[1].replace(/^[*_`]+/, "").replace(/[*_`]+$/, "");
+        if (!id || seen[id]) continue;
+        seen[id] = true;
+        models.push(id);
+      }
+    }
+    return models;
+  }
+
+  /** Split a commit message into its subject line and the remainder. */
+  function splitMessage(message) {
+    var lines = String(message == null ? "" : message).replace(/\s+$/, "").split("\n");
+    var subject = (lines.shift() || "").trim();
+    var body = lines.join("\n").replace(/^\n+/, "").replace(/\s+$/, "");
+    return { subject: subject, body: body };
+  }
+
+  /**
+   * Compose the squash-merge message, reproducing what the repo's
+   * `squash_merge_commit_message = COMMIT_MESSAGES` setting would have produced
+   * (first commit subject as the title, every commit's text below it) and adding
+   * the `Reviewed-by:` trailer.
+   *
+   * Passing `commit_message` to the merge API overrides that repo setting, so
+   * the body has to be rebuilt here or it is silently dropped. Returns null
+   * when there is nothing to attribute, which leaves the merge call untouched.
+   */
+  function buildMergeMessage(commitMessages, models, fallbackTitle) {
+    if (!Array.isArray(models) || models.length === 0) return null;
+    var parts = [];
+    var title = "";
+    var split = (Array.isArray(commitMessages) ? commitMessages : []).map(splitMessage);
+    for (var i = 0; i < split.length; i++) {
+      var chunk;
+      if (i === 0) {
+        title = split[0].subject;
+        chunk = split[0].body;
+      } else {
+        chunk = split[i].subject ? split[i].subject : "";
+        if (split[i].body) chunk += (chunk ? "\n\n" : "") + split[i].body;
+      }
+      if (chunk) parts.push(chunk);
+    }
+    if (!title) title = fallbackTitle || "Merge pull request";
+    parts.push("Reviewed-by: " + models.join(", "));
+    return [title].concat(parts).join("\n\n");
+  }
+
   /** Return true if the user object represents a bot. */
   function isBotUser(user) {
     return !!user && ((user.type || "").toLowerCase() === "bot" ||
@@ -243,10 +342,36 @@ module.exports = function createHelpers({ github, context, core }) {
     var pr = await github.rest.pulls.get({
       owner, repo, pull_number: prNumber
     });
+    var mergeArgs = {
+      owner, repo, pull_number: prNumber, merge_method: "squash"
+    };
+    var commitMessage = null;
     try {
-      await github.rest.pulls.merge({
-        owner, repo, pull_number: prNumber, merge_method: "squash"
-      });
+      var models = await collectReviewerModels(prNumber);
+      if (models.length) {
+        var commits = await github.rest.pulls.listCommits({
+          owner, repo, pull_number: prNumber, per_page: 100
+        });
+        var list = commits && commits.data;
+        if (Array.isArray(list)) {
+          commitMessage = buildMergeMessage(list.map(function (c) {
+            return (c && c.commit && c.commit.message) || "";
+          }), models, pr.data && pr.data.title);
+        } else {
+          core.warning("mergePR: listCommits returned no data for PR #" + prNumber +
+            "; merge will use the repository default message");
+        }
+      }
+    } catch (e) {
+      core.warning("mergePR: could not build the Reviewed-by message for PR #" +
+        prNumber + ": " + e.message);
+      commitMessage = null;
+    }
+    // Only override when there is something to add: an unnecessary commit_message
+    // would replace the repository's COMMIT_MESSAGES template for no reason.
+    if (commitMessage) mergeArgs.commit_message = commitMessage;
+    try {
+      await github.rest.pulls.merge(mergeArgs);
     } catch (err) {
       var message = String((err && err.message) || "");
       if (err && err.status === 204) {
@@ -316,6 +441,8 @@ module.exports = function createHelpers({ github, context, core }) {
     isCIGreen: isCIGreen,
     SAFE_AUTO_MERGE_KINDS: SAFE_AUTO_MERGE_KINDS,
     isBotUser: isBotUser,
+    collectReviewerModels: collectReviewerModels,
+    buildMergeMessage: buildMergeMessage,
     mergePR: mergePR,
     extractLabels: extractLabels,
     findPRsForSHA: findPRsForSHA,
