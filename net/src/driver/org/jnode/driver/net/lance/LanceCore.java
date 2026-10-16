@@ -43,6 +43,7 @@ import org.jnode.system.resource.ResourceNotFreeException;
 import org.jnode.system.resource.ResourceOwner;
 import org.jnode.util.AccessControllerUtils;
 import org.jnode.util.NumberUtils;
+import org.jnode.util.TimeUtils;
 import org.jnode.util.TimeoutException;
 
 /**
@@ -68,7 +69,10 @@ public class LanceCore extends AbstractDeviceCore implements IRQHandler, LanceCo
     // Note: Valid numbers are 2^x where x is 0..8 (1, 2, 4, 8, 16, .., 512)
     private static final int RX_DESCRIPTOR_LENGTH = 16;
     private static final int TX_DESCRIPTOR_LENGTH = 16;
+    // the maximum time to wait for the chip to report initialization done, in
+    // INIT_POLL_DELAY millisecond steps
     private static final int INIT_POLL_RETRIES = 1000;
+    private static final int INIT_POLL_DELAY = 1;
 
     /**
      * Device Driver
@@ -216,11 +220,27 @@ public class LanceCore extends AbstractDeviceCore implements IRQHandler, LanceCo
         // Initialize the device with the Initialization Block and enable interrupts
         io.setCSR(0, CSR0_INIT | CSR0_IENA);
 
-        for (int i = 0; i < INIT_POLL_RETRIES && (io.getCSR(0) & CSR0_IDON) == 0; i++) {
+        boolean initialized = false;
+        for (int i = 0; i < INIT_POLL_RETRIES; i++) {
+            if ((io.getCSR(0) & CSR0_IDON) != 0) {
+                initialized = true;
+                break;
+            }
+            TimeUtils.sleep(INIT_POLL_DELAY);
         }
 
-        io.setCSR(15, 0);
-        io.setCSR(0, CSR0_STRT | CSR0_IENA);
+        if (initialized) {
+            log.info(flags.getChipName() + " initialization done, starting device");
+            io.setCSR(15, 0);
+            // assert the Start and clear Initialization Done (IDON) flag, matching the
+            // initialization done interrupt handler so the chip is not started twice
+            // Note: there are reported errors due to setting IDON here but I have not seen any
+            io.setCSR(0, CSR0_STRT | CSR0_IENA | CSR0_IDON);
+        } else {
+            log.error(flags.getChipName() + " did not signal initialization done within " +
+                INIT_POLL_RETRIES * INIT_POLL_DELAY + "ms, waiting for the initialization done " +
+                "interrupt instead");
+        }
     }
 
     /**
