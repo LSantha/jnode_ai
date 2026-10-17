@@ -381,15 +381,15 @@ public abstract class AbstractDirectory extends FatObject implements FSDirectory
     public abstract void flush() throws IOException;
 
     /**
-     * Read the contents of this directory from the given byte array
+     * Read the contents of this directory from the given buffer
      *
      * @param src
      */
-    protected synchronized void read(byte[] src) {
+    protected synchronized void read(ByteBuffer src) {
         int size = entries.size();
         for (int i = 0; i < size; i++) {
             int index = i * FatConstants.DIR_ENTRY_SIZE;
-            if (src[index] == 0) {
+            if (src.get(index) == 0) {
                 entries.set(i, null);
             } else {
                 FatBasicDirEntry entry = FatDirEntry.fatDirEntryFactory(this, src, index);
@@ -399,12 +399,11 @@ public abstract class AbstractDirectory extends FatObject implements FSDirectory
     }
 
     /**
-     * Write the contents of this directory to the given device at the given
-     * offset.
+     * Write the contents of this directory to the given buffer
      *
      * @param dest
      */
-    protected synchronized void write(byte[] dest) {
+    protected synchronized void write(ByteBuffer dest) {
         int size = entries.size();
         byte[] empty = new byte[FatConstants.DIR_ENTRY_SIZE];
         for (int i = 0; i < size; i++) {
@@ -412,7 +411,8 @@ public abstract class AbstractDirectory extends FatObject implements FSDirectory
             if (entry != null) {
                 entry.write(dest, i * FatConstants.DIR_ENTRY_SIZE);
             } else {
-                System.arraycopy(empty, 0, dest, i * FatConstants.DIR_ENTRY_SIZE, empty.length);
+                dest.position(i * FatConstants.DIR_ENTRY_SIZE);
+                dest.put(empty);
             }
         }
     }

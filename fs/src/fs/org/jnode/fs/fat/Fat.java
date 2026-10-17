@@ -23,6 +23,7 @@ package org.jnode.fs.fat;
 import java.io.IOException;
 import java.io.PrintWriter;
 import java.nio.ByteBuffer;
+import java.nio.ByteOrder;
 import java.util.Arrays;
 import org.jnode.driver.block.BlockDeviceAPI;
 import org.jnode.fs.FileSystemFullException;
@@ -79,16 +80,15 @@ public class Fat {
      * @param device
      */
     public synchronized void read(BlockDeviceAPI device, long offset) throws IOException {
-        byte[] data = new byte[nrSectors * sectorSize];
-        device.read(offset, ByteBuffer.wrap(data));
+        ByteBuffer data = ByteBuffer.allocate(nrSectors * sectorSize);
+        data.order(ByteOrder.LITTLE_ENDIAN);
+        device.read(offset, data);
         for (int i = 0; i < entries.length; i++) {
-            int idx, b1, b2, v;
+            int idx, v;
             switch (fatType) {
                 case FAT12:
                     idx = (int) (i * 1.5);
-                    b1 = data[idx] & 0xFF;
-                    b2 = data[idx + 1] & 0xFF;
-                    v = (b2 << 8) | b1;
+                    v = data.getShort(idx) & 0xFFFF;
                     if ((i % 2) == 0) {
                         entries[i] = v & 0xFFF;
                     } else {
@@ -96,18 +96,10 @@ public class Fat {
                     }
                     break;
                 case FAT16:
-                    idx = i * 2;
-                    b1 = data[idx] & 0xFF;
-                    b2 = data[idx + 1] & 0xFF;
-                    entries[i] = (b2 << 8) | b1;
+                    entries[i] = data.getShort(i * 2) & 0xFFFF;
                     break;
                 case FAT32:
-                    idx = i * 4;
-                    long l1 = data[idx] & 0xFF;
-                    long l2 = data[idx + 1] & 0xFF;
-                    long l3 = data[idx + 2] & 0xFF;
-                    long l4 = data[idx + 3] & 0xFF;
-                    entries[i] = (l4 << 24) | (l3 << 16) | (l2 << 8) | l1;
+                    entries[i] = data.getInt(i * 4) & 0xFFFFFFFFL;
                     break;
             }
         }
@@ -120,7 +112,8 @@ public class Fat {
      * @param device
      */
     public synchronized void write(BlockDeviceAPI device, long offset) throws IOException {
-        byte[] data = new byte[nrSectors * sectorSize];
+        ByteBuffer data = ByteBuffer.allocate(nrSectors * sectorSize);
+        data.order(ByteOrder.LITTLE_ENDIAN);
         for (int i = 0; i < entries.length; i++) {
             long v = entries[i];
             int idx;
@@ -128,29 +121,22 @@ public class Fat {
                 case FAT12: 
                     idx = (int) (i * 1.5);
                     if ((i % 2) == 0) {
-                        data[idx] = (byte) (v & 0xFF);
-                        data[idx + 1] = (byte) ((v >> 8) & 0x0F);
+                        data.put(idx, (byte) (v & 0xFF));
+                        data.put(idx + 1, (byte) ((v >> 8) & 0x0F));
                     } else {
-                        data[idx] |= (byte) ((v & 0x0F) << 4);
-                        data[idx + 1] = (byte) ((v >> 4) & 0xFF);
+                        data.put(idx, (byte) (data.get(idx) | ((v & 0x0F) << 4)));
+                        data.put(idx + 1, (byte) ((v >> 4) & 0xFF));
                     }
                     break;
                 case FAT16: 
-                    idx = i << 1;
-                    data[idx] = (byte) (v & 0xFF);
-                    data[idx + 1] = (byte) ((v >> 8) & 0xFF);
+                    data.putShort(i << 1, (short) v);
                     break;
                 case FAT32:
-                    idx = i << 2;
-                    data[idx] = (byte) (v & 0xFF);
-                    data[idx + 1] = (byte) ((v >> 8) & 0xFF);
-                    data[idx + 2] = (byte) ((v >> 16) & 0xFF);
-                    data[idx + 3] = (byte) ((v >> 24) & 0xFF);
+                    data.putInt(i << 2, (int) v);
                     break;
             }
-
         }
-        device.write(offset, ByteBuffer.wrap(data));
+        device.write(offset, data);
         this.dirty = false;
     }
 
