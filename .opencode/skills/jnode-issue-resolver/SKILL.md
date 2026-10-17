@@ -190,7 +190,7 @@ If you find yourself past 5 minutes still "looking into it", you have failed the
   ```
   `#<N>` is the **issue** number. GitHub appends ` (#<PR>)` to the squash subject on its own, so the branch commit must **not** end in `(#<N>)` - that produced `... (#<issue>) (#<PR>)` on master (#757/#755/#765). One issue reference at the front, one PR reference appended by GitHub: `#751 - shell: expand pathname globs (#757)`. `(#<PR>)` (7 chars) plus `#<N> - ` (7) is 14 chars of scaffolding, so keep the description within ~58 chars.
 - **PR title** — `#<N> - <Subject>`, the same string as the commit subject. Do not repeat the issue number anywhere else in the title.
-- **Model attribution is automatic.** Do not add it yourself: the agent workflows install `.github/hooks/prepare-commit-msg`, which appends `Assisted-by: <model>` to every commit made while `OPENCODE_MODEL` is set (the workflow env). The trailer flows into the squash commit body because the repo squashes with `COMMIT_MESSAGES`. A reviewer's model is not in any commit it makes (it makes none); it is recorded on the PR instead.
+- **Model attribution is automatic.** Do not add it yourself: the agent workflows install `.github/hooks/prepare-commit-msg`, which appends `Assisted-by: <model>` to every commit made while `OPENCODE_MODEL` is set (the workflow env). The trailer flows into the squash commit body because the repo squashes with `COMMIT_MESSAGES`. A reviewer makes no commit, so it has no trailer to carry; it writes an `Assisted-by:` line into its review summary instead (§5.2), which `mergePR` folds into the merge commit as `Reviewed-by:`.
 - **PR body** — use this template:
   ```markdown
   ## Summary
@@ -219,6 +219,15 @@ Use inline comments on the diff via `pull_request_review_comment` context (exist
 | 🟢 | Nit: typo, formatting, optional refactor | comment, do not block |
 
 End every review with a single **summary comment** (not a review submission) that lists the findings in priority order and ends with `Verdict: approve | request-changes | comment`. Never approve with an untracked 🟡: either request changes or create a follow-up issue and link it in the summary. Then submit a GitHub Review with the matching verdict using `gh pr review <N> --request-changes` (etc.).
+
+That summary comment must also carry the reviewer's model, on its own line next to the `Verdict:` line, taken from the run's `OPENCODE_MODEL` env var (the same value the workflow passes as `with: model`, so the attribution cannot drift from the model that actually ran):
+
+```
+Verdict: approve
+Assisted-by: <value of $OPENCODE_MODEL>
+```
+
+A reviewer makes no commit, so this comment is the only place its model can be recorded. `orchestrator-helpers.js` `mergePR` scans the PR's review and comment bodies for `Assisted-by:` lines and folds the distinct values into the merge commit as `Reviewed-by: <models>`. Omitting the line leaves the reviewer model unrecorded; write the env value verbatim rather than naming a model from memory.
 
 ### 5.3 `investigation` (single structured comment)
 
