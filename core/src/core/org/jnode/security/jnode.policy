@@ -66,5 +66,8 @@ grant {
 	// Log4j specific standard properties
 	permission java.util.PropertyPermission "log4j.defaultInitOverride", "read";	
 	
+	// Required for mauve test framework (and other) reflection access
+	permission java.lang.reflect.ReflectPermission "suppressAccessChecks";
+	
 };
 
