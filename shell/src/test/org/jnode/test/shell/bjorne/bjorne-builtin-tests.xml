@@ -131,23 +131,23 @@ EOF
 +1+ +2 3+
 </output>
     </testSpec>
-    <testSpec title="read 2" runMode="AS_SCRIPT" rc="0">
+<testSpec title="read 2" runMode="AS_SCRIPT" rc="0">
         <script>#!bjorne
                 IFS="|" read A B C &lt;&lt;EOF 
-1|2|3
-EOF
+        1|2|3
+        EOF
                 echo +$A+ +$B+ +$C+
                 IFS=" |" read A B C D &lt;&lt;EOF 
- 1 | 2 | 3 
-EOF
+  1 | 2 | 3 
+        EOF
                 echo +$A+ +$B+ +$C+ +$D+
                 IFS=" |" read A B C D &lt;&lt;EOF 
- 1 | 2 || 3 
-EOF
+  1 | 2 || 3 
+        EOF
                 echo +$A+ +$B+ +$C+ +$D+
                 IFS="" read A B &lt;&lt;EOF 
- 1 | 2 | 3 
-EOF
+  1 | 2 | 3 
+        EOF
                 echo +$A+ +$B+
         </script>
         <output>+1+ +2+ +3+
@@ -155,5 +155,29 @@ EOF
 +1+ +2+ ++ +3+
 + 1 | 2 | 3 + ++
 </output>
+    </testSpec>
+    <testSpec title="echo -n hello" runMode="AS_SCRIPT" rc="0">
+        <script>#!bjorne
+                echo -n hello
+        </script>
+        <output>hello</output>
+    </testSpec>
+    <testSpec title="echo hello" runMode="AS_SCRIPT" rc="0">
+        <script>#!bjorne
+                echo hello
+        </script>
+        <output>hello</output>
+    </testSpec>
+    <testSpec title="echo -n" runMode="AS_SCRIPT" rc="0">
+        <script>#!bjorne
+                echo -n
+        </script>
+        <output></output>
+    </testSpec>
+    <testSpec title="echo -n foo bar baz" runMode="AS_SCRIPT" rc="0">
+        <script>#!bjorne
+                echo -n foo bar baz
+        </script>
+        <output>foo bar baz</output>
     </testSpec>
 </testSet>
