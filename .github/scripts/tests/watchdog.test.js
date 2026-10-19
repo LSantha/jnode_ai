@@ -47,7 +47,7 @@ function issue(number, body, over) {
   }, over || {});
 }
 
-function mock({ issues = [], runs = {}, comments = {}, prSha = SHA, prState = "open" } = {}) {
+function mock({ issues = [], runs = {}, comments = {}, prSha = SHA, prState = "open", prLabels = [] } = {}) {
   const created = [];
   const removed = [];
   const github = {
@@ -69,7 +69,7 @@ function mock({ issues = [], runs = {}, comments = {}, prSha = SHA, prState = "o
         get: async ({ pull_number }) => ({
           data: {
             number: pull_number, state: prState, merged: prState === "closed",
-            head: { sha: prSha }
+            head: { sha: prSha }, labels: prLabels
           }
         })
       },
@@ -439,4 +439,30 @@ test("heal attempt cap reads the PR's markers", async () => {
   });
   await watchdog(Object.assign(m, { env: ENV }));
   assert.equal(m.created.length, 0);
+});
+
+test("heal respects the PR's skip labels", async () => {
+  for (const label of ["no-auto", "agent/blocked", "agent/needs-info"]) {
+    const m = mock({
+      issues: [issue(1, ticketBody(state({ phase: "REVIEW", pr: 99, review_pending_ci: true })))],
+      runs: { "ant.yml": [ci("completed", "failure")] },
+      prLabels: [{ name: label }]
+    });
+    await watchdog(Object.assign(m, { env: ENV }));
+    assert.equal(m.created.length, 0, "label " + label);
+  }
+});
+
+test("REVIEW without a PR posts nothing (a /run cannot recover it)", async () => {
+  const m = mock({ issues: [issue(1, ticketBody(state({ phase: "REVIEW", pr: null })))] });
+  await watchdog(Object.assign(m, { env: ENV }));
+  assert.equal(m.created.length, 0);
+});
+
+test("a failed runs read aborts the sweep (fail closed)", async () => {
+  const m = mock({ issues: [issue(1, ticketBody(state()))] });
+  m.github.rest.actions.listWorkflowRuns = async () => { throw new Error("boom"); };
+  await watchdog(Object.assign(m, { env: ENV }));
+  assert.equal(m.created.length, 0);
+  assert.equal(m.removed.length, 0);
 });

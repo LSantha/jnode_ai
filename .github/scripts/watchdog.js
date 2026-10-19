@@ -172,16 +172,15 @@ async function listOpenIssues(github, owner, repo) {
   return out;
 }
 
-async function listRuns(github, owner, repo, workflowId, core) {
-  try {
-    var res = await github.rest.actions.listWorkflowRuns({
-      owner: owner, repo: repo, workflow_id: workflowId, per_page: 50
-    });
-    return (res && res.data && res.data.workflow_runs) ? res.data.workflow_runs : [];
-  } catch (err) {
-    core.warning("Watchdog: could not list " + workflowId + " runs: " + err.message);
-    return [];
-  }
+// Fails closed: a failed runs read must abort the sweep, not look like "no
+// runs". An empty runs list disables every in-flight guard, which is exactly
+// when the sweep would double-run a long DEV agent run or remove a leaked lock
+// while an orchestrator run is actually active.
+async function listRuns(github, owner, repo, workflowId) {
+  var res = await github.rest.actions.listWorkflowRuns({
+    owner: owner, repo: repo, workflow_id: workflowId, per_page: 50
+  });
+  return (res && res.data && res.data.workflow_runs) ? res.data.workflow_runs : [];
 }
 
 function runsFor(runs, issueNumber, prNumber) {
@@ -292,9 +291,10 @@ async function inspectTicket(ctx, issue) {
   }
 
   if (!state.pr) {
-    if (idle < cfg.reviewTimeout) return { note: "#" + issue.number + " REVIEW without PR, idle " + Math.round(idle) + "m" };
-    return decision("run", "REVIEW without PR idle " + Math.round(idle) + "m",
-      ticketKey(issue.number, state, last, "no-pr"), attempt);
+    // A REVIEW ticket with no PR is a broken state: ticket-runner's /run does
+    // requestReview(state, null) -> createComment({ issue_number: null }), which
+    // fails, so posting /run cannot recover it. Leave it for a human.
+    return { note: "#" + issue.number + " REVIEW without PR (needs manual /run --reset)" };
   }
 
   var pr;
@@ -336,6 +336,14 @@ async function inspectTicket(ctx, issue) {
   // failure only).
   if (completed.conclusion !== "failure" && completed.conclusion !== "timed_out") {
     return { note: "#" + issue.number + " CI " + completed.conclusion + " (no heal)" };
+  }
+  // The heal acts on the PR, so its labels (not the ticket's) decide whether it
+  // is allowed - matching ant.yml's heal job and ticket-runner's postCiFixOnce.
+  var prLabels = ctx.h.extractLabels(pr);
+  for (var s = 0; s < SKIP_LABELS.length; s++) {
+    if (prLabels.indexOf(SKIP_LABELS[s]) >= 0) {
+      return { note: "#" + issue.number + " PR #" + state.pr + " skip " + SKIP_LABELS[s] };
+    }
   }
   return decision("heal", "CI " + completed.conclusion + " and heal missing",
     ticketKey(issue.number, state, last, "ci-red:" + sha.slice(0, 7)), attempt,
@@ -454,11 +462,18 @@ module.exports = async function watchdog({ github, context, core, env }) {
   var now = Date.now();
   var h = createHelpers({ github: github, context: context, core: core });
 
-  var runs = {
-    opencode: await listRuns(github, owner, repo, "opencode.yml", core),
-    java: await listRuns(github, owner, repo, "ant.yml", core),
-    orchestrator: await listRuns(github, owner, repo, "orchestrator.yml", core)
-  };
+  var runs;
+  try {
+    runs = {
+      opencode: await listRuns(github, owner, repo, "opencode.yml"),
+      java: await listRuns(github, owner, repo, "ant.yml"),
+      orchestrator: await listRuns(github, owner, repo, "orchestrator.yml")
+    };
+  } catch (err) {
+    core.error("Watchdog: cannot list workflow runs (" + err.message +
+      "); skipping sweep to avoid duplicate actions.");
+    return;
+  }
 
   var issues;
   try {
