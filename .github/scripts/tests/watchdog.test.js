@@ -459,6 +459,30 @@ test("REVIEW without a PR posts nothing (a /run cannot recover it)", async () =>
   assert.equal(m.created.length, 0);
 });
 
+test("REVIEW without PR is not nudged even while review_in_progress is set", async () => {
+  const m = mock({
+    issues: [issue(1, ticketBody(state({ phase: "REVIEW", pr: null, review_in_progress: true })))]
+  });
+  await watchdog(Object.assign(m, { env: ENV }));
+  assert.equal(m.created.length, 0);
+});
+
+test("master skips when the child run just finished (settle window)", async () => {
+  const master = issue(1, orchBody({
+    status: "IN_PROGRESS",
+    current_task: { issue: 5, phase: "DEV", turn: 0, max_turns: 3, retries: 0, review_in_progress: false },
+    started: iso(120), history: [{ timestamp: iso(120) }]
+  }), { labels: [{ name: "kind/orchestrator" }] });
+  const m = mock({
+    issues: [master],
+    runs: {
+      "opencode.yml": [{ status: "completed", display_title: "Issue #5 - fix", updated_at: iso(2) }]
+    }
+  });
+  await watchdog(Object.assign(m, { env: ENV }));
+  assert.equal(m.created.length, 0);
+});
+
 test("a failed runs read aborts the sweep (fail closed)", async () => {
   const m = mock({ issues: [issue(1, ticketBody(state()))] });
   m.github.rest.actions.listWorkflowRuns = async () => { throw new Error("boom"); };

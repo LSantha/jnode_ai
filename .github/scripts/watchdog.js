@@ -100,7 +100,11 @@ function commentsOf(result) {
 // a later page and dedupe/cooldown/attempts would go blind (and a heal re-post
 // every sweep). paginate is used when available, with a single-page fallback.
 async function listAllComments(github, owner, repo, issueNumber) {
-  var params = { owner: owner, repo: repo, issue_number: issueNumber, per_page: 100 };
+  // Newest-first so even the single-page fallback sees the recent markers.
+  var params = {
+    owner: owner, repo: repo, issue_number: issueNumber, per_page: 100,
+    sort: "created", direction: "desc"
+  };
   if (github && typeof github.paginate === "function") {
     try {
       return commentsOf(await github.paginate(github.rest.issues.listComments, params));
@@ -284,17 +288,19 @@ async function inspectTicket(ctx, issue) {
 
   if (state.phase !== "REVIEW") return null;
 
+  // Checked before review_in_progress: a REVIEW ticket with no PR is a broken
+  // state, and ticket-runner's /run for it does requestReview(state, null) ->
+  // createComment({ issue_number: null }), which fails - so no /run trigger can
+  // recover it, and posting the stale-review /run would only spam. Leave it for
+  // a human (/run --reset).
+  if (!state.pr) {
+    return { note: "#" + issue.number + " REVIEW without PR (needs manual /run --reset)" };
+  }
+
   if (state.review_in_progress) {
     if (idle < cfg.reviewTimeout) return { note: "#" + issue.number + " review in flight" };
     return decision("run", "review_in_progress stale " + Math.round(idle) + "m",
       ticketKey(issue.number, state, last, "stale-review"), attempt);
-  }
-
-  if (!state.pr) {
-    // A REVIEW ticket with no PR is a broken state: ticket-runner's /run does
-    // requestReview(state, null) -> createComment({ issue_number: null }), which
-    // fails, so posting /run cannot recover it. Leave it for a human.
-    return { note: "#" + issue.number + " REVIEW without PR (needs manual /run --reset)" };
   }
 
   var pr;
@@ -350,27 +356,45 @@ async function inspectTicket(ctx, issue) {
     { sha: sha, runUrl: completed.html_url || "" });
 }
 
-// True when the orchestrator's current task still has a run in flight. Without
-// this the master path would re-post /orchestrate at the timeout boundary and
-// double-run a child that is still executing (the ticket path already guards).
-async function childRunInFlight(ctx, task) {
+// Reports whether the orchestrator's current task still has a run in flight
+// (inFlight) or one just finished (justFinished), mirroring the settle windows
+// inspectTicket uses. Without this the master path would re-post /orchestrate at
+// the timeout boundary and double-run a child that is still executing or whose
+// completion the orchestrator is about to consume (orchestrator.js re-posts the
+// child /oc prompt on its own wakeup).
+async function childRunState(ctx, task) {
+  var state = { inFlight: false, justFinished: false };
   var ocRuns = runsFor(ctx.runs.opencode, task.issue, task.pr);
   for (var i = 0; i < ocRuns.length; i++) {
-    if (isActiveRun(ocRuns[i])) return true;
+    if (isActiveRun(ocRuns[i])) state.inFlight = true;
   }
-  if (!task.pr) return false;
+  if (!state.inFlight) {
+    var done = latestCompletedTime(ocRuns);
+    if (done > 0 && minutesSince(done, ctx.now) < ctx.cfg.agentSettle) state.justFinished = true;
+  }
+  if (!task.pr) return state;
   var sha = "";
   try {
     var pr = (await ctx.github.rest.pulls.get({ owner: ctx.owner, repo: ctx.repo, pull_number: task.pr })).data;
     sha = (pr.head && pr.head.sha) || "";
   } catch (err) {
-    return false;
+    // Fail closed: an unreadable PR must not disable the guard.
+    state.inFlight = true;
+    return state;
   }
-  if (!sha) return false;
+  if (!sha) return state;
+  var ciRuns = [];
   for (var j = 0; j < ctx.runs.java.length; j++) {
-    if (ctx.runs.java[j].head_sha === sha && isActiveRun(ctx.runs.java[j])) return true;
+    if (ctx.runs.java[j].head_sha === sha) ciRuns.push(ctx.runs.java[j]);
   }
-  return false;
+  for (var k = 0; k < ciRuns.length; k++) {
+    if (isActiveRun(ciRuns[k])) state.inFlight = true;
+  }
+  if (!state.inFlight) {
+    var ciDone = latestCompletedTime(ciRuns);
+    if (ciDone > 0 && minutesSince(ciDone, ctx.now) < ctx.cfg.ciSettle) state.justFinished = true;
+  }
+  return state;
 }
 
 async function inspectMaster(ctx, issue) {
@@ -413,8 +437,12 @@ async function inspectMaster(ctx, issue) {
   if (idle < ctx.cfg.orchTimeout) {
     return { note: "#" + issue.number + " orchestrator idle " + Math.round(idle) + "m" };
   }
-  if (await childRunInFlight(ctx, task)) {
+  var child = await childRunState(ctx, task);
+  if (child.inFlight) {
     return { note: "#" + issue.number + " child #" + task.issue + " run in flight" };
+  }
+  if (child.justFinished) {
+    return { note: "#" + issue.number + " child #" + task.issue + " run just finished" };
   }
   return decision("orchestrate", "task #" + task.issue + " " + task.phase + " idle " + Math.round(idle) + "m",
     "master:" + issue.number + ":" + task.issue + ":" + task.phase + ":" + new Date(last).toISOString(),
