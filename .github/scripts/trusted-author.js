@@ -15,7 +15,9 @@
 
 'use strict';
 
-var TRUSTED_AUTHOR_LOGINS = ["LSantha"];
+// TEMPORARY (untrusted-gate validation): empty allowlist, reverted immediately
+// in the following commit. Do not keep.
+var TRUSTED_AUTHOR_LOGINS = [];
 
 /** Return true if the user object represents a bot. */
 function isBotUser(user) {
