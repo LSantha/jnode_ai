@@ -24,6 +24,13 @@ var isTriggerComment = require("./report-signals.js").isTriggerComment;
  */
 var MAX_HISTORY_ENTRIES = 200;
 
+/**
+ * Trusted-author policy lives in one place, shared with the workflow YAML
+ * guards (auto-triage.yml, ant.yml). See trusted-author.js.
+ */
+var trustedAuthor = require("./trusted-author.js");
+var TRUSTED_AUTHOR_LOGINS = trustedAuthor.TRUSTED_AUTHOR_LOGINS;
+
 module.exports = function createHelpers({ github, context, core }) {
   const owner = context.repo.owner;
   const repo  = context.repo.repo;
@@ -334,9 +341,12 @@ module.exports = function createHelpers({ github, context, core }) {
 
   /** Return true if the user object represents a bot. */
   function isBotUser(user) {
-    return !!user && ((user.type || "").toLowerCase() === "bot" ||
-      (user.login || "").includes("[bot]") ||
-      (user.login || "").startsWith("app/"));
+    return trustedAuthor.isBotUser(user);
+  }
+
+  /** Return true if the user is an allowlisted maintainer (fail-closed on a missing user). */
+  function isTrustedAuthor(user) {
+    return trustedAuthor.isTrustedAuthor(user);
   }
 
   /** Squash-merge a PR and delete its head branch. */
@@ -448,6 +458,7 @@ module.exports = function createHelpers({ github, context, core }) {
     isBotUser: isBotUser,
     collectReviewerModels: collectReviewerModels,
     buildMergeMessage: buildMergeMessage,
+    isTrustedAuthor: isTrustedAuthor,
     mergePR: mergePR,
     extractLabels: extractLabels,
     findPRsForSHA: findPRsForSHA,
@@ -456,6 +467,7 @@ module.exports = function createHelpers({ github, context, core }) {
   };
 };
 
-// Module-level export so the runners can cap history without instantiating.
+// Module-level exports so the runners and YAML steps can read them without instantiating.
 module.exports.MAX_HISTORY_ENTRIES = MAX_HISTORY_ENTRIES;
+module.exports.TRUSTED_AUTHOR_LOGINS = TRUSTED_AUTHOR_LOGINS;
 

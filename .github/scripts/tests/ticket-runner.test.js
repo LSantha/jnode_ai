@@ -25,6 +25,7 @@ function createMocks(eventName, {
   commentOnPR = false,
   issueNumber = 42,
   issueBody = "Original issue body description",
+  issueUser = { login: "LSantha", type: "User" },
   issueLabels = [{ name: "kind/bug" }],
   runDisplayTitle = "Issue #42 - Fix bug",
   runConclusion = "success",
@@ -96,7 +97,8 @@ function createMocks(eventName, {
                 number: issueNumber,
                 body: currentIssueBody,
                 labels: currentIssueLabels,
-                state: currentIssueState
+                state: currentIssueState,
+                user: issueUser
               }
             };
           }
@@ -446,6 +448,14 @@ test("orchestrator-helpers utilities", async (t) => {
     assert.strictEqual(h.isBotUser({ login: "app[bot]", type: "Bot" }), true);
     assert.strictEqual(h.isBotUser({ login: "opencode-agent[bot]" }), true);
   });
+
+  await t.test("isTrustedAuthor allowlists only the maintainer", () => {
+    assert.strictEqual(h.isTrustedAuthor({ login: "LSantha", type: "User" }), true);
+    assert.strictEqual(h.isTrustedAuthor({ login: "random", type: "User" }), false);
+    assert.strictEqual(h.isTrustedAuthor({ login: "LSantha[bot]", type: "Bot" }), false, "a bot cannot claim trust");
+    assert.strictEqual(h.isTrustedAuthor(null), false, "missing user is untrusted (fail-closed)");
+    assert.strictEqual(h.isTrustedAuthor({}), false);
+  });
 });
 
 test("merge safety gate helpers", async (t) => {
@@ -598,6 +608,7 @@ test("merge safety gate helpers", async (t) => {
 test("ticket-runner.js event handling suite", async (t) => {
   await t.test("Initialization on /run creates state and triggers /oc", async () => {
     const mocks = createMocks("issue_comment", { commentBody: "/run" });
+    mocks.setIssueComments([{ body: "## Triage\nBlast radius: low; actionable." }]);
     await runTicketRunner(mocks);
 
     assert.strictEqual(mocks.calls.updateIssue.length, 1);
@@ -614,10 +625,20 @@ test("ticket-runner.js event handling suite", async (t) => {
 
   await t.test("Respects custom max-turns with /run --turns 5", async () => {
     const mocks = createMocks("issue_comment", { commentBody: "/run --turns 5" });
+    mocks.setIssueComments([{ body: "## Triage\nBlast radius: low; actionable." }]);
     await runTicketRunner(mocks);
 
     const state = _parseState(mocks.getIssueBody());
     assert.strictEqual(state.max_turns, 5);
+  });
+
+  await t.test("/run on an untriaged ticket requests triage instead of starting DEV", async () => {
+    const mocks = createMocks("issue_comment", { commentBody: "/run" });
+    await runTicketRunner(mocks);
+
+    assert.strictEqual(_parseState(mocks.getIssueBody()), null, "no DEV state until triage is clear");
+    assert.strictEqual(mocks.calls.createComment.length, 1);
+    assert.ok(mocks.calls.createComment[0].body.includes("/oc triage"), "requests triage first");
   });
 
   await t.test("Ignores comments that start with /running or /runaway", async () => {
@@ -795,6 +816,7 @@ test("ticket-runner.js event handling suite", async (t) => {
       commentBody: "/run --reset",
       issueBody: initialBody
     });
+    mocks.setIssueComments([{ body: "## Triage\nBlast radius: low; actionable." }]);
     await runTicketRunner(mocks);
 
     const state = _parseState(mocks.getIssueBody());
@@ -1603,6 +1625,38 @@ test("ticket-runner.js event handling suite", async (t) => {
     assert.strictEqual(state.phase, "DEV");
     assert.strictEqual(mocks.calls.createComment.length, 1);
     assert.ok(mocks.calls.createComment[0].body.includes("/oc Please proceed"));
+  });
+
+  await t.test("issues:labeled untrusted author does not auto-start DEV", async () => {
+    const mocks = createMocks("issues", {
+      issueBody: "Bug description",
+      issueLabels: [{ name: "kind/bug" }, { name: "area/fs" }],
+      issueUser: { login: "attacker", type: "User" }
+    });
+    mocks.setIssueComments([
+      { body: "## Triage\n\n- [x] **Repro:** 1. boot 2. mkdir\n- [x] **Suggested next:** fix" }
+    ]);
+    await runTicketRunner(mocks);
+
+    assert.strictEqual(_parseState(mocks.getIssueBody()), null, "no run state for an untrusted author");
+    assert.strictEqual(mocks.calls.createComment.length, 0, "nothing is triggered for an untrusted author");
+  });
+
+  await t.test("issues:labeled untrusted author auto-starts after a maintainer kickoff", async () => {
+    const mocks = createMocks("issues", {
+      issueBody: "Bug description",
+      issueLabels: [{ name: "kind/bug" }, { name: "area/fs" }],
+      issueUser: { login: "reporter", type: "User" }
+    });
+    mocks.setIssueComments([
+      { body: "/oc triage issue #42\n\nTriage run ONLY. Load the jnode-triage-issue skill and obey it." },
+      { body: "## Triage\n\n- [x] **Repro:** 1. boot\n- [x] **Suggested next:** fix" }
+    ]);
+    await runTicketRunner(mocks);
+
+    const state = _parseState(mocks.getIssueBody());
+    assert.strictEqual(state.phase, "DEV");
+    assert.ok(mocks.calls.createComment.some(c => c.body.includes("/oc Please proceed")));
   });
 
   await t.test("issues:labeled without triage requests triage first", async () => {
@@ -2523,6 +2577,7 @@ test("ticket-runner.js event handling suite", async (t) => {
       issueBody: initialBody,
       issueLabels: [{ name: "kind/bug" }]
     });
+    mocks.setIssueComments([{ body: "## Triage\nBlast radius: low; actionable." }]);
 
     await runTicketRunner(mocks);
 

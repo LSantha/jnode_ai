@@ -239,7 +239,19 @@ module.exports = async ({ github, context, core }) => {
     }
 
     if (!state) {
-      // Initialize fresh run
+      // Triage-first: manual /run must not skip triage. Without a clear
+      // ## Triage report, start triage and let DEV begin once it lands (the
+      // Triage workflow_run wakeup). The /run comment is itself the maintainer
+      // kickoff that lets an untrusted-author ticket through autoStartGuards.
+      var triage = await triageStatus(issueNumber);
+      if (!triage.present || !triage.clear || triage.count > 3) {
+        if (!triage.requested) {
+          await h.triggerTask(issueNumber, "/oc triage issue #" + issueNumber + "\n\nTriage run ONLY. Load the jnode-triage-issue skill and obey it. Output is exactly one ## Triage comment plus kind/area label edits. FORBIDDEN in this run: git checkout -b, git push, gh pr create, any branch, any PR.");
+        }
+        core.info("Ticket runner: #" + issueNumber + " /run deferred: waiting for a clear ## Triage report.");
+        return;
+      }
+      // Clear triage: initialize and start DEV.
       state = initState(customMaxTurns);
       state.history.push({ event: "start", timestamp: new Date().toISOString() });
 
@@ -338,6 +350,22 @@ module.exports = async ({ github, context, core }) => {
   // proceeds once a CLEAR ## Triage comment exists. All auto paths share
   // these guards; manual /run is unaffected.
 
+  // An issue from an untrusted author may still be processed once a maintainer
+  // explicitly kicks it off. The kickoff is a human trigger comment (`/oc
+  // triage` or `/run`); agent comments carry an `opencode.ai/s/` session link
+  // and are excluded. Auto-triage is disabled for untrusted authors (see
+  // auto-triage.yml), so a trigger comment on an untrusted issue can only come
+  // from the maintainer.
+  async function hasMaintainerKickoff(issueNumber) {
+    var res = await github.rest.issues.listComments({ owner, repo, issue_number: issueNumber, per_page: 100 });
+    var list = (res && res.data) ? res.data : res;
+    for (var i = 0; i < list.length; i++) {
+      var b = (list[i] && list[i].body) || "";
+      if (isTriggerComment(b) && !/opencode\.ai\/s\//.test(b)) return true;
+    }
+    return false;
+  }
+
   // Shared guards for every auto-start path. Returns { ok, reason?, labels? }.
   async function autoStartGuards(issueNumber) {
     var d;
@@ -349,6 +377,9 @@ module.exports = async ({ github, context, core }) => {
     }
     if (d.pull_request) return { ok: false, reason: "is a PR" };
     if (d.state && d.state !== "open") return { ok: false, reason: "issue is " + d.state };
+    if (!h.isTrustedAuthor(d.user) && !(await hasMaintainerKickoff(issueNumber))) {
+      return { ok: false, reason: "author not trusted" };
+    }
     var labels = h.extractLabels(d);
     if (labels.includes("no-auto")) return { ok: false, reason: "no-auto" };
     if (labels.includes("kind/orchestrator")) return { ok: false, reason: "orchestrator master" };

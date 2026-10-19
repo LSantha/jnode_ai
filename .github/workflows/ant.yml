@@ -196,6 +196,10 @@ jobs:
       issues: write
       pull-requests: write
     steps:
+      - name: Checkout trusted base
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
       - name: Post /oc fix on CI failure
         uses: actions/github-script@v7
         env:
@@ -210,7 +214,18 @@ jobs:
             const marker = `<!-- CI-HEAL:${sha} -->`;
             const runUrl = `https://github.com/${owner}/${repo}/actions/runs/${context.runId}`;
 
+            // Only the maintainer's own PRs are CI-healed. Agent PRs are opened
+            // as the maintainer (via GH_PAT); an external/fork PR must never
+            // wake an agent run. The base ref (not the PR head) is checked out
+            // above, so a fork cannot swap this module. Policy lives in
+            // trusted-author.js.
+            const { isTrustedAuthor } = require('./.github/scripts/trusted-author.js');
+
             const { data: pr } = await github.rest.issues.get({ owner, repo, issue_number: prNumber });
+            if (!isTrustedAuthor(pr.user)) {
+              core.info(`CI-heal skipped for PR #${prNumber} (untrusted author).`);
+              return;
+            }
             const labels = (pr.labels || []).map(l => (typeof l === 'string') ? l : l.name);
             if (labels.includes('no-auto') || labels.includes('agent/in-progress')) {
               core.info(`CI-heal skipped for PR #${prNumber} (opt-out or busy).`);
