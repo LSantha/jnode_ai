@@ -226,17 +226,37 @@ test("dedupes a second sweep for the same unchanged state", async () => {
   assert.equal(m.created.length, 1);
 });
 
-test("stops after the attempt cap", async () => {
+test("stops after the attempt cap for the same state", async () => {
+  const prefix = "<!-- WATCHDOG:ticket:1:DEV:0:";
   const comments = {
     1: [
-      { body: "<!-- WATCHDOG:a -->", created_at: iso(120) },
-      { body: "<!-- WATCHDOG:b -->", created_at: iso(110) },
-      { body: "<!-- WATCHDOG:c -->", created_at: iso(100) }
+      { body: prefix + "a -->", created_at: iso(120) },
+      { body: prefix + "b -->", created_at: iso(110) },
+      { body: prefix + "c -->", created_at: iso(100) }
     ]
   };
   const m = mock({ issues: [issue(1, ticketBody(state()))], comments: comments });
   await watchdog(Object.assign(m, { env: ENV }));
   assert.equal(m.created.length, 0);
+});
+
+test("attempt cap is per state, not per issue lifetime", async () => {
+  const comments = {
+    1: [
+      { body: "<!-- WATCHDOG:ticket:1:REVIEW:0:a -->", created_at: iso(400) },
+      { body: "<!-- WATCHDOG:ticket:1:FEEDBACK:0:a -->", created_at: iso(300) },
+      { body: "<!-- WATCHDOG:ticket:1:REVIEW:0:b -->", created_at: iso(200) }
+    ]
+  };
+  const m = mock({ issues: [issue(1, ticketBody(state()))], comments: comments });
+  await watchdog(Object.assign(m, { env: ENV }));
+  assert.equal(m.created.length, 1);
+});
+
+test("non-numeric timeout env falls back instead of disabling the check", () => {
+  const cfg = watchdog._config({ WATCHDOG_DEV_TIMEOUT_MIN: "abc", WATCHDOG_REVIEW_TIMEOUT_MIN: "" });
+  assert.equal(cfg.devTimeout, 40);
+  assert.equal(cfg.reviewTimeout, 45);
 });
 
 test("dry-run posts nothing", async () => {
@@ -309,6 +329,74 @@ test("an in-flight orchestrator run blocks the master path", async () => {
   const m = mock({
     issues: [master],
     runs: { "orchestrator.yml": [{ status: "queued" }] }
+  });
+  await watchdog(Object.assign(m, { env: ENV }));
+  assert.equal(m.created.length, 0);
+});
+
+test("master path respects no-auto and blocking agent labels", async () => {
+  for (const label of ["no-auto", "watchdog/paused", "agent/failed", "agent/blocked"]) {
+    const master = issue(1, orchBody({
+      status: "IN_PROGRESS",
+      current_task: { issue: 5, phase: "DEV", turn: 0, max_turns: 3, retries: 0, review_in_progress: false },
+      started: iso(120), history: [{ timestamp: iso(120) }]
+    }), { labels: [{ name: "kind/orchestrator" }, { name: label }] });
+    const m = mock({ issues: [master] });
+    await watchdog(Object.assign(m, { env: ENV }));
+    assert.equal(m.created.length, 0, "label " + label);
+  }
+});
+
+test("an in-flight child agent run blocks the master path", async () => {
+  const master = issue(1, orchBody({
+    status: "IN_PROGRESS",
+    current_task: { issue: 5, phase: "DEV", turn: 0, max_turns: 3, retries: 0, review_in_progress: false },
+    started: iso(120), history: [{ timestamp: iso(120) }]
+  }), { labels: [{ name: "kind/orchestrator" }] });
+  const m = mock({
+    issues: [master],
+    runs: { "opencode.yml": [{ status: "in_progress", display_title: "Issue #5 - fix" }] }
+  });
+  await watchdog(Object.assign(m, { env: ENV }));
+  assert.equal(m.created.length, 0);
+});
+
+test("in-flight child PR CI blocks the master path", async () => {
+  const master = issue(1, orchBody({
+    status: "IN_PROGRESS",
+    current_task: { issue: 5, pr: 99, phase: "REVIEW", turn: 0, max_turns: 3, retries: 0, review_in_progress: false },
+    started: iso(120), history: [{ timestamp: iso(120) }]
+  }), { labels: [{ name: "kind/orchestrator" }] });
+  const m = mock({
+    issues: [master],
+    runs: { "ant.yml": [ci("in_progress", null)] }
+  });
+  await watchdog(Object.assign(m, { env: ENV }));
+  assert.equal(m.created.length, 0);
+});
+
+test("heal cooldown reads the PR's markers", async () => {
+  const m = mock({
+    issues: [issue(1, ticketBody(state({ phase: "REVIEW", pr: 99, review_pending_ci: true })))],
+    runs: { "ant.yml": [ci("completed", "failure")] },
+    comments: { 99: [{ body: "<!-- WATCHDOG:ticket:1:REVIEW:99:old -->", created_at: iso(5) }] }
+  });
+  await watchdog(Object.assign(m, { env: ENV }));
+  assert.equal(m.created.length, 0);
+});
+
+test("heal attempt cap reads the PR's markers", async () => {
+  const prefix = "<!-- WATCHDOG:ticket:1:REVIEW:99:";
+  const m = mock({
+    issues: [issue(1, ticketBody(state({ phase: "REVIEW", pr: 99, review_pending_ci: true })))],
+    runs: { "ant.yml": [ci("completed", "failure")] },
+    comments: {
+      99: [
+        { body: prefix + "a -->", created_at: iso(120) },
+        { body: prefix + "b -->", created_at: iso(110) },
+        { body: prefix + "c -->", created_at: iso(100) }
+      ]
+    }
   });
   await watchdog(Object.assign(m, { env: ENV }));
   assert.equal(m.created.length, 0);

@@ -122,18 +122,24 @@ function config(env) {
     var v = env && env[name];
     return (v === undefined || v === null || v === "") ? fallback : v;
   }
+  // A non-numeric value must fall back, not become NaN: NaN would silently
+  // disable the timeout/settle comparisons and turn the sweep into a spammer.
+  function num(name, fallback) {
+    var n = Number(get(name, fallback));
+    return isNaN(n) ? fallback : n;
+  }
   return {
     // Default to log-only; the workflow opts in with WATCHDOG_DRY_RUN=0.
     dryRun: String(get("WATCHDOG_DRY_RUN", "1")) !== "0",
-    devTimeout: Number(get("WATCHDOG_DEV_TIMEOUT_MIN", "40")),
-    reviewTimeout: Number(get("WATCHDOG_REVIEW_TIMEOUT_MIN", "45")),
-    orchTimeout: Number(get("WATCHDOG_ORCH_TIMEOUT_MIN", "45")),
-    ciSettle: Number(get("WATCHDOG_CI_SETTLE_MIN", "10")),
-    agentSettle: Number(get("WATCHDOG_AGENT_SETTLE_MIN", "10")),
-    cooldown: Number(get("WATCHDOG_COOLDOWN_MIN", "30")),
-    maxAttempts: Number(get("WATCHDOG_MAX_ATTEMPTS", "3")),
-    maxActions: Number(get("WATCHDOG_MAX_ACTIONS", "20")),
-    lockMin: Number(get("WATCHDOG_LOCK_MIN", "25"))
+    devTimeout: num("WATCHDOG_DEV_TIMEOUT_MIN", 40),
+    reviewTimeout: num("WATCHDOG_REVIEW_TIMEOUT_MIN", 45),
+    orchTimeout: num("WATCHDOG_ORCH_TIMEOUT_MIN", 45),
+    ciSettle: num("WATCHDOG_CI_SETTLE_MIN", 10),
+    agentSettle: num("WATCHDOG_AGENT_SETTLE_MIN", 10),
+    cooldown: num("WATCHDOG_COOLDOWN_MIN", 30),
+    maxAttempts: num("WATCHDOG_MAX_ATTEMPTS", 3),
+    maxActions: num("WATCHDOG_MAX_ACTIONS", 20),
+    lockMin: num("WATCHDOG_LOCK_MIN", 25)
   };
 }
 
@@ -185,27 +191,35 @@ function latestCompletedTime(runs) {
   return best;
 }
 
-function decision(action, reason, key, extra) {
-  return Object.assign({ action: action, reason: reason, key: key }, extra || {});
+// attemptPrefix groups nudges for the same state identity (issue + phase + PR),
+// independent of the per-snapshot key. The key dedupes an unchanged state; the
+// cap bounds retries when the runner keeps rewriting state without advancing.
+function decision(action, reason, key, attemptPrefix, extra) {
+  return Object.assign({ action: action, reason: reason, key: key, attemptPrefix: attemptPrefix }, extra || {});
 }
 
 function ticketKey(issueNumber, state, last, suffix) {
-  return "ticket:" + issueNumber + ":" + state.phase + ":" + (state.pr || 0) + ":" +
-    new Date(last).toISOString() + (suffix ? ":" + suffix : "");
+  return ticketAttemptPrefix(issueNumber, state) + new Date(last).toISOString() + (suffix ? ":" + suffix : "");
 }
 
-// Shared dedupe/cooldown/attempt checks. Returns a note when an action must not
-// be taken, or null when it is allowed.
-function nudgeGate(comments, key, cfg, now) {
+function ticketAttemptPrefix(issueNumber, state) {
+  return "ticket:" + issueNumber + ":" + state.phase + ":" + (state.pr || 0) + ":";
+}
+
+// Shared dedupe/cooldown/attempt checks against the comments where the marker is
+// actually written (the issue for /run and /orchestrate, the PR for a heal).
+// Returns a note when an action must not be taken, or null when it is allowed.
+function nudgeGate(comments, key, attemptPrefix, cfg, now) {
   var marker = WATCHDOG_PREFIX + key + " -->";
   if (hasBodyMarker(comments, marker)) return "already nudged for this state";
   var last = latestMarkerTs(comments, WATCHDOG_PREFIX);
   if (last > 0 && minutesSince(last, now) < cfg.cooldown) {
     return "within cooldown (" + Math.round(minutesSince(last, now)) + "m)";
   }
+  var attemptMarker = WATCHDOG_PREFIX + attemptPrefix;
   var attempts = 0;
   for (var i = 0; i < comments.length; i++) {
-    if (((comments[i] && comments[i].body) || "").indexOf(WATCHDOG_PREFIX) >= 0) attempts++;
+    if (((comments[i] && comments[i].body) || "").indexOf(attemptMarker) >= 0) attempts++;
   }
   if (attempts >= cfg.maxAttempts) return "attempt cap reached (" + attempts + ")";
   return null;
@@ -247,25 +261,26 @@ async function inspectTicket(ctx, issue) {
 
   var last = lastActivity(state);
   var idle = minutesSince(last, now);
+  var attempt = ticketAttemptPrefix(issue.number, state);
 
   if (state.phase === "DEV" || state.phase === "FEEDBACK") {
     if (idle < cfg.devTimeout) return { note: "#" + issue.number + " " + state.phase + " idle " + Math.round(idle) + "m" };
-    return { key: ticketKey(issue.number, state, last, "dev"), action: "run",
-      reason: state.phase + " idle " + Math.round(idle) + "m" };
+    return decision("run", state.phase + " idle " + Math.round(idle) + "m",
+      ticketKey(issue.number, state, last, "dev"), attempt);
   }
 
   if (state.phase !== "REVIEW") return null;
 
   if (state.review_in_progress) {
     if (idle < cfg.reviewTimeout) return { note: "#" + issue.number + " review in flight" };
-    return { key: ticketKey(issue.number, state, last, "stale-review"), action: "run",
-      reason: "review_in_progress stale " + Math.round(idle) + "m" };
+    return decision("run", "review_in_progress stale " + Math.round(idle) + "m",
+      ticketKey(issue.number, state, last, "stale-review"), attempt);
   }
 
   if (!state.pr) {
     if (idle < cfg.reviewTimeout) return { note: "#" + issue.number + " REVIEW without PR, idle " + Math.round(idle) + "m" };
-    return { key: ticketKey(issue.number, state, last, "no-pr"), action: "run",
-      reason: "REVIEW without PR idle " + Math.round(idle) + "m" };
+    return decision("run", "REVIEW without PR idle " + Math.round(idle) + "m",
+      ticketKey(issue.number, state, last, "no-pr"), attempt);
   }
 
   var pr;
@@ -291,27 +306,54 @@ async function inspectTicket(ctx, issue) {
   }
   if (!completed) {
     if (idle < cfg.reviewTimeout) return { note: "#" + issue.number + " no CI record, idle " + Math.round(idle) + "m" };
-    return { key: ticketKey(issue.number, state, last, "no-ci"), action: "run",
-      reason: "REVIEW with no CI record idle " + Math.round(idle) + "m" };
+    return decision("run", "REVIEW with no CI record idle " + Math.round(idle) + "m",
+      ticketKey(issue.number, state, last, "no-ci"), attempt);
   }
   var ciEnd = parseTs(completed.updated_at || completed.created_at);
   if (minutesSince(ciEnd, now) < cfg.ciSettle) {
     return { note: "#" + issue.number + " CI just completed" };
   }
   if (completed.conclusion === "success") {
-    return { key: ticketKey(issue.number, state, last, "ci-green:" + sha.slice(0, 7)),
-      action: "run", reason: "CI green but review not requested" };
+    return decision("run", "CI green but review not requested",
+      ticketKey(issue.number, state, last, "ci-green:" + sha.slice(0, 7)), attempt);
   }
-  return { key: ticketKey(issue.number, state, last, "ci-red:" + sha.slice(0, 7)),
-    action: "heal", reason: "CI " + completed.conclusion + " and heal missing",
-    sha: sha, runUrl: completed.html_url || "" };
+  return decision("heal", "CI " + completed.conclusion + " and heal missing",
+    ticketKey(issue.number, state, last, "ci-red:" + sha.slice(0, 7)), attempt,
+    { sha: sha, runUrl: completed.html_url || "" });
+}
+
+// True when the orchestrator's current task still has a run in flight. Without
+// this the master path would re-post /orchestrate at the timeout boundary and
+// double-run a child that is still executing (the ticket path already guards).
+async function childRunInFlight(ctx, task) {
+  var ocRuns = runsFor(ctx.runs.opencode, task.issue, task.pr);
+  for (var i = 0; i < ocRuns.length; i++) {
+    if (isActiveRun(ocRuns[i])) return true;
+  }
+  if (!task.pr) return false;
+  var sha = "";
+  try {
+    var pr = (await ctx.github.rest.pulls.get({ owner: ctx.owner, repo: ctx.repo, pull_number: task.pr })).data;
+    sha = (pr.head && pr.head.sha) || "";
+  } catch (err) {
+    return false;
+  }
+  if (!sha) return false;
+  for (var j = 0; j < ctx.runs.java.length; j++) {
+    if (ctx.runs.java[j].head_sha === sha && isActiveRun(ctx.runs.java[j])) return true;
+  }
+  return false;
 }
 
 async function inspectMaster(ctx, issue) {
   var labels = ctx.h.extractLabels(issue);
   if (labels.indexOf("kind/orchestrator") < 0) return null;
   if (!ctx.h.isTrustedAuthor(issue.user)) return { note: "#" + issue.number + " untrusted author" };
-  if (labels.indexOf("watchdog/paused") >= 0) return { note: "#" + issue.number + " paused" };
+  for (var s = 0; s < SKIP_LABELS.length; s++) {
+    if (labels.indexOf(SKIP_LABELS[s]) >= 0) {
+      return { note: "#" + issue.number + " skip " + SKIP_LABELS[s] };
+    }
+  }
 
   for (var i = 0; i < ctx.runs.orchestrator.length; i++) {
     if (isActiveRun(ctx.runs.orchestrator[i])) {
@@ -327,8 +369,9 @@ async function inspectMaster(ctx, issue) {
     if (!olderThan(updated, ctx.cfg.lockMin, ctx.now)) {
       return { note: "#" + issue.number + " lock recent" };
     }
-    return { key: "master:" + issue.number + ":lock:" + new Date(updated).toISOString(),
-      action: "unlock", reason: "leaked orchestrator lock" };
+    return decision("unlock", "leaked orchestrator lock",
+      "master:" + issue.number + ":lock:" + new Date(updated).toISOString(),
+      "master:" + issue.number + ":lock:");
   }
 
   var state = parseBlock(ORCH_STATE_RE, issue.body);
@@ -342,9 +385,12 @@ async function inspectMaster(ctx, issue) {
   if (idle < ctx.cfg.orchTimeout) {
     return { note: "#" + issue.number + " orchestrator idle " + Math.round(idle) + "m" };
   }
-  return { key: "master:" + issue.number + ":" + task.issue + ":" + task.phase + ":" +
-      new Date(last).toISOString(),
-    action: "orchestrate", reason: "task #" + task.issue + " " + task.phase + " idle " + Math.round(idle) + "m" };
+  if (await childRunInFlight(ctx, task)) {
+    return { note: "#" + issue.number + " child #" + task.issue + " run in flight" };
+  }
+  return decision("orchestrate", "task #" + task.issue + " " + task.phase + " idle " + Math.round(idle) + "m",
+    "master:" + issue.number + ":" + task.issue + ":" + task.phase + ":" + new Date(last).toISOString(),
+    "master:" + issue.number + ":");
 }
 
 async function performAction(ctx, issue, plan) {
@@ -420,20 +466,21 @@ module.exports = async function watchdog({ github, context, core, env }) {
         core.info("Watchdog: " + plan.note);
         continue;
       }
+      // The heal path acts on the PR; its nudge marker lands there, so the gate
+      // must read that comment stream or its cooldown/attempt cap would never
+      // see a prior heal (only the CI-HEAL dedupe would apply).
+      var target = (plan.action === "heal") ? statePrForHeal(issue) : issue.number;
       var comments = commentsOf(await github.rest.issues.listComments({
-        owner: owner, repo: repo, issue_number: issue.number, per_page: 100
+        owner: owner, repo: repo, issue_number: target, per_page: 100
       }));
-      var gate = nudgeGate(comments, plan.key, cfg, now);
+      var gate = nudgeGate(comments, plan.key, plan.attemptPrefix, cfg, now);
       if (gate) {
         core.info("Watchdog: #" + issue.number + " skip: " + gate);
         continue;
       }
       if (plan.action === "heal") {
         var shortSha = (plan.sha || "").slice(0, 7);
-        var prComments = commentsOf(await github.rest.issues.listComments({
-          owner: owner, repo: repo, issue_number: statePrForHeal(issue), per_page: 100
-        }));
-        if (hasBodyMarker(prComments, CI_HEAL_PREFIX + shortSha + " -->")) {
+        if (hasBodyMarker(comments, CI_HEAL_PREFIX + shortSha + " -->")) {
           core.info("Watchdog: #" + issue.number + " skip: CI heal already posted");
           continue;
         }
