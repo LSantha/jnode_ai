@@ -6,5 +6,17 @@
 [ -n "$OPENCODE_MODEL" ] || exit 0
 [ "$2" = "merge" ] && exit 0
 msg_file="$1"
+
+# Drop any Co-authored-by: line that credits an opencode/bot noreply account.
+# GitHub renders Co-authored-by: as an extra author (avatar + Contributors
+# list), so an "opencode <...@users.noreply.github.com>" trailer would show a
+# stranger's image on the maintainer's commits. The model already rides in the
+# Assisted-by: trailer below, which GitHub does not parse. Only opencode/bot
+# addresses are stripped, so an intentional human co-author is preserved.
+if grep -qiE '^co-authored-by:.*opencode.*@users\.noreply\.github\.com' "$msg_file"; then
+  grep -viE '^co-authored-by:.*opencode.*@users\.noreply\.github\.com' "$msg_file" > "$msg_file.tmp" &&
+    mv "$msg_file.tmp" "$msg_file"
+fi
+
 grep -q '^Assisted-by:' "$msg_file" && exit 0
 printf '\nAssisted-by: %s\n' "$OPENCODE_MODEL" >> "$msg_file"

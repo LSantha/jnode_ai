@@ -185,9 +185,8 @@ If you find yourself past 5 minutes still "looking into it", you have failed the
   #<N> - <Subject>
 
   <body, ≤ 10 lines>
-
-  Co-authored-by: LSantha <LSantha@users.noreply.github.com>
   ```
+  Do **not** add a `Co-authored-by:` trailer. The CI git identity is already the maintainer, so a co-author line is unnecessary; and GitHub renders `Co-authored-by:` as an extra author (avatar + Contributors list), so naming the agent - `opencode`, `opencode-agent`, or any bot noreply - would put a stranger's image on the maintainer's commits. The `prepare-commit-msg` hook strips such lines. Model attribution is automatic (see below).
   `#<N>` is the **issue** number. GitHub appends ` (#<PR>)` to the squash subject on its own, so the branch commit must **not** end in `(#<N>)` - that produced `... (#<issue>) (#<PR>)` on master (#757/#755/#765). One issue reference at the front, one PR reference appended by GitHub: `#751 - shell: expand pathname globs (#757)`. `(#<PR>)` (7 chars) plus `#<N> - ` (7) is 14 chars of scaffolding, so keep the description within ~58 chars.
 - **PR title** — `#<N> - <Subject>`, the same string as the commit subject. Do not repeat the issue number anywhere else in the title.
 - **Model attribution is automatic.** Do not add it yourself: the agent workflows install `.github/hooks/prepare-commit-msg`, which appends `Assisted-by: <model>` to every commit made while `OPENCODE_MODEL` is set (the workflow env). The trailer flows into the squash commit body because the repo squashes with `COMMIT_MESSAGES`. A reviewer makes no commit, so it has no trailer to carry; it writes an `Assisted-by:` line into its review summary instead (§5.2), which `mergePR` folds into the merge commit as `Reviewed-by:`.

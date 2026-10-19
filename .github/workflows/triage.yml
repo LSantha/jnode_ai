@@ -36,8 +36,10 @@ jobs:
           persist-credentials: true
       - name: Configure git identity
         run: |
-          git config user.name "opencode-agent"
-          git config user.email "opencode-agent@users.noreply.github.com"
+          # Same identity as opencode.yml: the maintainer, never a bot. Triage is
+          # read-only (no commit/push), kept consistent for the single convention.
+          git config user.name "LSantha"
+          git config user.email "LSantha@users.noreply.github.com"
       - name: Clone wiki
         run: gh repo clone LSantha/jnode_ai.wiki .wiki
         env:

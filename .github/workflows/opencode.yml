@@ -45,8 +45,13 @@ jobs:
           persist-credentials: true
       - name: Configure git identity
         run: |
-          git config user.name "opencode-agent"
-          git config user.email "opencode-agent@users.noreply.github.com"
+          # Attribute agent commits to the maintainer, never a bot. GitHub renders
+          # the author avatar and the Contributors list from the git identity and
+          # from Co-authored-by: trailers; the model therefore rides only in an
+          # Assisted-by: trailer (see the prepare-commit-msg hook), which GitHub
+          # does not parse. The GitHub noreply keeps the personal email private.
+          git config user.name "LSantha"
+          git config user.email "LSantha@users.noreply.github.com"
           # Git does not clone hooks, and core.hooksPath defaults to .git/hooks,
           # so point it at the tracked hooks dir to install the attribution hook.
           git config core.hooksPath "$GITHUB_WORKSPACE/.github/hooks"
