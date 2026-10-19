@@ -63,7 +63,7 @@ module.exports = function createHelpers({ github, context, core }) {
 
   /** Build the standard review prompt that the runner/orchestrator posts on PRs. */
   function getReviewPrompt() {
-    return "/oc review\n\nYou are reviewing a pull request for the automated pipeline. Your final line must be exactly one of:\nVerdict: approve\nVerdict: request-changes\n\nUse \"Verdict: request-changes\" if the PR needs code changes. Use \"Verdict: approve\" only if the PR is correct and ready for the next phase.";
+    return "/oc review\n\nYou are reviewing a pull request for the automated pipeline. Your final line must be exactly one of:\nVerdict: approve\nVerdict: request-changes\n\nImmediately after the Verdict line, add one more line naming the model that produced this review, copied verbatim from the model your runtime reports (never invented):\nAssisted-by: <model id>\n\nA reviewer makes no commit, so this comment is the only place its model can be recorded; mergePR folds it into the merge commit as Reviewed-by. Use \"Verdict: request-changes\" if the PR needs code changes. Use \"Verdict: approve\" only if the PR is correct and ready for the next phase.";
   }
 
   /** Scan comments on a PR for the latest Verdict line. Returns 'approve', 'request-changes', or null. */

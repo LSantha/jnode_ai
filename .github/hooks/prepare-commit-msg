@@ -7,14 +7,14 @@
 [ "$2" = "merge" ] && exit 0
 msg_file="$1"
 
-# Drop any Co-authored-by: line that credits an opencode/bot noreply account.
-# GitHub renders Co-authored-by: as an extra author (avatar + Contributors
-# list), so an "opencode <...@users.noreply.github.com>" trailer would show a
-# stranger's image on the maintainer's commits. The model already rides in the
-# Assisted-by: trailer below, which GitHub does not parse. Only opencode/bot
-# addresses are stripped, so an intentional human co-author is preserved.
-if grep -qiE '^co-authored-by:.*opencode.*@users\.noreply\.github\.com' "$msg_file"; then
-  grep -viE '^co-authored-by:.*opencode.*@users\.noreply\.github\.com' "$msg_file" > "$msg_file.tmp" &&
+# Drop any Co-authored-by: line from an agent commit. The CI identity is
+# already the maintainer, so the agent has no co-author to credit, and GitHub
+# renders Co-authored-by: as an extra author (avatar + Contributors list) -
+# whether it names a bot ("opencode") or the maintainer a second time. The
+# model rides in the Assisted-by: trailer below, which GitHub does not parse.
+# This only runs when OPENCODE_MODEL is set, so a human message is never touched.
+if grep -qi '^co-authored-by:' "$msg_file"; then
+  grep -vi '^co-authored-by:' "$msg_file" > "$msg_file.tmp" &&
     mv "$msg_file.tmp" "$msg_file"
 fi
 
