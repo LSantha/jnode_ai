@@ -95,6 +95,20 @@ function commentsOf(result) {
   return (result && result.data) ? result.data : (result || []);
 }
 
+// Read ALL comments, not just the first page: listComments defaults to oldest
+// first, so on a busy issue/PR the recent WATCHDOG/CI-HEAL markers would land on
+// a later page and dedupe/cooldown/attempts would go blind (and a heal re-post
+// every sweep). paginate is used when available, with a single-page fallback.
+async function listAllComments(github, owner, repo, issueNumber) {
+  var params = { owner: owner, repo: repo, issue_number: issueNumber, per_page: 100 };
+  if (github && typeof github.paginate === "function") {
+    try {
+      return commentsOf(await github.paginate(github.rest.issues.listComments, params));
+    } catch (err) { /* fall through to the single-page read */ }
+  }
+  return commentsOf(await github.rest.issues.listComments(params));
+}
+
 function hasBodyMarker(comments, needle) {
   for (var i = 0; i < comments.length; i++) {
     if ((((comments[i] && comments[i].body) || "").indexOf(needle)) >= 0) return true;
@@ -317,6 +331,12 @@ async function inspectTicket(ctx, issue) {
     return decision("run", "CI green but review not requested",
       ticketKey(issue.number, state, last, "ci-green:" + sha.slice(0, 7)), attempt);
   }
+  // Only a real failure warrants a heal; cancelled/skipped/neutral/stale would
+  // make the sweep chase a run that never needed a fix (ant.yml heals on
+  // failure only).
+  if (completed.conclusion !== "failure" && completed.conclusion !== "timed_out") {
+    return { note: "#" + issue.number + " CI " + completed.conclusion + " (no heal)" };
+  }
   return decision("heal", "CI " + completed.conclusion + " and heal missing",
     ticketKey(issue.number, state, last, "ci-red:" + sha.slice(0, 7)), attempt,
     { sha: sha, runUrl: completed.html_url || "" });
@@ -390,7 +410,7 @@ async function inspectMaster(ctx, issue) {
   }
   return decision("orchestrate", "task #" + task.issue + " " + task.phase + " idle " + Math.round(idle) + "m",
     "master:" + issue.number + ":" + task.issue + ":" + task.phase + ":" + new Date(last).toISOString(),
-    "master:" + issue.number + ":");
+    "master:" + issue.number + ":" + task.issue + ":" + task.phase + ":");
 }
 
 async function performAction(ctx, issue, plan) {
@@ -470,9 +490,7 @@ module.exports = async function watchdog({ github, context, core, env }) {
       // must read that comment stream or its cooldown/attempt cap would never
       // see a prior heal (only the CI-HEAL dedupe would apply).
       var target = (plan.action === "heal") ? statePrForHeal(issue) : issue.number;
-      var comments = commentsOf(await github.rest.issues.listComments({
-        owner: owner, repo: repo, issue_number: target, per_page: 100
-      }));
+      var comments = await listAllComments(github, owner, repo, target);
       var gate = nudgeGate(comments, plan.key, plan.attemptPrefix, cfg, now);
       if (gate) {
         core.info("Watchdog: #" + issue.number + " skip: " + gate);

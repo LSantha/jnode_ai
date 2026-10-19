@@ -51,6 +51,7 @@ function mock({ issues = [], runs = {}, comments = {}, prSha = SHA, prState = "o
   const created = [];
   const removed = [];
   const github = {
+    paginate: async (fn, params) => (await fn(params)).data,
     rest: {
       issues: {
         listForRepo: async ({ page }) => ({ data: page === 1 ? issues : [] }),
@@ -251,6 +252,44 @@ test("attempt cap is per state, not per issue lifetime", async () => {
   const m = mock({ issues: [issue(1, ticketBody(state()))], comments: comments });
   await watchdog(Object.assign(m, { env: ENV }));
   assert.equal(m.created.length, 1);
+});
+
+test("gate reads the full comment history via paginate, not just page one", async () => {
+  const m = mock({ issues: [issue(1, ticketBody(state()))], comments: { 1: [] } });
+  m.github.paginate = async () =>
+    [{ body: "<!-- WATCHDOG:ticket:1:DEV:0:old -->", created_at: iso(5) }];
+  await watchdog(Object.assign(m, { env: ENV }));
+  assert.equal(m.created.length, 0);
+});
+
+test("heals on failure but not on other non-success conclusions", async () => {
+  for (const conclusion of ["cancelled", "skipped", "neutral", "stale"]) {
+    const m = mock({
+      issues: [issue(1, ticketBody(state({ phase: "REVIEW", pr: 99, review_pending_ci: true })))],
+      runs: { "ant.yml": [ci("completed", conclusion)] }
+    });
+    await watchdog(Object.assign(m, { env: ENV }));
+    assert.equal(m.created.length, 0, "conclusion " + conclusion);
+  }
+});
+
+test("master attempt cap is per child task and phase", async () => {
+  const prefix = "<!-- WATCHDOG:master:1:5:DEV:";
+  const comments = {
+    1: [
+      { body: prefix + "a -->", created_at: iso(120) },
+      { body: prefix + "b -->", created_at: iso(110) },
+      { body: prefix + "c -->", created_at: iso(100) }
+    ]
+  };
+  const master = issue(1, orchBody({
+    status: "IN_PROGRESS",
+    current_task: { issue: 5, phase: "DEV", turn: 0, max_turns: 3, retries: 0, review_in_progress: false },
+    started: iso(120), history: [{ timestamp: iso(120) }]
+  }), { labels: [{ name: "kind/orchestrator" }] });
+  const m = mock({ issues: [master], comments: comments });
+  await watchdog(Object.assign(m, { env: ENV }));
+  assert.equal(m.created.length, 0);
 });
 
 test("non-numeric timeout env falls back instead of disabling the check", () => {
