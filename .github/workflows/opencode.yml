@@ -32,7 +32,7 @@ jobs:
       # read by .github/hooks/prepare-commit-msg to stamp each agent commit with
       # an "Assisted-by: <model>" trailer. One place to change when the model
       # changes, so the commit attribution cannot drift from the actual model.
-      OPENCODE_MODEL: opencode/space-bunny-free
+      OPENCODE_MODEL: opencode/deepseek-v4.1-flash-free
     permissions:
       id-token: write
       contents: write
