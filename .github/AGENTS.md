@@ -281,6 +281,8 @@ The post-step is idempotent. A second run with the same inputs makes the same de
 
 `AGENTS.md` files in this repo are US-ASCII. No smart quotes, no em-dash, no non-breaking space. The one exception is `opencode.yml` run-name, which uses an em-dash for display only. When editing scripts and docs, prefer `-` or `--` over `-`.
 
+Workflow `if:` expressions do **not** interpret `\n`/`\r` inside single-quoted strings (they are the literal characters `\`, `n`), so `startsWith(body, '/run\n')` never matches a newline. Match a prefix only (`startsWith(body, '/run')`) and leave the exact body shape to the script (the runner's `isRun` guard already narrows it). This was exactly why a multi-line `/run` - including the watchdog's `/run\n\n<!-- WATCHDOG:... -->` nudge - was silently dropped by `ticket-runner.yml`.
+
 ## Running scripts locally
 
 ```bash
