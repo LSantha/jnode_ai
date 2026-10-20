@@ -42,8 +42,14 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v6
         with:
-          persist-credentials: true
+          # Do not persist the automatic GITHUB_TOKEN. A push made with it is
+          # attributed to github-actions[bot], and GitHub then parks the PR's
+          # Java CI run in action_required (waiting for a maintainer to approve)
+          # instead of running it. The PAT is installed below instead.
+          persist-credentials: false
       - name: Configure git identity
+        env:
+          GH_PAT: ${{ secrets.GH_PAT }}
         run: |
           # Attribute agent commits to the maintainer, never a bot. GitHub renders
           # the author avatar and the Contributors list from the git identity and
@@ -55,6 +61,12 @@ jobs:
           # Git does not clone hooks, and core.hooksPath defaults to .git/hooks,
           # so point it at the tracked hooks dir to install the attribution hook.
           git config core.hooksPath "$GITHUB_WORKSPACE/.github/hooks"
+          # Authenticate pushes with the PAT so a pushed commit is attributed to
+          # the maintainer. Same-repo collaborator pushes are never approval
+          # gated; a GITHUB_TOKEN push makes the PR's Java CI run
+          # action_required and stalls the REVIEW/FEEDBACK loop until approved.
+          auth=$(printf 'x-access-token:%s' "$GH_PAT" | base64 -w0)
+          git config --local http.https://github.com/.extraheader "AUTHORIZATION: basic $auth"
       - name: Clone wiki
         run: gh repo clone LSantha/jnode_ai.wiki .wiki
         env:
