@@ -1,0 +1,22 @@
+#!/bin/sh
+# Append an Assisted-by trailer naming the model that produced this commit.
+# Installed via core.hooksPath by the agent workflows; a no-op when
+# OPENCODE_MODEL is unset (local human commits) or on a merge commit, so it
+# never rewrites a message a person wrote.
+[ -n "$OPENCODE_MODEL" ] || exit 0
+[ "$2" = "merge" ] && exit 0
+msg_file="$1"
+
+# Drop any Co-authored-by: line from an agent commit. The CI identity is
+# already the maintainer, so the agent has no co-author to credit, and GitHub
+# renders Co-authored-by: as an extra author (avatar + Contributors list) -
+# whether it names a bot ("opencode") or the maintainer a second time. The
+# model rides in the Assisted-by: trailer below, which GitHub does not parse.
+# This only runs when OPENCODE_MODEL is set, so a human message is never touched.
+if grep -qi '^co-authored-by:' "$msg_file"; then
+  grep -vi '^co-authored-by:' "$msg_file" > "$msg_file.tmp" &&
+    mv "$msg_file.tmp" "$msg_file"
+fi
+
+grep -q '^Assisted-by:' "$msg_file" && exit 0
+printf '\nAssisted-by: %s\n' "$OPENCODE_MODEL" >> "$msg_file"

@@ -9,11 +9,16 @@ on:
 
 jobs:
   opencode:
+    # The triage and approve exclusions are prefix/contains based and mirror each
+    # other. Being slightly broad only under-runs an unknown "approve*"/"triage*"
+    # verb, which is the safe direction for an agent trigger.
     if: |
       (contains(github.event.comment.body, ' /oc ') ||
       startsWith(github.event.comment.body, '/oc ')) &&
       !(startsWith(github.event.comment.body, '/oc triage') ||
       contains(github.event.comment.body, ' /oc triage')) &&
+      !(startsWith(github.event.comment.body, '/oc approve') ||
+      contains(github.event.comment.body, ' /oc approve')) &&
       !contains(github.event.comment.body, 'opencode.ai/s/') &&
       (github.event.comment.author_association == 'COLLABORATOR' || 
        github.event.comment.author_association == 'MEMBER' || 
@@ -23,6 +28,11 @@ jobs:
     env:
       # This forces actions to use Node 24 and clears the warning
       FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+      # Single source for the model. Passed to the agent as `with: model` and
+      # read by .github/hooks/prepare-commit-msg to stamp each agent commit with
+      # an "Assisted-by: <model>" trailer. One place to change when the model
+      # changes, so the commit attribution cannot drift from the actual model.
+      OPENCODE_MODEL: opencode/deepseek-v4.1-flash-free
     permissions:
       id-token: write
       contents: write
@@ -32,11 +42,31 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v6
         with:
-          persist-credentials: true
+          # Do not persist the automatic GITHUB_TOKEN. A push made with it is
+          # attributed to github-actions[bot], and GitHub then parks the PR's
+          # Java CI run in action_required (waiting for a maintainer to approve)
+          # instead of running it. The PAT is installed below instead.
+          persist-credentials: false
       - name: Configure git identity
+        env:
+          GH_PAT: ${{ secrets.GH_PAT }}
         run: |
-          git config user.name "opencode-agent"
-          git config user.email "opencode-agent@users.noreply.github.com"
+          # Attribute agent commits to the maintainer, never a bot. GitHub renders
+          # the author avatar and the Contributors list from the git identity and
+          # from Co-authored-by: trailers; the model therefore rides only in an
+          # Assisted-by: trailer (see the prepare-commit-msg hook), which GitHub
+          # does not parse. The GitHub noreply keeps the personal email private.
+          git config user.name "LSantha"
+          git config user.email "LSantha@users.noreply.github.com"
+          # Git does not clone hooks, and core.hooksPath defaults to .git/hooks,
+          # so point it at the tracked hooks dir to install the attribution hook.
+          git config core.hooksPath "$GITHUB_WORKSPACE/.github/hooks"
+          # Authenticate pushes with the PAT so a pushed commit is attributed to
+          # the maintainer. Same-repo collaborator pushes are never approval
+          # gated; a GITHUB_TOKEN push makes the PR's Java CI run
+          # action_required and stalls the REVIEW/FEEDBACK loop until approved.
+          auth=$(printf 'x-access-token:%s' "$GH_PAT" | base64 -w0)
+          git config --local http.https://github.com/.extraheader "AUTHORIZATION: basic $auth"
       - name: Clone wiki
         run: gh repo clone LSantha/jnode_ai.wiki .wiki
         env:
@@ -67,7 +97,7 @@ jobs:
           OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY }}
           OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
         with:
-          model: opencode/space-bunny-free
+          model: ${{ env.OPENCODE_MODEL }}
           variant: high
           use_github_token: true
 

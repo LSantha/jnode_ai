@@ -2257,10 +2257,18 @@ public abstract class VmType<T> extends VmAnnotatedElement implements
                    the initialization of a class that is being initialized by
                    another thread to block until that initialization completes.
 
-                   doInitialize is synchronized on this type and holds the
-                   monitor for the whole of <clinit>, so this blocks until the
-                   initializing thread is done. Re-entering from within our
-                   own <clinit> is allowed and is a no-op there. */
+doInitialize is synchronized on this type and holds the
+                    monitor for the whole of <clinit>, so this blocks until the
+                    initializing thread is done. Re-entering from within our
+                    own <clinit> is allowed and is a no-op there.
+
+                    Side effect: doPrepare, doVerify, doCompile and doInitialize
+                    are all synchronized on this same VmType and hold that
+                    monitor across superclass loading, TIB/IMT construction and
+                    compileIMT, so this blocking branch now also serializes
+                    initialize() behind them. Two threads running mutually
+                    referencing <clinit>s on two types can therefore deadlock
+                    (silent hang) where they previously raced. */
                 doInitialize();
             }
         }

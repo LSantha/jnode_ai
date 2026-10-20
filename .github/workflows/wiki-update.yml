@@ -18,7 +18,7 @@ concurrency:
 jobs:
   update-wiki:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 60
     env:
       FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
     permissions:
@@ -84,7 +84,7 @@ jobs:
           OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY }}
           OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
         with:
-          model: opencode/space-bunny-free
+          model: opencode/deepseek-v4.1-flash-free
           variant: high
           prompt: |
             Analyze all commits since ${{ steps.range.outputs.since }} and update wiki pages.
@@ -96,9 +96,23 @@ jobs:
 
       - name: Update last-run marker
         if: always()
+        env:
+          GH_TOKEN: ${{ secrets.GH_PAT }}
         run: |
           echo "${{ steps.range.outputs.until }}" > .wiki/.last-wiki-update
-          cd .wiki && git add .last-wiki-update && git commit -m "Update last wiki update marker" && git push || true
+          cd .wiki
+          # The wiki clone is a separate repo: it has neither an identity nor
+          # stored credentials, so set both before committing and pushing.
+          git config user.name "LSantha"
+          git config user.email "LSantha@users.noreply.github.com"
+          git add .last-wiki-update
+          if git diff --cached --quiet; then
+            echo "Marker already up to date."
+            exit 0
+          fi
+          git commit -m "Update last wiki update marker"
+          gh auth setup-git
+          git push
 
       - name: Report results
         if: always()

@@ -180,8 +180,17 @@ def main():
     except (FileNotFoundError, ConnectionRefusedError, OSError) as e:
         print("ERROR: %s: %s (%s)" % (paths.kdb_sock, e, paths.id))
         print("  instance registered?   jnode_paths.py --list")
-        print("  UART1 wired for KDB?   see jnode-serial SKILL.md "
-              "(QEMU: start_qemu.sh full; VBox: --uartmode1 server)")
+        entry = jp.read_entry(paths.id) or {}
+        if entry.get("hypervisor") == "vbox":
+            print("  UART1 is a file boot log by default on VirtualBox;")
+            print("  enable KDB with either:")
+            print("    jnode_vbox.py config --name %s --instance %s --kdb"
+                  % (entry.get("vm", "JNode"), paths.id))
+            print("    VBoxManage controlvm %s changeuartmode1 server %s"
+                  % (entry.get("vm", "JNode"), paths.kdb_sock))
+        else:
+            print("  UART1 wired for KDB?   see jnode-serial SKILL.md "
+                  "(QEMU: start_qemu.sh full)")
         sys.exit(1)
 
     try:

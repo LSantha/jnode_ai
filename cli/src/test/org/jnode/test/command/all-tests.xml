@@ -2,4 +2,5 @@
     <include setName="argument/all-argument-tests.xml"/>
     <include setName="common/all-common-tests.xml"/>
     <include setName="file/all-file-tests.xml"/>
+    <include setName="system/all-system-tests.xml"/>
 </testSet>

@@ -43,6 +43,7 @@
 
   <extension point="org.jnode.shell.aliases">
     <alias name="alias"     class="org.jnode.command.system.AliasCommand"/>
+    <alias name="base64"    class="org.jnode.command.system.Base64Command"/>
     <alias name="bindkeys"  class="org.jnode.command.system.BindKeysCommand"/>
     <alias name="class"     class="org.jnode.command.system.ClassCommand"/>
     <alias name="classpath" class="org.jnode.command.system.ClasspathCommand" internal="yes"/>
@@ -74,6 +75,17 @@
   </extension>
 
   <extension point="org.jnode.shell.syntaxes">
+    <syntax alias="base64" description="Encode or decode base64 data">
+      <sequence>
+        <optionSet>
+          <option argLabel="decode" shortName="d" longName="decode"
+                  description="Decode the input instead of encoding it"/>
+        </optionSet>
+        <repeat minCount="0">
+          <argument argLabel="files" description="Files to encode or decode; standard input if omitted"/>
+        </repeat>
+      </sequence>
+    </syntax>
     <syntax alias="alias">
       <empty description="List all aliases"/>
       <option argLabel="remove" shortName="r" description="Remove an alias"/>

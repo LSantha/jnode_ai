@@ -1,0 +1,48 @@
+name: Stall Watchdog
+
+# Polls runner state instead of trusting workflow_run delivery. Recovers tickets
+# stranded by a dropped event (e.g. an Actions incident) by re-posting the same
+# /run, /orchestrate or CI-heal trigger a human would. See scripts/watchdog.js.
+#
+# Scheduled sweeps are DRY-RUN by default. Run it manually with "apply" to act,
+# or flip the scheduled default to '0' once the dry-run logs look clean.
+
+on:
+  schedule:
+    - cron: '*/15 * * * *'
+  workflow_dispatch:
+    inputs:
+      apply:
+        description: 'Take action (post triggers / remove leaked lock). Off = log only.'
+        type: boolean
+        default: false
+
+# Never interleave two sweeps, and never share a group with the runners so a
+# sweep cannot block a ticket or orchestrator run.
+concurrency:
+  group: watchdog-sweep
+  cancel-in-progress: false
+
+permissions:
+  issues: write
+  pull-requests: read
+  checks: read
+  actions: read
+  contents: read
+
+jobs:
+  sweep:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      WATCHDOG_DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.apply && '0' || '1' }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      - name: Sweep stalled runs
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GH_PAT || secrets.GITHUB_TOKEN }}
+          script: |
+            const watchdog = require('./.github/scripts/watchdog.js');
+            await watchdog({ github, context, core });

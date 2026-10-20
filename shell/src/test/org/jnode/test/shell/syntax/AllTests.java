@@ -29,6 +29,7 @@ import org.junit.runners.Suite;
     HostArgumentTypesTest.class, SystemArgumentTypesTest.class, ArgumentBundleTest.class,
     DefaultTokenizerTest.class,
     DefaultInterpreterSequenceTest.class,
+    DefaultInterpreterGlobTest.class,
     MuSyntaxTest.class, MuParserTest.class, MuParserTest2.class, MuPresetTest.class,
     SharedStackTest.class, ArgumentMultiplicityTest.class,
     CommandLineTest.class, RepeatSyntaxTest.class, SequenceSyntaxTest.class,
