@@ -62,7 +62,11 @@ public class RouteTest {
 
     @BeforeClass
     public static void initNaming() {
-        InitialNaming.setNameSpace(new BasicNameSpace());
+        try {
+            InitialNaming.nameSet();
+        } catch (NullPointerException ex) {
+            InitialNaming.setNameSpace(new BasicNameSpace());
+        }
     }
 
     @Before

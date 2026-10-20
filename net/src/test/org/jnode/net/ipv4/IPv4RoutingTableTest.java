@@ -29,7 +29,9 @@ import org.jnode.driver.Device;
 import org.jnode.driver.net.NetDeviceAPI;
 import org.junit.Test;
 
+import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertSame;
+import static org.junit.Assert.assertTrue;
 import static org.junit.Assert.fail;
 
 /**
@@ -38,6 +40,8 @@ import static org.junit.Assert.fail;
 public class IPv4RoutingTableTest {
 
     private static final IPv4Address ON_LINK_MASK = new IPv4Address("255.255.255.0");
+    private static final IPv4Address HALF_MASK = new IPv4Address("255.255.255.128");
+    private static final IPv4Address THIRTY_MASK = new IPv4Address("255.255.255.252");
     private static final IPv4Address SUPER_MASK = new IPv4Address("255.0.0.0");
 
     private Device createDevice(String id) {
@@ -118,6 +122,8 @@ public class IPv4RoutingTableTest {
         rt.add(new IPv4Route(IPv4Address.ANY, null, new IPv4Address("10.0.3.1"), dev0));
         rt.add(hostRoute);
 
+        assertTrue(hostRoute.isHost());
+        assertFalse(hostRoute.isNetwork());
         assertSame(hostRoute, rt.search(new IPv4Address("10.0.9.12")));
     }
 
@@ -162,6 +168,57 @@ public class IPv4RoutingTableTest {
         rt.add(downRoute);
 
         assertSame(defaultRoute, rt.search(new IPv4Address("10.0.3.12")));
+    }
+
+    @Test
+    public void testSearchUsesNonOctetBoundaryNetworkRoute() throws Exception {
+        final Device dev0 = createDevice("eth-test0");
+        final Device dev1 = createDevice("eth-test1");
+        final IPv4Route defaultRoute =
+            new IPv4Route(IPv4Address.ANY, null, new IPv4Address("10.0.3.1"), dev1);
+        final IPv4Route onLink = new IPv4Route(new IPv4Address("10.0.9.128"), HALF_MASK, dev0);
+        final IPv4RoutingTable rt = new IPv4RoutingTable();
+        rt.add(defaultRoute);
+        rt.add(onLink);
+
+        assertTrue(onLink.isNetwork());
+        assertFalse(onLink.isHost());
+        assertSame(onLink, rt.search(new IPv4Address("10.0.9.128")));
+        assertSame(onLink, rt.search(new IPv4Address("10.0.9.200")));
+        assertSame(defaultRoute, rt.search(new IPv4Address("10.0.9.127")));
+        assertSame(defaultRoute, rt.search(new IPv4Address("10.0.10.1")));
+    }
+
+    @Test
+    public void testSearchUsesLongestPrefixAcrossNonOctetBoundary() throws Exception {
+        final Device dev0 = createDevice("eth-test0");
+        final Device dev1 = createDevice("eth-test1");
+        final IPv4Route wide = new IPv4Route(new IPv4Address("10.0.9.0"), ON_LINK_MASK, dev1);
+        final IPv4Route narrow = new IPv4Route(new IPv4Address("10.0.9.128"), HALF_MASK, dev0);
+        final IPv4RoutingTable rt = new IPv4RoutingTable();
+        rt.add(wide);
+        rt.add(narrow);
+
+        assertSame(narrow, rt.search(new IPv4Address("10.0.9.200")));
+        assertSame(wide, rt.search(new IPv4Address("10.0.9.127")));
+    }
+
+    @Test
+    public void testSearchUsesThirtyBitNetworkRoute() throws Exception {
+        final Device dev0 = createDevice("eth-test0");
+        final Device dev1 = createDevice("eth-test1");
+        final IPv4Route defaultRoute =
+            new IPv4Route(IPv4Address.ANY, null, new IPv4Address("10.0.3.1"), dev1);
+        final IPv4Route onLink = new IPv4Route(new IPv4Address("10.0.9.4"), THIRTY_MASK, dev0);
+        final IPv4RoutingTable rt = new IPv4RoutingTable();
+        rt.add(defaultRoute);
+        rt.add(onLink);
+
+        assertTrue(onLink.isNetwork());
+        assertSame(onLink, rt.search(new IPv4Address("10.0.9.4")));
+        assertSame(onLink, rt.search(new IPv4Address("10.0.9.6")));
+        assertSame(defaultRoute, rt.search(new IPv4Address("10.0.9.3")));
+        assertSame(defaultRoute, rt.search(new IPv4Address("10.0.9.8")));
     }
 
     @Test
