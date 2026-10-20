@@ -96,9 +96,17 @@ jobs:
 
       - name: Update last-run marker
         if: always()
+        env:
+          GH_TOKEN: ${{ secrets.GH_PAT }}
         run: |
           echo "${{ steps.range.outputs.until }}" > .wiki/.last-wiki-update
-          cd .wiki && git add .last-wiki-update && git commit -m "Update last wiki update marker" && git push || true
+          cd .wiki
+          git add .last-wiki-update
+          git commit -m "Update last wiki update marker" || true
+          # The clone is a separate repo without stored credentials, so the push
+          # failed with "could not read Username"; install gh's credential helper.
+          gh auth setup-git
+          git push || true
 
       - name: Report results
         if: always()
