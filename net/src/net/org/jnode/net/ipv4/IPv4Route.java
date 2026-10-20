@@ -101,17 +101,19 @@ public class IPv4Route implements IPv4Constants {
 
     /**
      * Is this a host route? A route is a host route if its subnetmask selects a
-     * single address, or if the destination has host bits set for the subnetmask
-     * (the classful host-route convention). Classification is based on the
-     * subnetmask, so networks that do not end on an octet boundary (e.g. a /25
-     * with a non-zero fourth octet) are still recognised as networks.
+     * single address, or if the destination is a classful host address that has
+     * host bits set for the subnetmask. Classful network addresses (a zero
+     * fourth octet) are always network routes, even when an earlier octet has
+     * host bits set for the classful mask (e.g. 10.0.9.0/8). Networks that do
+     * not end on an octet boundary (e.g. a /25 with a non-zero fourth octet)
+     * are recognised as networks because their destination is already masked.
      * 
      * @return True if this is a host route, false otherwise
      * @see #isNetwork()
      */
     public boolean isHost() {
         return (subnetmask.prefixLength() == 32) ||
-                !destination.equals(destination.and(subnetmask));
+                (destination.isHost() && !destination.equals(destination.and(subnetmask)));
     }
 
     /**

@@ -222,6 +222,35 @@ public class IPv4RoutingTableTest {
     }
 
     @Test
+    public void testSearchUsesClassfulClassANetworkRoute() throws Exception {
+        final Device dev0 = createDevice("eth-test0");
+        final Device dev1 = createDevice("eth-test1");
+        final IPv4Route onLink = new IPv4Route(new IPv4Address("10.0.9.0"), dev0);
+        final IPv4Route defaultRoute =
+            new IPv4Route(IPv4Address.ANY, null, new IPv4Address("10.0.3.1"), dev1);
+        final IPv4RoutingTable rt = new IPv4RoutingTable();
+        rt.add(defaultRoute);
+        rt.add(onLink);
+
+        assertTrue(onLink.isNetwork());
+        assertFalse(onLink.isHost());
+        assertSame(onLink, rt.search(new IPv4Address("10.0.5.5")));
+        assertSame(onLink, rt.search(new IPv4Address("10.0.9.12")));
+        assertSame(defaultRoute, rt.search(new IPv4Address("8.8.8.8")));
+    }
+
+    @Test
+    public void testSearchUsesClassfulClassBNetworkRoute() throws Exception {
+        final Device dev0 = createDevice("eth-test0");
+        final IPv4Route onLink = new IPv4Route(new IPv4Address("172.16.5.0"), dev0);
+        final IPv4RoutingTable rt = new IPv4RoutingTable();
+        rt.add(onLink);
+
+        assertTrue(onLink.isNetwork());
+        assertSame(onLink, rt.search(new IPv4Address("172.16.200.7")));
+    }
+
+    @Test
     public void testAddReplacesRouteWithSameDestinationAndDevice() throws Exception {
         final Device dev = createDevice("eth-test0");
         final IPv4Route first = new IPv4Route(new IPv4Address("10.0.3.0"), ON_LINK_MASK, dev);

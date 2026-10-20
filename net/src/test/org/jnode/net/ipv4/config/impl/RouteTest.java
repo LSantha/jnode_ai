@@ -22,6 +22,7 @@ package org.jnode.net.ipv4.config.impl;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertSame;
+import static org.junit.Assert.assertTrue;
 import static org.junit.Assert.fail;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
@@ -153,6 +154,15 @@ public class RouteTest {
         final IPv4Route route = onlyRoute();
         assertEquals(new IPv4Address("10.0.9.5"), route.getDestination());
         assertEquals(SUPER_MASK, route.getSubnetmask());
+    }
+
+    @Test
+    public void testAddRouteWithoutMaskClassifiesClassANetworkAddressAsNetwork() throws Exception {
+        Route.addRoute(new IPv4Address("10.0.9.0"), null, new IPv4Address("10.0.3.1"), dev);
+
+        final IPv4Route route = onlyRoute();
+        assertTrue(route.isNetwork());
+        assertSame(route, rt.search(new IPv4Address("10.0.5.5")));
     }
 
     @Test
