@@ -844,7 +844,20 @@ module.exports = async ({ github, context, core }) => {
       for (var i = list.length - 1; i >= 0; i--) {
         var body = (list[i] && list[i].body) || "";
         var match = body.match(/\b(?:Created|Opened) PR #(\d+)\b/i);
-        if (match) return parseInt(match[1], 10);
+        if (match) {
+          var candidate = parseInt(match[1], 10);
+          // A "Created PR #N" comment may reference a PR from a previous,
+          // already-closed attempt. Resurrecting it as this ticket's active PR
+          // corrupts state (pr=stale closed PR). Only consider open PRs;
+          // if we cannot determine the state, accept the candidate (fail-open).
+          try {
+            var prData = await github.rest.pulls.get({ owner, repo, pull_number: candidate });
+            // Skip PRs closed without merging (abandoned attempts from previous
+            // runs). Open PRs and closed+merged PRs are acceptable candidates.
+            if (prData.data.state === "closed" && !prData.data.merged) continue;
+          } catch (_) {}
+          return candidate;
+        }
       }
     } catch (err) {
       core.warning("findPRForIssueWithComment failed: " + err.message);
