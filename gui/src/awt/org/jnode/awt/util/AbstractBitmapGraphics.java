@@ -309,6 +309,22 @@ public abstract class AbstractBitmapGraphics extends BitmapGraphics {
         if (width <= 0 || height <= 0) {
             return;
         }
+        doFillRect(x, y, width, height, color, mode);
+    }
+
+    /**
+     * Fill a pre-validated rectangle. Subclasses may override this method to
+     * use a single contiguous bulk write when there is no inter-row padding
+     * (bytesPerLine == getBytesForWidth(width)).
+     *
+     * @param x
+     * @param y
+     * @param width
+     * @param height
+     * @param color
+     * @param mode
+     */
+    protected void doFillRect(int x, int y, int width, int height, int color, int mode) {
         for (int i = 0; i < height; i++) {
             doDrawPixels(x, y + i, width, color, mode);
         }
