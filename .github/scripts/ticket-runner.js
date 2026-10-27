@@ -901,6 +901,24 @@ module.exports = async ({ github, context, core }) => {
       state.phase = "REVIEW";
       state.retries = 0;
       state.history.push({ event: "dev_done", pr: prNumber, timestamp: new Date().toISOString() });
+      // Ensure the PR title carries the issue number so the squash-merge
+      // commit subject (COMMIT_OR_PR_TITLE) stays traceable back to the ticket.
+      // Only touches the title when the prefix is missing; wrapped in try/catch
+      // so a titles API hiccup can never break the DEV flow.
+      try {
+        var prData = await github.rest.pulls.get({ owner, repo, pull_number: prNumber });
+        var prefix = "#" + issueNumber + " - ";
+        var title = prData.data.title || "";
+        if (!title.startsWith(prefix) && !title.startsWith("#" + issueNumber + ":")) {
+          await github.rest.pulls.update({
+            owner, repo, pull_number: prNumber,
+            title: prefix + title
+          });
+          core.info("Ticket runner: prefixed PR #" + prNumber + " title with issue #" + issueNumber);
+        }
+      } catch (err) {
+        core.warning("Ticket runner: could not prefix PR #" + prNumber + " title: " + err.message);
+      }
       var ciGreen = await h.isCIGreen(prNumber);
       if (ciGreen) {
         await updateIssueState(issueNumber, state);
