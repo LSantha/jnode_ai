@@ -26,6 +26,8 @@ import static org.junit.Assert.assertNull;
 import java.util.ArrayList;
 import java.util.List;
 
+import org.junit.After;
+import org.junit.Before;
 import org.junit.Test;
 
 /**
@@ -34,49 +36,65 @@ import org.junit.Test;
  * <p/>
  * Covers primitive arrays, object arrays and generic collections, and verifies
  * that every element is visited exactly once and in declaration order.
+ * <p/>
+ * The shared input data is created in {@link #setUp()} and released in
+ * {@link #tearDown()} so that every test iteration starts from a clean state.
  *
  * @author Ewout Prangsma (epr@users.sourceforge.net)
  * @author Fabien DUMINY (fduminy@jnode.org)
  */
 public class ForEachTest {
 
+    private int[] intArray;
+    private String[] stringArray;
+    private List<String> collection;
+
+    @Before
+    public void setUp() {
+        intArray = new int[]{0, 1, 2, 3, 4, 5};
+        stringArray = new String[]{"A", "B", "C", "D", "E"};
+        collection = new ArrayList<String>();
+        collection.add("Aap");
+        collection.add("Noot");
+        collection.add("Mies");
+    }
+
+    @After
+    public void tearDown() {
+        intArray = null;
+        stringArray = null;
+        collection.clear();
+        collection = null;
+    }
+
     @Test
     public void testIntArray() {
-        final int[] a = new int[]{0, 1, 2, 3, 4, 5};
-
         int expected = 0;
-        for (int i : a) {
+        for (int i : intArray) {
             assertEquals(expected, i);
             expected++;
         }
-        assertEquals("array not fully iterated", expected, a.length);
+        assertEquals("array not fully iterated", expected, intArray.length);
     }
 
     @Test
     public void testStringArray() {
-        final String[] a = new String[]{"A", "B", "C", "D", "E"};
-
         int idxExpected = 0;
-        for (String s : a) {
-            assertEquals(a[idxExpected], s);
+        for (String s : stringArray) {
+            assertEquals(stringArray[idxExpected], s);
             idxExpected++;
         }
-        assertEquals("array not fully iterated", idxExpected, a.length);
+        assertEquals("array not fully iterated", idxExpected, stringArray.length);
     }
 
     @Test
     public void testCollection() {
-        final ArrayList<String> list = new ArrayList<String>();
-        list.add("Aap");
-        list.add("Noot");
-        list.add("Mies");
-
         int idxExpected = 0;
-        for (String s : list) {
-            assertEquals(list.get(idxExpected), s);
+        for (String s : collection) {
+            assertEquals(collection.get(idxExpected), s);
             idxExpected++;
         }
-        assertEquals("collection not fully iterated", idxExpected, list.size());
+        assertEquals("collection not fully iterated", idxExpected, collection.size());
     }
 
     @Test
@@ -124,16 +142,11 @@ public class ForEachTest {
 
     @Test
     public void testIteratorOverList() {
-        final List<String> list = new ArrayList<String>();
-        list.add("one");
-        list.add("two");
-        list.add("three");
-
         int words = 0;
-        for (String word : list) {
-            assertEquals(list.get(words), word);
+        for (String word : collection) {
+            assertEquals(collection.get(words), word);
             words++;
         }
-        assertEquals(list.size(), words);
+        assertEquals(collection.size(), words);
     }
 }
