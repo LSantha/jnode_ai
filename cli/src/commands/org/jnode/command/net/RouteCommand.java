@@ -17,7 +17,7 @@
  * along with this library; If not, write to the Free Software Foundation, Inc., 
  * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
  */
- 
+
 package org.jnode.command.net;
 
 import static org.jnode.net.ethernet.EthernetConstants.ETH_P_IP;
@@ -45,7 +45,7 @@ import org.jnode.shell.syntax.FlagArgument;
  * @author epr
  */
 public class RouteCommand extends AbstractCommand {
-    
+
     private static final String help_add = "if set, add a route";
     private static final String help_del = "if set, remove a route";
     private static final String help_target = "the target network";
@@ -53,7 +53,7 @@ public class RouteCommand extends AbstractCommand {
     private static final String help_device = "the device to connect to the foreign network";
     private static final String help_super = "Manage the IPv4 network routing table";
     private static final String str_table = "Routing table:";
-    
+
     private final FlagArgument argAdd;
     private final FlagArgument argDel;
     private final IPv4AddressArgument argTarget;
