@@ -110,6 +110,18 @@ public class ForEachTest {
     }
 
     @Test
+    public void testEmptyCollection() {
+        final List<String> empty = new ArrayList<String>();
+
+        int count = 0;
+        for (String s : empty) {
+            assertNull("unexpected element in empty collection", s);
+            count++;
+        }
+        assertEquals(0, count);
+    }
+
+    @Test
     public void testNullElementsArePassedThrough() {
         final String[] a = new String[]{"A", null, "C"};
 
