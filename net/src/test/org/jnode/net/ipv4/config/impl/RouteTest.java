@@ -36,8 +36,8 @@ import org.jnode.driver.Device;
 import org.jnode.driver.DeviceManager;
 import org.jnode.driver.net.NetDeviceAPI;
 import org.jnode.driver.net.NetworkException;
-import org.jnode.emu.naming.BasicNameSpace;
 import org.jnode.naming.InitialNaming;
+import org.jnode.net.NetTestNaming;
 import org.jnode.net.NetworkLayer;
 import org.jnode.net.NetworkLayerManager;
 import org.jnode.net.ipv4.IPv4Address;
@@ -63,11 +63,7 @@ public class RouteTest {
 
     @BeforeClass
     public static void initNaming() {
-        try {
-            InitialNaming.nameSet();
-        } catch (NullPointerException ex) {
-            InitialNaming.setNameSpace(new BasicNameSpace());
-        }
+        NetTestNaming.init();
     }
 
     @Before
