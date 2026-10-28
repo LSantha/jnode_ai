@@ -20,6 +20,7 @@
  
 package org.jnode.net;
 
+import org.jnode.driver.net.lance.TxDescriptorRingTest;
 import org.jnode.net.arp.ARPHeaderTest;
 import org.jnode.net.ethernet.EthernetAddressTest;
 import org.jnode.net.ipv4.IPv4RoutingTableTest;
@@ -38,6 +39,7 @@ import org.junit.runners.Suite;
     IPv4RoutingTableTest.class, //
     ResolverImplTest.class, //
     ARPHeaderTest.class, //
-    EthernetAddressTest.class })
+    EthernetAddressTest.class, //
+    TxDescriptorRingTest.class })
 public class AllTests {
 }
