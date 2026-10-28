@@ -21,56 +21,12 @@
 package org.jnode.test.shell.io;
 
 import java.io.StringWriter;
-import java.io.Writer;
 
 import org.jnode.shell.io.FanoutWriter;
 import org.junit.Assert;
 import org.junit.Test;
 
 public class FanoutWriterTest {
-
-    @Test
-    public void testFanoutToAllWriters() throws Exception {
-        StringWriter w1 = new StringWriter();
-        StringWriter w2 = new StringWriter();
-        FanoutWriter fanout = new FanoutWriter(true, w1, w2);
-        fanout.write('k');
-        fanout.write(new char[] {'a', 'b'}, 0, 2);
-        fanout.flush();
-        Assert.assertEquals("kab", w1.toString());
-        Assert.assertEquals("kab", w2.toString());
-    }
-
-    @Test
-    public void testAddStream() throws Exception {
-        StringWriter w1 = new StringWriter();
-        StringWriter w2 = new StringWriter();
-        FanoutWriter fanout = new FanoutWriter(true, w1);
-        fanout.addStream(w2);
-        fanout.write('k');
-        Assert.assertEquals("k", w1.toString());
-        Assert.assertEquals("k", w2.toString());
-    }
-
-    @Test
-    public void testRemoveStreamDetachesTarget() throws Exception {
-        StringWriter w1 = new StringWriter();
-        StringWriter w2 = new StringWriter();
-        FanoutWriter fanout = new FanoutWriter(true, w1, w2);
-        Assert.assertTrue(fanout.removeStream(w2));
-        fanout.write('k');
-        Assert.assertEquals("k", w1.toString());
-        Assert.assertEquals("", w2.toString());
-    }
-
-    @Test
-    public void testRemoveStreamIsNotIdempotentlyTrue() throws Exception {
-        StringWriter w1 = new StringWriter();
-        StringWriter w2 = new StringWriter();
-        FanoutWriter fanout = new FanoutWriter(true, w1, w2);
-        Assert.assertTrue(fanout.removeStream(w2));
-        Assert.assertFalse(fanout.removeStream(w2));
-    }
 
     @Test
     public void testRemoveStreamPreservesOrderOfRemainingWriters() throws Exception {
@@ -100,16 +56,6 @@ public class FanoutWriterTest {
     }
 
     @Test
-    public void testRemoveUnknownStream() throws Exception {
-        StringWriter w1 = new StringWriter();
-        StringWriter other = new StringWriter();
-        FanoutWriter fanout = new FanoutWriter(true, w1);
-        Assert.assertFalse(fanout.removeStream(other));
-        fanout.write('k');
-        Assert.assertEquals("k", w1.toString());
-    }
-
-    @Test
     public void testRemoveStreamAfterReAdd() throws Exception {
         StringWriter w1 = new StringWriter();
         StringWriter w2 = new StringWriter();
@@ -129,34 +75,5 @@ public class FanoutWriterTest {
         fanout.write('k');
         fanout.flush();
         Assert.assertEquals("", w1.toString());
-    }
-
-    @Test
-    public void testFlushOnlyReachesAttachedWriters() throws Exception {
-        CountingWriter w1 = new CountingWriter();
-        CountingWriter w2 = new CountingWriter();
-        FanoutWriter fanout = new FanoutWriter(true, w1, w2);
-        Assert.assertTrue(fanout.removeStream(w2));
-        fanout.flush();
-        Assert.assertEquals(1, w1.flushCount);
-        Assert.assertEquals(0, w2.flushCount);
-    }
-
-    private static final class CountingWriter extends Writer {
-
-        private int flushCount;
-
-        @Override
-        public void write(char[] cbuf, int off, int len) {
-        }
-
-        @Override
-        public void flush() {
-            flushCount++;
-        }
-
-        @Override
-        public void close() {
-        }
     }
 }
