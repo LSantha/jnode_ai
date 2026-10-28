@@ -103,6 +103,20 @@ BASE=tests/l2oracle/baselines
 # Committed tooling lives next to this script; per-machine bits are env vars.
 TOOLS=$SELF_DIR
 VM=${JNODE_VM:-JNode}
+# ANCHOR-L2-243 (instance legs, VBox): with JNODE_L2_INSTANCE set, all
+# serial endpoints and the mux follow the jnode-serial instance namespace
+# and the VM named by JNODE_VM (one VM definition dedicated to this
+# instance, created once via jnode-vbox `config --name <vm>
+# --instance <inst> --iso all/build/cdroms/jnode-x86-lite.iso`). A
+# co-running session then cannot touch these boots and their parked
+# legacy mux cannot steal the pipe from under them (ANCHOR-L2-205 is a
+# legacy-endpoint hazard only). Unset keeps the legacy shared behavior.
+VSI=${JNODE_L2_INSTANCE:-}
+_instance_state_dir=${JNODE_STATE_DIR:-/tmp/jnode}
+if [ -n "$VSI" ]; then
+  VM=${JNODE_VM:-}
+  [ -n "$VM" ] || { echo "regress: JNODE_L2_INSTANCE needs JNODE_VM" >&2; exit 2; }
+fi
 WORK=${REGRESS_WORK:-/tmp/jnode-regress}
 mkdir -p "$WORK"
 HJ=${HJ:-/home/levente/ext/prg/java/bin/java}
@@ -143,15 +157,25 @@ fail() { say "$*"; FAILURES=$((FAILURES + 1)); }
 # session (the jnode-serial skill against VirtualBox) and is left alone,
 # which keeps the ANCHOR-L2-205 fail-fast decision intact: a foreign holder
 # still stops boot-l2 with its PID named rather than being killed.
+# ANCHOR-L2-243: instance mode scopes both the pidfile and the cleanup to
+# the instance's own mux; other instances' (and the legacy default's)
+# parked muxes are untouched.
+if [ -n "$VSI" ]; then
+  MUXPID="$_instance_state_dir/$VSI/mux/mux.pid"
+  MUXSTAT="$_instance_state_dir/$VSI/mux/mux.status"
+else
+  MUXPID=/tmp/jnode_serial_mux.pid
+  MUXSTAT=/tmp/jnode_serial_mux.status
+fi
 PRE_MUX=
-if [ -r /tmp/jnode_serial_mux.pid ]; then
-  PRE_MUX=$(cat /tmp/jnode_serial_mux.pid 2>/dev/null || true)
+if [ -r "$MUXPID" ]; then
+  PRE_MUX=$(cat "$MUXPID" 2>/dev/null || true)
 fi
 stop_own_mux() {
-  if [ ! -r /tmp/jnode_serial_mux.pid ]; then
+  if [ ! -r "$MUXPID" ]; then
     return 0
   fi
-  _mpid=$(cat /tmp/jnode_serial_mux.pid 2>/dev/null || true)
+  _mpid=$(cat "$MUXPID" 2>/dev/null || true)
   if [ -z "$_mpid" ] || [ "$_mpid" = "$PRE_MUX" ]; then
     return 0
   fi
@@ -171,7 +195,7 @@ stop_own_mux() {
   # a recycled PID as PRE_MUX and then refuse to stop a mux it did create.
   # It also makes this function idempotent, which is why the INT trap plus
   # the exit trap used to log the same stop twice.
-  rm -f /tmp/jnode_serial_mux.pid /tmp/jnode_serial_mux.status
+  rm -f "$MUXPID" "$MUXSTAT"
   return 0
 }
 # The trap covers every exit path, including an early exit 2 and a Ctrl-C;

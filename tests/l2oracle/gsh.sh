@@ -11,16 +11,39 @@
 #   - GC loops are detected from EITHER the live output OR the mux response
 #     dir OR the KDB console log, and reported as such;
 #   - on any failure the client is SIGKILLed and the VM is powered off.
+# ANCHOR-L2-243: with JNODE_L2_INSTANCE set every serial command is
+# --instance scoped, so a co-running leg's client on the legacy endpoint
+# is never touched here (nor are ours by theirs); the GC-marker sources
+# resolve to the instance's mux response dir, log and boot log.
 set -u
 HARD=$1; shift
 STALL=$1; shift
 LABEL=$1; shift
+VI=${JNODE_L2_INSTANCE:-}
 S=${JNODE_SERIAL_SCRIPTS:-$HOME/.config/opencode/skills/jnode-serial/scripts}
+SERIAL_FALLBACK=$(dirname "$0")/../../.opencode/skills/jnode-serial/scripts
+[ -d "$S" ] || S=$(cd "$SERIAL_FALLBACK" 2>/dev/null && pwd) || S="$SERIAL_FALLBACK"
 OUT=${REGRESS_WORK:-/tmp/jnode-regress}/gsh-$LABEL.out
 mkdir -p /tmp/opencode
 rm -f "$OUT"
+SI=""
+RESP_GLOB="/tmp/jnode_serial_resp/*.out"
+KSCAN=/tmp/jnode.kdb
+if [ -n "$VI" ]; then
+  SI="--instance $VI"
+  _state_dir=${JNODE_STATE_DIR:-/tmp/jnode}
+  _mux_resp=$(python3 - "$S" "$VI" <<'PYEOF' 2>/dev/null
+import sys
+sys.path.insert(0, sys.argv[1])
+import jnode_paths as jp
+print(jp.paths_for(sys.argv[2]).resp_dir + "/*.out")
+PYEOF
+)
+  [ -n "$_mux_resp" ] && RESP_GLOB="$_mux_resp"
+  KSCAN="$_state_dir/$VI/boot.log"
+fi
 
-python3 "$S/serial_cmd.py" --timeout "$HARD" "$@" > "$OUT" 2>&1 &
+python3 "$S/serial_cmd.py" $SI --timeout "$HARD" "$@" > "$OUT" 2>&1 &
 CPID=$!
 
 last_size=-1
@@ -57,7 +80,7 @@ if [ -z "$verdict" ]; then
   verdict="hard cap ${HARD}s reached"
 fi
 GC=0
-for src in "$OUT" "$(ls -t /tmp/jnode_serial_resp/*.out 2>/dev/null | head -n 1)" /tmp/jnode.kdb; do
+for src in "$OUT" "$(ls -t $RESP_GLOB 2>/dev/null | head -n 1)" "$KSCAN"; do
   [ -f "$src" ] || continue
   n=$(grep -aciE "mark|sweep|out of memory|oom|full gc|gc storm" "$src" 2>/dev/null | head -n 1)
   case "$n" in
@@ -78,7 +101,17 @@ fi
 echo "== output tail:"
 tail -n 15 "$OUT" 2>/dev/null | tr -d '\r'
 kill -9 "$CPID" 2>/dev/null
-pkill -9 -f "serial_[c]md.py" 2>/dev/null
+# ANCHOR-L2-243: only this leg's client may be swept. On the legacy
+# endpoint the old all-clients pgrep stays (the endpoint is shared); on
+# an instance, a co-running leg's client must survive this failure and
+# ours is identifiable by its --instance argument.
+if [ -n "$VI" ]; then
+  for p in $(ps -eo pid=,cmd= | grep -F 'serial_cmd.py' | grep -F -- "--instance $VI" | grep -v grep | awk '{print $1}'); do
+    kill -9 "$p" 2>/dev/null
+  done
+else
+  pkill -9 -f "serial_[c]md.py" 2>/dev/null
+fi
 vboxmanage controlvm "${JNODE_VM:-JNode}" poweroff >/dev/null 2>&1
 rm -f /tmp/jnode-ready
 exit 1

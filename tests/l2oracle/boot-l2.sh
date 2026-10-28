@@ -27,7 +27,8 @@ SELF_DIR=$(cd "$(dirname "$0")" && pwd)
 ROOT=$(cd "$SELF_DIR/../.." && pwd)
 cd "$ROOT" || exit 2
 
-SKILL="$ROOT/.opencode/skills/jnode-interact/scripts"
+SERIAL="$ROOT/.opencode/skills/jnode-serial/scripts"
+QSKILL="$ROOT/.opencode/skills/jnode-qemu/scripts"
 LOG=${BOOTL2_LOG:-/tmp/qemu_serial.log}
 BOOT_TIMEOUT=${BOOT_TIMEOUT:-180}
 # TCG has no KVM entry failures but runs the guest about five times slower:
@@ -40,6 +41,30 @@ BOOT_GC_TIMES=${BOOT_GC_TIMES:-4}
 # runs under TCG: measured 2026-10-01, gc round 1 returned with an EMPTY
 # buffer and exit 0 while the guest was still collecting.
 export JNODE_AGENT_OUTPUT_TIMEOUT=${BOOTL2_OUTPUT_TIMEOUT:-90}
+
+# ANCHOR-L2-243 (co-session coexistence): the legacy endpoints
+# (/tmp/jnode.serial2, /tmp/qemu_serial.log, /tmp/qemu_monitor.sock,
+# /tmp/qemu.err) are one-server/one-client resources that every session
+# and every worktree on this box shares; a parked serial_mux.py anywhere
+# (ANCHOR-L2-205) fails every boot that names them with a guest that
+# booted perfectly. With JNODE_L2_INSTANCE=<id> set, this gate runs
+# entirely inside the instance namespace of the jnode-serial +
+# jnode-qemu skills (STATE_DIR/<id>/agent.sock and boot log): its own
+# socket, client slot, log and QEMU process -- unreachable by co-running
+# legs and touching none of theirs, including other trees' muxes and VMs
+# on the legacy endpoints. Unset keeps the legacy behavior.
+INST=${JNODE_L2_INSTANCE:-}
+SOC=/tmp/jnode.serial2
+if [ -n "$INST" ]; then
+  if ! eval "$(python3 "$SERIAL/jnode_paths.py" --env --instance "$INST")" ||
+     [ -z "${JNODE_AGENT_SOCK:-}" ]; then
+    echo "boot-l2: cannot resolve JNODE_L2_INSTANCE '$INST'"
+    exit 2
+  fi
+  SOC=$JNODE_AGENT_SOCK
+  LOG=${BOOTL2_LOG:-$JNODE_BOOT_LOG}
+  QEMU_ERR=${JNODE_BOOT_LOG}.stderr
+fi
 
 # The failure this gate exists for is not "the VM died" -- it is a method that
 # refused to compile and was therefore never runnable. JNode has no
@@ -88,11 +113,41 @@ rc=0
 # `pgrep -x qemu-system-x86` printed 1. The old pattern therefore made this
 # function a silent no-op and let stale QEMUs squat /tmp/jnode.serial2.
 stop_qemu() {
+  if [ -n "$INST" ]; then
+    # ANCHOR-L2-243: the global pgrep sweep kills every QEMU on the box,
+    # including co-running legs of other sessions and worktrees. Inside
+    # an instance, stop only the QEMU the launcher registered for $INST
+    # (pid from the registry, TERM -> wait -> KILL, then unregister).
+    bash "$QSKILL/start_qemu.sh" --stop --instance "$INST" >/dev/null 2>&1 || true
+    return
+  fi
   for p in $(pgrep -x qemu-system-x86 2>/dev/null); do
     kill -9 "$p" 2>/dev/null
   done
 }
 trap stop_qemu EXIT
+
+# guest_cmd TIMEOUT 'cmd...' : run agent-shell commands through the
+# jnode-serial skill. TIMEOUT is the tolerated OUTPUT silence (the
+# semantics the pre-mux agent gave BOOTL2_OUTPUT_TIMEOUT / BOOTL2_AOT_TIMEOUT);
+# the protocol deadline passed to the client is 10x that, so a slow guest
+# that keeps producing bytes is never cut mid-run by the total alone --
+# both the legacy oneshot capture loop and the instance mux decide their
+# own way to stop on silence. Legacy mode is --oneshot (direct connect,
+# no mux -- exactly the pre-mux behaviour this gate was built on, and the
+# only compatible shape next to the ANCHOR-L2-205 holder guards);
+# instance mode goes through the mux of that instance (auto-started when
+# absent), whose persistent client is the designed holder of $SOC.
+guest_cmd() {
+  _t=${1:?guest cmd needs a timeout}
+  shift
+  if [ -n "$INST" ]; then
+    python3 "$SERIAL/serial_cmd.py" --instance "$INST" --timeout $((_t * 10)) "$@"
+  else
+    JNODE_SERIAL_ONESHOT_QUIET=$_t python3 "$SERIAL/serial_cmd.py" \
+      --oneshot --timeout $((_t * 10)) "$@"
+  fi
+}
 
 # Guard for the pgrep line above: it runs before anything else, against a
 # process that carries exactly that comm name. Reverting the pattern to
@@ -127,7 +182,14 @@ selftest_stopqemu() {
     exit 2
   fi
 }
-selftest_stopqemu
+# Legacy mode only: the red proof wants a pgrep-killable stray QEMU, and
+# the legacy stop path is precisely the global sweep this test pins. Under
+# $INST the stop is registry-scoped and structurally cannot touch another
+# session's QEMU -- that is the whole point of ANCHOR-L2-243, so there is
+# nothing sweep-shaped left to test.
+if [ -z "$INST" ]; then
+  selftest_stopqemu
+fi
 
 if [ ! -f "$ISO" ]; then
   echo "boot-l2: no ISO at $ISO (run the bootl2image phase first)"
@@ -153,6 +215,11 @@ fi
 # match that command line and every run would fail (the pgrep -f
 # self-match documented for stop_qemu above, one level up).
 guard_endpoint_holder() {
+  # ANCHOR-L2-243: meaningful only on the shared legacy endpoint. Under
+  # $INST the socket is instance-private: a foreign mux binds a different
+  # path, and this gate's own persistent mux holding $SOC BETWEEN guest
+  # commands is the designed client of the instance model, not a hazard.
+  [ -n "$INST" ] && return 0
   _hold=$(ps -eo pid=,cmd= | grep -E 'serial_[m]ux\.py' || true)
   [ -n "$_hold" ] || return 0
   echo "boot-l2: FAILED -- a persistent helper already holds /tmp/jnode.serial2:"
@@ -160,14 +227,25 @@ guard_endpoint_holder() {
   echo "boot-l2: it owns the socket's only client slot, so the agent cannot"
   echo "boot-l2: connect (ERROR: [Errno 11]). Kill it by the PID printed above"
   echo "boot-l2: and rerun; pkill and pgrep -f both self-match here."
+  echo "boot-l2: or set JNODE_L2_INSTANCE=<id> to boot on a private socket."
   exit 2
 }
 guard_endpoint_holder
 
 stop_qemu
-rm -f "$LOG" /tmp/jnode.serial2 /tmp/jnode_com2 /tmp/qemu_monitor.sock "$QEMU_ERR"
+if [ -n "$INST" ]; then
+  rm -f "$LOG" "$QEMU_ERR"
+else
+  rm -f "$LOG" /tmp/jnode.serial2 /tmp/jnode_com2 /tmp/qemu_monitor.sock "$QEMU_ERR"
+fi
 
-bash "$SKILL/start_qemu.sh" simple "$ISO" 0 || { echo "boot-l2: start_qemu failed"; exit 2; }
+if [ -n "$INST" ]; then
+  bash "$QSKILL/start_qemu.sh" --instance "$INST" simple "$ISO" 0 ||
+    { echo "boot-l2: start_qemu failed"; exit 2; }
+else
+  bash "$QSKILL/start_qemu.sh" --instance default simple "$ISO" 0 ||
+    { echo "boot-l2: start_qemu failed"; exit 2; }
+fi
 
 # 1. serial up.
 #
@@ -191,9 +269,18 @@ while [ "$i" -lt "$deadline" ]; do
      grep -qa "KVM: entry failed" "$QEMU_ERR"; then
     echo "boot-l2: host KVM failed (QEMU stderr in $QEMU_ERR) -- retrying under TCG"
     stop_qemu
-    rm -f "$LOG" /tmp/jnode.serial2 /tmp/jnode_com2 /tmp/qemu_monitor.sock "$QEMU_ERR"
-    QEMU_ACCEL=tcg bash "$SKILL/start_qemu.sh" simple "$ISO" 0 ||
-      { echo "boot-l2: TCG restart failed"; exit 2; }
+    if [ -n "$INST" ]; then
+      rm -f "$LOG" "$QEMU_ERR"
+    else
+      rm -f "$LOG" /tmp/jnode.serial2 /tmp/jnode_com2 /tmp/qemu_monitor.sock "$QEMU_ERR"
+    fi
+    if [ -n "$INST" ]; then
+      QEMU_ACCEL=tcg bash "$QSKILL/start_qemu.sh" --instance "$INST" simple "$ISO" 0 ||
+        { echo "boot-l2: TCG restart failed"; exit 2; }
+    else
+      QEMU_ACCEL=tcg bash "$QSKILL/start_qemu.sh" --instance default simple "$ISO" 0 ||
+        { echo "boot-l2: TCG restart failed"; exit 2; }
+    fi
     accel=tcg
     deadline=$BOOT_TIMEOUT_TCG
     i=0
@@ -208,7 +295,7 @@ if [ "$i" -ge "$deadline" ]; then
   exit 1
 fi
 echo "boot-l2: serial console after ${i}s (accel=$accel)"
-ln -sfn /tmp/jnode.serial2 /tmp/jnode_com2
+[ -n "$INST" ] || ln -sfn /tmp/jnode.serial2 /tmp/jnode_com2
 
 # ANCHOR-L2-205 (runtime half): the pre-boot scan only knows the helpers it
 # names, so check the socket itself. Unattached, QEMU's unix chardev carries
@@ -217,7 +304,12 @@ ln -sfn /tmp/jnode.serial2 /tmp/jnode_com2
 # at this point, so an ESTAB here is a foreign client on the only slot -- the
 # peer inode resolves it to a pid. Say so now rather than let the agent-shell
 # loop retry for minutes and then blame the guest for the squatter.
+# ANCHOR-L2-243: legacy-shaped only. Under $INST the instance's own mux may
+# hold an ESTAB on $SOC by design (persistent reconnecting client), so the
+# distinguishing signal this check depends on ("our agent has not connected
+# yet") does not exist there.
 guard_foreign_client() {
+  [ -n "$INST" ] && return 0
   command -v ss >/dev/null 2>&1 || return 0
   ss -xp 2>/dev/null | grep -F /tmp/jnode.serial2 | grep -q ESTAB || return 0
   echo "boot-l2: FAILED -- a foreign client is already on /tmp/jnode.serial2:"
@@ -243,7 +335,7 @@ ready=0
 i=0
 agent_start=$(date +%s)
 while [ "$i" -lt 30 ]; do
-  if python3 "$SKILL/jnode_agent_cmd.py" "echo L2_SHELL_READY" \
+  if guest_cmd 20 "echo L2_SHELL_READY" \
        > /tmp/bootl2-ready.out 2>&1 && grep -q "L2_SHELL_READY" /tmp/bootl2-ready.out; then
     ready=1
     break
@@ -261,7 +353,7 @@ if [ "$ready" -ne 1 ]; then
   # Whoever holds the slot when the agent gives up is the diagnosis; without
   # this the output is an opaque errno from a guest that booted fine.
   command -v ss >/dev/null 2>&1 &&
-    ss -xp 2>/dev/null | grep -F /tmp/jnode.serial2 | head -n 2
+    ss -xp 2>/dev/null | grep -F "$SOC" | head -n 2
   scan_log "$LOG" || true
   exit 1
 fi
@@ -276,8 +368,7 @@ if [ "$MODE" = aot ]; then
   aot_rc=0
   aot_run() { # aot_run <capture-file> <single guest command>
     _cap=$1; shift
-    JNODE_AGENT_OUTPUT_TIMEOUT=${BOOTL2_AOT_TIMEOUT:-600} \
-      python3 "$SKILL/jnode_agent_cmd.py" "$@" > "$_cap" 2>&1
+    guest_cmd "${BOOTL2_AOT_TIMEOUT:-600}" "$@" > "$_cap" 2>&1
   }
   aot_run /tmp/bootl2-aot-mkdir.out "mkdir -p /jnode/tmp/ox" ||
     { echo "boot-l2: aot mkdir FAILED"; tail -n 4 /tmp/bootl2-aot-mkdir.out; aot_rc=1; }
@@ -323,7 +414,7 @@ if [ "$MODE" != aot ]; then
 g=1
 gc_failed=0
 while [ "$g" -le "$BOOT_GC_TIMES" ]; do
-  if ! python3 "$SKILL/jnode_agent_cmd.py" "gc" > "/tmp/bootl2-gc-$g.out" 2>&1; then
+  if ! guest_cmd "${BOOTL2_OUTPUT_TIMEOUT:-90}" "gc" > "/tmp/bootl2-gc-$g.out" 2>&1; then
     echo "boot-l2: gc round $g FAILED to run"
     tail -n 6 "/tmp/bootl2-gc-$g.out"
     gc_failed=1

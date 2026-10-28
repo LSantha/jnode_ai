@@ -51,7 +51,11 @@ POLL_SECS = 0.2
 # "prompt not seen" errors.
 ONESHOT_PROMPT_TIMEOUT = 10.0
 ONESHOT_PROMPT_RETRIES = 3
-ONESHOT_OUTPUT_TIMEOUT = 10.0
+# Per-command silence window in --oneshot mode. Callers that know a command
+# takes longer to go quiet than the default (e.g. a TCG gc banking many
+# seconds of nothing printed at all) pass it via the environment so one
+# remote boot's guest-cmd loops can size their own window per call.
+ONESHOT_OUTPUT_TIMEOUT = float(os.environ.get("JNODE_SERIAL_ONESHOT_QUIET", "10.0"))
 
 PROMPT = b"[JNODE_AGENT_READY]"
 
