@@ -201,12 +201,24 @@ public class PipelineStreamsAndFanoutWriterTest {
     }
 
     @Test
-    public void testInputStreamSkipReturnsMinusOneAtEof() throws IOException {
+    public void testInputStreamSkipReturnsZeroOnLiveStream() throws IOException {
+        setUpActive();
+        Assert.assertEquals(0, sink.skip(0));
+        Assert.assertEquals(0, sink.skip(-3));
+        source.write(bytes("xy"));
+        Assert.assertEquals(0, sink.skip(0));
+        Assert.assertEquals('x', sink.read());
+        sink.close();
+        source.close();
+    }
+
+    @Test
+    public void testInputStreamSkipReturnsZeroAtEof() throws IOException {
         setUpActive();
         source.write(bytes("ab"));
         source.close();
         Assert.assertEquals(2, sink.skip(8));
-        Assert.assertEquals(-1, sink.skip(1));
+        Assert.assertEquals(0, sink.skip(1));
         sink.close();
     }
 
@@ -295,7 +307,7 @@ public class PipelineStreamsAndFanoutWriterTest {
         Assert.assertTrue(pipeline.isShutdown());
         Assert.assertEquals(-1, sink.read());
         Assert.assertEquals(-1, sink.read(new byte[8]));
-        Assert.assertEquals(-1, sink.skip(8));
+        Assert.assertEquals(0, sink.skip(8));
         sink.close();
         source.close();
     }
