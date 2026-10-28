@@ -146,9 +146,9 @@ cd tests/l2oracle
 ./run_oracle.sh /devices/hdb1/ox   # persistent disk (survives reboots/crashes)
 ```
 
-( historical script; the live flow below via `serial_cmd.py` is preferred —
-`run_oracle.sh` still uses the legacy one-shot agent, which must never run
-while the mux holds the pipe. )
+( `run_oracle.sh` now drives the guest through the mux client
+(`serial_cmd.py`); for gate runs, `regress.sh`'s `oracle` phase keeps the
+guarded-runner version with fresh boots and stall detection. )
 
 ## Persistent oracle disk (this machine)
 
@@ -214,9 +214,9 @@ python3 $S/serial_cmd.py --timeout 900 "javac MiniProbes.java MiniRun.java"
 python3 $S/serial_cmd.py --timeout 300 "java MiniRun noforce" "java MiniRun"
 ```
 
-One shell command per legacy `$JAC` call is obsolete with the mux
-(multi-command batches work); never run legacy `jnode_agent_cmd.py` or
-raw sockets while the mux holds the pipe. Strip `[batch OK N]` marker
+One shell command per call is obsolete with the mux (multi-command
+batches work); never hold a raw socket to the console endpoint while
+the mux owns the pipe. Strip `[batch OK N]` marker
 lines from pulled files before comparing.
 
 ## ISO hygiene (learned 2026-09-10)
@@ -229,46 +229,58 @@ then verify the baked classes, e.g.
 `javap -classpath core/build/classes -c ...GenericX86CodeGenerator |
 grep -c TopStackLocation` (expect nonzero after 103).
 
-## Legacy loop (jnode_agent_cmd.py — only with the mux STOPPED)
+## Mux wedge remedy (was: legacy jnode_agent_cmd.py loop)
+
+The one-shot agent (`jnode_agent_cmd.py`) is retired — the repo skill
+directory is removed (and the `~/.config/opencode/...` path the old
+notes cited never actually existed). Every guest command
+goes through `serial_cmd.py`, which owns the pipe via the mux. When the guest wedges (agent answers 1-2 commands
+then goes silent, serial client can't reconnect), the remedy is a full
+serial-stack reset, NOT a legacy fallback:
 
 ```bash
-JAC=~/.config/opencode/skills/jnode-serial/scripts/jnode_agent_cmd.py
-python3 $JAC "mkdir /jnode/tmp/ox"
-cat Probes.java | python3 $JAC --write /jnode/tmp/ox/Probes.java
-cat OracleDriver.java | python3 $JAC --write /jnode/tmp/ox/OracleDriver.java
-python3 $JAC "cd /jnode/tmp/ox"
-python3 $JAC "javac Probes.java OracleDriver.java"
-python3 $JAC "java OracleDriver out-l1.txt noforce"
-python3 $JAC "java OracleDriver out-l2.txt"
-python3 $JAC "cat out-l2.txt" > /tmp/out-l2.txt
-bash compare.sh <host-out> /tmp/out-l2.txt
+bash .opencode/skills/jnode-qemu/scripts/start_qemu.sh --stop --instance <ID>
+pkill -f "qemu-system.*JNode"     # mind the self-match rule below
+kill "$(cat /tmp/jnode/<ID>/mux/mux.pid 2>/dev/null)" 2>/dev/null
+rm -f /tmp/jnode/<ID>/agent.sock /tmp/jnode/<ID>/mux/mux.pid
+# fresh boot; serial_cmd.py's ensure_mux() rebuilds the stack on its
+# first call
 ```
 
-One shell command per `$JAC` call (no chains around silent-long steps);
-`--write` needs the parent dir to exist.
+(`regress.sh bootl2-1/-2` failing rc=2 because an earlier run left a mux
+behind is this same failure; regress.sh:148-152 documents it.)
 
 ## QEMU loop (when VBox is down)
 
-Same guest flow over QEMU (repo skill `.opencode/skills/jnode-interact`;
-VBox pipe and mux stay out of it — stop the mux first):
+Same guest flow over the instance-aware QEMU boot plus the mux serial
+client (repo skills `.opencode/skills/jnode-qemu`, `.opencode/skills/jnode-serial`):
 
 ```bash
-bash .opencode/skills/jnode-interact/scripts/start_qemu.sh simple all/build/cdroms/jnode-x86-lite.iso 1
-# wait for "Serial console available" in /tmp/qemu_serial.log, then:
-ln -sf /tmp/jnode.serial2 /tmp/jnode_com2
-JAC=.opencode/skills/jnode-interact/scripts/jnode_agent_cmd.py
-python3 $JAC "javac -d /jnode/tmp/ox /devices/sg0/ox/Probes.java /devices/sg0/ox/OracleDriver.java"
-python3 $JAC "java OracleDriver out-l2.txt"   # separate calls; TCG is slow
-python3 $JAC "cat out-l2.txt" > /tmp/out-l2.txt
+I=oc-vbox
+bash .opencode/skills/jnode-qemu/scripts/start_qemu.sh --instance $I \
+     simple all/build/cdroms/jnode-x86-lite.iso 1
+python3 .opencode/skills/jnode-serial/scripts/serial_cmd.py --instance $I \
+     --wait 180 "echo alive"
+python3 .opencode/skills/jnode-serial/scripts/serial_cmd.py --instance $I \
+     --timeout 900 "javac -d /jnode/tmp/ox /devices/sg0/ox/Probes.java /devices/sg0/ox/OracleDriver.java"
+python3 .opencode/skills/jnode-serial/scripts/serial_cmd.py --instance $I \
+     --timeout 1800 "java OracleDriver out-l2.txt"
+python3 .opencode/skills/jnode-serial/scripts/serial_cmd.py --instance $I \
+     --wait 60 "cat out-l2.txt" > /tmp/out-l2.txt
+bash .opencode/skills/jnode-qemu/scripts/start_qemu.sh --stop --instance $I
 ```
 
-One command per call (legacy one-shot agent, no batching, no `--write`
-of big files); TCG needs generous timeouts. Identify QEMU by PID before
-killing (shared host); never `pkill -f` with a self-matching pattern.
-`pgrep -f "<pattern>"` self-matches too (the pattern string sits in your
-own `bash -c` line) — append `.*JNode`, pipe through `grep -v pgrep`,
-or match `mk-ox-iso\.sh` with the escaped dot. A "STILL-ALIVE" after a
-successful kill is almost always your own command line.
+The mux (auto-started by `serial_cmd.py`) owns the console; batching
+works, but keep the oracle one-step-per-call for clean failure points.
+TCG needs generous `--timeout`s, and a command that prints nothing for
+longer than the agent's ~10s output default needs
+`JNODE_AGENT_OUTPUT_TIMEOUT` raised (see `boot-l2.sh`). Identify QEMU by
+PID before killing (shared host); never `pkill -f` with a self-matching
+pattern. `pgrep -f "<pattern>"` self-matches too (the pattern string
+sits in your own `bash -c` line) — append `.*JNode`, pipe through
+`grep -v pgrep`, or match `mk-ox-iso\.sh` with the escaped dot. A
+"STILL-ALIVE" after a successful kill is almost always your own command
+line.
 
 ## Magic probes (host support set + semantic rules)
 
@@ -426,7 +438,7 @@ incidental fix in 097-103. Regression-guarded by `CASES` now.
   as `-serial unix:...,server,nowait`, i.e. one client; `serial_mux.py` (the
   `jnode-serial` skill's VirtualBox helper) attaches to that same path and
   keeps "the single client attached even when idle", retrying every `<=10s`.
-  While it runs, every `jnode_agent_cmd.py` connect fails `EAGAIN` and the
+  While it runs, every fresh client connect fails `EAGAIN` and the
   gate reports a guest that booted perfectly as
   `FAILED -- no agent shell ...` / `ERROR: [Errno 11] Resource temporarily
   unavailable` with `exception hits=0`. The tell-tale that separates this from

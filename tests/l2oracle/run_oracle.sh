@@ -1,12 +1,18 @@
 #!/bin/bash
 # End-to-end L2 execution oracle. See AGENTS.md for the full runbook.
 # Usage: ./run_oracle.sh [workdir-on-vm]   (default /jnode/tmp/ox)
-# Prerequisites: JNode booted with full plugins, serial agent up,
-#   JAC helper reachable, host JDK 1.6+ for the reference run.
+# Prerequisites: JNode booted with full plugins (GRUB entry 1), the agent
+#   shell answering (drives the guest via the repo's mux client
+#   serial_cmd.py; set INSTANCE when more than one VM runs), host JDK 1.6+
+#   for the reference run.
 set -u
 HERE="$(dirname "$0")"
+ROOT="$(cd "$HERE/../.." && pwd)"
 OX="${1:-/jnode/tmp/ox}"
-JAC="${JAC:-$HOME/.config/opencode/skills/jnode-serial/scripts/jnode_agent_cmd.py}"
+SC="${SC:-$ROOT/.opencode/skills/jnode-serial/scripts/serial_cmd.py}"
+# INSTANCE: forwarded to serial_cmd as --instance when set; unset lets
+# serial_cmd resolve the instance itself (fits per-instance jnode-qemu).
+INSTANCE="${INSTANCE:-}"
 HOST_JAVA="${HOST_JAVA:-/home/levente/ext/prg/java/bin/java}"
 HOST_JAVAC="${HOST_JAVAC:-/home/levente/ext/prg/java/bin/javac}"
 REFDIR="${REFDIR:-/tmp/l2oracle-ref}"
@@ -14,6 +20,21 @@ REFDIR="${REFDIR:-/tmp/l2oracle-ref}"
 step() { echo "=== $1"; }
 
 fail() { echo "ORACLE ABORT: $1" >&2; exit 1; }
+
+# Guest-command wrapper over the mux client. sc [serial_cmd flags] "cmd"...
+sc() {
+  [ -f "$SC" ] || fail "serial_cmd.py missing at $SC (repo skill jnode-serial)"
+  python3 "$SC" ${INSTANCE:+--instance "$INSTANCE"} "$@"
+}
+
+# Pull a guest result file: strip the mux's host-side status lines
+# ([waiting ...]/[batch OK N]) and CRs before writing to the host file.
+pull() {
+  _f="$1"; _dst="$2"
+  _out="$(sc --wait 60 --timeout 120 "cat $OX/$_f" 2>/dev/null)" \
+    || fail "pull $_f"
+  printf '%s\n' "$_out" | grep -av "^\[" | tr -d '\r' > "$_dst"
+}
 
 step "host reference"
 rm -rf "$REFDIR" && mkdir -p "$REFDIR" || fail "refdir"
@@ -35,18 +56,22 @@ step "on-VM javac (CD-staged ox/)"
 # hygiene / manual loop) and was why the preferred flow moved to CD-staged
 # sources. local/mk-ox-iso.sh already puts these exact files on the CD, so
 # compile them in place and let a missing ox/ say so instead of OOMing.
-python3 "$JAC" "mkdir $OX" > /dev/null || fail "mkdir"
-python3 "$JAC" "javac -d $OX /devices/sg0/ox/Probes.java /devices/sg0/ox/OracleDriver.java" \
+# mkdir+javac+cd in one mux batch; `cd` persists in the agent shell after
+# it (needed by the bare `java OracleDriver` calls below).
+sc --wait 120 --timeout 900 \
+  "mkdir $OX" \
+  "javac -d $OX /devices/sg0/ox/Probes.java /devices/sg0/ox/OracleDriver.java" \
+  "cd $OX" \
   || fail "guest javac -- ox/ is not staged on the ISO, run local/mk-ox-iso.sh"
-python3 "$JAC" "cd $OX" > /dev/null || fail "cd"
 
 step "L1 baseline + L2 run"
-python3 "$JAC" "java OracleDriver out-l1.txt noforce" > /dev/null || fail "L1 run"
-python3 "$JAC" "java OracleDriver out-l2.txt" > /dev/null || fail "L2 run"
+sc --timeout 1800 "java OracleDriver out-l1.txt noforce" > /dev/null \
+  || fail "L1 run"
+sc --timeout 1800 "java OracleDriver out-l2.txt" > /dev/null || fail "L2 run"
 
 step "pull + compare"
-python3 "$JAC" "cat out-l1.txt" > "$REFDIR/out-l1.txt" || fail "pull L1"
-python3 "$JAC" "cat out-l2.txt" > "$REFDIR/out-l2.txt" || fail "pull L2"
+pull out-l1.txt "$REFDIR/out-l1.txt"
+pull out-l2.txt "$REFDIR/out-l2.txt"
 echo "--- L1 vs host (pre-existing divergences only) ---"
 bash "$HERE/compare.sh" "$REFDIR/out-host.txt" "$REFDIR/out-l1.txt" || true
 echo "--- L2 vs host (any diff here is an L2 bug) ---"
