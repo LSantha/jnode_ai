@@ -25,7 +25,7 @@ import org.junit.runners.Suite;
 
 @RunWith(Suite.class)
 @Suite.SuiteClasses({PipelineTest.class, PipelineStreamsAndFanoutWriterTest.class,
-    ReaderInputStreamTest.class, WriterOutputStreamTest.class })
+    FanoutWriterTest.class, ReaderInputStreamTest.class, WriterOutputStreamTest.class })
 public class AllTests {
 
 }
