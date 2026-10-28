@@ -37,20 +37,27 @@ import org.jnode.vm.classmgr.VmInterpretedExceptionHandler;
 import org.jnode.vm.classmgr.VmMethod;
 import org.jnode.vm.compiler.CompiledMethod;
 import org.jnode.vm.compiler.CompilerBytecodeVisitor;
+import org.jnode.vm.compiler.CompilerFlags;
 import org.jnode.vm.compiler.EntryPoints;
 import org.jnode.vm.compiler.GCMapIterator;
 import org.jnode.vm.compiler.ir.CodeGenerator;
+import org.jnode.vm.compiler.ir.IRRangeAnalysis;
+import org.jnode.vm.compiler.ir.Constant;
 import org.jnode.vm.compiler.ir.IRBasicBlock;
 import org.jnode.vm.compiler.ir.IRControlFlowGraph;
 import org.jnode.vm.compiler.ir.IRGenerator;
+import org.jnode.vm.compiler.ir.IntConstant;
 import org.jnode.vm.compiler.ir.LinearScanAllocator;
 import org.jnode.vm.compiler.ir.LiveRange;
 import org.jnode.vm.compiler.ir.MethodArgument;
 import org.jnode.vm.compiler.ir.MethodInliner;
+import org.jnode.vm.compiler.ir.Operand;
 import org.jnode.vm.compiler.ir.StackLocation;
 import org.jnode.vm.compiler.ir.Variable;
 import org.jnode.vm.compiler.ir.quad.AssignQuad;
 import org.jnode.vm.compiler.ir.quad.BinaryQuad;
+import org.jnode.vm.compiler.ir.quad.ConditionalBranchQuad;
+import org.jnode.vm.compiler.ir.quad.ConstantRefAssignQuad;
 import org.jnode.vm.compiler.ir.quad.Quad;
 import org.jnode.vm.compiler.ir.quad.VariableRefAssignQuad;
 import org.jnode.vm.facade.TypeSizeInfo;
@@ -135,6 +142,10 @@ public class X86Level2Compiler extends AbstractX86Compiler {
         X86CodeGenerator x86cg = (X86CodeGenerator) cg;
 //        x86cg.setArgumentVariables(irg.getVariables(), irg.getNoArgs());
         x86cg.setSpilledVariables(lsa.getSpilledVariables());
+        // ANCHOR-L2-239: the emitters consult allocation results while
+        // emitting (bracket elision around array access), so hand them the
+        // allocator that assigned the homes.
+        x86cg.setAllocator(lsa);
         // ANCHOR-L2-158: the safepoint test is structural (CFG back
         // edge), so the generator needs the CFG and a layout index.
         x86cg.setCFG(cfg);
@@ -196,6 +207,13 @@ public class X86Level2Compiler extends AbstractX86Compiler {
                 }
             }
         }
+        // ANCHOR-L2-244: flush every deferred out-of-bounds stub at the
+        // footer position, BEFORE the leftover handler-end binds below:
+        // whole-method try rows then extend over the stub region and keep
+        // covering the stub PCs (VmSystem.findThrowableHandler -> isInScope
+        // matches by raw offset). Methods with mid-range handler rows keep
+        // their legacy inline stubs (see checkBounds deferBoundsOk).
+        x86cg.flushDeferredBounds();
         // Leftover PCs have no block (endPC == code length): bind at the
         // footer start. No throwing ops live in the footer, so the
         // over-coverage is inert.
@@ -315,6 +333,15 @@ public class X86Level2Compiler extends AbstractX86Compiler {
                 optimizeOnce(cfg);
                 deSSAAndFixup(cfg);
 
+                // ANCHOR-L2-245: elide bounds guards proven redundant by
+                // the interval range analysis. Reads dense pre-fixup quad
+                // addresses, so it MUST stay right after deSSAAndFixup
+                // (before fixupAddresses runs inside that call) and only
+                // sets consult state on the generator.
+                if (!"false".equals(CompilerFlags.L2_BCE)) {
+                    x86cg.setGuardElideAddresses(IRRangeAnalysis.markElidableGuards(cfg, bytecode));
+                }
+
                 LinearScanAllocator lsa = allocateRanges(cfg);
                 generateCode(x86cg, cfg, irg, lsa);
 
@@ -432,9 +459,120 @@ public class X86Level2Compiler extends AbstractX86Compiler {
     public static void deSSAAndFixup(IRControlFlowGraph cfg) {
         cfg.deconstrucSSA();
         removeSelfCopies(cfg);
+        foldConstantCompares(cfg);
         cfg.removeUnusedVars();
         cfg.removeDefUseChains();
         cfg.fixupAddresses();
+    }
+
+    /**
+     * ANCHOR-L2-242 (compare-imm folding): rewrite a binary conditional
+     * branch operand that is a variable whose value is an IntConstant
+     * into that constant, so the compare consumes it directly
+     * ("cmp esi, 0x1ffe" / "cmp dword[ebp-4], 7") instead of the
+     * allocator materializing it into a pooled home ("mov ebx, 0x1ffe" +
+     * "cmp esi, ebx" -- one dead instruction and one register of pressure
+     * per loop-rematerialized constant).
+     *
+     * The value is chased through copy chains: deSSA's phi moves leave
+     * the loop-carried versions of a constant as VariableRefAssignQuad
+     * copies of the original ConstantRefAssignQuad (Sieve: s15_4 = 8190
+     * prints as a constant but its own def is a copy of the length fold).
+     * Depth is bounded -- post-deSSA chains are acyclic, but the bound
+     * keeps a pathological cycle from spinning here.
+     *
+     * Must run between removeSelfCopies and removeUnusedVars: dropping the
+     * reference here is what lets removeUnusedVars see the ORIGINAL
+     * constant def with zero readers and kill it the ANCHOR-L2-132-safe
+     * way (never mark a def dead while another live use still reads it --
+     * folding does not touch any def quad at all). IntConstant only: the
+     * (REGISTER, CONSTANT) and (STACK, CONSTANT) branch emitters consume
+     * IntConstant directly, and liveness/ranges/allocation all run after
+     * this pass and read the mutated refs.
+     */
+    public static void foldConstantCompares(IRControlFlowGraph cfg) {
+        // ANCHOR-L2-242 soundness: getAssignQuad() only remembers the LAST
+        // assignment. A phi-merge target (deSSA turned it into one copy per
+        // predecessor) has several defs; chasing from its last def would
+        // fold a loop-carried counter to its entry-edge constant and the
+        // compare would stop reading the counter's home (an infinite loop
+        // with the counter still updated in its spill slot). So count defs
+        // per variable first (identity: PhiAssignQuad.equals is on getLHS)
+        // and only chase variables with exactly one def -- SSA guarantees
+        // that def dominates every use of that version.
+        final java.util.Map defCounts = new java.util.IdentityHashMap();
+        for (Object b0 : (Iterable<?>) cfg) {
+            final IRBasicBlock b = (IRBasicBlock) b0;
+            for (Object q0 : (List<?>) b.getQuads()) {
+                final Quad q = (Quad) q0;
+                if (q.isDeadCode() || !(q instanceof AssignQuad)) {
+                    continue;
+                }
+                final Variable lhs = ((AssignQuad) q).getLHS();
+                final Integer n = (Integer) defCounts.get(lhs);
+                defCounts.put(lhs, Integer.valueOf(n == null ? 1 : n + 1));
+            }
+        }
+        for (Object b0 : (Iterable<?>) cfg) {
+            final IRBasicBlock b = (IRBasicBlock) b0;
+            for (Object q0 : (List<?>) b.getQuads()) {
+                final Quad q = (Quad) q0;
+                if (q.isDeadCode() || !(q instanceof ConditionalBranchQuad)) {
+                    continue;
+                }
+                final ConditionalBranchQuad cbq = (ConditionalBranchQuad) q;
+                final Operand[] refs = cbq.getReferencedOps();
+                if (refs == null || refs.length < 2) {
+                    continue;
+                }
+                for (int i = 0; i < 2; i += 1) {
+                    if (!(refs[i] instanceof Variable)) {
+                        continue;
+                    }
+                    final IntConstant c = constValueOf((Variable) refs[i], defCounts, 0);
+                    if (c != null) {
+                        refs[i] = c;
+                    }
+                }
+            }
+        }
+    }
+
+    /**
+     * The IntConstant a variable's definition chain ends in, or null.
+     * Follows VariableRefAssignQuad copies (depth-bounded); every quad on
+     * the chain must be alive and every variable on it must have exactly
+     * one def (see the def-count guard in foldConstantCompares).
+     */
+    private static IntConstant constValueOf(Variable v, java.util.Map defCounts, int depth) {
+        if (depth > 4) {
+            return null;
+        }
+        final Integer n = (Integer) defCounts.get(v);
+        if (n == null || n.intValue() != 1) {
+            return null;
+        }
+        final AssignQuad aq = v.getAssignQuad();
+        if (aq == null || aq.isDeadCode()) {
+            return null;
+        }
+        if (aq instanceof ConstantRefAssignQuad) {
+            final Constant c = ((ConstantRefAssignQuad) aq).getRHS();
+            return (c instanceof IntConstant) ? (IntConstant) c : null;
+        }
+        if (aq instanceof VariableRefAssignQuad) {
+            // The copy's rhs may already BE the constant: doPass2's
+            // simplify() propagates through the copy chain, so deSSA's
+            // phi-move copies read "s15_4 = 8190" directly.
+            final Operand rhs = ((VariableRefAssignQuad) aq).getRHS();
+            if (rhs instanceof IntConstant) {
+                return (IntConstant) rhs;
+            }
+            if (rhs instanceof Variable) {
+                return constValueOf((Variable) rhs, defCounts, depth + 1);
+            }
+        }
+        return null;
     }
 
     /**

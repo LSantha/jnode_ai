@@ -54,6 +54,7 @@ import org.jnode.vm.x86.compiler.X86CompilerHelper;
 import org.jnode.vm.x86.compiler.l2.X86CodeGenerator;
 import org.jnode.vm.x86.compiler.l2.X86Level2Compiler;
 import org.jnode.vm.x86.compiler.l2.X86StackFrame;
+import org.jnode.vm.compiler.ir.IRRangeAnalysis;
 import org.jnode.vm.compiler.ir.quad.ArrayAssignQuad;
 import org.jnode.vm.compiler.ir.StackVariable;
 import org.jnode.vm.compiler.ir.quad.InstanceCallQuad;
@@ -205,6 +206,15 @@ public class L2PipelineTest {
             // one optimize/DCE, this is the second.
             X86Level2Compiler.optimizeOnce(cfg);
             X86Level2Compiler.deSSAAndFixup(cfg);
+            // ANCHOR-L2-245: mirror production's BCE consult so a guard-elision
+            // probe actually elides (the harness predates the pass; without it
+            // the elidable probe never sees its marks). Reads dense pre-fixup
+            // quad addresses, so it stays right after deSSAAndFixup and before
+            // allocation, exactly as doCompile does it.
+            if (!"false".equals(org.jnode.vm.compiler.CompilerFlags.L2_BCE)) {
+                x86cg.setGuardElideAddresses(
+                    IRRangeAnalysis.markElidableGuards(cfg, code));
+            }
             // allocateRanges' body, inlined only because the audit asserts
             // below need the LiveRange[] the helper would otherwise swallow.
             List liveVariables = cfg.computeLiveVariables();
@@ -600,6 +610,94 @@ public class L2PipelineTest {
         // ANCHOR-L2-081: folded wide-constant stores (CONSTANT rhs).
         assertCompiles("larrayConstStore");
         assertCompiles("darrayConstStore");
+    }
+
+    /**
+     * BOUNDS-CHECK ELISION guard probe 1 (ANCHOR-L2-246): a loop index defined
+     * once from a constant and bounded by a constant loop condition is provably
+     * inside [0, 8) on the loop-body edge (the branch refinement of the
+     * interval analysis); the guard must be elided. The guard label in the
+     * ANCHOR-L2-244 deferred-stub path is `$$cbfailed` (queued in checkBounds,
+     * bound at the footer by flushDeferredBounds) -- elision returns from
+     * checkBounds before the label exists, so the emission must not contain it.
+     * <p/>
+     * Red proof: set `CompilerFlags.L2_BCE = "false"` (non-final, read in the
+     * production path at X86Level2Compiler and mirrored in the harness
+     * compileMethod) and the guard is no longer removed -- the assertion
+     * against `$$cbfailed` fails. Measured red: L2_BCE=false puts
+     * `cmp [eax],ecx / jbe ...$$cbfailed` back in front of the load.
+     */
+    @Test
+    public void testBceElidableGuardRemoved() throws Exception {
+        CompileResult r = compileMethod(findMethod("bceElidable"));
+        String text = r.text;
+        assertNotNull("no code emitted for bceElidable", text);
+        assertFalse("bceElidable's provably-true guard must be elided; got:\n"
+                + text, text.contains("$$cbfailed"));
+        // The elision removes only the guard: the indexed load itself must
+        // still be emitted (a scaled-index memory operand off the array base).
+        assertTrue("array load must still be emitted for bceElidable; got:\n"
+                + text,
+            Pattern.compile("\\+e[a-z]{2}\\*[1248]\\]").matcher(text).find());
+    }
+
+    /**
+     * BOUNDS-CHECK guard-not-elided probe 2 (ANCHOR-L2-247): a loop index taken
+     * from an argument has an unknown interval at the loop entry (no state-map
+     * entry, TOP), so the analysis can never prove it inside [0, 8) and the
+     * guard MUST be kept. This also discriminates the pass state: with elision
+     * it emits differently than `bceElidable` (guard kept vs removed); an
+     * analysis bug that over-marks (e.g. a broken interval computation for
+     * argument variables) would drop this guard too and the two probes would
+     * emit identically.
+     * <p/>
+     * Red proof: make the analysis over-mark (measured: `elidable()` forced to
+     * return true) and this assertion fails -- the guard disappears exactly as
+     * in the elidable probe.
+     */
+    @Test
+    public void testBceGuardKeptWhenUnknown() throws Exception {
+        CompileResult r = compileMethod(findMethod("bceGuardKept"));
+        String text = r.text;
+        assertNotNull("no code emitted for bceGuardKept", text);
+        assertTrue("bceGuardKept's unprovable guard must be kept; got:\n"
+                + text, text.contains("$$cbfailed"));
+    }
+
+    /**
+     * COMPARE-IMMEDIATE-FOLD probe 3 (ANCHOR-L2-242, Sieve geometry): the
+     * branch bound is a variable (size = 8190) whose single def is a copy
+     * chain ending in an IntConstant. foldConstantCompares chases that chain
+     * and rewrites the branch operand to the constant, so the emitted compare
+     * is register-vs-immediate `cmp reg,0x00001FFE` and the dead bound def is
+     * DCE'd away.
+     * <p/>
+     * Red proof (measured): comment out the `foldConstantCompares(cfg)` call
+     * in deSSAAndFixup -> simplify() does NOT fold this shape, the bound copy
+     * `s4_2 = 8190` survives to emission, and the compare becomes
+     * register-vs-register `cmp esi,ebx` -- no line matches the assertion.
+     * (The constant-bound counter shape `while (l1 < 10)` is NOT a fold
+     * discriminator: simplify() folds it pre-deSSA, so its test stays green
+     * with the fold disabled -- measured.)
+     */
+    @Test
+    public void testBceFoldCompareToImmediate() throws Exception {
+        CompileResult r = compileMethod(findMethod("bceFold"));
+        String text = r.text;
+        assertNotNull("no code emitted for bceFold", text);
+        boolean foundImmediateCmp = false;
+        for (String line : text.split("\n")) {
+            // The text assembler prints cmp reg,0x + 8 uppercase hex digits.
+            if (line.trim().matches("cmp e..,0x00001FFE")) {
+                foundImmediateCmp = true;
+                break;
+            }
+        }
+        assertTrue("folded bound must emit a register-vs-immediate compare "
+                + "`cmp reg,0x00001FFE` (foldConstantCompares chased the "
+                + "size=8190 copy chain); a register-vs-register compare here "
+                + "means the fold did not run. Got:\n" + text,
+            foundImmediateCmp);
     }
 
     /**

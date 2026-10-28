@@ -159,6 +159,9 @@
         <token name="@jnode.l2.inline@" value="${jnode.l2.inline}"/>
         <token name="@jnode.l2.inline.dump@" value="${jnode.l2.inline.dump}"/>
         <token name="@jnode.l2.ssatag@" value="${jnode.l2.ssatag}"/>
+        <token name="@jnode.l2.bce@" value="${jnode.l2.bce}"/>
+        <token name="@jnode.l2.trace@" value="${jnode.l2.trace}"/>
+        <token name="@jnode.l2.bcedbg@" value="${jnode.l2.bcedbg}"/>
         <token name="@jnode.dump.methodmap@" value="${jnode.dump.methodmap}"/>
     </template>
   </target>

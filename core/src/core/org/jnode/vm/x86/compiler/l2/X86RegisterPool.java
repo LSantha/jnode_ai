@@ -111,6 +111,18 @@ public class X86RegisterPool extends RegisterPool<X86Register> {
         registers.add(register);
     }
 
+    /**
+     * True when the register is not currently pooled to a live variable and
+     * may be clobbered freely. The pool doubles as the free-list (request
+     * removes, release adds back), so this is a containment probe. The array
+     * emitters use it to decide whether the ECX/EBX save brackets around
+     * sub-word array access are needed at all: a bracketed scratch that is
+     * actually free is two dead instructions in every hot loop iteration.
+     */
+    public boolean isFree(X86Register register) {
+        return registers.contains(register);
+    }
+
     public boolean supports3AddrOps() {
         return false;
     }

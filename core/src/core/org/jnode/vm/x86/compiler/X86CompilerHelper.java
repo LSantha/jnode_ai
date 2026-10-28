@@ -379,12 +379,13 @@ public class X86CompilerHelper {
             } else {
                 os.writeCMP_Const(BITS32, PROCESSOR64, offset, flag);
             }
-            // Jump to the yieldpoint interrupt, when flags are set
-            // We do NOT predict this to happen (in most cases),
-            // so we optimize for that (wrt. branch prediction)
-            os.writeJCC(ypLabel, X86Constants.JE);
-            // Jump over INT is most cases
-            os.writeJMP(doneLabel);
+            // Inverted conditional: 1 hot-path control transfer instead of
+            // the old JE(untaken)+JMP(taken) pair. "No switch requested"
+            // (the predicted case) is the taken branch to noYP; the switch
+            // requested case falls through to the INT and converges at
+            // noYP. Both labels keep their old names ($$yp/noYP) so any
+            // label-based census or anchor stays valid.
+            os.writeJCC(doneLabel, X86Constants.JNE);
             // Trigger yieldpoint
             os.setObjectRef(ypLabel);
             os.writeINT(X86CompilerConstants.YIELDPOINT_INTNO);

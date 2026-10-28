@@ -136,6 +136,40 @@ public class LinearScanAllocator<T> {
     }
 
     /**
+     * ANCHOR-L2-239 (bracket elision): true when some range homed in the
+     * given register covers the quad address, i.e. the register may not be
+     * clobbered while that quad is emitted. Coverage mirrors the
+     * allocator's own overlap model (expireOldRange): a range occupies its
+     * home through lastUseAddress + 1, because a quad reads its operands
+     * and writes its result in one emission. Over-preserving is safe: the
+     * array emitters only use this to decide whether the ECX save bracket
+     * around sub-word access is needed; a false positive costs two
+     * instructions, a false positive in the other direction would corrupt
+     * a live variable.
+     *
+     * @param register the pooled register being probed
+     * @param address the (dense, post-fixup) quad address being emitted
+     * @return true if any live range in this register covers the address
+     */
+    public boolean isRegisterLiveAt(T register, int address) {
+        for (int i = 0; i < liveRanges.length; i += 1) {
+            final LiveRange<T> lr = liveRanges[i];
+            final Location<T> loc = lr.getLocation();
+            if (!(loc instanceof RegisterLocation)) {
+                continue;
+            }
+            if (!register.equals(((RegisterLocation<T>) loc).getRegister())) {
+                continue;
+            }
+            if (lr.getAssignAddress() <= address
+                && address <= lr.getLastUseAddress() + 1) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
      * @param lr
      */
     private void expireOldRange(LiveRange<T> lr) {

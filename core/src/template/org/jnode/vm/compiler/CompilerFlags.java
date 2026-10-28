@@ -70,6 +70,18 @@ public final class CompilerFlags {
     /** jnode.l2.ssatag: "true" logs SSA tagging. */
     public static String L2_SSATAG = "@jnode.l2.ssatag@";
 
+    /** jnode.l2.bce: "false" disables the array bounds-check elision pass. */
+    public static String L2_BCE = "@jnode.l2.bce@";
+
+    /** jnode.l2.trace: "true" enables the in-VM boot-log trace of the pass. */
+    public static String L2_BCE_TRACE = "@jnode.l2.trace@";
+
+    /** jnode.l2.bcedbg: "true" enables IRRangeAnalysis debug prints. Compile
+     * path flags must never read system properties at runtime: the boot's
+     * nested on-demand compiles can run while SystemProperties.<clinit> is
+     * still inside preInit (see class header). */
+    public static String L2_BCEDBG = "@jnode.l2.bcedbg@";
+
     /** jnode.dump.methodmap: "true" logs the bootstrap method map. */
     public static String L2_DUMP_METHODMAP = "@jnode.dump.methodmap@";
 }

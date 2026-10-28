@@ -287,6 +287,12 @@ public class L2Dump {
             }
             return;
         }
+        // ANCHOR-L2-245: mirror the production BCE hookup
+        // (X86Level2Compiler.generateCode call path) so dump mode shows the
+        // same elisions the JIT emits. Dump mode always runs the pass; the
+        // tranche-3 dump (sieve-l2-d.txt) is the no-BCE reference.
+        x86cg.setGuardElideAddresses(
+            org.jnode.vm.compiler.ir.IRRangeAnalysis.markElidableGuards(cfg, code));
         X86Level2Compiler.generateCode(x86cg, cfg, irg, lsa);
         os.flush();
         System.out.println(sw.toString());

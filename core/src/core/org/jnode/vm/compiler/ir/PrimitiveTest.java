@@ -1458,4 +1458,71 @@ public class PrimitiveTest {
         int b = n * 11 + 5;
         return a + b;
     }
+
+    /**
+     * ANCHOR-L2-246 BCE fixture (MiniSieve geometry): the index is defined
+     * once from a constant and bounded by a constant loop condition, so the
+     * branch refinement proves it inside [0, 8) on the body edge; the load's
+     * guard is elidable (measured: marks=[4], the ArrayAssignQuad address).
+     *
+     * NOTE: the dynamic-bound shape (i < arr.length) does NOT elide today:
+     * deSSA emits the length read off a COPY of the allocation result
+     * (s5_2 = s4_3) and the sizes map is keyed by the allocation LHS only,
+     * so the branch operand's length interval is unknown. That gap is
+     * recorded in tests/l2oracle/OPEN-BUGS.md (BCE-LEN-COPY); this fixture
+     * pins the geometry the pass was validated on.
+     *
+     * Red proof (L2PipelineTest#testBceElidableGuardRemoved): with BCE off
+     * (jnode.l2.bce=false) the emitted guard label $$cbfailed is present;
+     * with BCE on it must be absent.
+     */
+    public static int bceElidable(int n) {
+        int l1 = 0;
+        int[] l2 = new int[8];
+        while (l1 < 8) {
+            int x = l2[l1];
+            l1 += 1;
+        }
+        return n;
+    }
+
+    /**
+     * ANCHOR-L2-247 BCE counter-fixture: the index comes from an ARGUMENT, so
+     * its interval is unknown at the loop entry and the guard is NOT elidable
+     * (measured: marks=[]). Discriminates pass state: a broken analysis that
+     * marked this shape too would drop this guard as well and the two probes
+     * would emit identically.
+     */
+    public static int bceGuardKept(int i) {
+        int[] l2 = new int[8];
+        while (i < 8) {
+            int x = l2[i];
+            i += 1;
+        }
+        return i;
+    }
+
+    /**
+     * ANCHOR-L2-242 compare-fold fixture (Sieve geometry): the branch bound is
+     * a VARIABLE (size = 8190) whose single def is a copy chain ending in an
+     * IntConstant. The SSA optimizer's simplify() does NOT fold this shape
+     * (measured: with the fold disabled the branch stays
+     * `if s3_4 >= s4_2`, the bound copy `s4_2 = 8190` survives to emission
+     * and the compare is register-vs-register `cmp esi,ebx`);
+     * foldConstantCompares chases the copy chain and rewrites the operand, so
+     * the emitted compare is register-vs-immediate `cmp esi,0x00001FFE` and
+     * the dead bound def is DCE'd.
+     *
+     * Red proof (L2PipelineTest#testBceFoldCompareToImmediate): comment out
+     * the foldConstantCompares call in deSSAAndFixup -> no immediate compare.
+     */
+    static byte[] bceArr = new byte[8191];
+
+    public static int bceFold(int n) {
+        int size = 8190;
+        for (int k = 2; k < size; k += 2) {
+            bceArr[k] = 0;
+        }
+        return n;
+    }
 }

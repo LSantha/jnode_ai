@@ -63,6 +63,7 @@ import org.jnode.vm.compiler.ir.IRBasicBlock;
 import org.jnode.vm.compiler.ir.DoubleConstant;
 import org.jnode.vm.compiler.ir.FloatConstant;
 import org.jnode.vm.compiler.ir.IntConstant;
+import org.jnode.vm.compiler.ir.LinearScanAllocator;
 import org.jnode.vm.compiler.ir.LongConstant;
 import org.jnode.vm.compiler.ir.Operand;
 import org.jnode.vm.compiler.ir.RegisterLocation;
@@ -131,6 +132,63 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
     X86Constants {
     private static final GPR SR1 = X86Register.EAX;
 
+    /**
+     * ANCHOR-L2-238 (array base handshake): true exactly when checkBounds
+     * just loaded a STACK-resident array base into EAX; the four array
+     * consumers (4-byte load/store, wide/narrow store) consult it right
+     * after checkBounds to skip their own duplicate base load. Writer and
+     * readers are strictly sequential inside one quad's emission.
+     */
+    private boolean eaxHoldsArrayRef;
+
+    /**
+     * ANCHOR-L2-243 (index staging handshake): true exactly when checkBounds
+     * just loaded a STACK-resident array index into ECX (only ever with ECX
+     * free, hence never while a value/result is homed in it -- a home makes
+     * the variable's range cover the quad). The wide/narrow store/load
+     * consumers consult it immediately after checkBounds and skip their own
+     * duplicate index load; checkBounds clears it on entry for the next
+     * quad, and the 4-byte cell consumers simply ignore it.
+     */
+    private boolean ecxHoldsIdx;
+
+    /**
+     * ANCHOR-L2-244 (deferred OOB stubs): checkBounds no longer emits its
+     * inline out-of-bounds throw stub between the caller's code and the
+     * guard compare, which used to cost every guarded access a 2-byte
+     * `jmp cbtest` around the stub. Instead each checkBounds call queues
+     * (failed-label, ref, index) here and only the forward `jbe cbfailed`
+     * is emitted inline. flushDeferredBounds() binds every queued label
+     * once at the method footer (after the exception-handler TRAILER
+     * binds, before endMethod) and emits the push/push/call stubs there --
+     * unreachable from hot flow, since the footer follows the epilogue.
+     * Operand homes are fixed before emission (SSA), so re-emitting the
+     * pushes at flush time uses the same displacements/registers as an
+     * inline stub would have.
+     */
+    private java.util.ArrayList deferredBoundsStubs;
+
+    /** ANCHOR-L2-244: cached method-level defer eligibility (see
+     * checkBounds): deferral requires no exception handler whose BC range
+     * ends before the code length, so no row can miss the footer stubs. */
+    private Boolean deferredBoundsOk;
+
+    /**
+     * ANCHOR-L2-245: dense quad addresses whose bounds guard the range
+     * analysis (IRRangeAnalysis) proved redundant; checkBounds consults
+     * it and emits nothing for such an access (no compare, no branch, no
+     * stub), only resetting the per-quad handshakes.
+     */
+    private java.util.HashSet guardElideAddresses;
+
+    /**
+     * Installs the elide set for this method's emission. Null (or empty)
+     * means no elisions; every guarded access behaves as before.
+     */
+    public void setGuardElideAddresses(java.util.HashSet guardElideAddresses) {
+        this.guardElideAddresses = guardElideAddresses;
+    }
+
     // private static final Register SR2 = Register.EBX;
     // private static final Register SR3 = Register.ECX;
     // private static final Register SR4 = Register.EDX;
@@ -158,6 +216,14 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
     private boolean[] labelBound;
 
     private final RegisterPool<T> registerPool;
+
+    /**
+     * ANCHOR-L2-239: the allocator that assigned this method's homes, set
+     * by X86Level2Compiler.generateCode before the quad walk. Emission-time
+     * bracket decisions (is ECX/EBX currently pooled to a live variable at
+     * this quad?) consult it. Null means "unknown": keep every bracket.
+     */
+    private LinearScanAllocator<T> allocator;
 
     /**
      * Initialize this instance
@@ -214,6 +280,23 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
 
     public RegisterPool<T> getRegisterPool() {
         return registerPool;
+    }
+
+    /**
+     * ANCHOR-L2-239: install the allocation result before the quad walk
+     * (see the field comment).
+     */
+    public void setAllocator(LinearScanAllocator<T> allocator) {
+        this.allocator = allocator;
+    }
+
+    /**
+     * True when the pooled register may be clobbered freely while the quad
+     * at the given address is emitted: no live range is homed in it there.
+     * With no allocator installed this conservatively reports NOT free.
+     */
+    protected final boolean isRegisterFreeAt(T register, int address) {
+        return (allocator != null) && !allocator.isRegisterLiveAt(register, address);
     }
 
     /**
@@ -3838,21 +3921,22 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
     }
 
     public void generateBinaryOP(BinaryQuad<T> quad, int disp1, int disp2, BinaryOperation operation, int disp3) {
+        // ANCHOR-L2-239: SR1 (EAX) is never pooled (see X86RegisterPool --
+        // EAX/EDX are commented out), so the old push/pop bracket around
+        // these cells preserved nothing: no live variable can be homed in
+        // EAX across a quad, and no cross-quad protocol leaves a value
+        // there (the array-base handshake is consumed within its quad).
         switch (operation) {
             case IADD:
-                os.writePUSH(SR1);
                 os.writeMOV(X86Constants.BITS32, SR1, X86Register.EBP, disp2);
                 os.writeADD(SR1, X86Register.EBP, disp3);
                 os.writeMOV(X86Constants.BITS32, X86Register.EBP, disp1, SR1);
-                os.writePOP(SR1);
                 break;
 
             case IAND:
-                os.writePUSH(SR1);
                 os.writeMOV(X86Constants.BITS32, SR1, X86Register.EBP, disp2);
                 os.writeAND(SR1, X86Register.EBP, disp3);
                 os.writeMOV(X86Constants.BITS32, X86Register.EBP, disp1, SR1);
-                os.writePOP(SR1);
                 break;
 
             case IDIV:
@@ -3867,19 +3951,15 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
                 break;
 
             case IMUL:
-                os.writePUSH(SR1);
                 os.writeMOV(X86Constants.BITS32, SR1, X86Register.EBP, disp2);
                 os.writeIMUL(SR1, X86Register.EBP, disp3);
                 os.writeMOV(X86Constants.BITS32, X86Register.EBP, disp1, SR1);
-                os.writePOP(SR1);
                 break;
 
             case IOR:
-                os.writePUSH(SR1);
                 os.writeMOV(X86Constants.BITS32, SR1, X86Register.EBP, disp2);
                 os.writeOR(SR1, X86Register.EBP, disp3);
                 os.writeMOV(X86Constants.BITS32, X86Register.EBP, disp1, SR1);
-                os.writePOP(SR1);
                 break;
 
             case IREM:
@@ -3916,11 +3996,9 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
                 break;
 
             case ISUB:
-                os.writePUSH(SR1);
                 os.writeMOV(X86Constants.BITS32, SR1, X86Register.EBP, disp2);
                 os.writeSUB(SR1, X86Register.EBP, disp3);
                 os.writeMOV(X86Constants.BITS32, X86Register.EBP, disp1, SR1);
-                os.writePOP(SR1);
                 break;
 
             case IUSHR:
@@ -3935,11 +4013,9 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
                 break;
 
             case IXOR:
-                os.writePUSH(SR1);
                 os.writeMOV(X86Constants.BITS32, SR1, X86Register.EBP, disp2);
                 os.writeXOR(SR1, X86Register.EBP, disp3);
                 os.writeMOV(X86Constants.BITS32, X86Register.EBP, disp1, SR1);
-                os.writePOP(SR1);
                 break;
 
             // ANCHOR-L2-082: doubles share the long disp convention (disp
@@ -5040,12 +5116,132 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
         for (Object bo : (Iterable<?>) c) {
             lay.put(bo, Integer.valueOf(i++));
         }
+        domsets.clear();
+        domsets.putAll(computeDominators(c));
     }
 
-    private void yieldPoint(ConditionalBranchQuad<T> quad) {
-        if (isBackEdge(quad.getBasicBlock(), quad.getAddress(), quad.getTargetAddress())) {
-            stackFrame.getHelper().writeYieldPoint(getInstrLabel(quad.getAddress()));
+    /**
+     * ANCHOR-L2-XP2: dominator sets for the CFG's blocks, computed by the
+     * classic iterative dataflow in CFG linear order (the builder emits
+     * blocks in RPO; non-recursive, boot-time once per method compile).
+     * Query shape: backedge = branch target DOMINATES the branch's own
+     * block -- the reaches() form additionally fired for forward targets
+     * that merely participate in a later cycle (Sieve loop-head
+     * conditionals qb_4/qb_12/qb_19 and the short-circuit qb_14 got a YP
+     * every iteration), doubling the per-iteration YP cadence vs L1A's
+     * backedge-only rule while covering nothing new: probes measured L2 at
+     * 0.83-0.91x per loop despite a better static instruction budget.
+     */
+    @SuppressWarnings("unchecked")
+    private final java.util.HashMap domsets = new java.util.HashMap();
+
+    private java.util.HashMap computeDominators(
+        org.jnode.vm.compiler.ir.IRControlFlowGraph c) {
+        final java.util.ArrayList blocks = new java.util.ArrayList();
+        for (Object bo : (Iterable<?>) c) {
+            blocks.add(bo);
         }
+        final int n = blocks.size();
+        return computeDominatorsBody(c, blocks, n);
+    }
+
+    /**
+     * ANCHOR-L2-XP2B: dominator sets live in a flat {@code long[]} word
+     * matrix (block i's words at rows[i*w .. ]). No classpath utility
+     * classes are touched from the compiler's own compile frame: every
+     * stub-bound call from here re-enters recompileMethod while this
+     * compile is still on the stack and the stub/call graph can cycle.
+     * Query shape unchanged: backedge = branch's target block dominates
+     * the branch's own block.
+     */
+    @SuppressWarnings("unchecked")
+    private java.util.HashMap computeDominatorsBody(
+        org.jnode.vm.compiler.ir.IRControlFlowGraph c,
+        java.util.ArrayList blocks, int n) {
+        final java.util.HashMap pairs = new java.util.HashMap();
+        if (n == 0) {
+            return pairs;
+        }
+        final java.util.HashMap idxOf = new java.util.HashMap();
+        for (int i = 0; i < n; i++) {
+            idxOf.put(blocks.get(i), Integer.valueOf(i));
+        }
+        final int w = (n + 63) >> 6;
+        final long[] domWords = new long[n * w];
+        // init: entry = {entry}, every other block = full set 0..n-1
+        domWords[0] = 1L;
+        for (int i = 1; i < n; i++) {
+            final int base = i * w;
+            for (int k = 0; k < w; k++) {
+                domWords[base + k] = -1L;
+            }
+            // clear bits >= n in the last partial word
+            if ((n & 63) != 0) {
+                domWords[base + w - 1] &= ~(0xFFFFFFFFFFFFFFFFL
+                    << (n & 63));
+            }
+            domWords[base] |= 1L << i;
+        }
+        final long[] tmp = new long[w];
+        boolean changed = true;
+        while (changed) {
+            changed = false;
+            for (int i = 1; i < n; i++) {
+                final org.jnode.vm.compiler.ir.IRBasicBlock b =
+                    (org.jnode.vm.compiler.ir.IRBasicBlock) blocks.get(i);
+                boolean any = false;
+                for (int k = 0; k < w; k++) {
+                    tmp[k] = -1L;
+                }
+                for (Object po : (Iterable<?>) b.getPredecessors()) {
+                    final Integer pi = (Integer) idxOf.get(po);
+                    if (pi == null) {
+                        continue;
+                    }
+                    any = true;
+                    final int pBase = pi.intValue() * w;
+                    for (int k = 0; k < w; k++) {
+                        tmp[k] &= domWords[pBase + k];
+                    }
+                }
+                if (!any) {
+                    // unreachable block: keep full set
+                    continue;
+                }
+                final int selfBase = i * w;
+                tmp[i >> 6] |= 1L << (i & 63);
+                boolean same = true;
+                for (int k = 0; k < w; k++) {
+                    if (tmp[k] != domWords[selfBase + k]) {
+                        same = false;
+                        break;
+                    }
+                }
+                if (!same) {
+                    for (int k = 0; k < w; k++) {
+                        domWords[selfBase + k] = tmp[k];
+                    }
+                    changed = true;
+                }
+            }
+        }
+        for (int src = 0; src < n; src++) {
+            final int sBase = src * w;
+            for (int tgt = 0; tgt < n; tgt++) {
+                if (((domWords[sBase + (tgt >> 6)]
+                    >>> (tgt & 63)) & 1L) == 0L) {
+                    continue;
+                }
+                java.util.HashMap inner =
+                    (java.util.HashMap) pairs.get(blocks.get(tgt));
+                if (inner == null) {
+                    inner = new java.util.HashMap();
+                    pairs.put(blocks.get(tgt), inner);
+                }
+                inner.put(blocks.get(src), Boolean.TRUE);
+            }
+        }
+        return pairs;
     }
 
     /**
@@ -5062,6 +5258,19 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
      * when the layout rule does not apply (direct generator use in the
      * mode-matrix harness, which has no CFG).
      */
+    /**
+     * ANCHOR-L2-YPB: a conditional branch becomes a yield point only when
+     * it closes a loop (isBackEdge); loop-head/short-circuit forward tests
+     * must stay YP-free or the per-iteration cadence doubles vs L1A.
+     */
+    private void yieldPoint(ConditionalBranchQuad<T> quad) {
+        if (isBackEdge(quad.getBasicBlock(), quad.getAddress(), quad.getTargetAddress())) {
+            stackFrame.getHelper().writeYieldPoint(getInstrLabel(quad.getAddress()));
+        }
+    }
+
+
+
     private boolean isBackEdge(org.jnode.vm.compiler.ir.IRBasicBlock b, int address,
         int targetAddress) {
         if (cfg != null && lay != null && b != null) {
@@ -5108,6 +5317,13 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
                     }
                 }
                 if (target != null) {
+                    final java.util.HashMap tmap =
+                        (java.util.HashMap) domsets.get(target);
+                    if (tmap != null) {
+                        // complete pair map: absence == no dominance
+                        final Boolean dmn = (Boolean) tmap.get(b);
+                        return dmn != null && dmn.booleanValue();
+                    }
                     return reaches(target, b, new java.util.HashSet());
                 }
             }
@@ -5357,18 +5573,31 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
      * value), then one width-specific sequence. Long/double results always
      * spill; sub-word results are ints (R/S).
      */
-     private void loadWideOrNarrowArray(ArrayAssignQuad quad, Variable lhs, Variable ref, Operand ind,
-                                        int arrayDataOffset) {
+    private void loadWideOrNarrowArray(ArrayAssignQuad quad, Variable lhs, Variable ref, Operand ind,
+                                       int arrayDataOffset, boolean baseInEax, boolean idxInEcx) {
         if (ref.getAddressingMode() == REGISTER) {
             GPR refr = (GPR) ((RegisterLocation) ref.getLocation()).getRegister();
             os.writeMOV(BITS32, X86Register.EAX, refr);
         } else if (ref.getAddressingMode() == STACK) {
-            int disp = ((StackLocation) ref.getLocation()).getDisplacement();
-            os.writeMOV(BITS32, X86Register.EAX, X86Register.EBP, disp);
+            if (!baseInEax) {
+                int disp = ((StackLocation) ref.getLocation()).getDisplacement();
+                os.writeMOV(BITS32, X86Register.EAX, X86Register.EBP, disp);
+            }
         } else {
             throw new IllegalArgumentException();
         }
-        os.writePUSH(X86Register.ECX);
+        // ANCHOR-L2-239: ECX is pooled (a live variable's home), so the
+        // classic bracket is only needed when ECX actually holds something
+        // live across this quad. When it is free, skip the push/pop pair
+        // and use ECX as the index temp directly -- two instructions less
+        // in every narrow/wide array loop iteration. Every cell below that
+        // consumes the bracket (the resultr==ECX and valr==ECX [esp]
+        // recoveries) is only reachable when ecxLive is true: a result or
+        // value homed in ECX makes its range cover this quad.
+        final boolean ecxLive = !isRegisterFreeAt((T) X86Register.ECX, quad.getAddress());
+        if (ecxLive) {
+            os.writePUSH(X86Register.ECX);
+        }
         // ANCHOR-L2-141: ECX is pushed live across narrow loads/stores and
         // reused as the index temp; a result/value homed in ECX must be
         // staged elsewhere (see resultr check below). Tracks whether the
@@ -5380,19 +5609,28 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
                 os.writeMOV(BITS32, X86Register.ECX, indr);
             }
         } else if (ind.getAddressingMode() == STACK) {
-            int disp = ((StackLocation) ((Variable) ind).getLocation()).getDisplacement();
-            os.writeMOV(BITS32, X86Register.ECX, X86Register.EBP, disp);
+            // ANCHOR-L2-243: checkBounds may already have staged this stack
+            // index into ECX (only ever with ECX free, hence bracketless);
+            // skip the duplicate load when it did.
+            if (!idxInEcx) {
+                int disp = ((StackLocation) ((Variable) ind).getLocation()).getDisplacement();
+                os.writeMOV(BITS32, X86Register.ECX, X86Register.EBP, disp);
+            }
         } else if (ind.getAddressingMode() == CONSTANT) {
             os.writeMOV_Const(X86Register.ECX, ((IntConstant) ind).getValue());
         } else {
-            os.writePOP(X86Register.ECX);
+            if (ecxLive) {
+                os.writePOP(X86Register.ECX);
+            }
             throw new IllegalArgumentException();
         }
         final int elemType = quad.getType();
         if (elemType == Operand.LONG) {
             if (lhs.getAddressingMode() != STACK) {
                 // Wide values always spill; a register here is unreachable.
-                os.writePOP(X86Register.ECX);
+                if (ecxLive) {
+                    os.writePOP(X86Register.ECX);
+                }
                 throw new IllegalArgumentException("Wide array load to register");
             }
             int resd = ((StackLocation) lhs.getLocation()).getDisplacement();
@@ -5403,7 +5641,9 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
             os.writeMOV(BITS32, X86Register.EBP, resd, X86Register.EDX);
         } else if (elemType == Operand.DOUBLE) {
             if (lhs.getAddressingMode() != STACK) {
-                os.writePOP(X86Register.ECX);
+                if (ecxLive) {
+                    os.writePOP(X86Register.ECX);
+                }
                 throw new IllegalArgumentException("Wide array load to register");
             }
             int resd = ((StackLocation) lhs.getLocation()).getDisplacement();
@@ -5434,7 +5674,16 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
                     } else {
                         os.writeMOVZX(SR1, X86Register.EDX, 0, size);
                     }
-                    os.writePOP(X86Register.ECX);
+                    // ANCHOR-L2-239: the result home IS ECX, and a def at
+                    // this quad does not make the range cover it (post-def
+                    // convention: assignAddress = def + 1), so this branch
+                    // can run with the bracket elided. The POP below only
+                    // balances the bracketed case; when ECX was free there
+                    // is nothing to restore and the result write below
+                    // simply publishes the home.
+                    if (ecxLive) {
+                        os.writePOP(X86Register.ECX);
+                    }
                     os.writeMOV(BITS32, X86Register.ECX, SR1);
                     ecxRestored = true;
                 } else if (signed) {
@@ -5451,11 +5700,13 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
                 }
                 os.writeMOV(BITS32, X86Register.EBP, resd, SR1);
             } else {
-                os.writePOP(X86Register.ECX);
+                if (ecxLive) {
+                    os.writePOP(X86Register.ECX);
+                }
                 throw new IllegalArgumentException();
             }
         }
-        if (!ecxRestored) {
+        if (ecxLive && !ecxRestored) {
             os.writePOP(X86Register.ECX);
         }
     }
@@ -5486,11 +5737,19 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
 
         checkBounds(ref, ind, quad.getAddress());
 
+        // ANCHOR-L2-238: consume the base-in-EAX handshake (see checkBounds).
+        final boolean baseInEax = eaxHoldsArrayRef;
+        eaxHoldsArrayRef = false;
+        // ANCHOR-L2-243: consume the index-in-ECX handshake (see checkBounds)
+        // and pass it to the wide/narrow load path below.
+        final boolean idxInEcx = ecxHoldsIdx;
+        ecxHoldsIdx = false;
+
         final int elemType = quad.getType();
         if (elemType != Operand.INT && elemType != Operand.FLOAT && elemType != Operand.REFERENCE) {
             // ANCHOR-L2-078: 8-byte and sub-word loads (the cube below stays
             // 4-byte only, byte-identical to the reviewed CG-4b shape).
-            loadWideOrNarrowArray(quad, lhs, ref, ind, arrayDataOffset);
+            loadWideOrNarrowArray(quad, lhs, ref, ind, arrayDataOffset, baseInEax, idxInEcx);
             return;
         }
 
@@ -5516,7 +5775,9 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
                 GPR refr = (GPR) ((RegisterLocation) ref.getLocation()).getRegister();
                 os.writeMOV(BITS32, resultr, refr, indr.getValue() * scale + arrayDataOffset);
             } else if (ref.getAddressingMode() == STACK) {
-                os.writeMOV(BITS32, SR1, X86Register.EBP, ((StackLocation) ref.getLocation()).getDisplacement());
+                if (!baseInEax) {
+                    os.writeMOV(BITS32, SR1, X86Register.EBP, ((StackLocation) ref.getLocation()).getDisplacement());
+                }
                 os.writeMOV(BITS32, resultr, SR1, indr.getValue() * scale + arrayDataOffset);
             } else {
                 throw new IllegalArgumentException();
@@ -5528,8 +5789,10 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
                     os.writeMOV(BITS32, SR1, refr, indr.getValue() * scale + arrayDataOffset);
                     os.writeMOV(BITS32, X86Register.EBP, rdisp, SR1);
                 } else if (ref.getAddressingMode() == STACK) {
-                    os.writeMOV(BITS32, SR1, X86Register.EBP,
-                        ((StackLocation) ref.getLocation()).getDisplacement());
+                    if (!baseInEax) {
+                        os.writeMOV(BITS32, SR1, X86Register.EBP,
+                            ((StackLocation) ref.getLocation()).getDisplacement());
+                    }
                     os.writeMOV(BITS32, SR1, SR1, indr.getValue() * scale + arrayDataOffset);
                     os.writeMOV(BITS32, X86Register.EBP, rdisp, SR1);
                 } else {
@@ -5546,7 +5809,9 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
                     GPR refr = (GPR) ((RegisterLocation) ref.getLocation()).getRegister();
                     os.writeMOV(BITS32, resultr, refr, indr, scale,  arrayDataOffset);
                 } else if (ref.getAddressingMode() == STACK) {
-                    os.writeMOV(BITS32, SR1, X86Register.EBP, ((StackLocation) ref.getLocation()).getDisplacement());
+                    if (!baseInEax) {
+                        os.writeMOV(BITS32, SR1, X86Register.EBP, ((StackLocation) ref.getLocation()).getDisplacement());
+                    }
                     os.writeMOV(BITS32, resultr, SR1, indr, scale,  arrayDataOffset);
                 } else {
                     throw new IllegalArgumentException();
@@ -5558,8 +5823,10 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
                     os.writeMOV(BITS32, SR1, refr, indr, scale,  arrayDataOffset);
                     os.writeMOV(BITS32, X86Register.EBP, rdisp, SR1);
                 } else if (ref.getAddressingMode() == STACK) {
-                    os.writeMOV(BITS32, SR1, X86Register.EBP, ((StackLocation) ref.getLocation()).getDisplacement());
-                    os.writePUSH(SR1, indr, scale, arrayDataOffset);
+                    if (!baseInEax) {
+                        os.writeMOV(BITS32, SR1, X86Register.EBP, ((StackLocation) ref.getLocation()).getDisplacement());
+                    }
+                    os.writePUSH(SR1, indr, scale,  arrayDataOffset);
                     os.writePOP(X86Register.EBP, rdisp);
                 } else {
                     throw new IllegalArgumentException();
@@ -5583,7 +5850,9 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
                     GPR refr = (GPR) ((RegisterLocation) ref.getLocation()).getRegister();
                     os.writeMOV(BITS32, resultr, refr, SR1, scale,  arrayDataOffset);
                 } else if (ref.getAddressingMode() == STACK) {
-                    os.writeMOV(BITS32, SR1, X86Register.EBP, ((StackLocation) ref.getLocation()).getDisplacement());
+                    if (!baseInEax) {
+                        os.writeMOV(BITS32, SR1, X86Register.EBP, ((StackLocation) ref.getLocation()).getDisplacement());
+                    }
                     GPR sr2 = (resultr == X86Register.EDX) ? X86Register.EBX : X86Register.EDX;
                     os.writePUSH(sr2);
                     os.writeMOV(BITS32, sr2, X86Register.EBP, indDisp);
@@ -5600,7 +5869,9 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
                     os.writePUSH(refr, SR1, scale,  arrayDataOffset);
                     os.writePOP(X86Register.EBP, rdisp);
                 } else if (ref.getAddressingMode() == STACK) {
-                    os.writeMOV(BITS32, SR1, X86Register.EBP, ((StackLocation) ref.getLocation()).getDisplacement());
+                    if (!baseInEax) {
+                        os.writeMOV(BITS32, SR1, X86Register.EBP, ((StackLocation) ref.getLocation()).getDisplacement());
+                    }
                     GPR sr2 = (SR1 == X86Register.EDX) ? X86Register.EBX : X86Register.EDX;
                     os.writePUSH(sr2);
                     os.writeMOV(BITS32, sr2, X86Register.EBP, indDisp);
@@ -5632,29 +5903,48 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
      * Long/double values always spill; sub-word int values are R/S/C.
      */
     private void storeWideOrNarrowArray(ArrayStoreQuad quad, Variable ref, Operand ind, Operand rhs,
-                                        int arrayDataOffset) {
+                                        int arrayDataOffset, boolean baseInEax, boolean idxInEcx) {
         if (ref.getAddressingMode() == REGISTER) {
             GPR refr = (GPR) ((RegisterLocation) ref.getLocation()).getRegister();
             os.writeMOV(BITS32, X86Register.EAX, refr);
         } else if (ref.getAddressingMode() == STACK) {
-            int disp = ((StackLocation) ref.getLocation()).getDisplacement();
-            os.writeMOV(BITS32, X86Register.EAX, X86Register.EBP, disp);
+            if (!baseInEax) {
+                int disp = ((StackLocation) ref.getLocation()).getDisplacement();
+                os.writeMOV(BITS32, X86Register.EAX, X86Register.EBP, disp);
+            }
         } else {
             throw new IllegalArgumentException();
         }
-        os.writePUSH(X86Register.ECX);
+        // ANCHOR-L2-239: ECX is pooled (a live variable's home), so the
+        // classic bracket is only needed when ECX actually holds something
+        // live across this quad. When it is free, skip the push/pop pair
+        // and use ECX as the index temp directly -- two instructions less
+        // in every narrow/wide array loop iteration. The [esp] recovery
+        // path (valr==ECX) below can then not trigger: a value homed in
+        // ECX makes ecxLive true, which keeps the bracket.
+        final boolean ecxLive = !isRegisterFreeAt((T) X86Register.ECX, quad.getAddress());
+        if (ecxLive) {
+            os.writePUSH(X86Register.ECX);
+        }
         if (ind.getAddressingMode() == REGISTER) {
             GPR indr = (GPR) ((RegisterLocation) ((Variable) ind).getLocation()).getRegister();
             if (indr != X86Register.ECX) {
                 os.writeMOV(BITS32, X86Register.ECX, indr);
             }
         } else if (ind.getAddressingMode() == STACK) {
-            int disp = ((StackLocation) ((Variable) ind).getLocation()).getDisplacement();
-            os.writeMOV(BITS32, X86Register.ECX, X86Register.EBP, disp);
+            // ANCHOR-L2-243: checkBounds may already have staged this stack
+            // index into ECX (only ever with ECX free, hence bracketless);
+            // skip the duplicate load when it did.
+            if (!idxInEcx) {
+                int disp = ((StackLocation) ((Variable) ind).getLocation()).getDisplacement();
+                os.writeMOV(BITS32, X86Register.ECX, X86Register.EBP, disp);
+            }
         } else if (ind.getAddressingMode() == CONSTANT) {
             os.writeMOV_Const(X86Register.ECX, ((IntConstant) ind).getValue());
         } else {
-            os.writePOP(X86Register.ECX);
+            if (ecxLive) {
+                os.writePOP(X86Register.ECX);
+            }
             throw new IllegalArgumentException();
         }
         final int elemType = quad.getType();
@@ -5670,7 +5960,9 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
                     (int) ((value >>> 32) & 0xFFFFFFFFL));
             } else if (rhs.getAddressingMode() != STACK) {
                 // Wide values always spill; a register here is unreachable.
-                os.writePOP(X86Register.ECX);
+                if (ecxLive) {
+                    os.writePOP(X86Register.ECX);
+                }
                 throw new IllegalArgumentException("Wide array value from register");
             } else {
             // EDX as value temp (EAX still holds the base; both free).
@@ -5692,7 +5984,9 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
                 os.writeMOV_Const(BITS32, X86Register.EAX, X86Register.ECX, 8, arrayDataOffset + 4,
                     (int) ((bits >>> 32) & 0xFFFFFFFFL));
             } else if (rhs.getAddressingMode() != STACK) {
-                os.writePOP(X86Register.ECX);
+                if (ecxLive) {
+                    os.writePOP(X86Register.ECX);
+                }
                 throw new IllegalArgumentException("Wide array value from register");
             } else {
             int vdisp = ((StackLocation) ((Variable) rhs).getLocation()).getDisplacement();
@@ -5705,9 +5999,14 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
         } else {
             // BYTE/CHAR/SHORT stores narrow the int value to 1/2 bytes.
             // ANCHOR-L2-122: CHAR/SHORT scale is 2 (see load side above).
-            os.writeLEA(X86Register.EDX, X86Register.EAX, X86Register.ECX,
-                (elemType == Operand.BYTE) ? 1 : 2, arrayDataOffset);
             final int size = (elemType == Operand.BYTE) ? BYTESIZE : WORDSIZE;
+            final int narrowScale = (elemType == Operand.BYTE) ? 1 : 2;
+            // Value staging into EDX (free: EAX holds the base, ECX the target),
+            // then a single SIB store "mov [base+idx*sc+off], dl)". This
+            // replaces the old "lea edx, addr" + "mov byte[edx], al" pair;
+            // both encoders accept the base+index form (DL is 8-bit-safe,
+            // nr==2). Same count for reg/stack values, one less instruction
+            // for constants (no separate "mov eax, imm".
             if (rhs.getAddressingMode() == REGISTER) {
                 GPR valr = (GPR) ((RegisterLocation) ((Variable) rhs).getLocation()).getRegister();
                 if (valr == X86Register.ECX) {
@@ -5715,39 +6014,27 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
                     // above, so the value must come from the PUSH slot (our
                     // own pushed home). No pushes intervene on the narrow
                     // path between that PUSH and this read; keep it that way.
-                    os.writeMOV(BITS32, SR1, X86Register.ESP, 0);
+                    os.writeMOV(BITS32, X86Register.EDX, X86Register.ESP, 0);
                 } else {
-                    os.writeMOV(BITS32, SR1, valr);
-                }
-                if (size == BYTESIZE) {
-                    // ANCHOR-L2-084: byte stores need a low-byte source (no
-                    // SIL/DIL pre-REX); route ESI/EDI/EBP/ESP via SR1 (EAX).
-                    os.writeMOV(BITS8, X86Register.EDX, 0, SR1);
-                } else {
-                    os.writeMOV(BITS16, X86Register.EDX, 0, SR1);
+                    os.writeMOV(BITS32, X86Register.EDX, valr);
                 }
             } else if (rhs.getAddressingMode() == STACK) {
                 int disp = ((StackLocation) ((Variable) rhs).getLocation()).getDisplacement();
-                os.writeMOV(BITS32, SR1, X86Register.EBP, disp);
-                if (size == BYTESIZE) {
-                    os.writeMOV(BITS8, X86Register.EDX, 0, SR1);
-                } else {
-                    os.writeMOV(BITS16, X86Register.EDX, 0, SR1);
-                }
+                os.writeMOV(BITS32, X86Register.EDX, X86Register.EBP, disp);
             } else if (rhs.getAddressingMode() == CONSTANT) {
-                // LEA first (EAX holds the base), then the immediate narrow store.
-                os.writeMOV_Const(SR1, ((IntConstant) rhs).getValue());
-                if (size == BYTESIZE) {
-                    os.writeMOV(BITS8, X86Register.EDX, 0, SR1);
-                } else {
-                    os.writeMOV(BITS16, X86Register.EDX, 0, SR1);
-                }
+                os.writeMOV_Const(X86Register.EDX, ((IntConstant) rhs).getValue());
             } else {
-                os.writePOP(X86Register.ECX);
+                if (ecxLive) {
+                    os.writePOP(X86Register.ECX);
+                }
                 throw new IllegalArgumentException();
             }
+            os.writeMOV(size, X86Register.EAX, X86Register.ECX, narrowScale, arrayDataOffset,
+                X86Register.EDX);
         }
-        os.writePOP(X86Register.ECX);
+        if (ecxLive) {
+            os.writePOP(X86Register.ECX);
+        }
     }
 
     /**
@@ -5784,17 +6071,27 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
             return;
         }
 
-        Variable ref = quad.getRef();
+        final Variable ref = quad.getRef();
         Operand ind = quad.getInd();
         Operand rhs = quad.getRHS();
 
         checkBounds(ref, ind, quad.getAddress());
 
+        // ANCHOR-L2-238: checkBounds left a STACK-resident base in EAX;
+        // consume the flag before any of the internal cells can clobber EAX
+        // again (they may: SR1==EAX also stages results inside some cells).
+        final boolean baseInEax = eaxHoldsArrayRef;
+        eaxHoldsArrayRef = false;
+        // ANCHOR-L2-243: consume the index-in-ECX handshake (see checkBounds)
+        // and pass it to the wide/narrow store path below.
+        final boolean idxInEcx = ecxHoldsIdx;
+        ecxHoldsIdx = false;
+
         final int elemType = quad.getType();
         if (elemType != Operand.INT && elemType != Operand.FLOAT && elemType != Operand.REFERENCE) {
-            // ANCHOR-L2-078: 8-byte and sub-word stores (the cube below stays
+            // ANCHOR-L2-078: 8-byte and sub-word loads (the cube below stays
             // 4-byte only, byte-identical to the reviewed CG-4b shape).
-            storeWideOrNarrowArray(quad, ref, ind, rhs, arrayDataOffset);
+            storeWideOrNarrowArray(quad, ref, ind, rhs, arrayDataOffset, baseInEax, idxInEcx);
             return;
         }
 
@@ -5861,7 +6158,9 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
                 throw new IllegalArgumentException();
             }
         } else if (ref.getAddressingMode() == STACK) {
-            os.writeMOV(BITS32, SR1, X86Register.EBP, ((StackLocation) ref.getLocation()).getDisplacement());
+            if (!baseInEax) {
+                os.writeMOV(BITS32, SR1, X86Register.EBP, ((StackLocation) ref.getLocation()).getDisplacement());
+            }
             if (ind.getAddressingMode() == CONSTANT) {
                 final int offset = ((IntConstant) ind).getValue() * scale;
                 if (rhs.getAddressingMode() == CONSTANT) {
@@ -5944,50 +6243,102 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
 
     private final void checkBounds(Variable ref, Operand index, int address) {
 //        counters.getCounter("checkbounds").inc();
+        // ANCHOR-L2-245: the IRRangeAnalysis marks set contains this quad's
+        // address when the index was proven inside [0, len): no compare,
+        // no branch, no throw stub. The consumer handshakes are reset so
+        // each consumer re-loads/refetches on its own, exactly as it would
+        // with no checkBounds call in front of it.
+        if (guardElideAddresses != null && guardElideAddresses.contains(Integer.valueOf(address))) {
+            eaxHoldsArrayRef = false;
+            ecxHoldsIdx = false;
+            return;
+        }
         final Label curInstrLabel = getInstrLabel(address);
-        final Label test = new Label(curInstrLabel + "$$cbtest");
-        final Label failed = new Label(curInstrLabel + "$$cbfailed");
 
 //        assertCondition(ref.isGPR(), "ref must be in a register");
 //        final GPR refr = (GPR) ((RegisterLocation) ref.getLocation()).getRegister();
 
-        os.writeJMP(test);
-        os.setObjectRef(failed);
-        // Call SoftByteCodes.throwArrayOutOfBounds
-        if (ref.getAddressingMode() == REGISTER) {
-            os.writePUSH((GPR) ((RegisterLocation) ref.getLocation()).getRegister());
-        } else if (ref.getAddressingMode() == STACK) {
-            os.writePUSH(X86Register.EBP, ((StackLocation) ref.getLocation()).getDisplacement());
-        } else {
-            throw new IllegalArgumentException();
+        // ANCHOR-L2-244: deferred OOB stubs. The throw stub is emitted at
+        // the method footer and the guard's jbe is a plain forward branch,
+        // so every guarded access drops its 2-byte `jmp cbtest`. Sound
+        // only when the stub PC still resolves: exception-table rows
+        // (VmSystem.findThrowableHandler -> isInScope) match by raw code
+        // offset, and this stub's PC is the footer. Handlers whose BC
+        // range ends at the code length bind their end label AFTER the
+        // stub region (footer binds), so they keep covering it; a
+        // mid-range try's row does not. Any method with a mid-range
+        // handler therefore keeps the legacy inline stub for all its
+        // guarded accesses.
+        final boolean defer;
+        if (deferredBoundsOk == null) {
+            boolean ok = true;
+            final org.jnode.vm.classmgr.VmByteCode bc = currentMethod.getBytecode();
+            final int noHandlers = bc.getNoExceptionHandlers();
+            for (int i = 0; i < noHandlers; i++) {
+                final org.jnode.vm.classmgr.VmInterpretedExceptionHandler eh = bc
+                    .getExceptionHandler(i);
+                if (eh.getEndPC() < bc.getLength()) {
+                    ok = false;
+                    break;
+                }
+            }
+            deferredBoundsOk = Boolean.valueOf(ok);
         }
-//        if (index.isConstant()) {
-//            os.writePUSH(index.getValue());
-//        } else {
-        if (index.getAddressingMode() == CONSTANT) {
-            os.writePUSH(((IntConstant) index).getValue());
-        } else if (index.getAddressingMode() == REGISTER) {
-            os.writePUSH((GPR) ((RegisterLocation) ((Variable) index).getLocation()).getRegister());
-        } else if (index.getAddressingMode() == STACK) {
-            os.writePUSH(X86Register.EBP, ((StackLocation) ((Variable) index).getLocation()).getDisplacement());
+        defer = deferredBoundsOk.booleanValue();
+
+        final Label failed = new Label(curInstrLabel + "$$cbfailed");
+        if (!defer) {
+            final Label test = new Label(curInstrLabel + "$$cbtest");
+            os.writeJMP(test);
+            os.setObjectRef(failed);
+            // Call SoftByteCodes.throwArrayOutOfBounds
+            if (ref.getAddressingMode() == REGISTER) {
+                os.writePUSH((GPR) ((RegisterLocation) ref.getLocation()).getRegister());
+            } else if (ref.getAddressingMode() == STACK) {
+                os.writePUSH(X86Register.EBP, ((StackLocation) ref.getLocation()).getDisplacement());
+            } else {
+                throw new IllegalArgumentException();
+            }
+            if (index.getAddressingMode() == CONSTANT) {
+                os.writePUSH(((IntConstant) index).getValue());
+            } else if (index.getAddressingMode() == REGISTER) {
+                os.writePUSH((GPR) ((RegisterLocation) ((Variable) index).getLocation()).getRegister());
+            } else if (index.getAddressingMode() == STACK) {
+                os.writePUSH(X86Register.EBP, ((StackLocation) ((Variable) index).getLocation()).getDisplacement());
+            } else {
+                throw new IllegalArgumentException();
+            }
+            os.markNextCallNoReturn();
+            stackFrame.getHelper().invokeJavaMethod(stackFrame.getEntryPoints().getThrowArrayOutOfBounds());
+            os.setObjectRef(test);
         } else {
-            throw new IllegalArgumentException();
+            // ANCHOR-L2-244: queue (label, ref, index); flushDeferredBounds
+            // emits the stub at the method footer, unreachable from hot
+            // flow, and the jbe below becomes a forward branch.
+            if (deferredBoundsStubs == null) {
+                deferredBoundsStubs = new java.util.ArrayList();
+            }
+            deferredBoundsStubs.add(failed);
+            deferredBoundsStubs.add(ref);
+            deferredBoundsStubs.add(index);
         }
-//        }
-//        invokeJavaMethod(context.getThrowArrayOutOfBounds());
-        os.markNextCallNoReturn();
-        stackFrame.getHelper().invokeJavaMethod(stackFrame.getEntryPoints().getThrowArrayOutOfBounds());
 
         final int slotSize = stackFrame.getHelper().SLOTSIZE;
         int arrayLengthOffset = VmArray.LENGTH_OFFSET * slotSize;
 
         // CMP length, index
-        os.setObjectRef(test);
-//        if (index.isConstant()) {
-//            os
-//                .writeCMP_Const(BITS32, refr, arrayLengthOffset, index
-//                    .getValue());
-//        } else {
+        // ANCHOR-L2-238 (array base handshake): a STACK-resident ref is
+        // loaded into EAX exactly once here; the four array consumers
+        // (4-byte load/store cubes, wide/narrow store) read the flag right
+        // after this call and skip their own duplicate base load. The flag
+        // is only meaningful immediately after a checkBounds call for the
+        // same quad (writer+reader are sequential in one emission thread).
+        eaxHoldsArrayRef = false;
+        // ANCHOR-L2-243 (index staging handshake): per-quad validity, same
+        // discipline as the base flag: cleared before the dispatch, set by
+        // the (STACK,STACK) cell only when ECX is free, consumed by the
+        // quad's own store/load cube right after.
+        ecxHoldsIdx = false;
         if (index.getAddressingMode() == CONSTANT) {
             if (ref.getAddressingMode() == REGISTER) {
                 os.writeCMP_Const(X86Constants.BITS32, (GPR) ((RegisterLocation) ref.getLocation()).getRegister(),
@@ -5995,6 +6346,7 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
             } else if (ref.getAddressingMode() == STACK) {
                 os.writeMOV(X86Constants.BITS32, SR1, X86Register.EBP,
                     ((StackLocation) ref.getLocation()).getDisplacement());
+                eaxHoldsArrayRef = true;
                 os.writeCMP_Const(X86Constants.BITS32, SR1, arrayLengthOffset, ((IntConstant) index).getValue());
             } else {
                 throw new IllegalArgumentException();
@@ -6006,6 +6358,7 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
             } else if (ref.getAddressingMode() == STACK) {
                 os.writeMOV(X86Constants.BITS32, SR1, X86Register.EBP,
                     ((StackLocation) ref.getLocation()).getDisplacement());
+                eaxHoldsArrayRef = true;
                 os.writeCMP(SR1, arrayLengthOffset,
                     (GPR) ((RegisterLocation) ((Variable) index).getLocation()).getRegister());
 
@@ -6021,11 +6374,34 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
                 // 105: the length field must be DEREFERENCED (all other
                 // paths compare [ref+off]; this one compared ref+off
                 // itself, so OOB indexes sailed through and nulls threw
-                // the wrong exception).
+                // the wrong exception). The deref stays -- as a memory
+                // operand of the compare: load base->EAX (also the
+                // consumer handshake, see eaxHoldsArrayRef), load
+                // index->EDX, then "cmp dword[base+off], edx" reads the
+                // length directly, replacing the old separate mov-deref.
+                // That old shape needed the second MOV only because the
+                // compare could not name [reg+disp] with a register RHS.
                 os.writeMOV(X86Constants.BITS32, SR1, X86Register.EBP,
                     ((StackLocation) ref.getLocation()).getDisplacement());
-                os.writeMOV(X86Constants.BITS32, SR1, SR1, arrayLengthOffset);
-                os.writeCMP(SR1, X86Register.EBP, ((StackLocation) ((Variable) index).getLocation()).getDisplacement());
+                eaxHoldsArrayRef = true;
+                // ANCHOR-L2-243 (index staging handshake): with ECX free at
+                // this quad, stage the stack index straight into ECX and let
+                // the quad's wide/narrow store/load consumer skip its own
+                // duplicate index load (ecxHoldsIdx). This can only fire when
+                // ECX is a throwaway temp: a value or result homed in ECX
+                // makes its range cover this quad, which is the same
+                // invariant that lets the consumers (ANCHOR-L2-239) skip
+                // their brackets when ECX is free.
+                if (isRegisterFreeAt((T) X86Register.ECX, address)) {
+                    os.writeMOV(X86Constants.BITS32, X86Register.ECX, X86Register.EBP,
+                        ((StackLocation) ((Variable) index).getLocation()).getDisplacement());
+                    ecxHoldsIdx = true;
+                    os.writeCMP(SR1, arrayLengthOffset, X86Register.ECX);
+                } else {
+                    os.writeMOV(X86Constants.BITS32, X86Register.EDX, X86Register.EBP,
+                        ((StackLocation) ((Variable) index).getLocation()).getDisplacement());
+                    os.writeCMP(SR1, arrayLengthOffset, X86Register.EDX);
+                }
             } else {
                 throw new IllegalArgumentException();
             }
@@ -6035,6 +6411,50 @@ public class GenericX86CodeGenerator<T extends X86Register> extends CodeGenerato
 
 //        }
         os.writeJCC(failed, X86Constants.JNA);
+    }
+
+    /**
+     * ANCHOR-L2-244 (deferred OOB stubs): emit every out-of-bounds throw
+     * stub queued by checkBounds at the method footer. Called once per
+     * method by X86Level2Compiler just before endMethod(): the footer
+     * follows the epilogue, so no hot path can fall into a stub, and each
+     * guard's `jbe cbfailed` is a plain forward branch. Stub contents are
+     * exactly the inline stub checkBounds used to emit (same operands,
+     * same call, same markNextCallNoReturn); homes are SSA-fixed before
+     * emission, so re-reading the operands here is sound.
+     */
+    public void flushDeferredBounds() {
+        if (deferredBoundsStubs == null) {
+            return;
+        }
+        final int n = deferredBoundsStubs.size();
+        for (int i = 0; i < n; i += 3) {
+            final Label failed = (Label) deferredBoundsStubs.get(i);
+            final Operand ref = (Operand) deferredBoundsStubs.get(i + 1);
+            final Operand index = (Operand) deferredBoundsStubs.get(i + 2);
+            os.setObjectRef(failed);
+            // Call SoftByteCodes.throwArrayOutOfBounds (moved verbatim
+            // from the former inline stub in checkBounds).
+            if (ref.getAddressingMode() == REGISTER) {
+                os.writePUSH((GPR) ((RegisterLocation) ((Variable) ref).getLocation()).getRegister());
+            } else if (ref.getAddressingMode() == STACK) {
+                os.writePUSH(X86Register.EBP, ((StackLocation) ((Variable) ref).getLocation()).getDisplacement());
+            } else {
+                throw new IllegalArgumentException();
+            }
+            if (index.getAddressingMode() == CONSTANT) {
+                os.writePUSH(((IntConstant) index).getValue());
+            } else if (index.getAddressingMode() == REGISTER) {
+                os.writePUSH((GPR) ((RegisterLocation) ((Variable) index).getLocation()).getRegister());
+            } else if (index.getAddressingMode() == STACK) {
+                os.writePUSH(X86Register.EBP, ((StackLocation) ((Variable) index).getLocation()).getDisplacement());
+            } else {
+                throw new IllegalArgumentException();
+            }
+            os.markNextCallNoReturn();
+            stackFrame.getHelper().invokeJavaMethod(stackFrame.getEntryPoints().getThrowArrayOutOfBounds());
+        }
+        deferredBoundsStubs = null;
     }
 
     @Override

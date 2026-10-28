@@ -499,6 +499,16 @@ public class L2Census {
      * it: a loop whose exit test lands in one of those modes has NO
      * safepoint on its back edge -> thread-switch/GC starvation (B52
      * hang class). One NOYIELDPOINT line per offending method.
+     *
+     * ANCHOR-L2-XP2B: the generator's back-edge test is now dominance
+     * (the branch target DOMINATES the branch's own block), not
+     * reaches(): the old rule also fired on loop-head conditionals and
+     * short-circuits that merely participate in a later cycle, doubling
+     * the per-iteration YP cadence vs L1A (Sieve: 2-3 YPs/iter, -10%).
+     * The lint mirrors the generator: a site counts only when the
+     * target dominates the branch block; a reducible loop's header
+     * always does, so every real loop keeps its per-iteration
+     * safepoint and the starvation class stays covered.
      */
     static void checkBackEdgeYieldPoints(VmMethod method, String text) {
         try {
@@ -510,6 +520,60 @@ public class L2Census {
             int li = 0;
             for (Object bo : (Iterable<?>) cfg) {
                 lay.put(bo, Integer.valueOf(li++));
+            }
+            // XP2B: dominator sets for this CFG, block -> BitSet of its
+            // dominators (by layout index). Entry = {entry}; every other
+            // block starts full and narrows by intersecting predecessors.
+            final java.util.HashMap domsets = new java.util.HashMap();
+            final java.util.ArrayList cblocks = new java.util.ArrayList();
+            for (Object bo : (Iterable<?>) cfg) {
+                cblocks.add(bo);
+            }
+            final int cn = cblocks.size();
+            if (cn > 0) {
+                final java.util.HashMap cidx = new java.util.HashMap();
+                for (int i = 0; i < cn; i++) {
+                    cidx.put(cblocks.get(i), Integer.valueOf(i));
+                }
+                final java.util.BitSet[] cdom = new java.util.BitSet[cn];
+                for (int i = 0; i < cn; i++) {
+                    cdom[i] = (i == 0) ? new java.util.BitSet(cn)
+                        : fullSet(cn);
+                }
+                cdom[0].set(0);
+                boolean cchanged = true;
+                while (cchanged) {
+                    cchanged = false;
+                    for (int i = 1; i < cn; i++) {
+                        final IRBasicBlock cb =
+                            (IRBasicBlock) cblocks.get(i);
+                        java.util.BitSet nd = null;
+                        for (Object po : (List<?>) cb.getPredecessors()) {
+                            final Integer pi =
+                                (Integer) cidx.get(po);
+                            if (pi == null) {
+                                continue;
+                            }
+                            if (nd == null) {
+                                nd = (java.util.BitSet)
+                                    cdom[pi.intValue()].clone();
+                            } else {
+                                nd.and(cdom[pi.intValue()]);
+                            }
+                        }
+                        if (nd == null) {
+                            continue;
+                        }
+                        nd.set(i);
+                        if (!nd.equals(cdom[i])) {
+                            cdom[i] = nd;
+                            cchanged = true;
+                        }
+                    }
+                }
+                for (int i = 0; i < cn; i++) {
+                    domsets.put(cblocks.get(i), cdom[i]);
+                }
             }
             for (Object b0 : (Iterable<?>) cfg) {
                 final IRBasicBlock b = (IRBasicBlock) b0;
@@ -577,8 +641,20 @@ public class L2Census {
                             }
                         }
                     }
-                    if (target == b || !reachesBlock(target, b,
-                        new java.util.HashSet<IRBasicBlock>())) {
+                    // XP2B: a site needs a YP only when the jump target
+                    // DOMINATES this block (true loop back edge); a
+                    // reducible loop header always dominates its
+                    // latching branches, so every real loop keeps a
+                    // per-iteration safepoint. Dominator sets are
+                    // computed per CFG with the classic iterative
+                    // intersection (host-side; BitSet is fine here).
+                    final java.util.BitSet domOfB =
+                        (java.util.BitSet) domsets.get(b);
+                    if (target == b || domOfB == null) {
+                        continue;
+                    }
+                    final Integer ti = (Integer) lay.get(target);
+                    if (ti == null || !domOfB.get(ti.intValue())) {
                         continue;
                     }
                     // Per-branch: the poll is emitted with the branch
@@ -600,20 +676,10 @@ public class L2Census {
         }
     }
 
-    private static boolean reachesBlock(IRBasicBlock from, IRBasicBlock to,
-        java.util.HashSet<IRBasicBlock> seen) {
-        if (from == to) {
-            return true;
-        }
-        if (!seen.add(from)) {
-            return false;
-        }
-        for (Object s0 : (List<?>) from.getSuccessors()) {
-            if (reachesBlock((IRBasicBlock) s0, to, seen)) {
-                return true;
-            }
-        }
-        return false;
+    private static java.util.BitSet fullSet(int n) {
+        final java.util.BitSet bs = new java.util.BitSet(n);
+        bs.set(0, n);
+        return bs;
     }
 
     /**
