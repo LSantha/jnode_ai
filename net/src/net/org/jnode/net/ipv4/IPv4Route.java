@@ -100,23 +100,30 @@ public class IPv4Route implements IPv4Constants {
     }
 
     /**
-     * Is the destination address a host address?
+     * Is this a host route? A route is a host route if its subnetmask selects a
+     * single address, or if the destination is a classful host address that has
+     * host bits set for the subnetmask. Classful network addresses (a zero
+     * fourth octet) are always network routes, even when an earlier octet has
+     * host bits set for the classful mask (e.g. 10.0.9.0/8). Networks that do
+     * not end on an octet boundary (e.g. a /25 with a non-zero fourth octet)
+     * are recognised as networks because their destination is already masked.
      * 
-     * @return True if the destination is a host address, false otherwise
+     * @return True if this is a host route, false otherwise
      * @see #isNetwork()
      */
     public boolean isHost() {
-        return destination.isHost();
+        return (subnetmask.prefixLength() == 32) ||
+                (destination.isHost() && !destination.equals(destination.and(subnetmask)));
     }
 
     /**
-     * Is the destination address a network address?
+     * Is this a network route?
      * 
-     * @return True if the destination is a network address, false otherwise
+     * @return True if this is a network route, false otherwise
      * @see #isHost()
      */
     public boolean isNetwork() {
-        return destination.isNetwork();
+        return !isHost();
     }
 
     /**
@@ -194,6 +201,43 @@ public class IPv4Route implements IPv4Constants {
      */
     public IPv4Address getGateway() {
         return gateway;
+    }
+
+    /**
+     * Two routes are equal if they have the same destination, subnetmask, gateway and device.
+     * The flags and the use count are not part of the route identity.
+     *
+     * @see java.lang.Object#equals(java.lang.Object)
+     */
+    public boolean equals(Object obj) {
+        if (this == obj) {
+            return true;
+        }
+        if (!(obj instanceof IPv4Route)) {
+            return false;
+        }
+        final IPv4Route other = (IPv4Route) obj;
+        if (!destination.equals(other.destination) || !subnetmask.equals(other.subnetmask)) {
+            return false;
+        }
+        if ((gateway == null) != (other.gateway == null)) {
+            return false;
+        }
+        if ((gateway != null) && !gateway.equals(other.gateway)) {
+            return false;
+        }
+        return device == other.device;
+    }
+
+    /**
+     * @see java.lang.Object#hashCode()
+     */
+    public int hashCode() {
+        int hash = destination.hashCode();
+        hash = 31 * hash + subnetmask.hashCode();
+        hash = 31 * hash + ((gateway == null) ? 0 : gateway.hashCode());
+        hash = 31 * hash + System.identityHashCode(device);
+        return hash;
     }
 
     /**

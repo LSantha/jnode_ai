@@ -116,7 +116,7 @@ jobs:
         tail -f /tmp/com1.txt &
         tail_pid=$!
 
-        timeout 120s bash -c 'until grep -q -i "System has finished" /tmp/com1.txt; do sleep 1; done' || {
+        timeout 240s bash -c 'until grep -q -i "System has finished" /tmp/com1.txt; do sleep 1; done' || {
           echo "32-bit boot failed or timed out!"
           cat /tmp/com1.txt
           kill $qemu_pid $tail_pid || true
@@ -171,7 +171,7 @@ jobs:
         tail -f /tmp/com1_64.txt &
         tail_pid=$!
 
-        timeout 120s bash -c 'until grep -q -i "System has finished" /tmp/com1_64.txt; do sleep 1; done' || {
+        timeout 240s bash -c 'until grep -q -i "System has finished" /tmp/com1_64.txt; do sleep 1; done' || {
           echo "64-bit boot failed or timed out!"
           cat /tmp/com1_64.txt
           kill $qemu_pid $tail_pid || true

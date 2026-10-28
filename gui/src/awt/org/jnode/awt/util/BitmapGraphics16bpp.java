@@ -114,6 +114,28 @@ final class BitmapGraphics16bpp extends AbstractBitmapGraphics {
         return result;
     }
 
+    protected void doFillRect(int x, int y, int width, int height, int color, int mode) {
+        final int ofs = getOffset(x, y);
+        final short c = (short) color;
+        if (bytesPerLine == (width << 1)) {
+            // single contiguous block
+            if (mode == Surface.PAINT_MODE) {
+                mem.setShort(ofs, c, width * height);
+            } else {
+                mem.xorShort(ofs, c, width * height);
+            }
+        } else {
+            for (int i = 0; i < height; i++) {
+                final int rowOfs = ofs + i * bytesPerLine;
+                if (mode == Surface.PAINT_MODE) {
+                    mem.setShort(rowOfs, c, width);
+                } else {
+                    mem.xorShort(rowOfs, c, width);
+                }
+            }
+        }
+    }
+
     protected final void doDrawLine(int x, int y, int w, int color, int mode) {
         final int ofs = getOffset(x, y);
 

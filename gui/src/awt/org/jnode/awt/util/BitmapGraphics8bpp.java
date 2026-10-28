@@ -100,6 +100,28 @@ final class BitmapGraphics8bpp extends AbstractBitmapGraphics {
         return new int[0];
     }
 
+    protected void doFillRect(int x, int y, int width, int height, int color, int mode) {
+        final int ofs = getOffset(x, y);
+        final byte c = (byte) color;
+        if (bytesPerLine == width) {
+            // single contiguous block
+            if (mode == Surface.PAINT_MODE) {
+                mem.setByte(ofs, c, width * height);
+            } else {
+                mem.xorByte(ofs, c, width * height);
+            }
+        } else {
+            for (int i = 0; i < height; i++) {
+                final int rowOfs = ofs + i * bytesPerLine;
+                if (mode == Surface.PAINT_MODE) {
+                    mem.setByte(rowOfs, c, width);
+                } else {
+                    mem.xorByte(rowOfs, c, width);
+                }
+            }
+        }
+    }
+
     protected void doDrawLine(int x, int y, int w, int color, int mode) {
         final int ofs = getOffset(x, y);
 

@@ -95,6 +95,27 @@ final class BitmapGraphics24bpp extends AbstractBitmapGraphics {
         return ret;
     }
 
+    protected void doFillRect(int x, int y, int width, int height, int color, int mode) {
+        final int ofs = getOffset(x, y);
+        if (bytesPerLine == width * 3) {
+            // single contiguous block
+            if (mode == Surface.PAINT_MODE) {
+                mem.setInt24(ofs, color, width * height);
+            } else {
+                mem.xorInt24(ofs, color, width * height);
+            }
+        } else {
+            for (int i = 0; i < height; i++) {
+                final int rowOfs = ofs + i * bytesPerLine;
+                if (mode == Surface.PAINT_MODE) {
+                    mem.setInt24(rowOfs, color, width);
+                } else {
+                    mem.xorInt24(rowOfs, color, width);
+                }
+            }
+        }
+    }
+
     protected void doDrawLine(int x, int y, int w, int color, int mode) {
         final int ofs = getOffset(x, y);
 

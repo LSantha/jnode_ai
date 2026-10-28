@@ -114,9 +114,28 @@ final class BitmapGraphics32bpp extends AbstractBitmapGraphics {
         }
     }
 
+    protected void doFillRect(int x, int y, int width, int height, int color, int mode) {
+        final int ofs = getOffset(x, y);
+        if (bytesPerLine == (width << 2)) {
+            // single contiguous block
+            if (mode == Surface.PAINT_MODE) {
+                mem.setInt(ofs, color, width * height);
+            } else {
+                mem.xorInt(ofs, color, width * height);
+            }
+        } else {
+            for (int i = 0; i < height; i++) {
+                final int rowOfs = ofs + i * bytesPerLine;
+                if (mode == Surface.PAINT_MODE) {
+                    mem.setInt(rowOfs, color, width);
+                } else {
+                    mem.xorInt(rowOfs, color, width);
+                }
+            }
+        }
+    }
+
     protected void doDrawLine(int x, int y, int w, int color, int mode) {
-        // System.out.println("doDrawLine" + x + "," + y + "," + w + "," +
-        // color + "," + mode);
         final int ofs = getOffset(x, y);
         if (mode == Surface.PAINT_MODE) {
             mem.setInt(ofs, color, w);

@@ -42,7 +42,7 @@ function initState(maxTurns) {
     phase: "DEV",
     pr: null,
     turn: 0,
-    max_turns: typeof maxTurns === "number" && maxTurns > 0 ? maxTurns : 3,
+    max_turns: typeof maxTurns === "number" && maxTurns > 0 ? maxTurns : createHelpers.DEFAULT_MAX_TURNS,
     retries: 0,
     review_in_progress: false,
     review_pending_ci: false,
@@ -226,7 +226,7 @@ module.exports = async ({ github, context, core }) => {
     }
 
     var turnsMatch = body.match(/--(?:max-)?turns\s+(\d+)/);
-    var customMaxTurns = turnsMatch ? parseInt(turnsMatch[1], 10) : 3;
+    var customMaxTurns = turnsMatch ? parseInt(turnsMatch[1], 10) : h.DEFAULT_MAX_TURNS;
 
     var state = parseState(issueBody);
 
@@ -424,7 +424,7 @@ module.exports = async ({ github, context, core }) => {
       core.info("Ticket runner: auto-start skipped for #" + issueNumber + ", state appeared meanwhile.");
       return false;
     }
-    var st = initState(3);
+    var st = initState();
     st.history.push({ event: "auto_start", reason: reason, timestamp: new Date().toISOString() });
     var newBody = replaceOrAppendStatus(body, st, issueNumber);
     await github.rest.issues.update({ owner, repo, issue_number: issueNumber, body: newBody });
@@ -844,7 +844,20 @@ module.exports = async ({ github, context, core }) => {
       for (var i = list.length - 1; i >= 0; i--) {
         var body = (list[i] && list[i].body) || "";
         var match = body.match(/\b(?:Created|Opened) PR #(\d+)\b/i);
-        if (match) return parseInt(match[1], 10);
+        if (match) {
+          var candidate = parseInt(match[1], 10);
+          // A "Created PR #N" comment may reference a PR from a previous,
+          // already-closed attempt. Resurrecting it as this ticket's active PR
+          // corrupts state (pr=stale closed PR). Only consider open PRs;
+          // if we cannot determine the state, accept the candidate (fail-open).
+          try {
+            var prData = await github.rest.pulls.get({ owner, repo, pull_number: candidate });
+            // Skip PRs closed without merging (abandoned attempts from previous
+            // runs). Open PRs and closed+merged PRs are acceptable candidates.
+            if (prData.data.state === "closed" && !prData.data.merged) continue;
+          } catch (_) {}
+          return candidate;
+        }
       }
     } catch (err) {
       core.warning("findPRForIssueWithComment failed: " + err.message);
@@ -888,6 +901,24 @@ module.exports = async ({ github, context, core }) => {
       state.phase = "REVIEW";
       state.retries = 0;
       state.history.push({ event: "dev_done", pr: prNumber, timestamp: new Date().toISOString() });
+      // Ensure the PR title carries the issue number so the squash-merge
+      // commit subject (COMMIT_OR_PR_TITLE) stays traceable back to the ticket.
+      // Only touches the title when the prefix is missing; wrapped in try/catch
+      // so a titles API hiccup can never break the DEV flow.
+      try {
+        var prData = await github.rest.pulls.get({ owner, repo, pull_number: prNumber });
+        var prefix = "#" + issueNumber + " - ";
+        var title = prData.data.title || "";
+        if (!title.startsWith(prefix) && !title.startsWith("#" + issueNumber + ":")) {
+          await github.rest.pulls.update({
+            owner, repo, pull_number: prNumber,
+            title: prefix + title
+          });
+          core.info("Ticket runner: prefixed PR #" + prNumber + " title with issue #" + issueNumber);
+        }
+      } catch (err) {
+        core.warning("Ticket runner: could not prefix PR #" + prNumber + " title: " + err.message);
+      }
       var ciGreen = await h.isCIGreen(prNumber);
       if (ciGreen) {
         await updateIssueState(issueNumber, state);
@@ -1250,7 +1281,7 @@ module.exports = async ({ github, context, core }) => {
 
     core.info("Ticket runner: #" + issueNumber + " lost its runner state but PR #" + found
       + " exists; rebuilding block at REVIEW.");
-    var st = initState(3);
+    var st = initState();
     st.phase = "REVIEW";
     st.pr = found;
     st.review_in_progress = false;

@@ -279,7 +279,7 @@ test("ticket-runner.js internal utilities", async (t) => {
     const s1 = _initState();
     assert.strictEqual(s1.phase, "DEV");
     assert.strictEqual(s1.turn, 0);
-    assert.strictEqual(s1.max_turns, 3);
+    assert.strictEqual(s1.max_turns, createHelpers.DEFAULT_MAX_TURNS);
     assert.strictEqual(s1.retries, 0);
     assert.strictEqual(s1.review_in_progress, false);
     assert.strictEqual(s1.pr, null);
@@ -389,7 +389,7 @@ test("ticket-runner.js internal utilities", async (t) => {
     const rows = busy.split("\n").filter((l) => l.startsWith("| **"));
     assert.deepStrictEqual(rows, [
       "| **Phase** | DEV |",
-      "| **Turn** | 0/3 |",
+      "| **Turn** | 0/" + createHelpers.DEFAULT_MAX_TURNS + " |",
       "| **Retries** | 0/3 |",
       "| **PR** | - |",
       "| **Review in progress** | yes |",
@@ -620,7 +620,7 @@ test("ticket-runner.js event handling suite", async (t) => {
     const updatedBody = mocks.getIssueBody();
     const state = _parseState(updatedBody);
     assert.strictEqual(state.phase, "DEV");
-    assert.strictEqual(state.max_turns, 3);
+    assert.strictEqual(state.max_turns, createHelpers.DEFAULT_MAX_TURNS);
   });
 
   await t.test("Respects custom max-turns with /run --turns 5", async () => {
