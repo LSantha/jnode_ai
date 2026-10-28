@@ -25,6 +25,16 @@ var isTriggerComment = require("./report-signals.js").isTriggerComment;
 var MAX_HISTORY_ENTRIES = 200;
 
 /**
+ * Default review-feedback turn cap, shared by both runners so the single-ticket
+ * (ticket-runner.js) and batch (orchestrator.js) paths cannot drift. A turn is
+ * consumed when a human requests changes (native review) or the agent review
+ * verdict is request-changes; exceeding the cap marks the ticket FAILED. The
+ * default applies on every state-creation path (fresh /run, auto-start, new
+ * orchestrator task); /run --turns N overrides it per ticket.
+ */
+var DEFAULT_MAX_TURNS = 7;
+
+/**
  * Trusted-author policy lives in one place, shared with the workflow YAML
  * guards (auto-triage.yml, ant.yml). See trusted-author.js.
  */
@@ -453,6 +463,7 @@ module.exports = function createHelpers({ github, context, core }) {
     isDiffSafe: isDiffSafe,
     touchesForbiddenPath: touchesForbiddenPath,
     MAX_HISTORY_ENTRIES: MAX_HISTORY_ENTRIES,
+    DEFAULT_MAX_TURNS: DEFAULT_MAX_TURNS,
     isCIGreen: isCIGreen,
     SAFE_AUTO_MERGE_KINDS: SAFE_AUTO_MERGE_KINDS,
     isBotUser: isBotUser,
@@ -469,5 +480,6 @@ module.exports = function createHelpers({ github, context, core }) {
 
 // Module-level exports so the runners and YAML steps can read them without instantiating.
 module.exports.MAX_HISTORY_ENTRIES = MAX_HISTORY_ENTRIES;
+module.exports.DEFAULT_MAX_TURNS = DEFAULT_MAX_TURNS;
 module.exports.TRUSTED_AUTHOR_LOGINS = TRUSTED_AUTHOR_LOGINS;
 

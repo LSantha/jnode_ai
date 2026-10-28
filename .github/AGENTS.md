@@ -99,7 +99,7 @@ State lives in the master issue body as a hidden HTML comment:
 ```html
 <!-- ORCHESTRATOR_STATE:
 { "status": "IDLE|IN_PROGRESS|COMPLETED",
-  "current_task": { "issue": 487, "pr": null, "phase": "DEV", "turn": 0, "max_turns": 3, "retries": 0, "review_in_progress": false },
+  "current_task": { "issue": 487, "pr": null, "phase": "DEV", "turn": 0, "max_turns": 7, "retries": 0, "review_in_progress": false },
   "queue": [488, 489],
   "completed": [485, 486],
   "failed": [],
@@ -179,7 +179,7 @@ State is stored in the issue body as a markdown status block and a hidden JSON c
   "phase": "DEV",
   "pr": null,
   "turn": 0,
-  "max_turns": 3,
+  "max_turns": 7,
   "retries": 0,
   "review_in_progress": false,
   "started": "2026-09-06T22:00:00.000Z",
@@ -191,7 +191,7 @@ State is stored in the issue body as a markdown status block and a hidden JSON c
 ### Commands and Flags
 
 - `/run`: Start a new multi-turn run, or re-trigger an existing run that stalled.
-- `/run --turns <N>` or `/run --max-turns <N>`: Start with a custom review feedback turn limit of `N` (default: 3). Both spellings are accepted by the same regex (`/--(?:max-)?turns\s+(\d+)/` in `ticket-runner.js`); the value is stored as `max_turns` in the runner state.
+- `/run --turns <N>` or `/run --max-turns <N>`: Start with a custom review feedback turn limit of `N` (default: 7). Both spellings are accepted by the same regex (`/--(?:max-)?turns\s+(\d+)/` in `ticket-runner.js`); the value is stored as `max_turns` in the runner state. The default lives in one place: `DEFAULT_MAX_TURNS` in `orchestrator-helpers.js`, used by every state-creation path in both runners (fresh `/run`, auto-start, new orchestrator task), so the single-ticket and batch paths cannot drift.
 - `/run --reset` or `/run --fresh`: Reset state and start fresh even if a run was already in progress or completed.
 - `/oc approve` (posted on the PR): The maintainer's equivalent of a native GitHub PR approval, for the single-maintainer case where GitHub refuses self-approval. It only acts on a ticket in `HUMAN_REVIEW` (so it cannot short-circuit an in-flight agent review or a DEV run), resolves the ticket via `findIssueByPR`, and runs the same `approveAndMerge` path as a native review - so it re-checks `isCIGreen` and parks honestly on red CI. `--force` is the deliberate emergency override that merges without the CI re-check and records `human_approved_forced` in history. It is PR-only; on an issue, or on a ticket outside `HUMAN_REVIEW`, it replies with the reason and merges nothing. Excluded from the `opencode` trigger so it never starts an agent run. Agent-authored comments are ignored: the agent posts with `GH_PAT`, so it is the PAT owner (`OWNER`) and clears the collaborator gate, but every agent comment carries an `opencode.ai/s/` session link, which is the same term `opencode.yml`, `triage.yml` and `auto-triage.yml` already use to reject agent self-triggers.
 

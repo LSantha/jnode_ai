@@ -2,7 +2,8 @@ module.exports = async ({ github, context, core }) => {
   const createHelpers = require('./orchestrator-helpers.js');
   const h = createHelpers({ github, context, core });
   const { triggerTask, findPRForIssue, getReviewPrompt, getAgentReviewVerdict,
-          isBotUser, mergePR, COMPLETION_LABELS, SHORT_CIRCUIT_LABELS } = h;
+          isBotUser, mergePR, COMPLETION_LABELS, SHORT_CIRCUIT_LABELS,
+          DEFAULT_MAX_TURNS } = h;
 
   // --- Multi-Step Orchestrator Helpers (orchestrator-specific, not shared) ---
   function isMultiStepTask(task) {
@@ -20,7 +21,7 @@ module.exports = async ({ github, context, core }) => {
       pr: null,
       phase: 'DEV',
       turn: 0,
-      max_turns: 3,
+      max_turns: DEFAULT_MAX_TURNS,
       retries: 0,
       review_in_progress: false
     };

@@ -42,7 +42,7 @@ function initState(maxTurns) {
     phase: "DEV",
     pr: null,
     turn: 0,
-    max_turns: typeof maxTurns === "number" && maxTurns > 0 ? maxTurns : 3,
+    max_turns: typeof maxTurns === "number" && maxTurns > 0 ? maxTurns : createHelpers.DEFAULT_MAX_TURNS,
     retries: 0,
     review_in_progress: false,
     review_pending_ci: false,
@@ -226,7 +226,7 @@ module.exports = async ({ github, context, core }) => {
     }
 
     var turnsMatch = body.match(/--(?:max-)?turns\s+(\d+)/);
-    var customMaxTurns = turnsMatch ? parseInt(turnsMatch[1], 10) : 3;
+    var customMaxTurns = turnsMatch ? parseInt(turnsMatch[1], 10) : h.DEFAULT_MAX_TURNS;
 
     var state = parseState(issueBody);
 
@@ -424,7 +424,7 @@ module.exports = async ({ github, context, core }) => {
       core.info("Ticket runner: auto-start skipped for #" + issueNumber + ", state appeared meanwhile.");
       return false;
     }
-    var st = initState(3);
+    var st = initState();
     st.history.push({ event: "auto_start", reason: reason, timestamp: new Date().toISOString() });
     var newBody = replaceOrAppendStatus(body, st, issueNumber);
     await github.rest.issues.update({ owner, repo, issue_number: issueNumber, body: newBody });
@@ -1281,7 +1281,7 @@ module.exports = async ({ github, context, core }) => {
 
     core.info("Ticket runner: #" + issueNumber + " lost its runner state but PR #" + found
       + " exists; rebuilding block at REVIEW.");
-    var st = initState(3);
+    var st = initState();
     st.phase = "REVIEW";
     st.pr = found;
     st.review_in_progress = false;
