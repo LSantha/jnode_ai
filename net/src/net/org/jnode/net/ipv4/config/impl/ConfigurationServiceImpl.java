@@ -95,11 +95,31 @@ public class ConfigurationServiceImpl implements IPv4ConfigurationService {
     }
 
     /**
+     * @see org.jnode.net.ipv4.config.IPv4ConfigurationService#addRoute(org.jnode.net.ipv4.IPv4Address,
+     *      org.jnode.net.ipv4.IPv4Address, org.jnode.net.ipv4.IPv4Address,
+     *      org.jnode.driver.Device, boolean)
+     */
+    public void addRoute(IPv4Address target, IPv4Address netmask, IPv4Address gateway, Device device,
+            boolean persistent) throws NetworkException {
+        Route.addRoute(target, netmask, gateway, device);
+    }
+
+    /**
      * @see org.jnode.net.ipv4.config.IPv4ConfigurationService#deleteRoute(org.jnode.net.ipv4.IPv4Address,
      *      org.jnode.net.ipv4.IPv4Address, org.jnode.driver.Device)
      */
     public void deleteRoute(IPv4Address target, IPv4Address gateway, Device device)
         throws NetworkException {
         Route.delRoute(target, gateway, device);
+    }
+
+    /**
+     * @see org.jnode.net.ipv4.config.IPv4ConfigurationService#deleteRoute(org.jnode.net.ipv4.IPv4Address,
+     *      org.jnode.net.ipv4.IPv4Address, org.jnode.net.ipv4.IPv4Address,
+     *      org.jnode.driver.Device)
+     */
+    public void deleteRoute(IPv4Address target, IPv4Address netmask, IPv4Address gateway, Device device)
+        throws NetworkException {
+        Route.delRoute(target, netmask, gateway, device);
     }
 }
