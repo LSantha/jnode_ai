@@ -613,32 +613,43 @@ public class L2PipelineTest {
     }
 
     /**
-     * BOUNDS-CHECK ELISION guard probe 1 (ANCHOR-L2-246): a loop index defined
-     * once from a constant and bounded by a constant loop condition is provably
-     * inside [0, 8) on the loop-body edge (the branch refinement of the
-     * interval analysis); the guard must be elided. The guard label in the
-     * ANCHOR-L2-244 deferred-stub path is `$$cbfailed` (queued in checkBounds,
-     * bound at the footer by flushDeferredBounds) -- elision returns from
-     * checkBounds before the label exists, so the emission must not contain it.
+     * BOUNDS-CHECK ELISION guard probe 1 (ANCHOR-L2-246): both elidable
+     * geometries must have their guard removed. E8-era shape: the index is
+     * bounded by the array's own length (the <code>i &lt; arr.length</code>
+     * idiom); the length read sits on a deSSA copy of the allocation result,
+     * so this pin exercises the sizes copy-propagation in IRRangeAnalysis.
+     * Pre-E8 geometry: the constant-bound <code>l1 &lt; 8</code> shape the
+     * pass was originally validated on.
      * <p/>
-     * Red proof: set `CompilerFlags.L2_BCE = "false"` (non-final, read in the
-     * production path at X86Level2Compiler and mirrored in the harness
-     * compileMethod) and the guard is no longer removed -- the assertion
-     * against `$$cbfailed` fails. Measured red: L2_BCE=false puts
-     * `cmp [eax],ecx / jbe ...$$cbfailed` back in front of the load.
+     * The guard label in the ANCHOR-L2-244 deferred-stub path is
+     * <code>$$cbfailed</code> (queued in checkBounds, bound at the footer by
+     * flushDeferredBounds) -- elision returns from checkBounds before the
+     * label exists, so the emission must not contain it.
+     * <p/>
+     * Red proofs: (1) set <code>CompilerFlags.L2_BCE = "false"</code>
+     * (non-final, read in the production path and mirrored in the harness
+     * compileMethod) and the guard is no longer removed -- both asserts fail;
+     * (2) revert the E8 kernel change (sizes keyed by the allocation LHS
+     * only) and the dynamic-bound shape keeps its guard while the constant
+     * sibling still elides. Measured red pre-E8: exactly this test red 1/59,
+     * with the exception naming bceElidable.
      */
     @Test
     public void testBceElidableGuardRemoved() throws Exception {
-        CompileResult r = compileMethod(findMethod("bceElidable"));
-        String text = r.text;
+        String text = compileMethod(findMethod("bceElidable")).text;
         assertNotNull("no code emitted for bceElidable", text);
-        assertFalse("bceElidable's provably-true guard must be elided; got:\n"
+        assertFalse("bceElidable's length-bound guard must be elided; got:\n"
                 + text, text.contains("$$cbfailed"));
         // The elision removes only the guard: the indexed load itself must
         // still be emitted (a scaled-index memory operand off the array base).
         assertTrue("array load must still be emitted for bceElidable; got:\n"
                 + text,
             Pattern.compile("\\+e[a-z]{2}\\*[1248]\\]").matcher(text).find());
+
+        String textConst = compileMethod(findMethod("bceElidableConst")).text;
+        assertNotNull("no code emitted for bceElidableConst", textConst);
+        assertFalse("bceElidableConst's constant-bound guard must be elided;\n"
+                + "got:\n" + textConst, textConst.contains("$$cbfailed"));
     }
 
     /**

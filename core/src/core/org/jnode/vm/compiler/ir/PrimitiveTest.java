@@ -1460,23 +1460,37 @@ public class PrimitiveTest {
     }
 
     /**
-     * ANCHOR-L2-246 BCE fixture (MiniSieve geometry): the index is defined
-     * once from a constant and bounded by a constant loop condition, so the
-     * branch refinement proves it inside [0, 8) on the body edge; the load's
-     * guard is elidable (measured: marks=[4], the ArrayAssignQuad address).
+     * ANCHOR-L2-246 BCE fixture: the index is defined once from a constant
+     * and bounded by the freshly-allocated array's length -- the
+     * <code>i &lt; arr.length</code> idiom. With E8 (BCE-LEN-COPY) landed the
+     * branch refinement proves the index inside [0, 8) on the body edge: the
+     * length read sits on a <em>copy</em> of the allocation result
+     * (s5_2 = s4_3, the deSSA slot merge) and the sizes map follows the
+     * copy, so <code>markElidableGuards</code> marks the ArrayAssignQuad
+     * and the load's guard is elidable.
      *
-     * NOTE: the dynamic-bound shape (i < arr.length) does NOT elide today:
-     * deSSA emits the length read off a COPY of the allocation result
-     * (s5_2 = s4_3) and the sizes map is keyed by the allocation LHS only,
-     * so the branch operand's length interval is unknown. That gap is
-     * recorded in tests/l2oracle/OPEN-BUGS.md (BCE-LEN-COPY); this fixture
-     * pins the geometry the pass was validated on.
-     *
-     * Red proof (L2PipelineTest#testBceElidableGuardRemoved): with BCE off
-     * (jnode.l2.bce=false) the emitted guard label $$cbfailed is present;
-     * with BCE on it must be absent.
+     * Red proofs (L2PipelineTest#testBceElidableGuardRemoved):
+     * (1) with BCE off (jnode.l2.bce=false) the deferred-stub guard label
+     * $$cbfailed is present; (2) on the pre-E8 kernel (sizes keyed by the
+     * allocation LHS only) this dynamic-bound shape kept its guard.
      */
     public static int bceElidable(int n) {
+        int l1 = 0;
+        int[] l2 = new int[8];
+        while (l1 < l2.length) {
+            int x = l2[l1];
+            l1 += 1;
+        }
+        return n;
+    }
+
+    /**
+     * ANCHOR-L2-246 BCE sibling fixture: the constant-bound geometry the
+     * pass was originally validated on (bound written as a literal, not
+     * read from the length ref). Pins that the copy-propagation fix did
+     * not disturb the pre-E8 elision path.
+     */
+    public static int bceElidableConst(int n) {
         int l1 = 0;
         int[] l2 = new int[8];
         while (l1 < 8) {

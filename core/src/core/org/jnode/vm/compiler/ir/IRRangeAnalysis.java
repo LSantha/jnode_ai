@@ -77,7 +77,12 @@ import org.jnode.vm.objects.BootableHashMap;
  * <p>Length intervals come from the allocation quads (a NewArray result's
  * length equals its size operand, clamped at 0 because a negative
  * allocation throws before the array exists) and propagate through
- * ArrayLengthAssignQuad.
+ * ArrayLengthAssignQuad, through reference copies and reference phis
+ * (E8/BCE-LEN-COPY: a copy or merge of the reference holds the same array,
+ * so the same length interval carries over; a phi carries the union of its
+ * sources' intervals and only when every source carries one). Every other
+ * definition kills the claim on its LHS, so a redefined variable cannot
+ * keep the length of an array it no longer references.
  *
  * <p>Exception soundness: blocks reachable only through exceptional
  * dispatch (handler entries and their downstream) hold unknown state.
@@ -459,8 +464,22 @@ public final class IRRangeAnalysis {
         return null;
     }
 
-    /** The kernel: refines def-variable intervals, tracks array lengths. */
+    /**
+     * The kernel: refines def-variable intervals, tracks array lengths.
+     *
+     * <p>E8 (BCE-LEN-COPY) discipline: every definition first KILLS any
+     * length claim its LHS used to carry. The sizes map is method-wide and
+     * survives the deSSA slot merge, so without the kill a redefinition of
+     * an allocation-result variable (call result, field load, a copy of a
+     * different array, ...) could keep claiming the earlier allocation's
+     * length for a different object. The arms that can truthfully carry a
+     * length claim re-put it below: allocations through setLen, reference
+     * copies and reference phis through their propagation rules.
+     */
     private static void kernel(Quad q, java.util.HashMap state, java.util.HashMap sizes) {
+        if (q instanceof AssignQuad) {
+            sizes.remove(((AssignQuad) q).getLHS());
+        }
         if (q instanceof ConstantRefAssignQuad) {
             final Constant rhs = ((ConstantRefAssignQuad) q).getRHS();
             if (rhs instanceof IntConstant) {
@@ -480,6 +499,14 @@ public final class IRRangeAnalysis {
                 if (s != null) {
                     state.put(((AssignQuad) q).getLHS(), new long[]{s[0], s[1]});
                 }
+                // E8: a reference copy denotes the same array object as its
+                // source, so the length interval transfers verbatim. The
+                // entry kill above already dropped any stale claim on the
+                // LHS, so a copy of an unknown ref claims nothing.
+                final long[] rs = (long[]) sizes.get(rhs);
+                if (rs != null) {
+                    sizes.put(((AssignQuad) q).getLHS(), new long[]{rs[0], rs[1]});
+                }
             }
         } else if (q instanceof PhiAssignQuad) {
             long lo = LIM;
@@ -496,6 +523,31 @@ public final class IRRangeAnalysis {
             }
             if (allKnown) {
                 put(state, ((AssignQuad) q).getLHS(), clamp(lo, hi));
+            }
+            // E8: a phi over array references carries its length only when
+            // EVERY source carries one; the merged reference's length is
+            // then bounded by the union of the sources' intervals. The
+            // elision check later insists on a constant (lo == hi) length,
+            // so aligned intervals elide and mixed ones merely stay
+            // bounded -- never wider than any source's length.
+            boolean allSizes = true;
+            long slo = LIM;
+            long shi = -LIM;
+            for (Object s0 : ((PhiAssignQuad) q).getPhiOperand().getSources()) {
+                if (!(s0 instanceof Variable)) {
+                    allSizes = false;
+                    break;
+                }
+                final long[] rs = (long[]) sizes.get(s0);
+                if (rs == null) {
+                    allSizes = false;
+                    break;
+                }
+                slo = Math.min(slo, rs[0]);
+                shi = Math.max(shi, rs[1]);
+            }
+            if (allSizes) {
+                sizes.put(((AssignQuad) q).getLHS(), new long[]{slo, shi});
             }
         } else if (q instanceof BinaryQuad) {
             final BinaryQuad bq = (BinaryQuad) q;
