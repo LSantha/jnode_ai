@@ -306,6 +306,29 @@ public final class ClassDecoder {
                     cp.setInt(i, nIdx << 16 | dIdx);
                     break;
                 }
+                case 15:
+                    // MethodHandle
+                {
+                    final int kind = data.get() & 0xFF;
+                    final int refIdx = data.getChar();
+                    cp.setConstMethodHandle(i, new VmConstMethodHandle(kind, refIdx));
+                    break;
+                }
+                case 16:
+                    // MethodType
+                {
+                    final int descrIdx = data.getChar();
+                    cp.setConstMethodType(i, new VmConstMethodType(descrIdx));
+                    break;
+                }
+                case 18:
+                    // InvokeDynamic
+                {
+                    final int bsmIdx = data.getChar();
+                    final int natIdx = data.getChar();
+                    cp.setConstInvokeDynamic(i, new VmConstInvokeDynamic(bsmIdx, natIdx));
+                    break;
+                }
                 default:
                     throw new ClassFormatError("Invalid constantpool tag: "
                         + tags[i]);
@@ -435,6 +458,15 @@ public final class ClassDecoder {
                 sourceFile = cp.getUTF8(data.getChar());
             } else if (VmArray.equals(SignatureAttrName, attrName)) {
                 signature = cp.getUTF8(data.getChar());
+            } else if (attrName.equals("BootstrapMethods")) {
+                final int numBootstrapMethods = data.getChar();
+                for (int b = 0; b < numBootstrapMethods; b++) {
+                    data.getChar(); // bootstrap_method_ref
+                    final int numArgs = data.getChar();
+                    for (int arg = 0; arg < numArgs; arg++) {
+                        data.getChar(); // bootstrap_argument
+                    }
+                }
             } else {
                 skip(data, length);
             }

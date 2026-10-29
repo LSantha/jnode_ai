@@ -28,6 +28,7 @@ import org.jnode.vm.classmgr.VmByteCode;
 import org.jnode.vm.classmgr.VmConstClass;
 import org.jnode.vm.classmgr.VmConstFieldRef;
 import org.jnode.vm.classmgr.VmConstIMethodRef;
+import org.jnode.vm.classmgr.VmConstInvokeDynamic;
 import org.jnode.vm.classmgr.VmConstMethodRef;
 import org.jnode.vm.classmgr.VmConstString;
 import org.jnode.vm.classmgr.VmInterpretedExceptionHandler;
@@ -1227,6 +1228,10 @@ public class BasicBlockFinder extends BytecodeVisitorSupport implements Bytecode
         popArguments(methodRef);
         tstack.pop(JvmType.REFERENCE);
         pushReturnValue(methodRef);
+    }
+
+    public void visit_invokedynamic(VmConstInvokeDynamic indy) {
+        endBB(false);
     }
 
     /**

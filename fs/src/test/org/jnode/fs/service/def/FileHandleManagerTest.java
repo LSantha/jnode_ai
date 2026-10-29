@@ -20,6 +20,7 @@
 
 package org.jnode.fs.service.def;
 
+import java.io.VMOpenMode;
 import org.jnode.fs.FSFile;
 import org.junit.Test;
 
@@ -38,10 +39,10 @@ public class FileHandleManagerTest {
         final FileHandleManager manager = new FileHandleManager();
         final FSFile file = mock(FSFile.class);
 
-        FileHandleImpl handle = manager.open(file, true, true);
+        FileHandleImpl handle = manager.open(file, VMOpenMode.READ_WRITE);
 
         verify(file, never()).setLength(anyLong());
-        assertTrue(handle.isWrite());
+        assertTrue(!handle.isReadOnly());
         handle.close();
     }
 
@@ -54,7 +55,7 @@ public class FileHandleManagerTest {
         Thread thread = new Thread(new Runnable() {
             public void run() {
                 try {
-                    opened[0] = manager.open(file, true);
+                    opened[0] = manager.open(file, VMOpenMode.WRITE);
                 } catch (Throwable t) {
                     failure[0] = t;
                 }
@@ -69,7 +70,7 @@ public class FileHandleManagerTest {
             throw new AssertionError(failure[0]);
         }
 
-        FileHandleImpl replacement = manager.open(file, true);
+        FileHandleImpl replacement = manager.open(file, VMOpenMode.WRITE);
         assertTrue(opened[0].isClosed());
         assertNotSame(opened[0], replacement);
         replacement.close();

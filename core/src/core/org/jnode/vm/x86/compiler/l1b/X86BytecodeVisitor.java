@@ -45,6 +45,7 @@ import org.jnode.vm.classmgr.VmClassType;
 import org.jnode.vm.classmgr.VmConstClass;
 import org.jnode.vm.classmgr.VmConstFieldRef;
 import org.jnode.vm.classmgr.VmConstIMethodRef;
+import org.jnode.vm.classmgr.VmConstInvokeDynamic;
 import org.jnode.vm.classmgr.VmConstMethodRef;
 import org.jnode.vm.classmgr.VmConstString;
 import org.jnode.vm.classmgr.VmField;
@@ -3439,6 +3440,10 @@ final class X86BytecodeVisitor extends InlineBytecodeVisitor implements
         stackFrame.writeStackAlignmentTest(getCurInstrLabel());
         // Write the push result
         helper.pushReturnValue(method.getSignature());
+    }
+
+    public final void visit_invokedynamic(VmConstInvokeDynamic indy) {
+        throw new UnsupportedOperationException("invokedynamic is not supported");
     }
 
     /**

@@ -22,6 +22,7 @@ package org.jnode.vm.compiler;
 
 import org.jnode.vm.bytecode.BasicBlock;
 import org.jnode.vm.bytecode.BytecodeVisitor;
+import org.jnode.vm.classmgr.VmConstInvokeDynamic;
 import org.jnode.vm.classmgr.VmType;
 
 
@@ -61,6 +62,8 @@ public abstract class CompilerBytecodeVisitor extends BytecodeVisitor {
      * @param value
      */
     public abstract void visit_ldc(VmType<?> value);
+
+    public abstract void visit_invokedynamic(VmConstInvokeDynamic indy);
 
     /**
      * Load an array from a given local index that is just stored

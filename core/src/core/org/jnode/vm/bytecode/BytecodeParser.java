@@ -29,6 +29,7 @@ import org.jnode.vm.classmgr.VmConstFieldRef;
 import org.jnode.vm.classmgr.VmConstFloat;
 import org.jnode.vm.classmgr.VmConstIMethodRef;
 import org.jnode.vm.classmgr.VmConstInt;
+import org.jnode.vm.classmgr.VmConstInvokeDynamic;
 import org.jnode.vm.classmgr.VmConstLong;
 import org.jnode.vm.classmgr.VmConstObject;
 import org.jnode.vm.classmgr.VmConstString;
@@ -795,7 +796,14 @@ public class BytecodeParser {
                     handler.visit_invokeinterface(ref, count);
                     break;
                 }
-                //case 0xba: handler.throw_invalid_opcode ; unused
+                case 0xBA: {
+                    int index = getu2();
+                    skip();
+                    skip();
+                    VmConstInvokeDynamic indy = cp.getConstInvokeDynamic(index);
+                    handler.visit_invokedynamic(indy);
+                    break;
+                }
                 case 0xbb:
                     handler.visit_new(cp.getConstClass(getu2()));
                     break;
