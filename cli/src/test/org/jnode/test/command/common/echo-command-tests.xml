@@ -1,0 +1,43 @@
+<testSet title="POSIX echo command tests">
+  <testSpec title="echo-1" command="echo"
+              runMode="AS_ALIAS" rc="0">
+    <arg>hello</arg>
+    <output>hello
+</output>
+  </testSpec>
+  <testSpec title="echo-2" command="echo"
+              runMode="AS_ALIAS" rc="0">
+    <arg>hello</arg>
+    <arg>world</arg>
+    <output>hello world
+</output>
+  </testSpec>
+  <testSpec title="echo-3" command="echo"
+              runMode="AS_ALIAS" rc="0">
+    <output>&#10;</output>
+  </testSpec>
+  <testSpec title="echo-n-1" command="echo"
+              runMode="AS_ALIAS" rc="0">
+    <arg>-n</arg>
+    <arg>hello</arg>
+    <output>hello</output>
+  </testSpec>
+  <testSpec title="echo-n-2" command="echo"
+              runMode="AS_ALIAS" rc="0">
+    <arg>-n</arg>
+    <arg>hello</arg>
+    <arg>world</arg>
+    <output>hello world</output>
+  </testSpec>
+  <testSpec title="echo-n-3" command="echo"
+              runMode="AS_ALIAS" rc="0">
+    <arg>-n</arg>
+  </testSpec>
+  <testSpec title="echo-n-4" command="echo"
+              runMode="AS_ALIAS" rc="0">
+    <arg>hello</arg>
+    <arg>-n</arg>
+    <output>hello -n
+</output>
+  </testSpec>
+</testSet>

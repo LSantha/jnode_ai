@@ -24,6 +24,7 @@ import java.io.PrintWriter;
 
 import org.jnode.shell.AbstractCommand;
 import org.jnode.shell.syntax.Argument;
+import org.jnode.shell.syntax.FlagArgument;
 import org.jnode.shell.syntax.StringArgument;
 
 /**
@@ -35,14 +36,17 @@ import org.jnode.shell.syntax.StringArgument;
 public class EchoCommand extends AbstractCommand {
 
     private static final String help_words = "the text to be printed";
-    private static final String help_super = "Print text to standard output";
+    private static final String help_no_newline = "if set, suppress the trailing newline";
+    private static final String help_super = "Print text to standard output; -n suppresses the trailing newline";
     
     private final StringArgument argWords;
+    private final FlagArgument argNoNewline;
 
     public EchoCommand() {
         super(help_super);
         argWords = new StringArgument("text", Argument.MULTIPLE, help_words);
-        registerArguments(argWords);
+        argNoNewline = new FlagArgument("n", Argument.OPTIONAL, help_no_newline);
+        registerArguments(argWords, argNoNewline);
     }
 
     public static void main(String[] args) throws Exception {
@@ -62,6 +66,8 @@ public class EchoCommand extends AbstractCommand {
             }
             out.print(words[i]);
         }
-        out.println();
+        if (!argNoNewline.isSet()) {
+            out.println();
+        }
     }
 }
