@@ -101,6 +101,19 @@ public class X86Level1ACompilerVisitorTest {
         compiler.cleanupBytecodeVisitor(wrapped);
     }
 
+    @Test(expected = UnsupportedOperationException.class)
+    public void testInvokedynamicIsRejectedByL1aVisitor() {
+        newVisitor().visit_invokedynamic(null);
+    }
+
+    @Test(expected = UnsupportedOperationException.class)
+    public void testInvokedynamicIsRejectedByVerifyingWrapper() {
+        final CompilerBytecodeVisitor wrapped =
+            new VerifyingCompilerBytecodeVisitor<CompilerBytecodeVisitor>(newVisitor());
+
+        wrapped.visit_invokedynamic(null);
+    }
+
     @Test
     public void testCreateReturnsRawVisitorWithoutInlining() {
         final CompilerBytecodeVisitor visitor = compiler.createBytecodeVisitor(null, new CompiledMethod(0), os,

@@ -24,6 +24,7 @@ import org.jnode.vm.bytecode.BytecodeVisitorSupport;
 import org.jnode.vm.classmgr.VmConstClass;
 import org.jnode.vm.classmgr.VmConstFieldRef;
 import org.jnode.vm.classmgr.VmConstIMethodRef;
+import org.jnode.vm.classmgr.VmConstInvokeDynamic;
 import org.jnode.vm.classmgr.VmConstMethodRef;
 import org.jnode.vm.classmgr.VmConstString;
 
@@ -201,6 +202,10 @@ public class L2ByteCodeSupportChecker extends BytecodeVisitorSupport {
     }
 
     public void visit_invokeinterface(VmConstIMethodRef methodRef, int count) {
+        notSupported();
+    }
+
+    public void visit_invokedynamic(VmConstInvokeDynamic indy) {
         notSupported();
     }
 

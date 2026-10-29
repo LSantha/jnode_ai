@@ -81,6 +81,8 @@ public final class ClassDecoder {
 
     private static char[] AnnotationDefaultAttrName;
 
+    private static char[] BootstrapMethodsAttrName;
+
     @SuppressWarnings("deprecation")
     private static final MethodPragmaException[] METHOD_PRAGMA_EXCEPTIONS = new MethodPragmaException[]{
         new MethodPragmaException(UninterruptiblePragma.class,
@@ -213,6 +215,7 @@ public final class ClassDecoder {
             RuntimeInvisibleParameterAnnotationsAttrName = "RuntimeInvisibleParameterAnnotations"
                 .toCharArray();
             AnnotationDefaultAttrName = "AnnotationDefault".toCharArray();
+            BootstrapMethodsAttrName = "BootstrapMethods".toCharArray();
         }
     }
 
@@ -306,6 +309,33 @@ public final class ClassDecoder {
                     cp.setInt(i, nIdx << 16 | dIdx);
                     break;
                 }
+                case 15:
+                    // MethodHandle
+                {
+                    final int kind = data.get() & 0xFF;
+                    final int refIdx = data.getChar();
+                    if ((kind < 1) || (kind > 9)) {
+                        throw new ClassFormatError("Invalid method handle reference kind: "
+                            + kind);
+                    }
+                    cp.setConstMethodHandle(i, new VmConstMethodHandle(kind, refIdx));
+                    break;
+                }
+                case 16:
+                    // MethodType
+                {
+                    final int descrIdx = data.getChar();
+                    cp.setConstMethodType(i, new VmConstMethodType(descrIdx));
+                    break;
+                }
+                case 18:
+                    // InvokeDynamic
+                {
+                    final int bsmIdx = data.getChar();
+                    final int natIdx = data.getChar();
+                    cp.setInt(i, bsmIdx << 16 | natIdx);
+                    break;
+                }
                 default:
                     throw new ClassFormatError("Invalid constantpool tag: "
                         + tags[i]);
@@ -361,6 +391,13 @@ public final class ClassDecoder {
                             name, descriptor));
                         break;
                 }
+            } else if (tag == 18) {
+                final int v = cp.getInt(i);
+                final int nat = cp.getInt(v & 0xFFFF);
+                final String name = cp.getUTF8(nat >>> 16);
+                final String descriptor = cp.getUTF8(nat & 0xFFFF);
+                cp.setConstInvokeDynamic(i, new VmConstInvokeDynamic(v >>> 16,
+                    v & 0xFFFF, name, descriptor));
             }
         }
 
@@ -435,6 +472,15 @@ public final class ClassDecoder {
                 sourceFile = cp.getUTF8(data.getChar());
             } else if (VmArray.equals(SignatureAttrName, attrName)) {
                 signature = cp.getUTF8(data.getChar());
+            } else if (VmArray.equals(BootstrapMethodsAttrName, attrName)) {
+                final int end = data.position() + length;
+                final int numBootstrapMethods = data.getChar();
+                for (int b = 0; b < numBootstrapMethods; b++) {
+                    data.getChar();
+                    final int numArgs = data.getChar();
+                    skip(data, numArgs * 2);
+                }
+                data.position(end);
             } else {
                 skip(data, length);
             }
