@@ -1,0 +1,108 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+    $Id$
+
+    Copyright (C) 2003-2015 JNode.org
+
+    This library is free software; you can redistribute it and/or modify it
+    under the terms of the GNU Lesser General Public License as published
+    by the Free Software Foundation; either version 2.1 of the License, or
+    (at your option) any later version.
+
+    This library is distributed in the hope that it will be useful, but
+    WITHOUT ANY WARRANTY; without even the implied warranty of MERCHANTABILITY
+    or FITNESS FOR A PARTICULAR PURPOSE. See the GNU Lesser General Public
+    License for more details.
+
+    You should have received a copy of the GNU Lesser General Public License
+    along with this library; If not, write to the Free Software Foundation, Inc.,
+    51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+-->
+<!DOCTYPE plugin SYSTEM "jnode.dtd">
+
+<plugin id="org.jnode.driver.sound.ac97.command"
+        name="JNode AC'97 commands"
+        version="@VERSION@"
+        license-name="lgpl"
+        provider-name="JNode.org">
+
+  <requires>
+    <import plugin="org.jnode.driver.sound.ac97"/>
+    <import plugin="org.jnode.shell.help"/>
+  </requires>
+
+  <runtime>
+    <library name="jnode-sound.jar">
+      <export name="org.jnode.driver.sound.ac97.command.*"/>
+    </library>
+  </runtime>
+
+  <extension point="org.jnode.shell.aliases">
+    <alias name="ac97play" class="org.jnode.driver.sound.ac97.command.AC97PlayCommand"/>
+    <alias name="ac97capture" class="org.jnode.driver.sound.ac97.command.AC97CaptureCommand"/>
+    <alias name="ac97wav" class="org.jnode.driver.sound.ac97.command.AC97WavCommand"/>
+    <alias name="ac97volume" class="org.jnode.driver.sound.ac97.command.AC97VolumeCommand"/>
+    <alias name="ac97reg" class="org.jnode.driver.sound.ac97.command.AC97RegCommand"/>
+    <alias name="ac97info" class="org.jnode.driver.sound.ac97.command.AC97InfoCommand"/>
+  </extension>
+
+  <extension point="org.jnode.security.permissions">
+    <!-- The capture and wav commands read and write WAV files. -->
+    <permission class="java.io.FilePermission" name="&lt;&lt;ALL FILES&gt;&gt;" actions="read,write"/>
+  </extension>
+
+  <extension point="org.jnode.shell.syntaxes">
+    <syntax alias="ac97play">
+      <sequence description="Play a tone with a given frequency and duration">
+        <optionSet>
+          <option argLabel="device" shortName="d" longName="device" description="index of the AC'97 device to use"/>
+        </optionSet>
+        <argument argLabel="frequency" description="tone frequency in Hz"/>
+        <argument argLabel="duration" description="duration in milliseconds"/>
+      </sequence>
+    </syntax>
+    <syntax alias="ac97info">
+      <optionSet>
+        <option argLabel="buffer-size" shortName="b" longName="buffer-size" description="frames per playback sample buffer, 1..2048"/>
+        <option argLabel="mic-gain" shortName="m" longName="mic-gain" description="microphone gain in 1.5 dB steps, 0..15"/>
+        <option argLabel="device" shortName="d" longName="device" description="index of the AC'97 device to use"/>
+      </optionSet>
+    </syntax>
+    <syntax alias="ac97reg">
+      <optionSet>
+        <option argLabel="get" shortName="g" longName="get" description="read a single register by index"/>
+        <option argLabel="set" shortName="s" longName="set" description="write a register by index"/>
+        <option argLabel="value" shortName="v" longName="value" description="the 16 bit value for --set"/>
+        <option argLabel="device" shortName="d" longName="device" description="index of the AC'97 device to use"/>
+      </optionSet>
+    </syntax>
+    <syntax alias="ac97wav">
+      <sequence description="Play a WAV file through the AC'97 codec">
+        <optionSet>
+          <option argLabel="device" shortName="d" longName="device" description="index of the AC'97 device to use"/>
+        </optionSet>
+        <argument argLabel="file" description="the WAV file to play"/>
+      </sequence>
+    </syntax>
+    <syntax alias="ac97volume">
+      <optionSet>
+        <option argLabel="mute" shortName="m" longName="mute" description="mute the outputs"/>
+        <option argLabel="unmute" shortName="u" longName="unmute" description="unmute the outputs"/>
+        <option argLabel="level" shortName="l" longName="level" description="volume in percent, 0..100"/>
+        <option argLabel="output" shortName="o" longName="output" description="mixer output to change: master, pcm or headphone"/>
+        <option argLabel="device" shortName="d" longName="device" description="index of the AC'97 device to use"/>
+      </optionSet>
+    </syntax>
+    <syntax alias="ac97capture">
+      <optionSet>
+        <option argLabel="duration" shortName="d" longName="duration" description="recording time in milliseconds"/>
+        <option argLabel="rate" shortName="r" longName="rate" description="sample rate in Hz"/>
+        <option argLabel="gain" shortName="g" longName="gain" description="record gain in 1.5 dB steps, 0 is maximum gain"/>
+        <option argLabel="source" shortName="s" longName="source" description="record source: mic or line"/>
+        <option argLabel="file" shortName="f" longName="file" description="write the recording as a WAV file to this path"/>
+        <option argLabel="device" longName="device" description="index of the AC'97 device to use"/>
+      </optionSet>
+    </syntax>
+  </extension>
+
+</plugin>

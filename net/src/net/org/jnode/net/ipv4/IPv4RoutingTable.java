@@ -62,9 +62,11 @@ public class IPv4RoutingTable {
      * @param entry
      */
     public void add(IPv4Route entry) {
-        // Remove any existing route to the same destination via the same device before adding
+        // Remove any existing route to the same destination, prefix and gateway via the same
+        // device before adding. A different subnet mask is a different route, not a replacement.
         for (IPv4Route r : entries.toArray(new IPv4Route[0])) {
             if (r.getDestination().equals(entry.getDestination()) 
+                && r.getSubnetmask().equals(entry.getSubnetmask())
                 && (r.getGateway() == null) == (entry.getGateway() == null)
                 && (r.getGateway() == null || r.getGateway().equals(entry.getGateway()))
                 && r.getDevice() == entry.getDevice()) {
@@ -77,8 +79,10 @@ public class IPv4RoutingTable {
 
     /**
      * Remove a given entry
-     * 
-     * @param entry
+     *
+     * @param entry The route to remove. It is matched by value (see
+     *            {@link IPv4Route#equals(Object)}), so an equal route that was not
+     *            added by this table instance is removed as well.
      */
     public void remove(IPv4Route entry) {
         entries.remove(entry);
@@ -113,27 +117,27 @@ public class IPv4RoutingTable {
                     }
                 }
                 // No direct host found, search through the networks
-                // Find all matching routes and prefer gateway routes
-                IPv4Route gatewayRoute = null;
-                IPv4Route directRoute = null;
+                // Find all matching routes and select the most specific one
+                IPv4Route bestRoute = null;
+                int bestPrefix = -1;
                 for (IPv4Route r : entries) {
                     if (r.isNetwork() && r.isUp()) {
                         if (r.getDestination().matches(destination, r.getSubnetmask())) {
-                            if (r.isGateway()) {
-                                gatewayRoute = r;
-                            } else {
-                                directRoute = r;
+                            final int prefix = r.getSubnetmask().prefixLength();
+                            if (prefix > bestPrefix) {
+                                bestRoute = r;
+                                bestPrefix = prefix;
+                            } else if (prefix == bestPrefix && r.isGateway()
+                                && !bestRoute.isGateway()) {
+                                // Prefer gateway routes over direct routes of equal
+                                // specificity
+                                bestRoute = r;
                             }
                         }
                     }
                 }
-                // Prefer gateway routes over direct routes for non-local traffic
-                if (gatewayRoute != null) {
-                    return gatewayRoute;
-                }
-                // No gateway found, try direct network route
-                if (directRoute != null) {
-                    return directRoute;
+                if (bestRoute != null) {
+                    return bestRoute;
                 }
 
                 // No network found, search for the default gateway

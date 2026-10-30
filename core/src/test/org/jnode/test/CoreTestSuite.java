@@ -23,6 +23,8 @@ package org.jnode.test;
 import org.jnode.test.threads.ThreadingTestJUnit4;
 import org.jnode.test.util.NumberUtilsTest;
 import org.jnode.test.util.VersionTest;
+import org.jnode.vm.classmgr.VmTypeStateTest;
+import org.jnode.vm.x86.compiler.l1a.X86Level1ACompilerVisitorTest;
 import org.jnode.vm.x86.compiler.l1a.X86RegisterPoolTest;
 import org.junit.runner.RunWith;
 import org.junit.runners.Suite;
@@ -36,13 +38,21 @@ import org.junit.runners.Suite.SuiteClasses;
 @RunWith(Suite.class)
 @SuiteClasses({
     NumberUtilsTest.class,
+    ResourceTest.class,
     SignatureTest.class,
     VersionTest.class,
     TryFinallyTest.class,
     VarArgsTest.class,
+    ForEachTest.class,
+    ViewMethodTest.class,
+    DoubleTest.class,
+    WaitTest.class,
     JavaCommandParserTest.class,
     ThreadingTestJUnit4.class,
+    X86Level1ACompilerVisitorTest.class,
     X86RegisterPoolTest.class,
+    X86StreamTest.class,
+    VmTypeStateTest.class,
 }
 )
 public class CoreTestSuite {

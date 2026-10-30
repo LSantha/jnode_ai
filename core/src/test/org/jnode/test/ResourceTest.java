@@ -20,6 +20,12 @@
  
 package org.jnode.test;
 
+import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertNotNull;
+import static org.junit.Assert.assertNull;
+import static org.junit.Assert.assertTrue;
+import static org.junit.Assert.fail;
+
 import java.io.IOException;
 import java.io.InputStream;
 import java.net.URL;
@@ -29,8 +35,9 @@ import java.util.Locale;
 import java.util.MissingResourceException;
 import java.util.PropertyResourceBundle;
 import java.util.ResourceBundle;
-import junit.framework.TestCase;
-import org.jnode.plugin.PluginUtils;
+import org.junit.After;
+import org.junit.Before;
+import org.junit.Test;
 
 /**
  * Documentation at http://www.javaworld.com/javaworld/javaqa/2003-08/01-qa-0808-property.html.
@@ -38,7 +45,7 @@ import org.jnode.plugin.PluginUtils;
  * @author Ewout Prangsma (epr@users.sourceforge.net)
  * @author Fabien DUMINY (fduminy@jnode.org)
  */
-public class ResourceTest extends TestCase {
+public class ResourceTest {
     public static final String RELATIVE_BUNDLE_NAME = "messages";
     public static final String BAD_ABSOLUTE_BUNDLE_NAME = ResourceTest.class.getPackage().getName() + ".unknowbundle";
 
@@ -55,73 +62,181 @@ public class ResourceTest extends TestCase {
     public static final String TEST_KEY = "test";
     public static final String TEST_VALUE = "testok";
 
-    public static void main(String[] args) throws IOException {
-        String resName = (args.length > 0) ? args[0] : ResourceTest.class.getName().replace('.', '/') + ".class";
-        URL url = ResourceTest.class.getClassLoader().getResource(resName);
-        System.out.println("URL=" + url);
-        InputStream is = url.openStream();
-        is.close();
+    private Locale savedLocale;
+
+    @Before
+    public void saveLocale() {
+        savedLocale = Locale.getDefault();
+    }
+
+    @After
+    public void restoreLocale() {
+        changeLocale(savedLocale);
     }
 
     //
     // ClassLoader tests
     //
 
+    @Test
     public void testClassLoaderGetResource() {
         doCLGetResource(relativeToAbsolutePath(RESOURCE_NAME, false));
     }
 
+    @Test
     public void testClassLoaderGetResourceMySelf() {
         doCLGetResource(classToAbsolutePath(false));
     }
 
+    @Test
+    public void testClassLoaderGetResourceUnknown() {
+        String resName = relativeToAbsolutePath("no-such-resource.properties", false);
+        assertNull("unknown resource " + resName + " must not be found",
+            ResourceTest.class.getClassLoader().getResource(resName));
+    }
+
+    @Test
     public void testClassLoaderGetResourceAsStream() throws IOException {
         doCLGetResourceAsStream(relativeToAbsolutePath(RESOURCE_NAME, false));
     }
 
+    @Test
     public void testClassLoaderGetResourceAsStreamMySelf() throws IOException {
         doCLGetResourceAsStream(classToAbsolutePath(false));
+    }
+
+    @Test
+    public void testClassLoaderGetResourceAsStreamUnknown() throws IOException {
+        String resName = relativeToAbsolutePath("no-such-resource.properties", false);
+        assertNull("unknown resource " + resName + " must not be found",
+            ResourceTest.class.getClassLoader().getResourceAsStream(resName));
+    }
+
+    //
+    // System classloader tests
+    //
+
+    @Test
+    public void testSystemClassLoaderGetResource() {
+        doCLGetResource(relativeToAbsolutePath(RESOURCE_NAME, false),
+            ClassLoader.getSystemClassLoader());
+    }
+
+    @Test
+    public void testGetSystemResource() {
+        String resName = relativeToAbsolutePath(RESOURCE_NAME, false);
+        URL url = ClassLoader.getSystemResource(resName);
+        assertNotNull("system resource " + resName + " not found", url);
+        assertTrue("file part must ends with resource name", url.getFile().endsWith(resName));
+        assertEquals("system resource and class loader resource must be the same",
+            ResourceTest.class.getClassLoader().getResource(resName).toExternalForm(), url.toExternalForm());
+    }
+
+    @Test
+    public void testGetSystemResourceAsStream() throws IOException {
+        String resName = relativeToAbsolutePath(RESOURCE_NAME, false);
+        InputStream is = ClassLoader.getSystemResourceAsStream(resName);
+        assertNotNull("system resource " + resName + " not found", is);
+        is.close();
+    }
+
+    @Test
+    public void testGetSystemResourceUnknown() {
+        assertNull(ClassLoader.getSystemResource(
+            relativeToAbsolutePath("no-such-resource.properties", false)));
+    }
+
+    //
+    // Classloader delegation tests
+    //
+
+    @Test
+    public void testDelegatedGetResource() {
+        String resName = relativeToAbsolutePath(RESOURCE_NAME, false);
+        ClassLoader child = new ClassLoader(ResourceTest.class.getClassLoader()) {
+        };
+        assertEquals("child class loader must delegate to its parent",
+            ResourceTest.class.getClassLoader().getResource(resName).toExternalForm(),
+            child.getResource(resName).toExternalForm());
+    }
+
+    @Test
+    public void testDelegatedGetResourceAsStream() throws IOException {
+        String resName = relativeToAbsolutePath(RESOURCE_NAME, false);
+        ClassLoader child = new ClassLoader(ResourceTest.class.getClassLoader()) {
+        };
+        InputStream is = child.getResourceAsStream(resName);
+        assertNotNull("child class loader must delegate to its parent", is);
+        is.close();
+    }
+
+    @Test
+    public void testDelegatedGetResourceUnknown() {
+        String resName = relativeToAbsolutePath("no-such-resource.properties", false);
+        ClassLoader child = new ClassLoader(ResourceTest.class.getClassLoader()) {
+        };
+        assertNull("child class loader must not invent resources", child.getResource(resName));
     }
 
     //
     // Class tests
     //
+    @Test
     public void testClassGetResourceAbsolute() {
         doClassGetResource(relativeToAbsolutePath(RESOURCE_NAME, true));
     }
 
+    @Test
     public void testClassGetResourceRelative() {
         doClassGetResource(RESOURCE_NAME);
     }
 
+    @Test
     public void testClassGetResourceMySelfAbsolute() {
         doClassGetResource(classToAbsolutePath(true));
     }
 
+    @Test
     public void testClassGetResourceMySelfRelative() {
         doClassGetResource(getClassFileName());
     }
 
+    @Test
+    public void testClassGetResourceUnknown() {
+        assertNull("unknown resource must not be found", ResourceTest.class.getResource("no-such-resource.properties"));
+    }
+
+    @Test
     public void testClassGetResourceAsStreamAbsolute() throws IOException {
         doClassGetResourceAsStream(relativeToAbsolutePath(RESOURCE_NAME, true));
     }
 
+    @Test
     public void testClassGetResourceAsStreamRelative() throws IOException {
         doClassGetResourceAsStream(RESOURCE_NAME);
     }
 
+    @Test
     public void testClassGetResourceAsStreamMySelfAbsolute() throws IOException {
         doClassGetResourceAsStream(classToAbsolutePath(true));
     }
 
+    @Test
     public void testClassGetResourceAsStreamMySelfRelative() throws IOException {
         doClassGetResourceAsStream(getClassFileName());
+    }
+
+    @Test
+    public void testClassGetResourceAsStreamUnknown() {
+        assertNull("unknown resource must not be found", ResourceTest.class.getResourceAsStream(
+            "no-such-resource.properties"));
     }
 
     //
     // Bundle tests
     //
 
+    @Test
     public void testBundle() {
         // will load messages.properties
         doGetBundle(Locale.US, "");
@@ -130,29 +245,25 @@ public class ResourceTest extends TestCase {
         doGetBundle(Locale.FRENCH, "_fr");
 
         try {
-            ResourceBundle bundle = ResourceBundle.getBundle(BAD_ABSOLUTE_BUNDLE_NAME);
+            ResourceBundle.getBundle(BAD_ABSOLUTE_BUNDLE_NAME);
             fail("must not be found");
         } catch (MissingResourceException mre) {
-            // OK
+            assertNotNull(mre);
         }
         try {
-            ResourceBundle bundle = ResourceBundle.getBundle(RELATIVE_BUNDLE_NAME);
+            ResourceBundle.getBundle(RELATIVE_BUNDLE_NAME);
             fail("relative bundle name not allowed");
         } catch (MissingResourceException mre) {
-            // OK
+            assertNotNull(mre);
         }
     }
 
-    //
-    // ResourceBundle tests
-    //
-
-    public void testPluginResourceBundle() {
-        // will load messages.properties
-        doGetLocalizedMessage(Locale.US, "");
-
-        // will load messages_fr.properties
-        doGetLocalizedMessage(Locale.FRENCH, "_fr");
+    @Test
+    public void testBundleKeys() {
+        changeLocale(Locale.US);
+        ResourceBundle bundle = ResourceBundle.getBundle(BUNDLE_NAME);
+        assertTrue("bundle must contain key " + TEST_KEY, bundle.containsKey(TEST_KEY));
+        assertEquals(TEST_VALUE, bundle.getString(TEST_KEY));
     }
 
     //
@@ -160,37 +271,41 @@ public class ResourceTest extends TestCase {
     //
 
     protected void doCLGetResource(String resName) {
-        URL url = getClass().getClassLoader().getResource(resName);
+        doCLGetResource(resName, ResourceTest.class.getClassLoader());
+    }
+
+    protected void doCLGetResource(String resName, ClassLoader loader) {
+        URL url = loader.getResource(resName);
         assertNotNull("resource " + resName + " not found", url);
         assertTrue("file part must ends with resource name", url.getFile().endsWith(resName));
     }
 
     protected void doCLGetResourceAsStream(String resName) throws IOException {
-        InputStream is = getClass().getClassLoader().getResourceAsStream(resName);
+        InputStream is = ResourceTest.class.getClassLoader().getResourceAsStream(resName);
         assertNotNull("resource " + resName + " not found", is);
         is.close();
     }
 
     protected void doClassGetResource(String resName) {
-        URL url = getClass().getResource(resName);
+        URL url = ResourceTest.class.getResource(resName);
         assertNotNull("resource " + resName + " not found", url);
         assertTrue("file part must ends with resource name", url.getFile().endsWith(resName));
     }
 
     protected void doClassGetResourceAsStream(String resName) throws IOException {
-        InputStream is = getClass().getResourceAsStream(resName);
+        InputStream is = ResourceTest.class.getResourceAsStream(resName);
         assertNotNull("resource " + resName + " not found", is);
         is.close();
     }
 
     protected String relativeToAbsolutePath(String resName, boolean addRoot) {
-        String packageName = getClass().getPackage().getName().replace('.', '/');
+        String packageName = ResourceTest.class.getPackage().getName().replace('.', '/');
         String name = packageName + '/' + resName;
         return addRoot ? '/' + name : name;
     }
 
     protected String classToAbsolutePath(boolean addRoot) {
-        String name = getClass().getName().replace('.', '/') + ".class";
+        String name = ResourceTest.class.getName().replace('.', '/') + ".class";
         return addRoot ? '/' + name : name;
     }
 
@@ -199,7 +314,7 @@ public class ResourceTest extends TestCase {
     }
 
     protected String getShortName() {
-        String fullName = getClass().getName();
+        String fullName = ResourceTest.class.getName();
         int idx = fullName.lastIndexOf('.');
         return (idx < 0) ? fullName : fullName.substring(idx + 1);
     }
@@ -211,13 +326,6 @@ public class ResourceTest extends TestCase {
         assertNotNull(bundle);
         assertEquals(PropertyResourceBundle.class, bundle.getClass());
         String msg = bundle.getString(TEST_KEY);
-        assertEquals(TEST_VALUE + suffix, msg);
-    }
-
-    protected void doGetLocalizedMessage(Locale locale, String suffix) {
-        changeLocale(locale);
-
-        String msg = PluginUtils.getLocalizedMessage(getClass(), RELATIVE_BUNDLE_NAME, TEST_KEY);
         assertEquals(TEST_VALUE + suffix, msg);
     }
 

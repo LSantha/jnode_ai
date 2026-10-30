@@ -78,7 +78,7 @@ public abstract class AbstractEthernetDriver extends AbstractNetDriver
         skbuf.set16(12, skbuf.getProtocolID());
 
         // check to see if it's for one self, if so don't send on the net and
-        // just put in into recieved
+        // just put in into received
         if (getAddress().equals(destination))
             onReceive(skbuf);
         else

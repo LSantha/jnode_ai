@@ -1,0 +1,64 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+    $Id$
+
+    Copyright (C) 2003-2015 JNode.org
+
+    This library is free software; you can redistribute it and/or modify
+    it under the terms of the GNU Lesser General Public License as published
+    by the Free Software Foundation; either version 2.1 of the License, or
+    (at your option) any later version.
+
+    This library is distributed in the hope that it will be useful, but
+    WITHOUT ANY WARRANTY; without even the implied warranty of MERCHANTABILITY
+    or FITNESS FOR A PARTICULAR PURPOSE. See the GNU Lesser General Public
+    License for more details.
+
+    You should have received a copy of the GNU Lesser General Public License
+    along with this library; If not, write to the Free Software Foundation, Inc.,
+    51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+-->
+<!DOCTYPE plugin SYSTEM "jnode.dtd">
+
+<plugin id="org.jnode.apps.nanocode"
+       name="JNode nanocode"
+       version="@VERSION@"
+       license-name="lgpl"
+       provider-name="JNode.org">
+
+  <requires>
+    <import plugin="org.jnode.shell"/>
+  </requires>
+
+  <runtime>
+    <library name="jnode-distr.jar">
+      <export name="org.jnode.apps.nanocode.*"/>
+      <export name="org.jnode.apps.nanocode.agent.*"/>
+      <export name="org.jnode.apps.nanocode.api.*"/>
+      <export name="org.jnode.apps.nanocode.config.*"/>
+      <export name="org.jnode.apps.nanocode.fs.*"/>
+      <export name="org.jnode.apps.nanocode.json.*"/>
+      <export name="org.jnode.apps.nanocode.platform.*"/>
+      <export name="org.jnode.apps.nanocode.render.*"/>
+      <export name="org.jnode.apps.nanocode.tool.*"/>
+    </library>
+  </runtime>
+
+  <extension point="org.jnode.shell.aliases">
+    <alias name="nanocode" class="org.jnode.apps.nanocode.NanoCode"/>
+  </extension>
+
+  <extension point="org.jnode.security.permissions">
+    <!-- nanocode is an HTTP client: it talks to a local relay -->
+    <permission class="java.net.SocketPermission" name="*" actions="resolve,connect"/>
+    <permission class="java.net.SocketPermission" name="*:80" actions="resolve,connect"/>
+    <permission class="java.net.SocketPermission" name="*:443" actions="resolve,connect"/>
+    <!-- the file tools (read, write, edit, glob, grep) -->
+    <permission class="java.io.FilePermission" name="&lt;&lt;ALL FILES&gt;&gt;" actions="read,write"/>
+    <!-- config probe: java.vm.name, java.class.version, file.encoding,
+         user.dir, jnode.cmdline, nanocode.* -->
+    <permission class="java.util.PropertyPermission" name="*" actions="read"/>
+    <permission class="java.lang.RuntimePermission" name="readFileDescriptor"/>
+    <permission class="java.lang.RuntimePermission" name="writeFileDescriptor"/>
+  </extension>
+</plugin>

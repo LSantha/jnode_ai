@@ -60,6 +60,15 @@ The build will result in the following files:
 
 If you have any questions, please post them to the forums at www.jnode.org
 or to the IRC channel #JNode.org@irc.oftc.net
+
+## Automation
+
+Most changes to this repository are produced by the automated agent pipeline and are committed by the
+maintainer, so `git log` shows the maintainer as the author of every commit.
+The model that implemented a change is recorded in an `Assisted-by: <model>` commit trailer.
+The model that reviewed a change is folded into the merge commit as `Reviewed-by: <model>`.
+`Co-authored-by:` is not used for the agent, since GitHub would render it as an extra author.
+See [`.github/AGENTS.md`](.github/AGENTS.md) for the full attribution rules.
  
  -- The JNode Team --
  

@@ -21,7 +21,7 @@
 <project name="JNode-Sound" default="all" basedir=".">
 
   <typedef file="${basedir}/../all/lib/jnode.xml"/>
-				
+
   <property name="my-build.dir"   value="${basedir}/build"/>
   <property name="my-classes.dir" value="${my-build.dir}/classes"/>
   <property name="my-testclasses.dir" value="${my-build.dir}/testclasses"/>
@@ -31,6 +31,7 @@
 <!-- Subproject specific classpath -->
   <path id="my-cp">
     <pathelement location="${jnode-core.jar}"/>
+    <pathelement location="${jnode-shell.jar}"/>
     <path refid="cp"/>
   </path>
 
@@ -38,24 +39,20 @@
   <target name="prepare">
     <mkdir dir="${my-classes.dir}"/>
     <mkdir dir="${my-testclasses.dir}"/>
-    	<jnode.copy-descriptors/>
-    <copy todir="${my-classes.dir}">
-      <fileset dir="${my-src.dir}/sound" excludes="**/*.java,**/package.html"/>
-    </copy>
+    <jnode.copy-descriptors/>
   </target>
 
 <!-- Compile all subproject java files -->
   <target name="compile" depends="prepare">
     <jnode.compile>
-        <src path="${my-src.dir}/driver"/>
-        <src path="${my-src.dir}/sound"/>
+      <src path="${my-src.dir}/driver"/>
       <classpath refid="my-cp"/>
     </jnode.compile>
     <jnode.compile.test>
-        <src path="${my-src.dir}/test"/>
+      <src path="${my-src.dir}/test"/>
       <classpath refid="my-cp"/>
     </jnode.compile.test>
-    </target>
+  </target>
 
 <!-- Assemble the jarfile -->
   <target name="assemble" depends="compile"/>
@@ -65,7 +62,7 @@
 
 <!-- Clean everything -->
   <target name="clean">
-  	<jnode.clean/>
+    <jnode.clean/>
   </target>
 
 </project>

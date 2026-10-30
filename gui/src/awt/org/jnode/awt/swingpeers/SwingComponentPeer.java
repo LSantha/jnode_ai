@@ -54,6 +54,7 @@ import org.jnode.awt.GraphicsFactory;
 import org.jnode.awt.JNodeGenericPeer;
 import org.jnode.awt.JNodeGraphics2D;
 import org.jnode.awt.JNodeToolkit;
+import org.jnode.awt.util.SurfaceGraphics2D;
 import sun.awt.CausedFocusEvent;
 import sun.java2d.pipe.Region;
 
@@ -152,6 +153,14 @@ abstract class SwingComponentPeer<awtT extends Component, swingPeerT extends Com
         return toolkit.getFontMetrics(font);
     }
 
+    private SwingBaseWindow getWindowAncestor() {
+        Component component = peerComponent;
+        while (component != null && !(component instanceof SwingBaseWindow)) {
+            component = component.getParent();
+        }
+        return (SwingBaseWindow) component;
+    }
+
     public Graphics getGraphics() {
         /*
         final Component parent = targetComponent.getParent();
@@ -174,6 +183,12 @@ abstract class SwingComponentPeer<awtT extends Component, swingPeerT extends Com
             new JNodeGraphics2D(this) : GraphicsFactory.getInstance().createGraphics(this);
         g.translate(x, y);
         g.clipRect(0, 0, width, height);
+        if (g instanceof SurfaceGraphics2D) {
+            final SwingBaseWindow window = getWindowAncestor();
+            if (window != null) {
+                ((SurfaceGraphics2D) g).setPaintClip(toolkit.getWindowPaintRegions(window));
+            }
+        }
 
         /*
         Throwable t = new Throwable();

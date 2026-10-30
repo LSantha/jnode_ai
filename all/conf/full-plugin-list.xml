@@ -41,6 +41,7 @@
   <plugin id="org.jnode.apps.commander"/>
   <plugin id="org.jnode.apps.debug"/>
   <plugin id="org.jnode.apps.httpd"/>
+  <plugin id="org.jnode.apps.nanocode"/>
 
   <plugin id="org.apache.tools.ant-launcher"/>
   <plugin id="org.apache.tools.ant"/>

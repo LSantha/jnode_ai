@@ -95,6 +95,8 @@ public class TestHarness {
                 debug = true;
             } else if (optName.equals("-F") || optName.equals("--stopOnFailure")) {
                 stopOnFailure = true;
+            } else if (optName.equals("--preserveTemp") || optName.equals("--keep-temp")) {
+                preserveTempFiles = true;
             } else if (optName.equals("-E") || optName.equals("--stopOnError")) {
                 stopOnError = true;
             } else if (optName.equals("-s") || optName.equals("--sandbox")) {
@@ -119,27 +121,30 @@ public class TestHarness {
         }
         
         prepareTmpDir();
-        
-        for (int i = firstArg; i < args.length; i++) {
-            String arg = args[i];
-            try {
-                File specFile = new File(arg);
-                if (useResources && !specFile.isAbsolute()) {
-                    specFile = new File("/", arg);
+        try {
+            for (int i = firstArg; i < args.length; i++) {
+                String arg = args[i];
+                try {
+                    File specFile = new File(arg);
+                    if (useResources && !specFile.isAbsolute()) {
+                        specFile = new File("/", arg);
+                    }
+                    specs = loadTestSetSpecification(specFile);
+                    if (specs != null) {
+                        execute(specs);
+                    }
+                } catch (TestsAbandonedException ex) {
+                    report(ex.getMessage());
+                    break;
+                } catch (Exception ex) {
+                    diagnose(ex, arg);
                 }
-                specs = loadTestSetSpecification(specFile);
-                if (specs != null) {
-                    execute(specs);
-                }
-            } catch (TestsAbandonedException ex) {
-                report(ex.getMessage());
-                break;
-            } catch (Exception ex) {
-                diagnose(ex, arg);
-            } 
+            }
+            report("Ran " + testCount + " tests with " + failureCount +
+                " test failures and " + exceptionCount + " errors (exceptions)");
+        } finally {
+            cleanupTempDir();
         }
-        report("Ran " + testCount + " tests with " + failureCount +
-            " test failures and " + exceptionCount + " errors (exceptions)");
     }
     
     private void prepareTmpDir() {
@@ -155,11 +160,26 @@ public class TestHarness {
     }
     
     void cleanDir(File directory) {
-        for (File f : directory.listFiles()) {
-            if (f.isDirectory()) {
-                cleanDir(f);
+        File[] files = directory.listFiles();
+        if (files != null) {
+            for (File f : files) {
+                if (f.isDirectory()) {
+                    cleanDir(f);
+                }
+                f.delete();
             }
-            f.delete();
+        }
+    }
+
+    private void cleanupTempDir() {
+        if (tempDir == null || preserveTempFiles) {
+            return;
+        }
+        if (tempDir.isDirectory()) {
+            cleanDir(tempDir);
+        }
+        if (!tempDir.delete() && tempDir.exists()) {
+            report("Could not remove temporary test directory: " + tempDir);
         }
     }
 
@@ -199,6 +219,7 @@ public class TestHarness {
         System.err.println("    --debug | -d               enable extra debug support");
         System.err.println("    --stopOnError | -E         stop at the first error");
         System.err.println("    --stopOnFailure | -F       stop at the first test failure");
+        System.err.println("    --preserveTemp | --keep-temp preserve temporary test files");
         System.err.println("    --sandbox | -s <dir-name>  specifies the dev't sandbox root directory");
         System.err.println("    --resource | -r            looks for <spec-file> as a resource on the CLASSPATH");
     }
@@ -242,7 +263,6 @@ public class TestHarness {
                 int tmp = runner.run();
                 failureCount += tmp;
                 if (tmp > 0 && stopOnFailure) {
-                    preserveTempFiles = true;
                     throw new TestsAbandonedException("Stopped due to test failure");
                 }
             } finally {

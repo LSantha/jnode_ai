@@ -2245,8 +2245,32 @@ public abstract class VmType<T> extends VmAnnotatedElement implements
      */
     @Inline
     public final void initialize() {
-        if (!isInitialized() && !isInitializing()) {
-            linkAndInitialize();
+        if (!isInitialized()) {
+            if (!isInitializing()) {
+                linkAndInitialize();
+            } else {
+                /* The INITIALIZING bit is set: another thread is running our
+                   static initializer right now, so our static fields are still
+                   being written. Returning here would let the caller read
+                   those half written fields (a null object reference, a zero
+                   int, ...) - see $5.5, which requires a thread that requests
+                   the initialization of a class that is being initialized by
+                   another thread to block until that initialization completes.
+
+doInitialize is synchronized on this type and holds the
+                    monitor for the whole of <clinit>, so this blocks until the
+                    initializing thread is done. Re-entering from within our
+                    own <clinit> is allowed and is a no-op there.
+
+                    Side effect: doPrepare, doVerify, doCompile and doInitialize
+                    are all synchronized on this same VmType and hold that
+                    monitor across superclass loading, TIB/IMT construction and
+                    compileIMT, so this blocking branch now also serializes
+                    initialize() behind them. Two threads running mutually
+                    referencing <clinit>s on two types can therefore deadlock
+                    (silent hang) where they previously raced. */
+                doInitialize();
+            }
         }
     }
 

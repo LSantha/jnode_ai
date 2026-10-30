@@ -43,6 +43,17 @@ test('opencode-post-step.js test suite', async (t) => {
     assert.ok(calls.addLabels.includes('agent/failed'));
   });
 
+  await t.test('Does not treat incidental out-of-scope prose as a refusal', async () => {
+    const { core, github, context, calls, setIssueData, setComments } = createMocks();
+    process.env.PREV_CONCLUSION = 'success';
+    setIssueData({ labels: ['kind/bug'], state: 'open' });
+    setComments([{ body: 'Reviewed the diff. The issue is out of scope for this helper.\n\nVerdict: request-changes' }]);
+
+    await runPostStep({ github, context, core });
+    assert.ok(!calls.addLabels.includes('agent/skip'));
+    assert.ok(calls.addLabels.includes('agent/done'));
+  });
+
   await t.test('Applies agent/skip when refusal comment is found', async () => {
     const { core, github, context, calls, setComments } = createMocks();
     process.env.PREV_CONCLUSION = 'success';
@@ -142,6 +153,19 @@ test('opencode-post-step.js test suite', async (t) => {
     assert.ok(calls.addLabels.includes('agent/needs-info'));
   });
 
+  await t.test('PR creation comment applies agent/done after a clear triage', async () => {
+    const { core, github, context, calls, setIssueData, setComments } = createMocks();
+    process.env.PREV_CONCLUSION = 'success';
+    setIssueData({ labels: ['kind/chore', 'area/docs'], state: 'open' });
+    setComments([
+      { body: '## Triage\n\n- [x] **Suggested next:** fix' },
+      { body: 'Created PR #99\n\n[opencode session](https://opencode.ai/s/test)' }
+    ]);
+
+    await runPostStep({ github, context, core });
+    assert.ok(calls.addLabels.includes('agent/done'));
+  });
+
   await t.test('Clear triage applies no agent label', async () => {
     const { core, github, context, calls, setIssueData, setComments } = createMocks();
     process.env.PREV_CONCLUSION = 'success';
@@ -165,6 +189,18 @@ test('opencode-post-step.js test suite', async (t) => {
     await runPostStep({ github, context, core });
     assert.ok(calls.removeLabel.includes('agent/needs-info'));
     assert.strictEqual(calls.addLabels.length, 0, 'Clear re-triage must not add any agent label');
+  });
+
+  await t.test('Clear re-triage removes stale agent/failed', async () => {
+    const { core, github, context, calls, setIssueData, setComments } = createMocks();
+    process.env.PREV_CONCLUSION = 'success';
+    setIssueData({ labels: ['kind/bug', 'agent/failed'], state: 'open' });
+    setComments([
+      { body: '## Triage\n\n- [x] **Repro:** 1. boot\n- [x] **Suggested next:** fix' }
+    ]);
+
+    await runPostStep({ github, context, core });
+    assert.ok(calls.removeLabel.includes('agent/failed'));
   });
 
   await t.test('Vague triage overrides existing agent/done', async () => {

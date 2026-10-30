@@ -27,6 +27,7 @@ import org.junit.runners.Suite;
 @RunWith(Suite.class)
 @Suite.SuiteClasses({CompletionInfoTest.class, PathnamePatternTest.class, CompletionTest.class,
     DefaultSyntaxCompletionTest.class, DefaultHelpTest.class, ExecuteJavaPackagePrivateTest.class,
-    org.jnode.test.shell.bjorne.AllTests.class, org.jnode.test.shell.syntax.AllTests.class })
+    org.jnode.test.shell.alias.AllTests.class, org.jnode.test.shell.bjorne.AllTests.class,
+    org.jnode.test.shell.syntax.AllTests.class, org.jnode.test.shell.io.AllTests.class })
 public class AllTests {
 }

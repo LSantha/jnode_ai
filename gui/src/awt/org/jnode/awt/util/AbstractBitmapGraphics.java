@@ -273,26 +273,60 @@ public abstract class AbstractBitmapGraphics extends BitmapGraphics {
      * @see org.jnode.driver.video.Surface#XOR_MODE
      */
     public final void drawPixels(int x, int y, int count, int color, int mode) {
-        try {
-            if ((x >= 0) && (x < width) && (y >= 0) && (y < height)) {
+        if (count <= 0) {
+            return;
+        }
+        if (x < 0) {
+            count += x;
+            x = 0;
+        }
+        if ((x >= 0) && (x < width) && (y >= 0) && (y < height)) {
+            count = Math.min(count, width - x);
+            if (count > 0) {
                 doDrawPixels(x, y, count, color, mode);
             }
-        } catch (IndexOutOfBoundsException ex) {
-            log.error("Index out of bounds: x=" + x + ", y=" + y + ", width=" +
-                width + ", height=" + height);
         }
     }
 
     @Override
     public void fillRect(int x, int y, int width, int height, int color, int mode) {
-        if ((x >= 0) && (x < this.width) && (y >= 0) && (y < this.height) &&
-            (x + width >= 0) && (x + width < this.width) && (y + height >= 0) && (y + height < this.height)) {
+        if (width <= 0 || height <= 0) {
+            return;
+        }
+        if (x < 0) {
+            width += x;
+            x = 0;
+        }
+        if (y < 0) {
+            height += y;
+            y = 0;
+        }
+        if (x >= this.width || y >= this.height) {
+            return;
+        }
+        width = Math.min(width, this.width - x);
+        height = Math.min(height, this.height - y);
+        if (width <= 0 || height <= 0) {
+            return;
+        }
+        doFillRect(x, y, width, height, color, mode);
+    }
 
-            for (int i = 0; i < height; i++)
-                doDrawPixels(x, y + i, width, color, mode);
-
-        } else {
-            // super.fillRect(x, y, width, height, color, mode);
+    /**
+     * Fill a pre-validated rectangle. Subclasses may override this method to
+     * use a single contiguous bulk write when there is no inter-row padding
+     * (bytesPerLine == getBytesForWidth(width)).
+     *
+     * @param x
+     * @param y
+     * @param width
+     * @param height
+     * @param color
+     * @param mode
+     */
+    protected void doFillRect(int x, int y, int width, int height, int color, int mode) {
+        for (int i = 0; i < height; i++) {
+            doDrawPixels(x, y + i, width, color, mode);
         }
     }
 

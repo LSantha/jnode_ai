@@ -20,59 +20,145 @@
  
 package org.jnode.test;
 
-import java.util.ArrayList;
-import junit.framework.TestCase;
+import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertNull;
 
+import java.util.ArrayList;
+import java.util.List;
+
+import org.junit.After;
+import org.junit.Before;
+import org.junit.Test;
 
 /**
+ * JUnit4 host-runnable test for the enhanced for loop (for-each) over arrays
+ * and Iterable collections, see issue #501.
+ * <p/>
+ * Covers primitive arrays, object arrays and generic collections, and verifies
+ * that every element is visited exactly once and in declaration order.
+ * <p/>
+ * The shared input data is created in {@link #setUp()} and released in
+ * {@link #tearDown()} so that every test iteration starts from a clean state.
+ *
  * @author Ewout Prangsma (epr@users.sourceforge.net)
  * @author Fabien DUMINY (fduminy@jnode.org)
  */
-public class ForEachTest extends TestCase {
+public class ForEachTest {
 
-    /**
-     * @param args
-     */
-    public static void main(String[] args) {
-        ForEachTest test = new ForEachTest();
-        test.testIntArray();
-        test.testStringArray();
-        test.testCollection();
+    private int[] intArray;
+    private String[] stringArray;
+    private List<String> collection;
+
+    @Before
+    public void setUp() {
+        intArray = new int[]{0, 1, 2, 3, 4, 5};
+        stringArray = new String[]{"A", "B", "C", "D", "E"};
+        collection = new ArrayList<String>();
+        collection.add("Aap");
+        collection.add("Noot");
+        collection.add("Mies");
     }
 
-    public void testIntArray() {
-        final int[] a = new int[]{0, 1, 2, 3, 4, 5};
+    @After
+    public void tearDown() {
+        intArray = null;
+        stringArray = null;
+        collection.clear();
+        collection = null;
+    }
 
+    @Test
+    public void testIntArray() {
         int expected = 0;
-        for (int i : a) {
+        for (int i : intArray) {
             assertEquals(expected, i);
             expected++;
         }
-        assertEquals("array not fully iterated", expected, a.length);
+        assertEquals("array not fully iterated", expected, intArray.length);
     }
 
+    @Test
     public void testStringArray() {
-        final String[] a = new String[]{"A", "B", "C", "D", "E"};
-
         int idxExpected = 0;
-        for (String s : a) {
-            assertEquals(a[idxExpected], s);
+        for (String s : stringArray) {
+            assertEquals(stringArray[idxExpected], s);
             idxExpected++;
         }
-        assertEquals("array not fully iterated", idxExpected, a.length);
+        assertEquals("array not fully iterated", idxExpected, stringArray.length);
     }
 
+    @Test
     public void testCollection() {
-        final ArrayList<String> list = new ArrayList<String>();
-        list.add("Aap");
-        list.add("Noot");
-        list.add("Mies");
-
         int idxExpected = 0;
-        for (String s : list) {
-            assertEquals(list.get(idxExpected), s);
+        for (String s : collection) {
+            assertEquals(collection.get(idxExpected), s);
             idxExpected++;
         }
-        assertEquals("collection not fully iterated", idxExpected, list.size());
+        assertEquals("collection not fully iterated", idxExpected, collection.size());
+    }
+
+    @Test
+    public void testEmptyArray() {
+        final String[] a = new String[0];
+
+        int count = 0;
+        for (String s : a) {
+            assertNull("unexpected element in empty array", s);
+            count++;
+        }
+        assertEquals(0, count);
+    }
+
+    @Test
+    public void testEmptyCollection() {
+        final List<String> empty = new ArrayList<String>();
+
+        int count = 0;
+        for (String s : empty) {
+            assertNull("unexpected element in empty collection", s);
+            count++;
+        }
+        assertEquals(0, count);
+    }
+
+    @Test
+    public void testNullElementsArePassedThrough() {
+        final String[] a = new String[]{"A", null, "C"};
+
+        final List<String> seen = new ArrayList<String>();
+        for (String s : a) {
+            seen.add(s);
+        }
+        assertEquals(3, seen.size());
+        assertEquals("A", seen.get(0));
+        assertNull(seen.get(1));
+        assertEquals("C", seen.get(2));
+    }
+
+    @Test
+    public void testArrayIsCopiedBeforeIteration() {
+        final int[] a = new int[]{1, 2, 3};
+
+        final List<Integer> seen = new ArrayList<Integer>();
+        for (int i : a) {
+            seen.add(Integer.valueOf(i));
+            if (seen.size() == 1) {
+                a[0] = 99;
+            }
+        }
+        assertEquals(3, seen.size());
+        assertEquals(1, seen.get(0).intValue());
+        assertEquals(2, seen.get(1).intValue());
+        assertEquals(3, seen.get(2).intValue());
+    }
+
+    @Test
+    public void testIteratorOverList() {
+        int words = 0;
+        for (String word : collection) {
+            assertEquals(collection.get(words), word);
+            words++;
+        }
+        assertEquals(collection.size(), words);
     }
 }

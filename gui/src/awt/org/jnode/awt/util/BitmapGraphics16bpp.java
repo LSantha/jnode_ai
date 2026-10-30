@@ -24,7 +24,6 @@ import java.awt.Rectangle;
 import java.awt.image.Raster;
 import org.jnode.driver.video.Surface;
 import org.jnode.system.resource.MemoryResource;
-import org.jnode.vm.Unsafe;
 
 final class BitmapGraphics16bpp extends AbstractBitmapGraphics {
 
@@ -38,7 +37,6 @@ final class BitmapGraphics16bpp extends AbstractBitmapGraphics {
     public BitmapGraphics16bpp(MemoryResource mem, int width, int height,
                                int offset, int bytesPerLine) {
         super(mem, width, height, offset, bytesPerLine);
-        Unsafe.debug("created BitmapGraphics16bpp");
     }
 
     @Override
@@ -48,8 +46,6 @@ final class BitmapGraphics16bpp extends AbstractBitmapGraphics {
 
     protected final void doDrawImage(Raster src, int srcX, int srcY,
                                      int dstX, int dstY, int width, int height) {
-        Unsafe.debug("BitmapGraphics16bpp: doDrawImage");
-
         int dstOfs = getOffset(dstX, dstY);
 
         final int[] buf = new int[width];
@@ -70,7 +66,7 @@ final class BitmapGraphics16bpp extends AbstractBitmapGraphics {
 
             dstOfs += bytesPerLine;
         }
-        log.error("Wrong image colors in BitmapGraphics.doDrawImage!");
+
     }
 
     /**
@@ -81,26 +77,20 @@ final class BitmapGraphics16bpp extends AbstractBitmapGraphics {
                                      int dstX, int dstY, int width, int height, int color) {
         // TODO Implement me
         log.error("Not implemented");
-        Unsafe.debug("BitmapGraphics16bpp: doDrawAlphaRaster");
-
         doDrawImage(raster, srcX, srcY, dstX, dstY, width, height);
     }
 
     protected final void doDrawImage(Raster src, int srcX, int srcY,
                                      int dstX, int dstY, int width, int height, int bgColor) {
         // TODO Check if it's API conform to disregard bgColor.. 32bit impl does ignore it
-        Unsafe.debug("BitmapGraphics16bpp: doDrawImage");
-        log.error("Not implemented");
         doDrawImage(src, srcX, srcY, dstX, dstY, width, height);
     }
 
     public int doGetPixel(int x, int y) {
-        Unsafe.debug("BitmapGraphics16bpp: doGetPixel");
         return mem.getShort(offset + (y * bytesPerLine) + (x << 1));
     }
 
     public int[] doGetPixels(Rectangle r) {
-        Unsafe.debug("BitmapGraphics16bpp: doGetPixels");
         int x = r.x;
         int y = r.y;
         int w = r.width;
@@ -124,8 +114,29 @@ final class BitmapGraphics16bpp extends AbstractBitmapGraphics {
         return result;
     }
 
+    protected void doFillRect(int x, int y, int width, int height, int color, int mode) {
+        final int ofs = getOffset(x, y);
+        final short c = (short) color;
+        if (bytesPerLine == (width << 1)) {
+            // single contiguous block
+            if (mode == Surface.PAINT_MODE) {
+                mem.setShort(ofs, c, width * height);
+            } else {
+                mem.xorShort(ofs, c, width * height);
+            }
+        } else {
+            for (int i = 0; i < height; i++) {
+                final int rowOfs = ofs + i * bytesPerLine;
+                if (mode == Surface.PAINT_MODE) {
+                    mem.setShort(rowOfs, c, width);
+                } else {
+                    mem.xorShort(rowOfs, c, width);
+                }
+            }
+        }
+    }
+
     protected final void doDrawLine(int x, int y, int w, int color, int mode) {
-        Unsafe.debug("BitmapGraphics16bpp: doDrawLine");
         final int ofs = getOffset(x, y);
 
         if (mode == Surface.PAINT_MODE) {
@@ -137,7 +148,6 @@ final class BitmapGraphics16bpp extends AbstractBitmapGraphics {
 
     protected final void doDrawPixels(int x, int y, int count, int color,
                                       int mode) {
-        Unsafe.debug("BitmapGraphics16bpp: doDrawPixels");
         final int ofs = getOffset(x, y);
 
         if (mode == Surface.PAINT_MODE) {

@@ -4223,7 +4223,7 @@ public class X86BinaryAssembler extends X86Assembler implements X86Operation {
      * Create a push dword imm32
      *
      * @param imm32
-     * @return The ofset of the start of the instruction.
+     * @return The offset of the start of the instruction.
      */
     public final int writePUSH(int imm32) {
         final int rc = m_used;
@@ -4241,7 +4241,7 @@ public class X86BinaryAssembler extends X86Assembler implements X86Operation {
      * Create a push srcReg
      *
      * @param srcReg
-     * @return The ofset of the start of the instruction.
+     * @return The offset of the start of the instruction.
      */
     public final int writePUSH(GPR srcReg) {
         testSize(srcReg, BITS32 | BITS64);
@@ -4254,7 +4254,7 @@ public class X86BinaryAssembler extends X86Assembler implements X86Operation {
      * Create a push srcReg
      *
      * @param srcReg
-     * @return The ofset of the start of the instruction.
+     * @return The offset of the start of the instruction.
      */
     public final int writePUSH(SR srcReg) {
         final int rc = m_used;
@@ -4283,7 +4283,7 @@ public class X86BinaryAssembler extends X86Assembler implements X86Operation {
      *
      * @param srcReg
      * @param srcDisp
-     * @return The ofset of the start of the instruction.
+     * @return The offset of the start of the instruction.
      */
     public final int writePUSH(GPR srcReg, int srcDisp) {
         testSize(srcReg, mode.getSize());
@@ -4299,7 +4299,7 @@ public class X86BinaryAssembler extends X86Assembler implements X86Operation {
      *
      * @param sr
      * @param srcDisp
-     * @return The ofset of the start of the instruction.
+     * @return The offset of the start of the instruction.
      */
     public final int writePUSH(SR sr, int srcDisp) {
         testOperandSize(4, mode.getSize());
@@ -4320,7 +4320,7 @@ public class X86BinaryAssembler extends X86Assembler implements X86Operation {
      * @param srcIndexReg
      * @param srcScale
      * @param srcDisp
-     * @return The ofset of the start of the instruction.
+     * @return The offset of the start of the instruction.
      */
     public final int writePUSH(GPR srcBaseReg, GPR srcIndexReg, int srcScale,
                                int srcDisp) {

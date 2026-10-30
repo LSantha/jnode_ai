@@ -9,7 +9,7 @@ metadata:
 
 # Skill: JNode Issue Resolver
 
-> The general playbook an OpenCode agent follows when it lands on a JNode issue or PR. Complementary to the focused skills (`filesystem-debug`, `jnode-interact`, `update-wiki`), each of which is also independently invokable.
+> The general playbook an OpenCode agent follows when it lands on a JNode issue or PR. Complementary to the focused skills (`filesystem-debug`, `jnode-qemu`, `jnode-vbox`, `jnode-serial`, `update-wiki`), each of which is also independently invokable.
 
 ## What I do
 
@@ -39,7 +39,7 @@ Each focused skill below has its own `description:` and loads independently — 
 
 | Focused skill | Load when… |
 |---|---|
-| `jnode-interact` | You must boot a built ISO in QEMU to verify a kernel/VM/driver change. |
+| `jnode-qemu` (+ `jnode-serial`) | You must boot a built ISO in QEMU to verify a kernel/VM/driver change. |
 | `filesystem-debug` | The bug is in `fs/src/fs/...` and the diagnosis needs BPB / FAT table inspection. |
 | `update-wiki` | The task is to create or update a wiki spoke page. |
 
@@ -167,7 +167,7 @@ If you find yourself past 5 minutes still "looking into it", you have failed the
 | Cached build | (none — CI uses `actions/cache@v4` keyed on `**/*.java` + `build.sh`) | default |
 | Focused unit tests | `cd <subproject> && ant test` | changed code is in `<subproject>` and the existing suite covers it |
 | Full sweep | `sh build.sh tests` | cross-subsystem change (e.g., plugin descriptor, assembly, build) |
-| QEMU boot test | load `jnode-interact`, run `bash .opencode/skills/jnode-interact/scripts/start_qemu.sh simple`, then `python3 .opencode/skills/jnode-interact/scripts/jnode_agent_cmd.py "date" "mount" "plugin"` | kernel/VM/driver/FS work |
+| QEMU boot test | `.opencode/skills/jnode-qemu/scripts/start_qemu.sh --wait-ready 240 simple`, then `python3 .opencode/skills/jnode-serial/scripts/serial_cmd.py --wait 300 "date" "mount" "plugin"` | kernel/VM/driver/FS work |
 | FS structure decode | load `filesystem-debug` | FS bugs at BPB/FAT level |
 | Wiki push | `cd .wiki && git add . && git commit -m "..." && git push` | wiki-doc kind only — `AGENTS.md` requires manual push |
 
@@ -180,15 +180,16 @@ If you find yourself past 5 minutes still "looking into it", you have failed the
 ### 5.1 `code-fix` / `chore` / `test` PR
 
 - **Branch name** — `opencode/issue<N>-<YYYYMMDDHHMMSS>` (matches the convention of `c706daa1b`, `2b48d2c3b`, `7d7a73f42`).
-- **Commit message** — imperative mood, ≤ 72-char subject, body explains *why*:
+- **Commit message** — imperative mood, body explains *why*. Subject: `#<issue> - <Subject>`, counted ≤ 72 chars *in full* (the issue reference counts):
   ```
-  <Subject> (#<N>)
+  #<N> - <Subject>
 
   <body, ≤ 10 lines>
-
-  Co-authored-by: LSantha <LSantha@users.noreply.github.com>
   ```
-- **PR title** — `Subject` only, or `Subject (Closes #<N>)`.
+  Do **not** add a `Co-authored-by:` trailer. The CI git identity is already the maintainer, so a co-author line is unnecessary; and GitHub renders `Co-authored-by:` as an extra author (avatar + Contributors list), so naming the agent - `opencode`, `opencode-agent`, or any bot noreply - would put a stranger's image on the maintainer's commits. The `prepare-commit-msg` hook strips such lines. Model attribution is automatic (see below).
+  `#<N>` is the **issue** number. GitHub appends ` (#<PR>)` to the squash subject on its own, so the branch commit must **not** end in `(#<N>)` - that produced `... (#<issue>) (#<PR>)` on master (#757/#755/#765). One issue reference at the front, one PR reference appended by GitHub: `#751 - shell: expand pathname globs (#757)`. `(#<PR>)` (7 chars) plus `#<N> - ` (7) is 14 chars of scaffolding, so keep the description within ~58 chars.
+- **PR title** — `#<N> - <Subject>`, the same string as the commit subject. Do not repeat the issue number anywhere else in the title.
+- **Model attribution is automatic.** Do not add it yourself: the agent workflows install `.github/hooks/prepare-commit-msg`, which appends `Assisted-by: <model>` to every commit made while `OPENCODE_MODEL` is set (the workflow env). The trailer flows into the squash commit body because the repo squashes with `COMMIT_MESSAGES`. A reviewer makes no commit, so it has no trailer to carry; it writes an `Assisted-by:` line into its review summary instead (§5.2), which `mergePR` folds into the merge commit as `Reviewed-by:`.
 - **PR body** — use this template:
   ```markdown
   ## Summary
@@ -213,10 +214,19 @@ Use inline comments on the diff via `pull_request_review_comment` context (exist
 | Marker | Meaning | Required action |
 |---|---|---|
 | 🔴 | Must-fix: bug, license violation, Java 1.6 violation, missing test | request changes |
-| 🟡 | Should-fix: style, naming, missing edge case | comment, do not block |
+| 🟡 | Should-fix: correctness, test validity, maintainability, or a tracked follow-up | request changes; a deferred 🟡 requires a follow-up issue created in the same review |
 | 🟢 | Nit: typo, formatting, optional refactor | comment, do not block |
 
-End every review with a single **summary comment** (not a review submission) that lists the findings in priority order and ends with `Verdict: approve | request-changes | comment`. Then submit a GitHub Review with the matching verdict using `gh pr review <N> --request-changes` (etc.).
+End every review with a single **summary comment** (not a review submission) that lists the findings in priority order and ends with `Verdict: approve | request-changes | comment`. Never approve with an untracked 🟡: either request changes or create a follow-up issue and link it in the summary. Then submit a GitHub Review with the matching verdict using `gh pr review <N> --request-changes` (etc.).
+
+That summary comment must also carry the reviewer's model, on its own line next to the `Verdict:` line, taken from the run's `OPENCODE_MODEL` env var (the same value the workflow passes as `with: model`, so the attribution cannot drift from the model that actually ran):
+
+```
+Verdict: approve
+Assisted-by: <value of $OPENCODE_MODEL>
+```
+
+A reviewer makes no commit, so this comment is the only place its model can be recorded. `orchestrator-helpers.js` `mergePR` scans the PR's review and comment bodies for `Assisted-by:` lines and folds the distinct values into the merge commit as `Reviewed-by: <models>`. Omitting the line leaves the reviewer model unrecorded; write the env value verbatim rather than naming a model from memory.
 
 ### 5.3 `investigation` (single structured comment)
 
@@ -291,6 +301,9 @@ When handling review feedback on an existing PR:
 - [ ] No debug `System.out.println` / `System.err.println` / `printStackTrace()` left behind.
 - [ ] No change to `jnode.properties`, `all/build.xml`, `all/conf/*-plugin-list.xml`, or `core/src/native/x86/*.asm` unless the bug clearly requires it.
 - [ ] At least one unit test added/updated for every behavioral change.
+- [ ] **No test asserts a known-bad behaviour** (see S8 in Anti-patterns). If the work uncovered a
+      defect in the code under test, the test must assert the CORRECT contract, or be left out
+      entirely - never the current broken behaviour. See S8.
 - [ ] Focused test suite passes: `cd <subproject> && ant test`.
 - [ ] ISO still builds if `core/` changed: `sh build.sh cd-x86-lite`.
 - [ ] No secrets, tokens, or absolute paths in the diff.
@@ -317,9 +330,17 @@ These are **hard walls**. If a request matches any of them, follow §2.5 (pre-fl
 - ❌ **Wiki fabrication** — never invent a wiki page that is not backed by source code. Load `update-wiki` and follow its protocol.
 - ❌ **Fabricated completion reports** — never claim a step is done unless you actually saw its output. **Before saying "pushed"**, the wiki push command must have returned 0 with the new commit hash visible. **Before saying "PR opened"**, `gh pr create` must have returned a PR URL. **Before saying "investigation complete"**, the report must be on the issue. If you have not run a step, say "I did not run X" — do not invent a fake report of having run it.
 - ❌ **Closing unclear issues** — never close an issue when the task is unclear; apply `agent/needs-info` and ask 3–5 specific questions instead.
-- ❌ **Reimplementing existing skills** — never reimplement `filesystem-debug` / `jnode-interact` / `update-wiki` inline. Load them on demand.
+- ❌ **Reimplementing existing skills** — never reimplement `filesystem-debug` / `jnode-qemu` / `jnode-vbox` / `jnode-serial` / `update-wiki` inline. Load them on demand.
 - ❌ **Speculative optimization** — never optimize based on "I think this is slow" or "this could be faster". Require a profile, a benchmark, or a stack trace pointing at the bottleneck.
 - ❌ Rerun the full `sh build.sh tests` when a focused `cd <subproject> && ant test` would do.
+- ❌ **Locking a bug into a test** (S8) - never write a test that asserts known-broken behaviour, even when
+  the defect is real, out of scope, or has been filed as a follow-up issue. Observed three times in one
+  batch: `testChildLabelsDoesNotIncludeLeafLabels` (Javadoc: *"a labelled leaf Syntax reports an empty
+  label set"*), `testToXMLRoundTripFailsOnArgNameAttribute`, and
+  `testEagerFalseFlagCurrentlyBehavesLikeTrue`. Each shipped a green test that cemented the defect, so the
+  eventual fix had to rewrite the test. If a defect blocks the assertion, fix it, assert the correct
+  contract, or do not write the test. (This rule is S8: the eighth item above, mirroring the
+  `s8` self-check reference.)
 
 ## 9. Orchestrator awareness
 
@@ -404,7 +425,9 @@ file <changed.java>                                # encoding must be ASCII
 - `.github/scripts/opencode-post-step.js` — the post-step that applies `agent/*` labels and closes the issue (this skill, §3 step 6)
 - `.github/scripts/sync-labels.js` — the label-bootstrap script (this skill, §10)
 - `.opencode/skills/filesystem-debug/SKILL.md`
-- `.opencode/skills/jnode-interact/SKILL.md`
+- `.opencode/skills/jnode-qemu/SKILL.md`
+- `.opencode/skills/jnode-vbox/SKILL.md`
+- `.opencode/skills/jnode-serial/SKILL.md`
 - `.opencode/skills/update-wiki/SKILL.md`
 - `AGENTS.md` — root agent instructions
 - `.wiki/index.md` — Task Routing table

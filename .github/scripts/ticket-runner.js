@@ -20,9 +20,15 @@
 'use strict';
 
 const createHelpers = require("./orchestrator-helpers.js");
+const MAX_HISTORY_ENTRIES = createHelpers.MAX_HISTORY_ENTRIES;
+const { isRefusalComment, isNeedsInfoComment, isTriageComment, isTriggerComment } = require("./report-signals.js");
 
 const STATE_RE = /<!-- TICKET_RUNNER_STATE:\s*([\s\S]*?)\s*-->/;
 const ORCHESTRATOR_STATE_RE = /<!-- ORCHESTRATOR_STATE:/;
+
+function isTerminalPhase(phase) {
+  return phase === "DONE" || phase === "FAILED" || phase === "CANCELLED";
+}
 
 function parseState(body) {
   if (!body) return null;
@@ -36,15 +42,23 @@ function initState(maxTurns) {
     phase: "DEV",
     pr: null,
     turn: 0,
-    max_turns: typeof maxTurns === "number" && maxTurns > 0 ? maxTurns : 3,
+    max_turns: typeof maxTurns === "number" && maxTurns > 0 ? maxTurns : createHelpers.DEFAULT_MAX_TURNS,
     retries: 0,
+    review_in_progress: false,
+    review_pending_ci: false,
     started: new Date().toISOString(),
     history: []
   };
 }
 
 function serializeState(state) {
-  return "<!-- TICKET_RUNNER_STATE:\n" + JSON.stringify(state, null, 2) + "\n-->";
+  var capped = Object.assign({}, state);
+  // Only rewrite an existing history array: a state without one round-trips
+  // unchanged, and adding an empty array would break deep-equality checks.
+  if (Array.isArray(state.history)) {
+    capped.history = state.history.slice(-MAX_HISTORY_ENTRIES);
+  }
+  return "<!-- TICKET_RUNNER_STATE:\n" + JSON.stringify(capped, null, 2) + "\n-->";
 }
 
 function replaceOrAppendState(body, state) {
@@ -58,7 +72,7 @@ function replaceOrAppendState(body, state) {
 function renderStatusSection(state, issueNumber) {
   var phaseEmoji = {
     DEV: "🔨", REVIEW: "🔍", FEEDBACK: "🔧",
-    HUMAN_REVIEW: "👤", MERGE: "🚀", DONE: "✅", FAILED: "❌"
+    HUMAN_REVIEW: "👤", MERGE: "🚀", DONE: "✅", FAILED: "❌", CANCELLED: "🚫"
   };
   var emoji = phaseEmoji[state.phase] || "⏳";
   var lines = [
@@ -72,6 +86,7 @@ function renderStatusSection(state, issueNumber) {
     "| **Turn** | " + state.turn + "/" + state.max_turns + " |",
     "| **Retries** | " + state.retries + "/3 |",
     "| **PR** | " + (state.pr ? "#" + state.pr : "-") + " |",
+    "| **Review in progress** | " + (state.review_in_progress ? "yes" : "no") + " |",
     "| **Started** | " + state.started + " |",
     ""
   ];
@@ -112,13 +127,10 @@ module.exports = async ({ github, context, core }) => {
   const ACTIONABLE_KINDS = ["kind/bug", "kind/feature", "kind/chore", "kind/wiki", "kind/test"];
   const AUTO_BLOCKING_LABELS = ["agent/done", "agent/investigated", "agent/skip", "agent/blocked",
     "agent/needs-info", "agent/duplicate", "agent/failed", "agent/in-progress"];
-  const VAGUE_RE = /needs more info from reporter|needs the following|suggested next:\s*needs-info/i;
-  const TRIAGE_RE = /## .*Triage/i;
-  const REFUSAL_RE = /refusal|out of scope/i;
   // A comment carrying a slash-command is a TRIGGER, never a REPORT.
   // Triggers routinely quote report strings (e.g. "## Triage", "Verdict: ..."),
   // so every report scan must skip them or it matches its own trigger.
-  const TRIGGER_RE = /(^|\s)\/(oc|run|orchestrate)(\s|$)/;
+  const TRIAGE_REQUEST_RE = /(^|\s)\/oc\s+triage(?:\s|$)/i;
 
   // ---- Determine issue number depending on event type ----
 
@@ -141,18 +153,45 @@ module.exports = async ({ github, context, core }) => {
   async function handleIssueComment() {
     var comment = context.payload.comment || {};
     var body = (comment.body || "").trim();
-    if (body !== "/run" && !body.startsWith("/run ") && !body.startsWith("/run\n") && !body.startsWith("/run\r")) return;
+    // Single literal space after `/oc`, matching the workflow trigger's
+    // startsWith('/oc approve'), so the handler and the dispatcher agree: a
+    // double space is handled by neither rather than by one of them.
+    var approveCmd = body.match(/^\/oc approve(?: (--force))?\s*$/);
+    var isRun = body === "/run" || body.startsWith("/run ") || body.startsWith("/run\n") || body.startsWith("/run\r");
+    if (!isRun && !approveCmd) return;
 
     // Only collaborators/members/owners
     var assoc = comment.author_association || "";
     if (!["COLLABORATOR", "MEMBER", "OWNER"].includes(assoc)) {
-      core.info("Ignoring /run from non-collaborator: " + assoc);
+      core.info("Ignoring issue command from non-collaborator: " + assoc);
+      return;
+    }
+
+    // The collaborator gate above is not an agent guard: the agent posts with
+    // GH_PAT, so its comments arrive as the PAT owner (OWNER) and clear that
+    // check. Every agent comment embeds a session link, and opencode.yml already
+    // ignores those for the same reason. Without this, an agent that parks its
+    // own ticket in HUMAN_REVIEW could quote the `/oc approve` this repo
+    // documents and merge its own PR - the phase gate does not help, because
+    // HUMAN_REVIEW is exactly the phase the command acts on.
+    if (/opencode\.ai\/s\//.test(body)) {
+      core.info("Ticket runner: ignoring agent-authored issue command");
       return;
     }
 
     var issue = context.payload.issue;
     if (!issue) return;
     var issueNumber = issue.number;
+
+    // `/oc approve` is the maintainer's stand-in for a native GitHub approval on
+    // a PR they authored. GitHub refuses self-approval, which is the norm on a
+    // single-maintainer repo, so this command is the honest equivalent: it is
+    // PR-only and merges through the same approve-and-merge path as a native
+    // review, so it inherits the CI re-check (and the `--force` override).
+    if (approveCmd) {
+      await handleApproveCommand(issue, approveCmd[1] === "--force");
+      return;
+    }
 
     // Refuse if this is a PR context
     if (issue.pull_request) {
@@ -187,20 +226,32 @@ module.exports = async ({ github, context, core }) => {
     }
 
     var turnsMatch = body.match(/--(?:max-)?turns\s+(\d+)/);
-    var customMaxTurns = turnsMatch ? parseInt(turnsMatch[1], 10) : 3;
+    var customMaxTurns = turnsMatch ? parseInt(turnsMatch[1], 10) : h.DEFAULT_MAX_TURNS;
 
     var state = parseState(issueBody);
 
     if (body.includes("--reset") || body.includes("--fresh")) {
       core.info("Ticket runner: reset requested via command flag.");
       state = null;
-    } else if (state && (state.phase === "DONE" || state.phase === "FAILED")) {
-      core.info("Previous run completed or failed. Starting fresh.");
+    } else if (state && isTerminalPhase(state.phase)) {
+      core.info("Previous run reached terminal phase " + state.phase + ". Starting fresh.");
       state = null;
     }
 
     if (!state) {
-      // Initialize fresh run
+      // Triage-first: manual /run must not skip triage. Without a clear
+      // ## Triage report, start triage and let DEV begin once it lands (the
+      // Triage workflow_run wakeup). The /run comment is itself the maintainer
+      // kickoff that lets an untrusted-author ticket through autoStartGuards.
+      var triage = await triageStatus(issueNumber);
+      if (!triage.present || !triage.clear || triage.count > 3) {
+        if (!triage.requested) {
+          await h.triggerTask(issueNumber, "/oc triage issue #" + issueNumber + "\n\nTriage run ONLY. Load the jnode-triage-issue skill and obey it. Output is exactly one ## Triage comment plus kind/area label edits. FORBIDDEN in this run: git checkout -b, git push, gh pr create, any branch, any PR.");
+        }
+        core.info("Ticket runner: #" + issueNumber + " /run deferred: waiting for a clear ## Triage report.");
+        return;
+      }
+      // Clear triage: initialize and start DEV.
       state = initState(customMaxTurns);
       state.history.push({ event: "start", timestamp: new Date().toISOString() });
 
@@ -218,14 +269,41 @@ module.exports = async ({ github, context, core }) => {
         core.info("Ticket runner: #" + issueNumber + " is waiting for human review.");
         await github.rest.issues.createComment({
           owner, repo, issue_number: issueNumber,
-          body: "Ticket runner is currently waiting for human approval on PR #" + state.pr + ". Approve or request changes via the PR Review UI."
+          body: "Ticket runner is currently waiting for human approval on PR #" + state.pr + ". Approve or request changes via the PR Review UI, or post `/oc approve` on the PR (the working path when you authored the PR and GitHub disables self-approval)."
         });
         return;
       }
+      // /run is an escape hatch for a stall, not an override of the CI gate.
+      // Re-requesting review on a red-CI PR would post the one prompt that the
+      // human-approval re-check later refuses to act on, and leaving
+      // review_in_progress false here would double-prompt on the next green CI
+      // wakeup. Park instead; the wakeup posts the prompt on green.
+      if (state.phase === "REVIEW" && state.pr && !(await h.isCIGreen(state.pr))) {
+        await updateIssueState(issueNumber, Object.assign({}, state, {
+          review_in_progress: false,
+          review_pending_ci: true,
+          history: state.history.concat([{
+            event: "review_deferred_ci", reason: "manual run while CI not green",
+            timestamp: new Date().toISOString()
+          }])
+        }));
+        await github.rest.issues.createComment({
+          owner, repo, issue_number: issueNumber,
+          body: "Review is waiting for Java CI to go green on PR #" + state.pr + ". Not re-requesting review yet; the runner posts it as soon as CI completes."
+        });
+        core.info("Ticket runner: #" + issueNumber + " /run deferred: PR #" + state.pr + " CI not green.");
+        return;
+      }
       core.info("Ticket runner: re-triggering phase " + state.phase + " for #" + issueNumber);
-      var target = state.pr || issueNumber;
-      var msg = phaseMessage(state);
-      await h.triggerTask(target, msg);
+      if (state.phase === "REVIEW") {
+        // The red-CI gate above has already returned, so CI is green here.
+        await updateIssueState(issueNumber, state);
+        await requestReview(state, state.pr);
+        await updateIssueState(issueNumber, state);
+      } else {
+        var msg = phaseMessage(state);
+        await h.triggerTask(state.pr || issueNumber, msg);
+      }
     }
   }
 
@@ -272,6 +350,22 @@ module.exports = async ({ github, context, core }) => {
   // proceeds once a CLEAR ## Triage comment exists. All auto paths share
   // these guards; manual /run is unaffected.
 
+  // An issue from an untrusted author may still be processed once a maintainer
+  // explicitly kicks it off. The kickoff is a human trigger comment (`/oc
+  // triage` or `/run`); agent comments carry an `opencode.ai/s/` session link
+  // and are excluded. Auto-triage is disabled for untrusted authors (see
+  // auto-triage.yml), so a trigger comment on an untrusted issue can only come
+  // from the maintainer.
+  async function hasMaintainerKickoff(issueNumber) {
+    var res = await github.rest.issues.listComments({ owner, repo, issue_number: issueNumber, per_page: 100 });
+    var list = (res && res.data) ? res.data : res;
+    for (var i = 0; i < list.length; i++) {
+      var b = (list[i] && list[i].body) || "";
+      if (isTriggerComment(b) && !/opencode\.ai\/s\//.test(b)) return true;
+    }
+    return false;
+  }
+
   // Shared guards for every auto-start path. Returns { ok, reason?, labels? }.
   async function autoStartGuards(issueNumber) {
     var d;
@@ -282,6 +376,10 @@ module.exports = async ({ github, context, core }) => {
       return { ok: false, reason: "fetch failed: " + err.message };
     }
     if (d.pull_request) return { ok: false, reason: "is a PR" };
+    if (d.state && d.state !== "open") return { ok: false, reason: "issue is " + d.state };
+    if (!h.isTrustedAuthor(d.user) && !(await hasMaintainerKickoff(issueNumber))) {
+      return { ok: false, reason: "author not trusted" };
+    }
     var labels = h.extractLabels(d);
     if (labels.includes("no-auto")) return { ok: false, reason: "no-auto" };
     if (labels.includes("kind/orchestrator")) return { ok: false, reason: "orchestrator master" };
@@ -305,15 +403,17 @@ module.exports = async ({ github, context, core }) => {
     var list = (res && res.data) ? res.data : res;
     var count = 0;
     var clear = false;
+    var requested = false;
     for (var i = 0; i < list.length; i++) {
       var b = (list[i] && list[i].body) || "";
-      if (TRIGGER_RE.test(b)) continue;
-      if (TRIAGE_RE.test(b)) {
+      if (TRIAGE_REQUEST_RE.test(b)) requested = true;
+      if (isTriggerComment(b)) continue;
+      if (isTriageComment(b)) {
         count++;
-        clear = !VAGUE_RE.test(b) && !REFUSAL_RE.test(b);
+        clear = !isNeedsInfoComment(b) && !isRefusalComment(b);
       }
     }
-    return { present: count > 0, clear: clear, count: count };
+    return { present: count > 0, clear: clear, count: count, requested: requested };
   }
 
   // Create fresh runner state and trigger DEV. Caller ran autoStartGuards first.
@@ -324,7 +424,7 @@ module.exports = async ({ github, context, core }) => {
       core.info("Ticket runner: auto-start skipped for #" + issueNumber + ", state appeared meanwhile.");
       return false;
     }
-    var st = initState(3);
+    var st = initState();
     st.history.push({ event: "auto_start", reason: reason, timestamp: new Date().toISOString() });
     var newBody = replaceOrAppendStatus(body, st, issueNumber);
     await github.rest.issues.update({ owner, repo, issue_number: issueNumber, body: newBody });
@@ -347,6 +447,10 @@ module.exports = async ({ github, context, core }) => {
     }
     var t = await triageStatus(issueNumber);
     if (!t.present) {
+      if (t.requested) {
+        core.info("Ticket runner: #" + issueNumber + " already has a triage request; waiting for its report.");
+        return;
+      }
       core.info("Ticket runner: #" + issueNumber + " labeled " + label + " but untriaged; requesting triage first.");
       await h.triggerTask(issueNumber, "/oc triage issue #" + issueNumber + "\n\nTriage run ONLY. Load the jnode-triage-issue skill and obey it. Output is exactly one ## Triage comment plus kind/area label edits. FORBIDDEN in this run: git checkout -b, git push, gh pr create, any branch, any PR.");
       return;
@@ -423,13 +527,23 @@ module.exports = async ({ github, context, core }) => {
       var found = await findIssueByPR(prNumber);
       if (!found) continue;
       var st = found.state;
-      if (!st || st.phase === "DONE" || st.phase === "FAILED") continue;
+      if (!st || isTerminalPhase(st.phase)) continue;
       if (conclusion === "success") {
-        if (st.phase !== "REVIEW") continue;
-        st.history.push({ event: "ci_green_rereview", timestamp: new Date().toISOString() });
-        await updateIssueState(found.issueNumber, st);
-        await h.triggerTask(prNumber, h.getReviewPrompt());
-        core.info("Ticket runner: CI green, re-reviewing PR #" + prNumber + " for #" + found.issueNumber);
+        if (st.phase !== "REVIEW" || st.review_in_progress) continue;
+        // Set both flags only after the trigger succeeds. On the DEV path this
+        // wakeup is the ONLY one -- no /oc review was ever posted, so no
+        // workflow_run completion will arrive to clear the flags. Persisting
+        // them before triggerTask and having the post throw would skip every
+        // subsequent green CI, stranding the ticket in REVIEW with no prompt.
+        try {
+          st.history.push({ event: "ci_green_rereview", timestamp: new Date().toISOString() });
+          await requestReview(st, prNumber);
+          await updateIssueState(found.issueNumber, st);
+          core.info("Ticket runner: CI green, re-reviewing PR #" + prNumber + " for #" + found.issueNumber);
+        } catch (err) {
+          core.warning("Ticket runner: re-review trigger failed for PR #" + prNumber + ": " + err.message +
+            ". review_in_progress left false so the next green CI retries.");
+        }
       } else {
         if (st.phase !== "REVIEW" && st.phase !== "FEEDBACK") continue;
         await postCiFixOnce(prNumber, sha.slice(0, 7), runUrl);
@@ -442,6 +556,13 @@ module.exports = async ({ github, context, core }) => {
     if (conclusion === "skipped") return;
 
     var wfName = context.payload.workflow_run.name || "opencode";
+    if (wfName === "Triage" || wfName.indexOf("Triage #") === 0) {
+      var triageTitle = context.payload.workflow_run.display_title || "";
+      var triageMatch = triageTitle.match(/Triage #(\d+)/);
+      if (!triageMatch) return;
+      await maybeAutoStartAfterTriage(parseInt(triageMatch[1], 10));
+      return;
+    }
     if (wfName === "Java CI") {
       await handleJavaCICompletion();
       return;
@@ -479,11 +600,19 @@ module.exports = async ({ github, context, core }) => {
     }
 
     if (!state) {
+      // A run title matching "Issue #N" names an ISSUE, not a PR, so
+      // findIssueByPR(runIssueNumber) above is only meaningful when the trigger
+      // was a PR run. When it maps an issue back to itself with a null state we
+      // still have a candidate ticket: recover its lost block before falling
+      // through to auto-start, whose autoStartGuards refuse on agent/done and
+      // would strand a ticket that already has a merge-ready PR.
+      var recovered = await recoverLostState(runIssueNumber, conclusion);
+      if (recovered) return;
       await maybeAutoStartAfterTriage(runIssueNumber);
       return;
     }
 
-    if (state.phase === "DONE" || state.phase === "FAILED") {
+    if (isTerminalPhase(state.phase)) {
       core.info("Ticket runner: issue #" + runIssueNumber + " already in terminal state " + state.phase);
       return;
     }
@@ -525,23 +654,7 @@ module.exports = async ({ github, context, core }) => {
     core.info("Ticket runner: human review on PR #" + prNumber + " for issue #" + found.issueNumber + ": " + reviewState);
 
     if (reviewState === "approved") {
-      state.phase = "MERGE";
-      state.history.push({ event: "human_approved", timestamp: new Date().toISOString() });
-      try {
-        await h.mergePR(prNumber);
-        state.phase = "DONE";
-        state.history.push({ event: "merged", pr: prNumber, timestamp: new Date().toISOString() });
-        await updateIssueState(found.issueNumber, state);
-        await closeIssueWithLabel(found.issueNumber);
-      } catch (err) {
-        core.error("Failed to merge PR #" + prNumber + ": " + err.message);
-        state.history.push({ event: "merge_failed", error: err.message, timestamp: new Date().toISOString() });
-        await updateIssueState(found.issueNumber, state);
-        await github.rest.issues.createComment({
-          owner, repo, issue_number: prNumber,
-          body: "⚠️ Ticket runner: failed to auto-merge PR #" + prNumber + ": " + err.message
-        });
-      }
+      await approveAndMerge(found.issueNumber, state, prNumber, false);
     } else if (reviewState === "changes_requested") {
       state.turn += 1;
       state.history.push({ event: "human_changes_requested", timestamp: new Date().toISOString() });
@@ -564,12 +677,144 @@ module.exports = async ({ github, context, core }) => {
     }
   }
 
+  /**
+   * Merge an approved PR through the safety gate, shared by the native PR review
+   * path and the `/oc approve` command so the two cannot drift. A human approval
+   * (or its `/oc approve` equivalent) is an instruction to merge, not an override
+   * of CI: re-check isCIGreen before merging because CI may have gone red since
+   * the merge gate last ran. Deferring is cheap and the Java CI wakeup re-enters
+   * REVIEW on green. `force` is the deliberate emergency override.
+   */
+  async function approveAndMerge(issueNumber, state, prNumber, force) {
+    if (!force && !(await h.isCIGreen(prNumber))) {
+      state.phase = "REVIEW";
+      state.review_in_progress = false;
+      state.review_pending_ci = true;
+      state.retries = 0;
+      state.history.push({ event: "human_approved_ci_red", timestamp: new Date().toISOString() });
+      await updateIssueState(issueNumber, state);
+      await github.rest.issues.createComment({
+        owner, repo, issue_number: prNumber,
+        body: "Approval recorded, but Java CI is not green yet. Not merging. Will re-check and merge when CI completes."
+      });
+      core.info("Ticket runner: approval on PR #" + prNumber + " but CI is red; deferring merge.");
+      return;
+    }
+    state.phase = "MERGE";
+    state.history.push({
+      event: force ? "human_approved_forced" : "human_approved",
+      timestamp: new Date().toISOString()
+    });
+    try {
+      await h.mergePR(prNumber);
+      state.phase = "DONE";
+      state.history.push({ event: "merged", pr: prNumber, timestamp: new Date().toISOString() });
+      await updateIssueState(issueNumber, state);
+      await closeIssueWithLabel(issueNumber);
+    } catch (err) {
+      core.error("Failed to merge PR #" + prNumber + ": " + err.message);
+      state.history.push({ event: "merge_failed", error: err.message, timestamp: new Date().toISOString() });
+      await updateIssueState(issueNumber, state);
+      await github.rest.issues.createComment({
+        owner, repo, issue_number: prNumber,
+        body: "⚠️ Ticket runner: failed to auto-merge PR #" + prNumber + ": " + err.message
+      });
+    }
+  }
+
+  /**
+   * Handle `/oc approve` posted as a comment on a PR. Unlike the native review
+   * path this arrives through `handleIssueComment`, so it re-derives the ticket
+   * from the PR number and only acts on a HUMAN_REVIEW ticket - the phase that
+   * exists to wait for a human. That keeps the gate meaningful: an approval
+   * cannot short-circuit an in-flight agent review or a DEV run.
+   */
+  async function handleApproveCommand(issue, force) {
+    var prNumber = issue.number;
+    if (!issue.pull_request) {
+      await github.rest.issues.createComment({
+        owner, repo, issue_number: prNumber,
+        body: "⚠️ `/oc approve` is for pull requests. Post it on the PR you want to approve."
+      });
+      return;
+    }
+    core.info("Ticket runner: /oc approve on PR #" + prNumber + (force ? " (force)" : ""));
+    var found = await findIssueByPR(prNumber);
+    if (!found) {
+      await github.rest.issues.createComment({
+        owner, repo, issue_number: prNumber,
+        body: "⚠️ No ticket-runner ticket references PR #" + prNumber + "; there is nothing to advance. `/oc approve` merges only ticket-runner PRs - link the PR to its issue (Closes #N on an issue tracked with `/run`)."
+      });
+      return;
+    }
+    if (found.state.phase !== "HUMAN_REVIEW") {
+      await github.rest.issues.createComment({
+        owner, repo, issue_number: prNumber,
+        body: "⚠️ `/oc approve` only applies while a ticket is in HUMAN_REVIEW; #" + found.issueNumber + " is in " + found.state.phase + "."
+      });
+      return;
+    }
+    await approveAndMerge(found.issueNumber, found.state, prNumber, force);
+  }
+
   // ================================================================
   // PHASE ADVANCEMENT (called from workflow_run handler)
   // ================================================================
 
   async function advancePhase(issueNumber, state, phaseFailed) {
     core.info("Ticket runner: advancing #" + issueNumber + " phase=" + state.phase + " failed=" + phaseFailed);
+
+    var issueOpen = true;
+    var issueLabels = [];
+    try {
+      var issueRes = await github.rest.issues.get({ owner, repo, issue_number: issueNumber });
+      issueLabels = h.extractLabels(issueRes.data);
+      issueOpen = !issueRes.data.pull_request && issueRes.data.state === "open";
+    } catch (err) {
+      core.warning("Ticket runner: could not fetch #" + issueNumber + " state: " + err.message);
+    }
+    if (!issueOpen) {
+      // "Closed" is not the same question as "abandoned". The post-step closes
+      // some tickets itself, and its own completion close must not be read as a
+      // human cancellation. Mirror shouldClose in opencode-post-step.js: it
+      // closes behind agent/duplicate, or agent/investigated on any kind. The
+      // kind-independent half matters because /oc investigate and /oc explain
+      // route to the investigation task type by verb, independent of kind, so a
+      // kind/bug ticket driven through them is closed by its own report. No kind
+      // clause is needed or wanted: decideAgentLabel reaches agent/investigated
+      // only through isInvestigationReport, so the label itself means a report
+      // was delivered, and a human-closed bug never carries it. COMPLETION_LABELS
+      // is still too wide - agent/done is the post-step's default branch for
+      // every non-investigation run, so a closed kind/bug carrying it is an
+      // abandonment and must cancel.
+      // The exception also requires no PR. Neither close opens a PR - the post-step
+      // closes investigations and duplicates from a report or a duplicate link -
+      // and the DONE path the exception protects is handleDevCompletion's
+      // short-circuit, which only runs when there is no PR. Wording matters here:
+      // a self-closed ticket does not need to lack a PR from earlier phases, it
+      // just cannot have been closed by one, so a self-closed FEEDBACK ticket
+      // that already had a PR does read as an abandonment. That is the deliberate
+      // trade against the stale-label case below: nothing merges and no retry is
+      // burned, the PR simply stays open unmerged on a closed issue.
+      //
+      // Without this clause a stale agent/investigated - decideAgentLabel's
+      // existing branch preserves the label across runs - lets a reopened ticket
+      // that reached REVIEW with a PR fall through and merge on an issue a human
+      // had closed.
+      const selfClosed =
+        (issueLabels.indexOf("agent/duplicate") >= 0 ||
+         issueLabels.indexOf("agent/investigated") >= 0) && !state.pr;
+      if (selfClosed) {
+        core.info("Ticket runner: #" + issueNumber + " is closed but was closed by the post-step; letting the phase short-circuit handle it.");
+      } else {
+        state.phase = "CANCELLED";
+        state.history.push({ event: "cancelled_issue_closed", timestamp: new Date().toISOString() });
+        await updateIssueState(issueNumber, state);
+        await applyLabel(issueNumber, "agent/skip");
+        core.info("Ticket runner: #" + issueNumber + " is closed; cancelling run.");
+        return;
+      }
+    }
 
     switch (state.phase) {
       case "DEV":
@@ -587,13 +832,112 @@ module.exports = async ({ github, context, core }) => {
     }
   }
 
+  async function findPRForIssueWithComment(issueNumber) {
+    var prNumber = await h.findPRForIssue(issueNumber);
+    if (prNumber) return prNumber;
+
+    try {
+      var comments = await github.rest.issues.listComments({
+        owner, repo, issue_number: issueNumber, per_page: 100
+      });
+      var list = (comments && comments.data) ? comments.data : comments;
+      for (var i = list.length - 1; i >= 0; i--) {
+        var body = (list[i] && list[i].body) || "";
+        var match = body.match(/\b(?:Created|Opened) PR #(\d+)\b/i);
+        if (match) {
+          var candidate = parseInt(match[1], 10);
+          // A "Created PR #N" comment may reference a PR from a previous,
+          // already-closed attempt. Resurrecting it as this ticket's active PR
+          // corrupts state (pr=stale closed PR). Only consider open PRs;
+          // if we cannot determine the state, accept the candidate (fail-open).
+          try {
+            var prData = await github.rest.pulls.get({ owner, repo, pull_number: candidate });
+            // Skip PRs closed without merging (abandoned attempts from previous
+            // runs). Open PRs and closed+merged PRs are acceptable candidates.
+            if (prData.data.state === "closed" && !prData.data.merged) continue;
+          } catch (_) {}
+          return candidate;
+        }
+      }
+    } catch (err) {
+      core.warning("findPRForIssueWithComment failed: " + err.message);
+    }
+    return null;
+  }
+
+  /**
+   * Post the review prompt and mark the ticket as under review.
+   *
+   * The two flags exist to tell three states apart, so they must move together:
+   * a review was requested (review_in_progress true), a review is waiting on CI
+   * and no prompt exists (review_pending_ci true), and neither. Every prompt
+   * site goes through here - four near-copies of the same two lines is what let
+   * them drift apart in review rounds 3 and 5. The flags are set only after the
+   * post succeeds, so a failed prompt leaves them both false and the Java CI
+   * wakeup can retry instead of skipping forever.
+   */
+  async function requestReview(state, prNumber) {
+    await h.triggerTask(prNumber, h.getReviewPrompt());
+    state.review_in_progress = true;
+    state.review_pending_ci = false;
+    state.history.push({ event: "review_requested", pr: prNumber, timestamp: new Date().toISOString() });
+  }
+
+  /** Park a ticket whose review cannot be requested yet because CI is not green. */
+  async function parkForCI(issueNumber, state, prNumber, reason) {
+    state.review_in_progress = false;
+    // Parked means no prompt was posted. handleReviewCompletion reads this flag
+    // to tell "never asked" from "asked, no answer".
+    state.review_pending_ci = true;
+    state.history.push({ event: "review_pending_ci", reason: reason, timestamp: new Date().toISOString() });
+    await updateIssueState(issueNumber, state);
+    core.info("Ticket runner: #" + issueNumber + " parked on PR #" + prNumber + ", review waits for CI: " + reason);
+  }
+
   async function handleDevCompletion(issueNumber, state, phaseFailed) {
+    var prNumber = await findPRForIssueWithComment(issueNumber);
+    if (prNumber) {
+      state.pr = prNumber;
+      state.phase = "REVIEW";
+      state.retries = 0;
+      state.history.push({ event: "dev_done", pr: prNumber, timestamp: new Date().toISOString() });
+      // Ensure the PR title carries the issue number so the squash-merge
+      // commit subject (COMMIT_OR_PR_TITLE) stays traceable back to the ticket.
+      // Only touches the title when the prefix is missing; wrapped in try/catch
+      // so a titles API hiccup can never break the DEV flow.
+      try {
+        var prData = await github.rest.pulls.get({ owner, repo, pull_number: prNumber });
+        var prefix = "#" + issueNumber + " - ";
+        var title = prData.data.title || "";
+        if (!title.startsWith(prefix) && !title.startsWith("#" + issueNumber + ":")) {
+          await github.rest.pulls.update({
+            owner, repo, pull_number: prNumber,
+            title: prefix + title
+          });
+          core.info("Ticket runner: prefixed PR #" + prNumber + " title with issue #" + issueNumber);
+        }
+      } catch (err) {
+        core.warning("Ticket runner: could not prefix PR #" + prNumber + " title: " + err.message);
+      }
+      var ciGreen = await h.isCIGreen(prNumber);
+      if (ciGreen) {
+        await updateIssueState(issueNumber, state);
+        await requestReview(state, prNumber);
+        await updateIssueState(issueNumber, state);
+        core.info("Ticket runner: #" + issueNumber + " -> REVIEW on PR #" + prNumber);
+      } else {
+        await parkForCI(issueNumber, state, prNumber, "CI not green after DEV");
+        core.info("Ticket runner: #" + issueNumber + " -> REVIEW on PR #" + prNumber
+          + ", review waits for CI (Java CI wakeup will request it)");
+      }
+      return;
+    }
+
     if (phaseFailed) {
       await retryOrFail(issueNumber, state);
       return;
     }
 
-    // Check labels for short-circuit
     var issueData = await github.rest.issues.get({
       owner, repo, issue_number: issueNumber
     });
@@ -608,16 +952,7 @@ module.exports = async ({ github, context, core }) => {
     }
 
     if (labels.includes("agent/done")) {
-      var prNumber = await h.findPRForIssue(issueNumber);
-      if (prNumber) {
-        state.pr = prNumber;
-        state.phase = "REVIEW";
-        state.retries = 0;
-        state.history.push({ event: "dev_done", pr: prNumber, timestamp: new Date().toISOString() });
-        await updateIssueState(issueNumber, state);
-        await h.triggerTask(prNumber, h.getReviewPrompt());
-        core.info("Ticket runner: #" + issueNumber + " -> REVIEW on PR #" + prNumber);
-      } else if (labels.includes("kind/feature") || labels.includes("kind/bug")) {
+      if (labels.includes("kind/feature") || labels.includes("kind/bug")) {
         // agent/done but no PR -- for bug/feature this is unexpected, retry
         core.error("Ticket runner: #" + issueNumber + " agent/done but no PR found. Retrying.");
         await retryOrFail(issueNumber, state);
@@ -636,6 +971,7 @@ module.exports = async ({ github, context, core }) => {
   }
 
   async function handleReviewCompletion(issueNumber, state, phaseFailed) {
+    state.review_in_progress = false;
     if (phaseFailed) {
       await retryOrFail(issueNumber, state);
       return;
@@ -665,36 +1001,80 @@ module.exports = async ({ github, context, core }) => {
         await updateIssueState(issueNumber, state);
         await github.rest.issues.createComment({
           owner, repo, issue_number: state.pr,
-          body: "Agent review passed. Awaiting human approval via native GitHub PR Review UI."
+          body: "Agent review passed. Awaiting human approval via native GitHub PR Review UI, or `/oc approve` on the PR."
         });
         core.info("Ticket runner: #" + issueNumber + " -> HUMAN_REVIEW");
-      } else if (await h.isDiffSafe(state.pr) && await h.isCIGreen(state.pr)) {
-        state.phase = "MERGE";
-        state.history.push({ event: "review_approved", next: "MERGE", timestamp: new Date().toISOString() });
-        try {
-          await h.mergePR(state.pr);
-          state.phase = "DONE";
-          state.history.push({ event: "merged", pr: state.pr, timestamp: new Date().toISOString() });
-          await updateIssueState(issueNumber, state);
-          await closeIssueWithLabel(issueNumber);
-          core.info("Ticket runner: #" + issueNumber + " merged and closed.");
-        } catch (err) {
-          core.error("Failed to merge PR #" + state.pr + ": " + err.message);
-          state.history.push({ event: "merge_failed", error: err.message, timestamp: new Date().toISOString() });
+      } else {
+        // Ordering matters: CI first, then the diff. A red-CI PR with a big
+        // diff must not reach a human, because human approval only re-checks CI
+        // (handlePullRequestReview) and a deferred merge on red CI has a wakeup
+        // while a queue in HUMAN_REVIEW does not. Deferring on red CI is
+        // strictly safer and the wakeup provably fires.
+        var diffSafe = await h.isDiffSafe(state.pr);
+        var ciGreen = await h.isCIGreen(state.pr);
+        var forbidden = diffSafe ? false : await h.touchesForbiddenPath(state.pr);
+
+        if (!ciGreen) {
+          // Do NOT prompt. The reviewer could approve a PR whose checks have
+          // not passed, and a human approval only re-checks CI. Park with
+          // review_pending_ci set; the
+          // Java CI success wakeup clears it and posts the prompt on green.
+          state.review_pending_ci = true;
+          state.history.push({ event: "merge_deferred", reason: "ci_not_green", timestamp: new Date().toISOString() });
           await updateIssueState(issueNumber, state);
           await github.rest.issues.createComment({
             owner, repo, issue_number: state.pr,
-            body: "\u26a0\ufe0f Ticket runner: failed to auto-merge PR #" + state.pr + ": " + err.message
+            body: "Agent review passed but auto-merge deferred: Java CI is not green yet. Will re-check when CI completes."
           });
+          core.info("Ticket runner: #" + issueNumber + " merge deferred (CI not green), staying in REVIEW");
+        } else if (forbidden) {
+          // Hard wall, not a wait. The diff touches a path auto-merge may never
+          // touch (ASM, build config, plugin lists), so no amount of waiting or
+          // human approval makes it mergeable by this runner. Route to a human
+          // rather than looping, and say which wall was hit.
+          state.phase = "HUMAN_REVIEW";
+          state.retries = 0;
+          state.history.push({ event: "merge_blocked_forbidden_path", timestamp: new Date().toISOString() });
+          await updateIssueState(issueNumber, state);
+          await github.rest.issues.createComment({
+            owner, repo, issue_number: state.pr,
+            body: "Agent review passed but the diff touches a forbidden path (core/src/native/x86, jnode.properties, all/build.xml, or all/conf). This runner will not auto-merge it. Routing to HUMAN_REVIEW - if this must land, merge it yourself via the GitHub PR Review UI or `/oc approve` on the PR."
+          });
+          core.info("Ticket runner: #" + issueNumber + " -> HUMAN_REVIEW (forbidden path touched)");
+        } else if (!diffSafe) {
+          // Over the size budget. This is also a wait-free condition -- the
+          // budget only shrinks if someone pushes, so there is no wakeup to
+          // wait for. Say so instead of promising a CI re-check that will never
+          // help.
+          state.phase = "HUMAN_REVIEW";
+          state.retries = 0;
+          state.history.push({ event: "merge_blocked_diff_unsafe", timestamp: new Date().toISOString() });
+          await updateIssueState(issueNumber, state);
+          await github.rest.issues.createComment({
+            owner, repo, issue_number: state.pr,
+            body: "Agent review passed but the diff exceeds the auto-merge safety budget (isDiffSafe). Routing to HUMAN_REVIEW - approve via the GitHub PR Review UI or `/oc approve` on the PR to merge."
+          });
+          core.info("Ticket runner: #" + issueNumber + " -> HUMAN_REVIEW (diff over auto-merge budget)");
+        } else {
+          state.phase = "MERGE";
+          state.history.push({ event: "review_approved", next: "MERGE", timestamp: new Date().toISOString() });
+          try {
+            await h.mergePR(state.pr);
+            state.phase = "DONE";
+            state.history.push({ event: "merged", pr: state.pr, timestamp: new Date().toISOString() });
+            await updateIssueState(issueNumber, state);
+            await closeIssueWithLabel(issueNumber);
+            core.info("Ticket runner: #" + issueNumber + " merged and closed.");
+          } catch (err) {
+            core.error("Failed to merge PR #" + state.pr + ": " + err.message);
+            state.history.push({ event: "merge_failed", error: err.message, timestamp: new Date().toISOString() });
+            await updateIssueState(issueNumber, state);
+            await github.rest.issues.createComment({
+              owner, repo, issue_number: state.pr,
+              body: "⚠️ Ticket runner: failed to auto-merge PR #" + state.pr + ": " + err.message
+            });
+          }
         }
-      } else {
-        state.history.push({ event: "merge_deferred", timestamp: new Date().toISOString() });
-        await updateIssueState(issueNumber, state);
-        await github.rest.issues.createComment({
-          owner, repo, issue_number: state.pr,
-          body: "Agent review passed but auto-merge deferred (diff not safe or CI not green). Will retry when CI completes."
-        });
-        core.info("Ticket runner: #" + issueNumber + " merge deferred, staying in REVIEW");
       }
     } else if (verdict === "request-changes") {
       state.turn += 1;
@@ -717,9 +1097,26 @@ module.exports = async ({ github, context, core }) => {
         core.info("Ticket runner: #" + issueNumber + " -> FEEDBACK (turn " + state.turn + ")");
       }
     } else {
-      // No verdict found -- retry
-      core.warning("Ticket runner: no verdict found for PR #" + state.pr + ". Retrying review.");
-      await retryOrFail(issueNumber, state);
+      // No verdict found. Two different states lead here, and only one of them
+      // should re-prompt.
+      //
+      // A prompt WAS posted (review_pending_ci false): the reviewer has not
+      // answered yet, so re-prompting after a stray completion is correct.
+      //
+      // No prompt was posted (review_pending_ci true) and CI is still red: we
+      // parked waiting for CI and never asked anyone, so re-prompting would post
+      // /oc review on a red-CI PR -- the exact race the CI gate exists to
+      // prevent. Do nothing; the Java CI success wakeup clears the parked flag
+      // and posts the prompt on green. If CI has gone green meanwhile, fall
+      // through to retryOrFail, which posts it through requestReview and clears
+      // the flag.
+      if (state.review_pending_ci && !(await h.isCIGreen(state.pr))) {
+        core.info("Ticket runner: #" + issueNumber + " review parked pending CI. Not re-prompting on red CI.");
+        await updateIssueState(issueNumber, state);
+      } else {
+        core.warning("Ticket runner: no verdict found for PR #" + state.pr + ". Retrying review.");
+        await retryOrFail(issueNumber, state);
+      }
     }
   }
 
@@ -747,8 +1144,14 @@ module.exports = async ({ github, context, core }) => {
     state.phase = "REVIEW";
     state.retries = 0;
     state.history.push({ event: "feedback_done", timestamp: new Date().toISOString() });
+    var ciGreen = await h.isCIGreen(state.pr);
+    if (!ciGreen) {
+      await parkForCI(issueNumber, state, state.pr, "CI not green after feedback");
+      return;
+    }
     await updateIssueState(issueNumber, state);
-    await h.triggerTask(state.pr, h.getReviewPrompt());
+    await requestReview(state, state.pr);
+    await updateIssueState(issueNumber, state);
     core.info("Ticket runner: #" + issueNumber + " -> REVIEW (after feedback)");
   }
 
@@ -757,6 +1160,15 @@ module.exports = async ({ github, context, core }) => {
   // ================================================================
 
   async function retryOrFail(issueNumber, state) {
+    // A retry that posts nothing must not cost a retry, whichever caller arrives.
+    // handleReviewCompletion can get here via phaseFailed before it reaches its
+    // own parked-skip, and the increment below is what pushed a healthy parked
+    // ticket to agent/failed on the third stray. Hoisted above the increment so
+    // a defer is free regardless of caller.
+    if (state.phase === "REVIEW" && state.pr && !(await h.isCIGreen(state.pr))) {
+      await parkForCI(issueNumber, state, state.pr, "retry suppressed: CI not green");
+      return;
+    }
     state.retries += 1;
     state.history.push({ event: "retry", retries: state.retries, phase: state.phase, timestamp: new Date().toISOString() });
     if (state.retries >= 3) {
@@ -768,20 +1180,30 @@ module.exports = async ({ github, context, core }) => {
       await applyLabel(issueNumber, "agent/failed");
       await github.rest.issues.createComment({
         owner, repo, issue_number: issueNumber,
-        body: "\u274c Ticket runner: phase " + failedPhase + " failed after 3 retries."
+        body: "❌ Ticket runner: phase " + failedPhase + " failed after 3 retries."
       });
     } else {
       var target = state.pr || issueNumber;
-      var msg = phaseMessage(state);
-      await updateIssueState(issueNumber, state);
-      await h.triggerTask(target, msg);
+      if (state.phase === "REVIEW") {
+        await updateIssueState(issueNumber, state);
+        await requestReview(state, target);
+        await updateIssueState(issueNumber, state);
+      } else {
+        var msg = phaseMessage(state);
+        await updateIssueState(issueNumber, state);
+        await h.triggerTask(target, msg);
+        core.info("Ticket runner: #" + issueNumber + " retrying (attempt " + (state.retries + 1) + "/3)");
+      }
       core.info("Ticket runner: #" + issueNumber + " retrying (attempt " + (state.retries + 1) + "/3)");
     }
   }
 
   function phaseMessage(state) {
+    // REVIEW deliberately has no branch. Both callers - the /run escape hatch
+    // and retryOrFail - gate on isCIGreen first and post through requestReview,
+    // so an ungated review prompt cannot be produced from here. Adding one
+    // would silently re-open the race this branch used to keep alive.
     if (state.phase === "FEEDBACK") return "/oc fix Address review feedback.";
-    if (state.phase === "REVIEW") return h.getReviewPrompt();
     return "/oc Please proceed with this task.";
   }
 
@@ -822,6 +1244,87 @@ module.exports = async ({ github, context, core }) => {
     } catch (err) {
       core.warning("Failed to add " + label + " to #" + issueNumber + ": " + err.message);
     }
+  }
+
+  /**
+   * Rebuild a TICKET_RUNNER_STATE block that was lost to an external issue-body
+   * edit. Returns true when a block was written (or already present).
+   *
+   * Only acts when a PR on an opencode/issueN- branch exists for the issue, so
+   * it cannot resurrect a ticket that never reached DEV. The block is written
+   * with phase REVIEW and review_in_progress false, which sends the ticket
+   * straight back to the review step rather than re-running DEV and risking a
+   * duplicate PR.
+   */
+  async function recoverLostState(issueNumber, conclusion) {
+    var issueData;
+    try {
+      issueData = await github.rest.issues.get({ owner, repo, issue_number: issueNumber });
+    } catch (err) {
+      core.warning("recoverLostState: cannot read #" + issueNumber + ": " + err.message);
+      return false;
+    }
+    if (issueData.data.pull_request) return false;
+    var body = issueData.data.body || "";
+    if (parseState(body)) return false;
+
+    // h.findPRForIssue matches on the opencode/issueN- branch prefix, so a
+    // same-numbered PR from an unrelated issue cannot be picked up here.
+    var found;
+    try {
+      found = await h.findPRForIssue(issueNumber);
+    } catch (err) {
+      core.warning("recoverLostState: findPRForIssue failed for #" + issueNumber + ": " + err.message);
+      return false;
+    }
+    if (!found) return false;
+
+    core.info("Ticket runner: #" + issueNumber + " lost its runner state but PR #" + found
+      + " exists; rebuilding block at REVIEW.");
+    var st = initState();
+    st.phase = "REVIEW";
+    st.pr = found;
+    st.review_in_progress = false;
+    st.started = new Date().toISOString();
+    st.history.push({
+      event: "state_recovered",
+      reason: "runner state block missing; rebuilt from existing PR #" + found,
+      pr: found,
+      timestamp: new Date().toISOString()
+    });
+    var newBody = replaceOrAppendStatus(body, st, issueNumber);
+    try {
+      await github.rest.issues.update({ owner, repo, issue_number: issueNumber, body: newBody });
+    } catch (err) {
+      core.warning("recoverLostState: body update failed for #" + issueNumber + ": " + err.message);
+      return false;
+    }
+
+    // A failed workflow_run is a DEV failure; let the normal retry path own it
+    // rather than starting a review on a broken branch.
+    if (conclusion !== "success") {
+      await retryOrFail(issueNumber, st);
+      return true;
+    }
+    var ciGreen = await h.isCIGreen(found);
+    if (!ciGreen) {
+      st.review_in_progress = false;
+      st.review_pending_ci = true;
+      st.history.push({ event: "review_pending_ci", timestamp: new Date().toISOString() });
+      try {
+        await github.rest.issues.update({ owner, repo, issue_number: issueNumber, body: replaceOrAppendStatus(body, st, issueNumber) });
+      } catch (_) { /* state already rebuilt above; wakeup will re-read */ }
+      core.info("Ticket runner: #" + issueNumber + " recovered -> REVIEW on PR #" + found
+        + ", review waits for CI (Java CI wakeup will request it)");
+      return true;
+    }
+    await requestReview(st, found);
+    try {
+      await github.rest.issues.update({ owner, repo, issue_number: issueNumber, body: replaceOrAppendStatus(body, st, issueNumber) });
+    } catch (_) { /* non-fatal: the wakeup re-reads the state from the body */ }
+    core.info("Ticket runner: #" + issueNumber + " recovered -> REVIEW (requesting review of PR #"
+      + found + ")");
+    return true;
   }
 
   /** Search open issues for one whose TICKET_RUNNER_STATE.pr matches the given PR number. */

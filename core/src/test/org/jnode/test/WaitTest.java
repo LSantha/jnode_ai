@@ -20,71 +20,244 @@
  
 package org.jnode.test;
 
+import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertTrue;
+
+import org.junit.Test;
+
 /**
+ * JUnit4 host-runnable test for Object.wait/notify/notifyAll and the timed
+ * variant, see issue #501.
+ * <p/>
+ * The workload matches the original main() driven version of this class: a
+ * group of threads blocks in wait() on a shared monitor until it is
+ * signalled. The sequencing is explicit now (a counter of threads that
+ * reached the wait point, plus join()) instead of a fixed two second sleep,
+ * so the assertions are deterministic and the suite stays fast.
+ *
  * @author epr
  */
 public class WaitTest {
 
-    public static void main(String[] args)
-        throws Exception {
+    private static final long JOIN_TIMEOUT = 20000;
+    private static final long WAIT_TIMEOUT = 300;
 
-        for (int j = 0; j < 20; j++) {
-            final WaitTest wt = new WaitTest();
+    private boolean triggered;
+    private int entered;
+    private int finished;
+    private int woken;
+    private int timedOut;
+    private int interrupted;
 
-            for (int i = 0; i < 10; i++) {
-                final int k = i;
-                new Thread(new Runnable() {
-                    public void run() {
-                        wt.test(k);
-                    }
-                }).start();
+    @Test
+    public void testNotifyAllReleasesEveryWaiter() throws Exception {
+        final WaitTest wt = new WaitTest();
+        final int threadCount = 10;
+        final Thread[] threads = new Thread[threadCount];
+
+        for (int i = 0; i < threadCount; i++) {
+            final int k = i;
+            threads[i] = new Thread(new Runnable() {
+                public void run() {
+                    wt.awaitTrigger(k);
+                }
+            });
+            threads[i].start();
+        }
+
+        waitUntilEntered(wt, threadCount);
+        assertEquals("nobody may leave before the signal", 0, wt.getFinishedCount());
+        assertEquals(0, wt.getWokenCount());
+
+        wt.trigger();
+
+        for (int i = 0; i < threadCount; i++) {
+            threads[i].join(JOIN_TIMEOUT);
+            assertFalse("waiter " + i + " did not finish", threads[i].isAlive());
+        }
+        assertEquals(threadCount, wt.getWokenCount());
+        assertEquals(threadCount, wt.getFinishedCount());
+        assertEquals(0, wt.getTimedOutCount());
+    }
+
+    @Test
+    public void testNotifyWakesASingleWaiter() throws Exception {
+        final WaitTest wt = new WaitTest();
+        final Thread t = new Thread(new Runnable() {
+            public void run() {
+                wt.awaitTrigger(0);
             }
+        });
+        t.start();
+        waitUntilEntered(wt, 1);
 
-            Thread.sleep(2000);
+        wt.notifyOne();
+        t.join(JOIN_TIMEOUT);
 
-            wt.trigger();
+        assertFalse("wait() was not woken by notify()", t.isAlive());
+        assertEquals(1, wt.getWokenCount());
+        assertEquals(1, wt.getFinishedCount());
+    }
 
-            // Now test the wait with timeout
+    @Test
+    public void testTimedWaitExpires() throws Exception {
+        final WaitTest wt = new WaitTest();
+        final Thread t = new Thread(new Runnable() {
+            public void run() {
+                wt.awaitTriggerTimed(0, WAIT_TIMEOUT);
+            }
+        });
+        t.start();
+        waitUntilEntered(wt, 1);
 
-            wt.testTimeout();
+        t.join(JOIN_TIMEOUT);
+
+        assertFalse("timed wait() did not expire", t.isAlive());
+        assertEquals(1, wt.getTimedOutCount());
+        assertEquals(0, wt.getWokenCount());
+        assertEquals(1, wt.getFinishedCount());
+    }
+
+    @Test
+    public void testTimedWaitIsWokenByNotifyAll() throws Exception {
+        final WaitTest wt = new WaitTest();
+        final Thread t = new Thread(new Runnable() {
+            public void run() {
+                wt.awaitTriggerTimed(0, JOIN_TIMEOUT);
+            }
+        });
+        t.start();
+        waitUntilEntered(wt, 1);
+
+        wt.trigger();
+        t.join(JOIN_TIMEOUT);
+
+        assertFalse("timed wait() was not woken by notifyAll()", t.isAlive());
+        assertEquals(1, wt.getWokenCount());
+        assertEquals(0, wt.getTimedOutCount());
+        assertEquals(1, wt.getFinishedCount());
+    }
+
+    @Test
+    public void testInterruptedWaiterReturns() throws Exception {
+        final WaitTest wt = new WaitTest();
+        final Thread t = new Thread(new Runnable() {
+            public void run() {
+                wt.awaitTrigger(0);
+            }
+        });
+        t.start();
+        waitUntilEntered(wt, 1);
+
+        t.interrupt();
+        t.join(JOIN_TIMEOUT);
+
+        assertFalse("interrupted wait() did not return", t.isAlive());
+        assertEquals(1, wt.getInterruptedCount());
+        assertEquals(0, wt.getWokenCount());
+        assertEquals(1, wt.getFinishedCount());
+    }
+
+    @Test
+    public void testWaitOnAlreadyTriggeredReturnsImmediately() throws Exception {
+        final WaitTest wt = new WaitTest();
+        wt.trigger();
+        wt.trigger();
+        assertTrue(wt.isTriggered());
+
+        final boolean[] done = {false};
+        final Thread t = new Thread(new Runnable() {
+            public void run() {
+                wt.awaitTrigger(0);
+                done[0] = true;
+            }
+        });
+        t.start();
+        t.join(JOIN_TIMEOUT);
+
+        assertFalse("wait() on a triggered object must not block", t.isAlive());
+        assertTrue("wait() on a triggered object must return", done[0]);
+        assertEquals(1, wt.getWokenCount());
+        assertEquals(0, wt.getEnteredCount());
+    }
+
+    private void waitUntilEntered(WaitTest wt, int count) throws InterruptedException {
+        final long deadline = System.currentTimeMillis() + JOIN_TIMEOUT;
+        while (wt.getEnteredCount() < count) {
+            final long remaining = deadline - System.currentTimeMillis();
+            assertTrue("waiter did not enter wait()", remaining > 0);
+            Thread.sleep(1);
         }
     }
 
-    private boolean trigger = false;
-
-    public synchronized void test(int i) {
-        if (trigger) {
-            //System.out.println("Skipping " + i);
-        } else {
-            try {
-                //System.out.println("Before wait " + i);
-                wait();
-                //System.out.println("After wait " + i);
-            } catch (InterruptedException ex) {
-                System.out.println("Interrupted " + i);
-            }
-            //System.out.println("Ready " + i);
+    public synchronized void awaitTrigger(int i) {
+        if (triggered) {
+            woken++;
+            finished++;
+            return;
         }
-    }
-
-    public synchronized void testTimeout() {
+        entered++;
         try {
-            //System.out.println("Before waitTimeout");
-            final long start = System.currentTimeMillis();
-            wait(500);
-            final long end = System.currentTimeMillis();
-            System.out.println("After waitTimeout: it took " + (end - start) + "ms");
+            wait();
+            woken++;
         } catch (InterruptedException ex) {
-            System.out.println("Interrupted in waitTimeout");
+            interrupted++;
         }
-        //System.out.println("Ready waitTimeout");
+        finished++;
+    }
+
+    public synchronized void awaitTriggerTimed(int i, long millis) {
+        if (triggered) {
+            woken++;
+            finished++;
+            return;
+        }
+        entered++;
+        try {
+            wait(millis);
+            if (triggered) {
+                woken++;
+            } else {
+                timedOut++;
+            }
+            finished++;
+        } catch (InterruptedException ex) {
+            interrupted++;
+            finished++;
+        }
     }
 
     public synchronized void trigger() {
-        //System.out.println("Before notifyAll");
-        trigger = true;
+        triggered = true;
         notifyAll();
-        //System.out.println("After notifyAll");
     }
 
+    public synchronized void notifyOne() {
+        notify();
+    }
+
+    public synchronized boolean isTriggered() {
+        return triggered;
+    }
+
+    public synchronized int getEnteredCount() {
+        return entered;
+    }
+
+    public synchronized int getFinishedCount() {
+        return finished;
+    }
+
+    public synchronized int getWokenCount() {
+        return woken;
+    }
+
+    public synchronized int getTimedOutCount() {
+        return timedOut;
+    }
+
+    public synchronized int getInterruptedCount() {
+        return interrupted;
+    }
 }

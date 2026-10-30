@@ -18,7 +18,7 @@ Development:
 Agentic development:
 - This is a fork of the classic JNode project, maintained as a living experiment in agent-driven development. GitHub Actions and OpenCode agents triage issues, implement fixes, review pull requests, update the wiki, and boot every build in QEMU before it lands.
 - Issue batching is coordinated through an orchestrator workflow; issues are labeled with `agent/in-progress`, `agent/done`, `agent/needs-info`, and routed by `/oc` verbs (`fix`, `investigate`, `review`, `wiki`, `triage`).
-- Agentic skills in the repo: `jnode-issue-resolver` (issue/PR resolution), `jnode-interact` (QEMU boot testing), `filesystem-debug` (filesystem bug diagnosis), `update-wiki` (wiki spoke pages).
+- Agentic skills in the repo: `jnode-issue-resolver` (issue/PR resolution), `jnode-qemu`/`jnode-vbox` (VM boot testing), `jnode-serial` (agent console/KDB transport), `filesystem-debug` (filesystem bug diagnosis), `update-wiki` (wiki spoke pages).
 - Workflow definitions: [opencode.yml](https://github.com/LSantha/jnode_ai/blob/master/.github/workflows/opencode.yml), [jnode-issue-resolver skill](https://github.com/LSantha/jnode_ai/blob/master/.opencode/skills/jnode-issue-resolver/SKILL.md)
 
 Reference:

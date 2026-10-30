@@ -104,7 +104,7 @@ The [ant.yml](https://github.com/LSantha/jnode_ai/blob/master/.github/workflows/
 
 | Tool | Purpose | Location |
 |------|---------|----------|
-| `jnode-interact` skill | Interactive QEMU testing via serial | repo `.opencode/skills/` |
+| `jnode-qemu` + `jnode-serial` skills | Interactive QEMU testing via serial | repo `.opencode/skills/` |
 | `filesystem-debug` skill | Analyze FS test failures | repo `.opencode/skills/` |
 | `jnode-issue-resolver` skill | Issue/PR resolution protocol | repo `.opencode/skills/` |
 | `jnode-java-coding` skill | Compile/run Java on live JNode | user config |

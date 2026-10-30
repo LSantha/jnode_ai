@@ -70,10 +70,14 @@ public class URLArgument extends Argument<URL> {
             if (url.getProtocol().equals("file") && 
                     (url.getAuthority() == null || url.getAuthority().length() == 0) &&
                     (url.getQuery() == null || url.getQuery().length() == 0)) {
-                // Use a FileArgument to do the work of completing the pathname, 
+                // Use a FileArgument to do the work of completing the pathname,
                 // capturing the results using our own CompletionInfo object.
+                // Note: doComplete is called directly rather than complete,
+                // because complete() calls isSet(), which throws
+                // SyntaxFailureException for an Argument that is not bound to
+                // an ArgumentBundle - and this helper Argument is never bound.
                 CompletionInfo myCompletion = new CommandCompletions();
-                new FileArgument(null, getFlags()).complete(myCompletion, url.getPath(), flags);
+                new FileArgument(null, getFlags()).doComplete(myCompletion, url.getPath(), flags);
                 // Then turn the completions back into "file:" URLs
                 for (String c : myCompletion.getCompletions()) {
                     // (Kludge - the 'true' argument prevents an extra space

@@ -12,6 +12,14 @@
 
 'use strict';
 
+const {
+  isRefusalComment,
+  isNeedsInfoComment,
+  isTriageComment,
+  isTriageClearComment,
+  isTriggerComment
+} = require('./report-signals.js');
+
 const AGENT_COMPLETION_RE = /^agent\/(done|investigated|skip|needs-info|blocked|failed)$/;
 const CLOSE_KINDS = ['kind/investigate', 'kind/question'];
 
@@ -19,33 +27,14 @@ function isPRContext(context) {
   return !!(context.payload.issue && context.payload.issue.pull_request);
 }
 
-function isRefusalComment(body) {
-  if (!body) return false;
-  return /refusal|out of scope|## 🤖 Refusal/i.test(body);
-}
-
-function isNeedsInfoComment(body) {
-  if (!body) return false;
-  return /needs more info from reporter|needs the following|suggested next:\s*needs-info/i.test(body);
-}
-
-function isTriageComment(body) {
-  if (!body) return false;
-  return /## .*Triage/i.test(body);
-}
-
-function isTriageClearComment(body) {
-  return isTriageComment(body) && !isNeedsInfoComment(body) && !isRefusalComment(body);
-}
-
-function isTriggerComment(body) {
-  if (!body) return false;
-  return /(^|\s)\/(oc|run|orchestrate)(\s|$)/.test(body);
-}
-
 function isDuplicateSignal(body) {
   if (!body) return false;
   return /duplicate-of-#\d+/i.test(body);
+}
+
+function isPRCreationComment(body) {
+  if (!body) return false;
+  return /\b(?:Created|Opened) PR #\d+\b/i.test(body);
 }
 
 function isInvestigationReport(body) {
@@ -54,7 +43,8 @@ function isInvestigationReport(body) {
 }
 
 function isAgentHeading(body) {
-  return body && (isRefusalComment(body) || isNeedsInfoComment(body) || isInvestigationReport(body) || isTriageComment(body));
+  return body && (isRefusalComment(body) || isNeedsInfoComment(body) || isInvestigationReport(body) ||
+    isTriageComment(body) || isPRCreationComment(body));
 }
 
 function findLatestAgentComment(comments) {
@@ -83,8 +73,11 @@ function decideAgentLabel({ existing, conclusion, latestComment, labels, isPR })
   if (isDuplicateSignal(latestComment)) {
     return { label: 'agent/duplicate', reason: 'duplicate-of link detected in comment' };
   }
+  if (isPRCreationComment(latestComment)) {
+    return { label: 'agent/done', reason: 'PR creation comment detected' };
+  }
   if (isTriageClearComment(latestComment)) {
-    return { label: null, clearNeedsInfo: true, reason: 'clear triage, no blocking label' };
+    return { label: null, clearNeedsInfo: true, clearFailed: true, reason: 'clear triage, no blocking label' };
   }
   if (conclusion === 'failure' || conclusion === 'cancelled') {
     return { label: 'agent/failed', reason: 'run concluded: ' + conclusion };
@@ -159,7 +152,18 @@ module.exports = async ({ github, context, core }) => {
       } catch (err) {
         core.warning('Failed to clear needs-info: ' + err.message);
       }
-    } else {
+    }
+    if (decision.clearFailed && labels.includes('agent/failed')) {
+      try {
+        await github.rest.issues.removeLabel({
+          owner, repo, issue_number: number, name: 'agent/failed',
+        });
+        core.info('Cleared stale agent/failed after clear triage');
+      } catch (err) {
+        core.warning('Failed to clear failed: ' + err.message);
+      }
+    }
+    if (!decision.clearNeedsInfo && !decision.clearFailed) {
       core.info('Clear triage, no label change');
     }
   } else {
