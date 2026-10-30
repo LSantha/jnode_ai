@@ -238,6 +238,9 @@
 	</patternset>
 
 	<target name="prepare">
+		<!-- Print the Java runtime used for the build up front, so version
+		     mismatches (e.g. running on 11 instead of 6) are visible. -->
+		<echo message="Java runtime: ${java.version} (${java.runtime.version}) in ${java.home}"/>
 		<!-- Fail on a Windows platform if there are spaces in the root dir's pathname.  It will
     	             lead to mkisofs dying with a misleading error message.  bluebit / crawley 2008-05-03 -->
 		<fail message="Cannot build JNode from a directory with spaces in the pathname.">
