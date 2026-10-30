@@ -237,14 +237,15 @@
 		<include name="**/*.xml"/>
 	</patternset>
 
-	<target name="java-version">
-		<!-- Common place to print the Java runtime used for the build, so
-		     version mismatches (e.g. running on 11 instead of 6) are visible.
-		     Put this target first in every depends chain. -->
+	<target name="environment">
+		<!-- Common place to print the build environment, so version mismatches
+		     (e.g. running on 11 instead of 6) are visible.  Put this target
+		     first in every depends chain. -->
 		<echo message="Java runtime: ${java.version} (${java.runtime.version}) in ${java.home}"/>
+		<echo message="Ant: ${ant.version} in ${ant.home}"/>
 	</target>
 
-	<target name="prepare" depends="java-version">
+	<target name="prepare" depends="environment">
 		<!-- Fail on a Windows platform if there are spaces in the root dir's pathname.  It will
     	             lead to mkisofs dying with a misleading error message.  bluebit / crawley 2008-05-03 -->
 		<fail message="Cannot build JNode from a directory with spaces in the pathname.">
@@ -643,7 +644,7 @@ clean             Remove all intermediate build results.
 	</target>
 
 	<!-- Save virtualization etc state across 'clean' -->
-	<target name="save" depends="java-version">
+	<target name="save" depends="environment">
 		<copy file="${cdroms.dir}/JNode.nvram" todir="${save.dir}" failonerror="no"/>
 	</target>
 
