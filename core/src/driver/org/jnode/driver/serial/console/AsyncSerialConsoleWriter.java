@@ -40,10 +40,12 @@ public class AsyncSerialConsoleWriter extends ConsoleWriter {
     private static final Logger log = Logger.getLogger(AsyncSerialConsoleWriter.class);
 
     static final int MAX_PENDING_CHARS = 8192;
+    static final long CLOSE_JOIN_TIMEOUT_MS = 1000;
 
     private final SerialPortAPI serialPort;
     private final Object lock = new Object();
     private final StringBuilder pending = new StringBuilder();
+    private final Thread drainThread;
 
     private long droppedChars;
     private long unreportedDrops;
@@ -57,7 +59,7 @@ public class AsyncSerialConsoleWriter extends ConsoleWriter {
             throw new IllegalArgumentException("null serial port");
         }
         this.serialPort = serialPort;
-        Thread drainThread = new Thread(new Runnable() {
+        drainThread = new Thread(new Runnable() {
             public void run() {
                 drainLoop();
             }
@@ -104,10 +106,18 @@ public class AsyncSerialConsoleWriter extends ConsoleWriter {
     }
 
     @Override
-    public void close() throws IOException {
+    public void close() {
         synchronized (lock) {
             closed = true;
             lock.notifyAll();
+        }
+        if (drainThread != Thread.currentThread()) {
+            drainThread.interrupt();
+            try {
+                drainThread.join(CLOSE_JOIN_TIMEOUT_MS);
+            } catch (InterruptedException ex) {
+                Thread.currentThread().interrupt();
+            }
         }
     }
 
@@ -148,6 +158,11 @@ public class AsyncSerialConsoleWriter extends ConsoleWriter {
                 log.error("Serial console output failed; disabling further output", ex);
                 return;
             }
+            synchronized (lock) {
+                if (closed && pending.length() == 0 && unreportedDrops == 0) {
+                    return;
+                }
+            }
             if (Thread.currentThread().isInterrupted()) {
                 return;
             }
@@ -166,6 +181,10 @@ public class AsyncSerialConsoleWriter extends ConsoleWriter {
             }
             serialPort.writeSingle(ch);
         }
+    }
+
+    Thread getDrainThread() {
+        return drainThread;
     }
 
     int getPendingCount() {

@@ -45,7 +45,7 @@ public class SerialAgentConsole extends AbstractConsole implements TextConsole {
 
     private final SerialPortAPI serialPort;
     private final KeyboardReader in;
-    private final ConsoleWriter out;
+    private final AsyncSerialConsoleWriter out;
     private final ConsoleWriter err;
 
     public SerialAgentConsole(ConsoleManager mgr, String name, SerialPortAPI serialPort) {
@@ -60,6 +60,12 @@ public class SerialAgentConsole extends AbstractConsole implements TextConsole {
         
         this.out = new AsyncSerialConsoleWriter(this, 0x07, serialPort);
         this.err = this.out;
+    }
+
+    @Override
+    public void close() {
+        out.close();
+        super.close();
     }
 
     @Override
