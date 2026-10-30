@@ -46,6 +46,7 @@ public class AsyncSerialConsoleWriter extends ConsoleWriter {
     private final StringBuilder pending = new StringBuilder();
 
     private long droppedChars;
+    private long unreportedDrops;
     private boolean closed;
     private boolean failed;
 
@@ -86,7 +87,9 @@ public class AsyncSerialConsoleWriter extends ConsoleWriter {
             }
             int space = MAX_PENDING_CHARS - pending.length();
             if (len > space) {
-                droppedChars += len - space;
+                int excess = len - space;
+                droppedChars += excess;
+                unreportedDrops += excess;
                 len = space;
             }
             if (len > 0) {
@@ -111,8 +114,9 @@ public class AsyncSerialConsoleWriter extends ConsoleWriter {
     private void drainLoop() {
         while (true) {
             String chunk;
+            long dropped;
             synchronized (lock) {
-                while (pending.length() == 0 && !closed) {
+                while (pending.length() == 0 && unreportedDrops == 0 && !closed) {
                     try {
                         lock.wait();
                     } catch (InterruptedException ex) {
@@ -120,19 +124,26 @@ public class AsyncSerialConsoleWriter extends ConsoleWriter {
                         return;
                     }
                 }
-                if (pending.length() == 0 && closed) {
+                if (pending.length() == 0 && unreportedDrops == 0 && closed) {
                     return;
                 }
                 chunk = pending.toString();
                 pending.setLength(0);
+                dropped = unreportedDrops;
+                unreportedDrops = 0;
+            }
+            int chunkLength = chunk.length();
+            if (dropped > 0) {
+                chunk = chunk + truncationMarker(dropped);
             }
             try {
                 writeChunk(chunk);
             } catch (RuntimeException ex) {
                 synchronized (lock) {
                     failed = true;
-                    droppedChars += chunk.length() + pending.length();
+                    droppedChars += chunkLength + pending.length();
                     pending.setLength(0);
+                    unreportedDrops = 0;
                 }
                 log.error("Serial console output failed; disabling further output", ex);
                 return;
@@ -141,6 +152,10 @@ public class AsyncSerialConsoleWriter extends ConsoleWriter {
                 return;
             }
         }
+    }
+
+    private static String truncationMarker(long dropped) {
+        return "\n[... truncated " + dropped + " chars ...]\n";
     }
 
     private void writeChunk(String chunk) {
