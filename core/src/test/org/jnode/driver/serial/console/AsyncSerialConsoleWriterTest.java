@@ -104,7 +104,72 @@ public class AsyncSerialConsoleWriterTest {
         }
     }
 
-    private static final class BlockingSerialPort implements SerialPortAPI {
+    @Test
+    public void testThrowingPortDisablesWriterWithAccounting() throws Exception {
+        final ThrowingSerialPort port = new ThrowingSerialPort();
+        final AsyncSerialConsoleWriter writer =
+                new AsyncSerialConsoleWriter(null, 0x07, port);
+        try {
+            writer.write('a');
+            port.awaitWriteAttempt(2000);
+
+            long deadline = System.currentTimeMillis() + 5000;
+            while (System.currentTimeMillis() < deadline && !writer.isFailed()) {
+                Thread.sleep(10);
+            }
+            assertTrue("writer did not detect the port fault", writer.isFailed());
+
+            long droppedBefore = writer.getDroppedChars();
+            writer.write('b');
+            assertTrue("writes after failure were not dropped with accounting",
+                    writer.getDroppedChars() > droppedBefore);
+            assertTrue("failed writer still queued output", writer.getPendingCount() == 0);
+        } finally {
+            writer.close();
+        }
+    }
+
+    private abstract static class StubSerialPort implements SerialPortAPI {
+
+        public void configure(int divisor, int bits, boolean longStop,
+                boolean parity, boolean pEven) {
+        }
+
+        public void configure(int divisor) {
+        }
+
+        public boolean isDataAvailable() {
+            return true;
+        }
+
+        public int readSingle() {
+            return 0;
+        }
+
+        public void flush() {
+        }
+
+        public ByteChannel getChannel(Device owner) throws ChannelAlreadyOwnedException {
+            return new ByteChannel() {
+                public int read(ByteBuffer dst) {
+                    return 0;
+                }
+
+                public int write(ByteBuffer src) {
+                    return src.remaining();
+                }
+
+                public boolean isOpen() {
+                    return true;
+                }
+
+                public void close() {
+                }
+            };
+        }
+    }
+
+    private static final class BlockingSerialPort extends StubSerialPort {
 
         private final Object monitor = new Object();
         private final StringBuilder received = new StringBuilder();
@@ -155,42 +220,33 @@ public class AsyncSerialConsoleWriterTest {
                 received.append((char) (value & 0xFF));
             }
         }
+    }
 
-        public void configure(int divisor, int bits, boolean longStop,
-                boolean parity, boolean pEven) {
-        }
+    private static final class ThrowingSerialPort extends StubSerialPort {
 
-        public void configure(int divisor) {
-        }
+        private final Object monitor = new Object();
+        private boolean attempted;
 
-        public boolean isDataAvailable() {
-            return true;
-        }
-
-        public int readSingle() {
-            return 0;
-        }
-
-        public void flush() {
-        }
-
-        public ByteChannel getChannel(Device owner) throws ChannelAlreadyOwnedException {
-            return new ByteChannel() {
-                public int read(ByteBuffer dst) {
-                    return 0;
+        public void awaitWriteAttempt(long timeoutMs) throws InterruptedException {
+            long deadline = System.currentTimeMillis() + timeoutMs;
+            synchronized (monitor) {
+                while (!attempted) {
+                    long remaining = deadline - System.currentTimeMillis();
+                    if (remaining <= 0) {
+                        break;
+                    }
+                    monitor.wait(remaining);
                 }
+                assertTrue("drain thread never touched the port", attempted);
+            }
+        }
 
-                public int write(ByteBuffer src) {
-                    return src.remaining();
-                }
-
-                public boolean isOpen() {
-                    return true;
-                }
-
-                public void close() {
-                }
-            };
+        public void writeSingle(int value) {
+            synchronized (monitor) {
+                attempted = true;
+                monitor.notifyAll();
+            }
+            throw new IllegalStateException("injected serial port fault");
         }
     }
 }
