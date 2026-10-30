@@ -258,20 +258,16 @@
 			</condition>
 		</fail>
 
+		<!-- Accepted runtimes, anchored so substrings cannot match accidentally:
+		     1.6/1.7/1.8 (JDK 6-8 numbering) and 9/10/11 (post-6 numbering),
+		     optionally followed by a version/vendor suffix (11.0.13, 9+, ...).
+		     Everything above 11 is rejected: the build is only verified up
+		     to 11 (source level 6 was dropped in JDK 12). -->
 		<fail message="Java Runtime version 1.6, 1.7, 1.8, 9, 10 or 11 needed. Your version is: ${java.runtime.version}">
 			<condition>
 				<not>
-					<or>
-						<contains string="${java.runtime.version}" substring="1.6" casesensitive="false"/>
-						<contains string="${java.runtime.version}" substring="1.7" casesensitive="false"/>
-						<contains string="${java.runtime.version}" substring="1.8" casesensitive="false"/>
-						<contains string="${java.runtime.version}" substring="9." casesensitive="false"/>
-						<contains string="${java.runtime.version}" substring="9+" casesensitive="false"/>
-						<contains string="${java.runtime.version}" substring="10." casesensitive="false"/>
-						<contains string="${java.runtime.version}" substring="10+" casesensitive="false"/>
-						<contains string="${java.runtime.version}" substring="11." casesensitive="false"/>
-						<contains string="${java.runtime.version}" substring="11+" casesensitive="false"/>
-					</or>
+					<matches string="${java.runtime.version}"
+						pattern="^(1\.[678]|9|10|11)($|[+.].*)" casesensitive="false"/>
 				</not>
 			</condition>
 		</fail>

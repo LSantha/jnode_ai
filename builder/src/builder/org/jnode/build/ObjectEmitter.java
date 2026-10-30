@@ -24,6 +24,8 @@ import java.io.PrintWriter;
 import java.lang.reflect.Array;
 import java.lang.reflect.Field;
 import java.lang.reflect.Modifier;
+import java.security.AccessControlContext;
+import java.security.ProtectionDomain;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
@@ -46,9 +48,6 @@ import org.jnode.vm.classmgr.VmType;
 import org.jnode.vm.objects.BootableObject;
 import org.jnode.vm.objects.VmSystemObject;
 import org.vmmagic.unboxed.UnboxedObject;
-
-import java.security.AccessControlContext;
-import java.security.ProtectionDomain;
 
 public class ObjectEmitter {
 
