@@ -20,6 +20,7 @@
 
 package org.jnode.driver.serial.console;
 
+import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
 
 import java.nio.ByteBuffer;
@@ -77,6 +78,76 @@ public class AsyncSerialConsoleWriterTest {
             port.release();
             writer.close();
         }
+    }
+
+    @Test
+    public void testOversizedOutputRetainsTruncationMarker() throws Exception {
+        final BlockingSerialPort port = new BlockingSerialPort();
+        final AsyncSerialConsoleWriter writer =
+                new AsyncSerialConsoleWriter(null, 0x07, port);
+        try {
+            writer.write('!');
+            port.awaitBlocked(2000);
+
+            final int length = AsyncSerialConsoleWriter.MAX_PENDING_CHARS + 1808;
+            char[] data = new char[length];
+            Arrays.fill(data, 'C');
+            writer.write(data, 0, data.length);
+
+            long expectedDropped = length - AsyncSerialConsoleWriter.MAX_PENDING_CHARS;
+            port.release();
+
+            long deadline = System.currentTimeMillis() + 5000;
+            while (System.currentTimeMillis() < deadline &&
+                    port.getReceived().indexOf("truncated") < 0) {
+                Thread.sleep(10);
+            }
+            String received = port.getReceived();
+            assertTrue("truncation marker missing from output",
+                    received.indexOf("[... truncated " + expectedDropped + " chars ...]") >= 0);
+            assertTrue("truncation marker was not retained at the tail: " + tail(received),
+                    received.endsWith("chars ...]\r\n"));
+        } finally {
+            port.release();
+            writer.close();
+        }
+    }
+
+    @Test
+    public void testSmallOutputIsDeliveredWithoutTruncationMarker() throws Exception {
+        final BlockingSerialPort port = new BlockingSerialPort();
+        final AsyncSerialConsoleWriter writer =
+                new AsyncSerialConsoleWriter(null, 0x07, port);
+        try {
+            writer.write('!');
+            port.awaitBlocked(2000);
+
+            char[] data = new char[100];
+            Arrays.fill(data, 's');
+            writer.write(data, 0, data.length);
+            port.release();
+
+            long deadline = System.currentTimeMillis() + 5000;
+            while (System.currentTimeMillis() < deadline &&
+                    port.getReceived().length() < data.length + 1) {
+                Thread.sleep(10);
+            }
+            String received = port.getReceived();
+            assertTrue("small output was not fully delivered: " + tail(received),
+                    received.length() == data.length + 1);
+            assertFalse("small output must not carry a truncation marker",
+                    received.indexOf("truncated") >= 0);
+            assertTrue("small output was unexpectedly dropped",
+                    writer.getDroppedChars() == 0);
+        } finally {
+            port.release();
+            writer.close();
+        }
+    }
+
+    private static String tail(String value) {
+        int start = value.length() > 80 ? value.length() - 80 : 0;
+        return value.substring(start);
     }
 
     @Test
