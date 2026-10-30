@@ -57,7 +57,7 @@
 		</copy>
 	</target>
 
-	<target name="pre-compile" depends="prepare" description="Compile the Template ANT task needed for compiling the core.">
+	<target name="pre-compile" depends="prepare" description="Compile the Template and Native2Ascii ANT tasks needed before the main compile.">
 		<javac destdir="${my-classes.dir}"
 	       debug="on"
 	       optimize="on"
@@ -71,7 +71,9 @@
            srcdir="${my-src.dir}/builder/">
 			<bootclasspath path="${jnode-core.jar}"/>
 			<compilerarg value="${compilerarg}"/>
-			<filename name="org/jnode/ant/taskdefs/TemplateTask.java" />
+			<include name="org/jnode/ant/taskdefs/TemplateTask.java"/>
+			<include name="org/jnode/ant/taskdefs/FileSetTask.java"/>
+			<include name="org/jnode/ant/taskdefs/Native2AsciiTask.java"/>
 		</javac>
 		<jar jarfile="${jnode-builder.jar}"
         basedir="${my-classes.dir}"
@@ -97,40 +99,18 @@
 		</condition>
 	</target>
 
-	<!-- native2ascii was removed from the JDK (11+). The JNAsm grammars are
-	     ASCII-clean (verified), so conversion is a no-op: when the tool is
-	     absent the generated sources are moved back unconverted. -->
-	<condition property="native2ascii.available">
-		<or>
-			<available file="${java.home}/bin/native2ascii"/>
-			<available file="${java.home}/bin/native2ascii.exe"/>
-		</or>
-	</condition>
-
-	<target name="native2ascii" depends="javacc" if="run.native2ascii">
-		<!-- Don't swap move & native2ascii tasks ! On Windows, we need to call them
-    	         in that order because native2ascii prevent from overwritting its source file -->
-		<move file="${jnasm-preprocessor-gen.dir}/JNAsmPP.java"
-        tofile="${jnasm-preprocessor-gen.dir}/JNAsmPP" overwrite="yes"/>
-		<move file="${jnasm-assembler-gen.dir}/JNAsm.java"
-        tofile="${jnasm-assembler-gen.dir}/JNAsm" overwrite="yes"/>
-		<antcall target="native2ascii-do-convert"/>
-		<antcall target="native2ascii-do-copyback"/>
-	</target>
-
-	<target name="native2ascii-do-convert" if="native2ascii.available">
-		<native2ascii src="${jnasm-preprocessor-gen.dir}" includes="JNAsmPP"
-                 dest="${jnasm-preprocessor-gen.dir}" ext=".java"/>
-		<native2ascii src="${jnasm-assembler-gen.dir}" includes="JNAsm"
-                 dest="${jnasm-assembler-gen.dir}" ext=".java"/>
-	</target>
-
-	<target name="native2ascii-do-copyback" unless="native2ascii.available">
-		<echo message="native2ascii tool not available (JDK 11+); generated parser sources are ASCII-clean, using unconverted."/>
-		<move file="${jnasm-preprocessor-gen.dir}/JNAsmPP"
-        tofile="${jnasm-preprocessor-gen.dir}/JNAsmPP.java" overwrite="yes"/>
-		<move file="${jnasm-assembler-gen.dir}/JNAsm"
-        tofile="${jnasm-assembler-gen.dir}/JNAsm.java" overwrite="yes"/>
+	<!-- Convert the JavaCC-generated parser sources to ASCII escapes.
+	     Uses the in-tree Native2AsciiTask (compiled in pre-compile), so the
+	     external native2ascii tool, removed from the JDK in version 9+, is
+	     not needed. The move-away dance the old JDK-tool invocation needed
+	     is unnecessary: the task converts each file in place atomically. -->
+	<target name="native2ascii" depends="javacc,pre-compile" if="run.native2ascii">
+		<taskdef name="n2a" classname="org.jnode.ant.taskdefs.Native2AsciiTask"
+			classpath="${my-classes.dir}"/>
+		<n2a update="true">
+			<fileset dir="${jnasm-preprocessor-gen.dir}" includes="JNAsmPP.java"/>
+			<fileset dir="${jnasm-assembler-gen.dir}" includes="JNAsm.java"/>
+		</n2a>
 	</target>
 
 	<!-- Compile all subproject java files -->
