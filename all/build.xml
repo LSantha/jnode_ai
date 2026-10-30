@@ -640,6 +640,9 @@ clean             Remove all intermediate build results.
 
 	<!-- Save virtualization etc state across 'clean' -->
 	<target name="save">
+		<!-- Print the Java runtime used for the build up front, so version
+		     mismatches are visible even on clean. -->
+		<echo message="Java runtime: ${java.version} (${java.runtime.version}) in ${java.home}"/>
 		<copy file="${cdroms.dir}/JNode.nvram" todir="${save.dir}" failonerror="no"/>
 	</target>
 
