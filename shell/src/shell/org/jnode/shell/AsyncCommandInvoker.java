@@ -186,6 +186,10 @@ public abstract class AsyncCommandInvoker implements SimpleCommandInvoker,
                     + cmdName + " has been killed)");
             unblock();
 
+            if (threadProcess instanceof Thread) {
+                ((Thread) threadProcess).interrupt();
+            }
+
             AccessController.doPrivileged(new PrivilegedAction<Void>() {
                 public Void run() {
                     threadProcess.stop(new ThreadDeath());

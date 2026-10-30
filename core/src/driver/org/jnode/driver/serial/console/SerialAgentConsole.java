@@ -58,8 +58,7 @@ public class SerialAgentConsole extends AbstractConsole implements TextConsole {
         // Disable echo in the reader for agent mode (though RawKeyboardReader ignores this anyway)
         this.in.setEcho(false);
         
-        // Use standard ConsoleWriter which satisfies CommandShell cast
-        this.out = new ConsoleWriter(this, 0x07);
+        this.out = new AsyncSerialConsoleWriter(this, 0x07, serialPort);
         this.err = this.out;
     }
 
