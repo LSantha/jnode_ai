@@ -266,6 +266,7 @@
 						<contains string="${java.runtime.version}" substring="1.7" casesensitive="false"/>
 						<contains string="${java.runtime.version}" substring="1.8" casesensitive="false"/>
 						<contains string="${java.runtime.version}" substring="11." casesensitive="false"/>
+						<contains string="${java.runtime.version}" substring="11+" casesensitive="false"/>
 					</or>
 				</not>
 			</condition>
