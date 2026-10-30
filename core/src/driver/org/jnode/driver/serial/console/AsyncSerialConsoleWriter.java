@@ -22,6 +22,7 @@ package org.jnode.driver.serial.console;
 
 import java.io.IOException;
 
+import org.apache.log4j.Logger;
 import org.jnode.driver.console.TextConsole;
 import org.jnode.driver.console.spi.ConsoleWriter;
 import org.jnode.driver.serial.SerialPortAPI;
@@ -36,6 +37,8 @@ import org.jnode.driver.serial.SerialPortAPI;
  */
 public class AsyncSerialConsoleWriter extends ConsoleWriter {
 
+    private static final Logger log = Logger.getLogger(AsyncSerialConsoleWriter.class);
+
     static final int MAX_PENDING_CHARS = 8192;
 
     private final SerialPortAPI serialPort;
@@ -44,6 +47,7 @@ public class AsyncSerialConsoleWriter extends ConsoleWriter {
 
     private long droppedChars;
     private boolean closed;
+    private boolean failed;
 
     public AsyncSerialConsoleWriter(TextConsole console, int fgColor,
             SerialPortAPI serialPort) {
@@ -76,6 +80,10 @@ public class AsyncSerialConsoleWriter extends ConsoleWriter {
             return;
         }
         synchronized (lock) {
+            if (failed) {
+                droppedChars += len;
+                return;
+            }
             int space = MAX_PENDING_CHARS - pending.length();
             if (len > space) {
                 droppedChars += len - space;
@@ -118,7 +126,17 @@ public class AsyncSerialConsoleWriter extends ConsoleWriter {
                 chunk = pending.toString();
                 pending.setLength(0);
             }
-            writeChunk(chunk);
+            try {
+                writeChunk(chunk);
+            } catch (RuntimeException ex) {
+                synchronized (lock) {
+                    failed = true;
+                    droppedChars += chunk.length() + pending.length();
+                    pending.setLength(0);
+                }
+                log.error("Serial console output failed; disabling further output", ex);
+                return;
+            }
             if (Thread.currentThread().isInterrupted()) {
                 return;
             }
@@ -144,6 +162,12 @@ public class AsyncSerialConsoleWriter extends ConsoleWriter {
     long getDroppedChars() {
         synchronized (lock) {
             return droppedChars;
+        }
+    }
+
+    boolean isFailed() {
+        synchronized (lock) {
+            return failed;
         }
     }
 }
