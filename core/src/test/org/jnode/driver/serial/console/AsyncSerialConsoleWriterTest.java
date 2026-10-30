@@ -145,6 +145,33 @@ public class AsyncSerialConsoleWriterTest {
         }
     }
 
+    @Test
+    public void testCloseIsBoundedAndDrainExitsAfterPortRelease() throws Exception {
+        final BlockingSerialPort port = new BlockingSerialPort(true);
+        final AsyncSerialConsoleWriter writer =
+                new AsyncSerialConsoleWriter(null, 0x07, port);
+        final Thread drain = writer.getDrainThread();
+        try {
+            writer.write('!');
+            port.awaitBlocked(2000);
+
+            long start = System.currentTimeMillis();
+            writer.close();
+            long elapsed = System.currentTimeMillis() - start;
+
+            assertTrue("close() blocked for " + elapsed + "ms on a stalled port",
+                    elapsed < AsyncSerialConsoleWriter.CLOSE_JOIN_TIMEOUT_MS + 4000);
+            assertTrue("drain thread did not survive the stalled write", drain.isAlive());
+
+            port.release();
+            drain.join(5000);
+            assertFalse("drain thread did not exit after the port was released", drain.isAlive());
+        } finally {
+            port.release();
+            writer.close();
+        }
+    }
+
     private static String tail(String value) {
         int start = value.length() > 80 ? value.length() - 80 : 0;
         return value.substring(start);
@@ -244,8 +271,17 @@ public class AsyncSerialConsoleWriterTest {
 
         private final Object monitor = new Object();
         private final StringBuilder received = new StringBuilder();
+        private final boolean ignoreInterrupts;
         private boolean blocked;
         private boolean released;
+
+        BlockingSerialPort() {
+            this(false);
+        }
+
+        BlockingSerialPort(boolean ignoreInterrupts) {
+            this.ignoreInterrupts = ignoreInterrupts;
+        }
 
         public void awaitBlocked(long timeoutMs) throws InterruptedException {
             long deadline = System.currentTimeMillis() + timeoutMs;
@@ -282,8 +318,10 @@ public class AsyncSerialConsoleWriterTest {
                     try {
                         monitor.wait();
                     } catch (InterruptedException ex) {
-                        Thread.currentThread().interrupt();
-                        return;
+                        if (!ignoreInterrupts) {
+                            Thread.currentThread().interrupt();
+                            return;
+                        }
                     }
                 }
             }
