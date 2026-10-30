@@ -243,6 +243,7 @@
 		     first in every depends chain. -->
 		<echo message="Java runtime: ${java.version} (${java.runtime.version}) in ${java.home}"/>
 		<echo message="Ant: ${ant.version} in ${ant.home}"/>
+		<echo message="OS: ${os.name} ${os.version} (${os.arch})"/>
 	</target>
 
 	<target name="prepare" depends="environment">
