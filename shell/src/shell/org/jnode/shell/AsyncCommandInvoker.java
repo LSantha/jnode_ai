@@ -212,25 +212,29 @@ public abstract class AsyncCommandInvoker implements SimpleCommandInvoker,
     }
 
     /**
-     * Report a job-control action both globally (existing behavior: VGA / log)
-     * and on the invoking shell's own console, so serial agents see it too.
-     * Failures here must never propagate: this runs on the console's event
-     * thread and must not prevent the unblock/stop that follows.
+     * Report a job-control action on the invoking shell's own console, so
+     * serial agents see it too, falling back to the global stderr when the
+     * console is unavailable.  Only one destination is used: on a text
+     * console {@code System.err} is already wired to the same console, so
+     * writing both would display the message twice.  Failures here must
+     * never propagate: this runs on the console's event thread and must not
+     * prevent the unblock/stop that follows.
      */
     private void reportJobControl(String msg) {
-        System.err.println(msg);
         try {
             if (shell != null && shell.getConsole() != null) {
                 java.io.Writer w = shell.getConsole().getErr();
                 if (w != null) {
                     w.write(msg + '\n');
                     w.flush();
+                    return;
                 }
             }
         } catch (Throwable t) {
             // Ignore: port access from an event thread may lack I/O
-            // privilege; the message already went to the global stderr.
+            // privilege; fall back to the global stderr.
         }
+        System.err.println(msg);
     }
 
     /**

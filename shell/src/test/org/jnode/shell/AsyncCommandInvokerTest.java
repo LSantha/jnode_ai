@@ -20,6 +20,7 @@
  
 package org.jnode.shell;
 
+import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
 import static org.mockito.Matchers.any;
@@ -31,8 +32,10 @@ import static org.mockito.Mockito.when;
 import java.awt.event.InputEvent;
 import java.awt.event.KeyEvent;
 import java.io.ByteArrayOutputStream;
+import java.io.OutputStreamWriter;
 import java.io.PrintStream;
 
+import org.jnode.driver.console.TextConsole;
 import org.jnode.driver.input.KeyboardEvent;
 import org.junit.Test;
 
@@ -76,6 +79,39 @@ public class AsyncCommandInvokerTest {
 
         assertTrue(message.contains("could not be stopped"));
         assertFalse(message.contains("has been killed"));
+    }
+
+    @Test
+    @SuppressWarnings("deprecation")
+    public void testCtrlCMessageWrittenOnceWhenConsoleSharesSystemErr() {
+        CommandThread command = mock(CommandThread.class);
+        when(command.isAlive()).thenReturn(true);
+
+        ByteArrayOutputStream buffer = new ByteArrayOutputStream();
+        TextConsole console = mock(TextConsole.class);
+        CommandShell shell = mock(CommandShell.class);
+        when(shell.getConsole()).thenReturn(console);
+        when(console.getErr()).thenReturn(new OutputStreamWriter(buffer));
+
+        TestInvoker invoker = new TestInvoker(shell);
+        invoker.threadProcess = command;
+        invoker.blockingThread = Thread.currentThread();
+        invoker.cmdName = "sleep";
+
+        PrintStream oldErr = System.err;
+        System.setErr(new PrintStream(buffer));
+        try {
+            invoker.keyPressed(new KeyboardEvent(KeyEvent.KEY_PRESSED, 0,
+                    InputEvent.CTRL_DOWN_MASK, KeyEvent.VK_C, 'c'));
+        } finally {
+            System.setErr(oldErr);
+            Thread.interrupted();
+        }
+
+        String message = buffer.toString();
+        int first = message.indexOf("stop requested");
+        assertTrue(first >= 0);
+        assertEquals(-1, message.indexOf("stop requested", first + 1));
     }
 
     private String pressCtrlC(CommandThread command) {
