@@ -73,25 +73,67 @@ module.exports = function createHelpers({ github, context, core }) {
 
   /** Build the standard review prompt that the runner/orchestrator posts on PRs. */
   function getReviewPrompt() {
-    return "/oc review\n\nYou are reviewing a pull request for the automated pipeline. Your final line must be exactly one of:\nVerdict: approve\nVerdict: request-changes\n\nImmediately after the Verdict line, add one more line naming the model that produced this review, copied verbatim from the model your runtime reports (never invented):\nAssisted-by: <model id>\n\nA reviewer makes no commit, so this comment is the only place its model can be recorded; mergePR folds it into the merge commit as Reviewed-by. Use \"Verdict: request-changes\" if the PR needs code changes. Use \"Verdict: approve\" only if the PR is correct and ready for the next phase.";
+    return "/oc review\n\nYou are reviewing a pull request for the automated pipeline. Your final line must be exactly one of:\nVerdict: approve\nVerdict: request-changes\n\nPost this verdict as an ordinary COMMENT on the pull request (a native GitHub review is not usable here: the PR is authored by the maintainer, so GitHub blocks self-approval).\n\nImmediately after the Verdict line, add one more line naming the model that produced this review, copied verbatim from the model your runtime reports (never invented):\nAssisted-by: <model id>\n\nA reviewer makes no commit, so this comment is the only place its model can be recorded; mergePR folds it into the merge commit as Reviewed-by. Use \"Verdict: request-changes\" if the PR needs code changes. Use \"Verdict: approve\" only if the PR is correct and ready for the next phase.";
   }
 
   /** Scan comments on a PR for the latest Verdict line. Returns 'approve', 'request-changes', or null. */
   async function getAgentReviewVerdict(prNumber) {
-    var comments = await github.rest.issues.listComments({
-      owner, repo, issue_number: prNumber, per_page: 100
-    });
     var approveRe = /(?:\*{0,2}Verdict\*{0,2}:?\*{0,2}\s*:?\s*)approve\b/i;
     var requestChangesRe = /(?:\*{0,2}Verdict\*{0,2}:?\*{0,2}\s*:?\s*)request[-_]changes\b/i;
 
-    for (var i = comments.data.length - 1; i >= 0; i--) {
-      var body = comments.data[i].body || "";
-      // The review prompt itself quotes both verdicts; never read triggers as verdicts.
-      if (isTriggerComment(body)) continue;
-      if (requestChangesRe.test(body)) return "request-changes";
-      if (approveRe.test(body)) return "approve";
+    function warn(msg) {
+      if (core && core.warning) core.warning(msg);
     }
-    return null;
+
+    // Newest-first within a source; request-changes still wins over approve
+    // in the same body.
+    function scanBodies(bodies) {
+      for (var i = bodies.length - 1; i >= 0; i--) {
+        var body = bodies[i] || "";
+        // The review prompt itself quotes both verdicts; never read triggers as verdicts.
+        if (isTriggerComment(body)) continue;
+        if (requestChangesRe.test(body)) return "request-changes";
+        if (approveRe.test(body)) return "approve";
+      }
+      return null;
+    }
+
+    var commentBodies = [];
+    try {
+      var comments = await github.rest.issues.listComments({
+        owner, repo, issue_number: prNumber, per_page: 100
+      });
+      var cdata = (comments && comments.data) ? comments.data : comments;
+      for (var i = 0; i < cdata.length; i++) {
+        commentBodies.push(cdata[i].body || "");
+      }
+    } catch (err) {
+      warn("getAgentReviewVerdict: issue-comment read failed for PR #" + prNumber + ": " + err.message);
+    }
+
+    var verdict = scanBodies(commentBodies);
+    if (verdict) return verdict;
+
+    // Native PR reviews are the fallback source. An agent that tries to
+    // approve natively hits GitHub's self-approval block (PRs are authored by
+    // the PAT owner, so GitHub refuses the maintainer's own review) and falls
+    // back to a COMMENT review - the verdict then lives only in the review
+    // stream, which the comment scan above cannot see. Issue #807 stalled in
+    // a retry loop (and would have failed the ticket) exactly this way.
+    try {
+      var reviews = await github.rest.pulls.listReviews({
+        owner, repo, pull_number: prNumber, per_page: 100
+      });
+      var rdata = (reviews && reviews.data) ? reviews.data : reviews;
+      var reviewBodies = [];
+      for (var j = 0; j < rdata.length; j++) {
+        reviewBodies.push(rdata[j].body || "");
+      }
+      return scanBodies(reviewBodies);
+    } catch (err) {
+      warn("getAgentReviewVerdict: review read failed for PR #" + prNumber + ": " + err.message);
+      return null;
+    }
   }
 
   /** Kinds that may auto-merge without an explicit 'auto-merge' label. */
