@@ -40,6 +40,7 @@ import org.jnode.vm.VmSystemClassLoader;
 import org.jnode.vm.bytecode.BytecodeParser;
 import org.jnode.vm.classmgr.VmByteCode;
 import org.jnode.vm.classmgr.Signature;
+import org.jnode.vm.classmgr.VmConstInvokeDynamic;
 import org.jnode.vm.classmgr.VmConstMethodRef;
 import org.jnode.vm.classmgr.VmMethod;
 import org.jnode.vm.classmgr.VmType;
@@ -2999,6 +3000,22 @@ public class L2PipelineTest {
         BytecodeParser.parse(code, irg);
         X86Level2Compiler.initMethodArguments(m, stackFrame, typeSizeInfo, irg);
         return cfg;
+    }
+
+    /**
+     * invokedynamic has no L2 implementation. It must fail the same way L1A
+     * does -- a loud UnsupportedOperationException from translation -- not
+     * fall through the retired opcode gate (L2ByteCodeSupportChecker) into a
+     * silent no-op or a confusing stack-depth mismatch later in the pipeline.
+     */
+    @Test(expected = UnsupportedOperationException.class)
+    public void testInvokedynamicIsRejectedByIrGenerator() throws Exception {
+        VmMethod m = findMethod("add");
+        IRControlFlowGraph cfg = new IRControlFlowGraph(m.getBytecode());
+        TypeSizeInfo typeSizeInfo = loader.getArchitecture().getTypeSizeInfo();
+        IRGenerator irg = new IRGenerator(cfg, typeSizeInfo,
+            m.getDeclaringClass().getLoader());
+        irg.visit_invokedynamic(null);
     }
 
     /**
