@@ -1539,4 +1539,55 @@ public class PrimitiveTest {
         }
         return n;
     }
+
+    /**
+     * OPT-14 (ANCHOR-L2-249) trap-precision fixture: a hot loop with its
+     * counter read three times per iteration and a GETFIELD inside the
+     * body -- trap-only per isTrapOnly (direct load faulting like L1A,
+     * no helper call; the array quads were measured UNSOUND to relax at
+     * boot and stay real calls). Under ANCHOR-L2-249 the counter range is
+     * NOT forced by the trap span, the loop-depth weights (ANCHOR-L2-248)
+     * win it a GPR, and the increment emits as a register add. If
+     * forcedSpills is naive and spans every isCallLike quad, the counter
+     * is forced to [ebp] and the increment becomes a memory RMW: the
+     * assertion fails.
+     */
+    public static int opt14TrapRegCounter(PrimitiveTest t, int n) {
+        int k = 0;
+        while (k < 6) {
+            n += t.iInt;  // RefAssignQuad - trap-only, inside the body
+            k += 2;       // induction increment
+        }
+        return n + k;
+    }
+
+    /**
+     * OPT-14 (ANCHOR-L2-249) handler-live-in fixture, hole shape: x is
+     * defined BEFORE the try, the try body is TRAP-ONLY (a GETFIELD on an
+     * argument receiver: a direct faulting load, no call -- the array quads
+     * were measured UNSOUND to relax at boot and stay real calls), the
+     * catch does NOT touch x at all, and x is read only AFTER the join --
+     * so the post-join read receives x over the HANDLER edge (the
+     * exceptional path passes through the handler into the join). On the
+     * exceptional transition the dispatcher leaves garbage in the pooled
+     * registers, so x must take a stack home or the join reads a clobbered
+     * value. This is the shape that crashed the early L2 boot: the
+     * join-edge copy stored a dispatcher-zero (null) into x's stack home
+     * and the next read dereferenced it.
+     * Red proof (measured): disable the entry-span rule in forcedSpills --
+     * x spans only the trap-only getfield, is not forced, and this
+     * assertion fails. (Setting L2_TRAPREG=false is NOT a red proof here:
+     * the legacy blanket rule also forces x, via the trap span.)
+     */
+    public static int opt14HandlerLiveIn(PrimitiveTest t, int n) {
+        int x = n + 1;
+        try {
+            if (t.iInt == 0) {
+                // trap-only body: getfield, no call
+            }
+        } catch (IndexOutOfBoundsException e) {
+            // does NOT touch x: the join-edge copy is x's only handler-edge read
+        }
+        return x + 1;    // read AFTER the join, over the handler edge
+    }
 }

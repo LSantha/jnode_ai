@@ -203,8 +203,30 @@ public class LinearScanAllocator<T> {
             this.spilledVariableList.add(lr.getVariable());
             return;
         }
-        LiveRange<T> spill = active.get(active.size() - 1);
-        if (spill.getLastUseAddress() > lr.getLastUseAddress()) {
+        // OPT-14 (ANCHOR-L2-248): victim = the cheapest active range, not
+        // simply the farthest end. Evicting an in-loop range for a once-used
+        // straight-line one turns every iteration into a memory round-trip
+        // (the MiniSieve probes: induction variables homed in [ebp-N] and
+        // incrementing through memory). Costs are per-read loop-depth
+        // weights set by IRControlFlowGraph.assignLoopSpillCosts; with all
+        // costs equal (default 0, assignment never ran) this degenerates to
+        // the legacy farthest-end rule (ANCHOR-L2-134), i.e. the legacy
+        // victim = active's farthest end.
+        LiveRange<T> spill = null;
+        for (LiveRange<T> cand : active) {
+            if (spill == null
+                || cand.getSpillCost() < spill.getSpillCost()
+                || (cand.getSpillCost() == spill.getSpillCost()
+                    && cand.getLastUseAddress() > spill.getLastUseAddress())) {
+                spill = cand;
+            }
+        }
+        // Only hand the victim's register over when this range needs it at
+        // least as much: a strictly cheaper victim is a strict win, and
+        // equal costs keep the legacy farthest-end comparison.
+        if (spill.getSpillCost() < lr.getSpillCost()
+            || (spill.getSpillCost() == lr.getSpillCost()
+                && spill.getLastUseAddress() > lr.getLastUseAddress())) {
             lr.setLocation(spill.getLocation());
             spill.setLocation(new StackLocation<T>());
             this.spilledVariableList.add(spill.getVariable());
@@ -212,9 +234,8 @@ public class LinearScanAllocator<T> {
             active.add(lr);
             // ANCHOR-L2-134: re-sort by END point. Natural ordering is by
             // START address, so after a spill decision expireOldRange's
-            // early-exit and the furthest-end victim choice above operated
-            // on the wrong order - registers freed late, suboptimal
-            // victims, more spilling.
+            // early-exit needs the end order (the victim choice above
+            // scans for min cost and does not rely on it).
             Collections.sort(active, endPointComparator);
         } else {
             lr.setLocation(new StackLocation<T>());

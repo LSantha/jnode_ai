@@ -162,6 +162,7 @@
         <token name="@jnode.l2.bce@" value="${jnode.l2.bce}"/>
         <token name="@jnode.l2.trace@" value="${jnode.l2.trace}"/>
         <token name="@jnode.l2.bcedbg@" value="${jnode.l2.bcedbg}"/>
+        <token name="@jnode.l2.trapreg@" value="${jnode.l2.trapreg}"/>
         <token name="@jnode.dump.methodmap@" value="${jnode.dump.methodmap}"/>
     </template>
   </target>

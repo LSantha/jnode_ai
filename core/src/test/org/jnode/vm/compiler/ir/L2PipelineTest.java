@@ -712,6 +712,104 @@ public class L2PipelineTest {
     }
 
     /**
+     * OPT-14 (ANCHOR-L2-248 / ANCHOR-L2-249) guard: a hot loop with a
+     * trap-only quad (ArrayStoreQuad) inside its body must not force its
+     * loop-carried counter onto the stack. The induction increment
+     * (k += 2, the only add-immediate-2 in the method) must emit as a
+     * register add, not a memory RMW.
+     * <p/>
+     * Red proof (measured): set <code>CompilerFlags.L2_TRAPREG =
+     * "false"</code> -- isCallLike now spans the array store inside the
+     * body, the counter is forced to a stack home and the increment becomes
+     * <code>add dword[ebp-N],0x00000002</code>: the first assertion fails.
+     */
+    @Test
+    public void testOpt14TrapRegCounterStaysInRegister() throws Exception {
+        CompileResult r = compileMethod(findMethod("opt14TrapRegCounter"));
+        String text = r.text;
+        assertNotNull("no code emitted for opt14TrapRegCounter", text);
+        assertTrue(
+            "the loop counter increment (k += 2) must emit as a register "
+            + "add; none found. Emission:\n" + text,
+            Pattern.compile("add e..,0x00000002").matcher(text).find());
+        assertFalse(
+            "the loop counter increment must NOT be a memory RMW under "
+            + "trap precision (the ArrayStoreQuad inside the body is "
+            + "trap-only and must not force the counter's span). Emission:\n"
+            + text,
+            Pattern.compile("add dword\\[ebp-[0-9]+\\],0x00000002")
+                .matcher(text).find());
+    }
+
+    /**
+     * OPT-14 (ANCHOR-L2-249) guard, rule (c) -- the entry-span rule --
+     * end to end: EVERY non-argument range whose interval crosses a
+     * handler entry block (created before it, used at/after it) must be in
+     * the forcedSpills set, because the exceptional transition clobbers the
+     * pooled registers on the way into a same-frame handler and the value
+     * flows onward over the handler edge (post-join reads bind pre-try
+     * versions; the deSSA join-edge copies read them after the handler).
+     * The assertion is on the forced SET, not on allocated homes: homes
+     * depend on register pressure (a range can get a stack home by luck),
+     * the forced set is the deterministic contract. Fixture
+     * opt14HandlerLiveIn is the measured boot-crash shape: x defined
+     * before the try, trap-only try body, catch does NOT touch x, read
+     * only after the join.
+     * <p/>
+     * Red proof (measured): comment out the entry-span branch in
+     * X86Level2Compiler.forcedSpills -- x then spans only trap-only quads,
+     * is not forced, and this assertion fails. (Setting L2_TRAPREG=false is
+     * NOT a red proof here: the legacy blanket rule also forces x, via the
+     * trap span.)
+     */
+    @Test
+    public void testOpt14HandlerLiveInCaughtValueOnStack() throws Exception {
+        CompileResult r = compileMethod(findMethod("opt14HandlerLiveIn"));
+        String text = r.text;
+        assertNotNull("no code emitted for opt14HandlerLiveIn", text);
+        // Mirror rule (c): collect the entry spans, find crossing ranges.
+        final ArrayList<int[]> handlerRanges = new ArrayList<int[]>();
+        for (Object b0 : (Iterable<?>) r.cfg) {
+            final IRBasicBlock b = (IRBasicBlock) b0;
+            if (b.isStartOfExceptionHandler()) {
+                handlerRanges.add(new int[]{b.getStartPC(), b.getEndPC()});
+            }
+        }
+        assertFalse("fixture must have a handler entry block",
+            handlerRanges.isEmpty());
+        Set<LiveRange> forced = X86Level2Compiler.forcedSpills(r.cfg,
+            r.liveRanges);
+        int crossings = 0;
+        for (int i = 0; i < r.liveRanges.length; i++) {
+            final LiveRange lr = r.liveRanges[i];
+            if (lr.getVariable() instanceof MethodArgument) {
+                // Incoming arguments are never register-allocated; their
+                // incoming slot IS a stack home (mirrors forcedSpills' skip).
+                continue;
+            }
+            final int def = lr.getAssignAddress();
+            final int last = lr.getLastUseAddress();
+            for (int[] h : handlerRanges) {
+                if (def <= h[0] && h[0] <= last) {
+                    crossings++;
+                    assertTrue(
+                        "range " + lr + " crosses handler entry @" + h[0]
+                        + " (def @" + def + ", last use @" + last
+                        + ") and MUST be in the forcedSpills set: the "
+                        + "exceptional transition clobbers pooled registers "
+                        + "and this value flows over the handler edge",
+                        forced.contains(lr));
+                    break;
+                }
+            }
+        }
+        assertTrue(
+            "fixture must produce at least one entry-crossing range "
+            + "(x is defined before the try and read after the join)",
+            crossings > 0);
+    }
+
+    /**
      * CG-4c (ANCHOR-L2-074): type ops through the real pipeline (class /
      * interface / array instanceof paths, checkcasts, ldc, multianewarray).
      * Object `new` needs invokespecial (CG-4e) for the ctor call.
@@ -1184,6 +1282,10 @@ public class L2PipelineTest {
         if (mustFire) {
             assertFalse("rule never fired for " + name, forced.isEmpty());
         }
+        // Mirror forcedSpills' flag exactly (ANCHOR-L2-249): the handler
+        // entry-span check below only applies under trap precision.
+        final boolean trapPrecise =
+            !"false".equals(org.jnode.vm.compiler.CompilerFlags.L2_TRAPREG);
         final HashSet<Integer> callAddrs = new HashSet<Integer>();
         final ArrayList<int[]> handlerRanges = new ArrayList<int[]>();
         for (Object b0 : (Iterable<?>) r.cfg) {
@@ -1193,7 +1295,7 @@ public class L2PipelineTest {
             }
             for (Object q0 : (List<?>) b.getQuads()) {
                 final Quad q = (Quad) q0;
-                if (IRControlFlowGraph.isCallLike(q)) {
+                if (IRControlFlowGraph.isRealCall(q)) {
                     callAddrs.add(Integer.valueOf(q.getAddress()));
                 }
             }
@@ -1222,8 +1324,16 @@ public class L2PipelineTest {
                     def <= call && call <= last);
             }
             for (int[] h : handlerRanges) {
-                assertFalse(name + ": register " + lr + " reaches handler",
-                    h[0] <= last && last < h[1]);
+                if (h[0] <= last && last < h[1]) {
+                    fail(name + ": register " + lr + " reaches handler");
+                }
+                // ANCHOR-L2-249 rule (c) mirror: entry-crossing ranges are
+                // forced by production -- a register home must never cross
+                // a handler entry (created before, used at/after).
+                if (trapPrecise && def <= h[0] && h[0] <= last) {
+                    fail(name + ": register " + lr + " crosses handler entry @"
+                        + h[0]);
+                }
             }
         }
     }

@@ -876,6 +876,146 @@ public class IRControlFlowGraph<T> implements Iterable<IRBasicBlock<T>> {
     }
 
     /**
+     * OPT-14 (ANCHOR-L2-248): loop-nesting depth per block, parallel to the
+     * order {@link #iterator()} yields blocks. A natural loop is a back edge
+     * t-&gt;h where h dominates t (h may equal t: a self-loop); its body starts
+     * as {h} and grows backwards over predecessors of t until reaching h,
+     * so a block's depth is the number of loop bodies that contain it and
+     * the innermost loop of a nest carries the largest depth. Blocks with a
+     * null idominator (unreachable/handler entries) can never prove an edge
+     * a back edge, which is the conservative direction.
+     * <p/>
+     * Consumer: {@link #assignLoopSpillCosts(LiveRange[])} scales each read
+     * of a variable by 2^depth of the reading block, and the linear-scan
+     * allocator evicts the cheapest active range instead of always the
+     * farthest end. Requires {@code computeDominance} to have run, which the
+     * SSA pipeline does before allocation.
+     */
+    public int[] computeLoopDepthByBlock() {
+        final ArrayList<IRBasicBlock<T>> blocks = new ArrayList<IRBasicBlock<T>>();
+        for (IRBasicBlock<T> b : this) {
+            blocks.add(b);
+        }
+        final int nB = blocks.size();
+        final int[] depths = new int[nB];
+        if (nB == 0) {
+            return depths;
+        }
+        final IdentityHashMap<IRBasicBlock<T>, Integer> blockIndex =
+            new IdentityHashMap<IRBasicBlock<T>, Integer>();
+        for (int i = 0; i < nB; i++) {
+            blockIndex.put(blocks.get(i), Integer.valueOf(i));
+        }
+        // Worklist stack; bounded by nB because every node is queued at
+        // most once per loop (the queued flag stays set past processing).
+        final int[] stack = new int[nB];
+        for (int h = 0; h < nB; h++) {
+            final IRBasicBlock<T> header = blocks.get(h);
+            for (IRBasicBlock<T> latch : header.getPredecessors()) {
+                if (!blockDominates(header, latch)) {
+                    continue;
+                }
+                // Natural loop of the back edge latch -> header.
+                final boolean[] inBody = new boolean[nB];
+                inBody[h] = true;
+                final boolean[] queued = new boolean[nB];
+                int top = 0;
+                final Integer latchIdx = blockIndex.get(latch);
+                if (latchIdx != null) {
+                    stack[top++] = latchIdx.intValue();
+                    queued[latchIdx.intValue()] = true;
+                }
+                while (top > 0) {
+                    final int m = stack[--top];
+                    if (inBody[m]) {
+                        continue;
+                    }
+                    inBody[m] = true;
+                    for (IRBasicBlock<T> pred : blocks.get(m).getPredecessors()) {
+                        final Integer pi = blockIndex.get(pred);
+                        if (pi != null && !inBody[pi.intValue()]
+                            && !queued[pi.intValue()]) {
+                            queued[pi.intValue()] = true;
+                            stack[top++] = pi.intValue();
+                        }
+                    }
+                }
+                for (int j = 0; j < nB; j++) {
+                    if (inBody[j]) {
+                        depths[j] += 1;
+                    }
+                }
+            }
+        }
+        return depths;
+    }
+
+    /**
+     * OPT-14 (ANCHOR-L2-248): spill cost per range for the linear-scan victim
+     * choice. Cost = sum of 2^loopDepth(block) over every quad that
+     * REFERENCES a range variable (getReferencedOps already contains the
+     * LHS exactly when the quad READS its own target: the read-modify-write
+     * increments are the hottest reads a loop has, and plain defs arrive
+     * with an LHS outside refs -- so every ref counts, no LHS carve-out),
+     * so a range read K times around a depth-d loop body costs at least
+     * K * 2^(d+1) while a range read once outside any loop costs 1. Spilling
+     * the cheap one instead of the loop-carried one is what removes the
+     * per-iteration home round-trips the probe dumps showed (storeLoop kept
+     * its induction variable homed in [ebp-N] and incremented it through
+     * memory: forcedSpills 17-27 against a 3-GPR pool with the victim chosen
+     * purely by end address).
+     * <p/>
+     * Unassigned ranges keep cost 0, which makes every range tie and the
+     * victim choice degenerate to the legacy farthest-end rule
+     * (ANCHOR-L2-134) -- behavior is unchanged until this runs, so tone
+     * down/ revert by dropping the one call in allocateRanges.
+     * <p/>
+     * Requires dense post-fixup quad addresses and computed loop depths
+     * ({@link #computeLoopDepthByBlock()}).
+     */
+    public void assignLoopSpillCosts(LiveRange<?>[] ranges) {
+        if (ranges == null || ranges.length == 0) {
+            return;
+        }
+        final int[] depths = computeLoopDepthByBlock();
+        final int nB = depths.length;
+        if (nB == 0) {
+            return;
+        }
+        final IdentityHashMap<Variable<?>, LiveRange<?>> byVar =
+            new IdentityHashMap<Variable<?>, LiveRange<?>>();
+        for (int i = 0; i < ranges.length; i++) {
+            byVar.put(ranges[i].getVariable(), ranges[i]);
+        }
+        final ArrayList<IRBasicBlock<T>> blocks = new ArrayList<IRBasicBlock<T>>();
+        for (IRBasicBlock<T> b : this) {
+            blocks.add(b);
+        }
+        for (int i = 0; i < nB && i < blocks.size(); i++) {
+            final int add = 1 << Math.min(depths[i], 15);
+            for (Quad<T> q : blocks.get(i).getQuads()) {
+                if (q.isDeadCode()) {
+                    continue;
+                }
+                final Operand<T>[] refs = q.getReferencedOps();
+                if (refs == null) {
+                    continue;
+                }
+                for (int r = 0; r < refs.length; r++) {
+                    final Operand<T> ref = refs[r];
+                    if (!(ref instanceof Variable)) {
+                        continue;
+                    }
+                    final LiveRange<?> lr = (LiveRange<?>) byVar.get(ref);
+                    if (lr != null) {
+                        lr.setSpillCost(lr.getSpillCost() + add);
+                    }
+                }
+            }
+        }
+    }
+
+    /**
      * Rebuild the dominated-blocks tree from the final idom fixpoint.
      * Must not rely on edges accumulated by {@code setIDominator} during
      * {@code doComputeDominance}: idoms change between iterations and every
@@ -3375,6 +3515,62 @@ public class IRControlFlowGraph<T> implements Iterable<IRBasicBlock<T>> {
             // a handler in the same frame, and nothing preserves the pooled
             // caller-saved registers across the unwind.
             || isThrowingBinary(q);
+    }
+
+    /**
+     * OPT-14 (ANCHOR-L2-249): true when {@code q} is in
+     * {@link #isCallLike} purely because it can TRAP -- not because its
+     * emission actively calls out. For a trapping quad a lost register
+     * only matters when the trap unwinds to a same-frame handler and
+     * processing continues in this frame reading the old value, which the
+     * forcedSpills entry-span rule (rule c) protects; the shipped members:
+     * <ul>
+     * <li>{@code RefAssignQuad} -- a direct load that faults like L1A
+     * (ANCHOR-L2-075, no explicit null check and no helper call),</li>
+     * <li>dividing operations -- instruction-level trap, no call.</li>
+     * </ul>
+     * DELIBERATELY NOT members, with the measured boot evidence:
+     * <ul>
+     * <li>{@code ArrayAssignQuad}/{@code ArrayStoreQuad}/
+     * {@code ArrayLengthAssignQuad} -- relaxing their spans crashes or
+     * hangs the pure-L2 boot (measured 2026-10-31: arrays-only trap-only
+     * panics in VmSystem.initialize with a null element at
+     * IRBasicBlockFinder.createBasicBlocks qb_44; loads-only hangs after
+     * plugin load; getfield+binaries boots). Their load/store cubes
+     * clobber pooled registers in shapes the legacy blanket span was
+     * masking (values lived on stack, so the scratch use was invisible).
+     * Revisit only with an emitter-level audit of every array cube's
+     * scratch registers against isRegisterFreeAt/isRegisterLiveAt.</li>
+     * <li>{@code StaticRefAssignQuad} -- the cinit stub is pusha/popa
+     * bracketed on the host probes, but at boot scale every getstatic is
+     * a first access through the compile-request entry point; kept a real
+     * call (conservatism costs little: getstatics inside hot loops are
+     * rare).</li>
+     * </ul>
+     * {@code instanceof}/{@code checkcast}/{@code ConstantClass} helpers
+     * and the ref-store write barriers call out with no measured
+     * preservation bracket, so they stay real calls here.
+     * <p/>
+     * Census lint CALLNOTCALLLIKE gates this list structurally; a
+     * trap-only quad whose emission really calls (or vice versa) fails
+     * the gate instead of silently corrupting.
+     */
+    public static boolean isTrapOnly(Quad q) {
+        if (q instanceof RefAssignQuad) {
+            return true;
+        }
+        return isThrowingBinary(q);
+    }
+
+    /**
+     * OPT-14 (ANCHOR-L2-249): the clobbering subset of {@link #isCallLike}
+     * -- quads whose emissions really transfer control out of the frame
+     * without a register-preservation bracket. Used by the allocator's
+     * forced-spill rule; DCE and the always-executed reasoning keep
+     * consulting {@link #isCallLike}.
+     */
+    public static boolean isRealCall(Quad q) {
+        return isCallLike(q) && !isTrapOnly(q);
     }
 
     /**

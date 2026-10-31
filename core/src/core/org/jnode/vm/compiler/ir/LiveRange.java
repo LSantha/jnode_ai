@@ -28,6 +28,17 @@ public class LiveRange<T> implements Comparable<LiveRange<T>> {
     private int assignAddress;
     private int lastUseAddress;
 
+    /**
+     * OPT-14 (ANCHOR-L2-248): weighted spill cost, default 0. Filled by
+     * {@code IRControlFlowGraph.assignLoopSpillCosts(LiveRange[])} as the
+     * sum of 2^loopDepth over every quad that reads the variable, and read
+     * by the allocator's victim choice: the cheapest active range is evicted
+     * when a register must be given up. With every cost equal (0 when the
+     * assignment never runs) the choice degenerates to the legacy
+     * farthest-end rule (ANCHOR-L2-134).
+     */
+    private int spillCost;
+
     public LiveRange(Variable<T> v) {
         this.variable = v;
         int assign = v.getAssignAddress();
@@ -101,5 +112,19 @@ public class LiveRange<T> implements Comparable<LiveRange<T>> {
      */
     public void setLocation(Location<T> loc) {
         variable.setLocation(loc);
+    }
+
+    /**
+     * OPT-14 (ANCHOR-L2-248): weighted spill cost (see the field doc).
+     */
+    public int getSpillCost() {
+        return spillCost;
+    }
+
+    /**
+     * OPT-14 (ANCHOR-L2-248): called from the spill-cost assignment only.
+     */
+    public void setSpillCost(int cost) {
+        this.spillCost = cost;
     }
 }

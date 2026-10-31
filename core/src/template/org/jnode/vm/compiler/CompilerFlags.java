@@ -82,6 +82,14 @@ public final class CompilerFlags {
      * still inside preInit (see class header). */
     public static String L2_BCEDBG = "@jnode.l2.bcedbg@";
 
+    /** jnode.l2.trapreg: "false" reverts the OPT-14/ANCHOR-L2-249 trap
+     * precision in forcedSpills -- trap-only quads (array ops, field loads,
+     * dividing operations) stop forcing stack homes on ranges that merely
+     * span them; only real calls keep the rule, and ranges live-in to a
+     * same-frame handler region are forced instead. "true" (default) keeps
+     * the precise rule on. */
+    public static String L2_TRAPREG = "@jnode.l2.trapreg@";
+
     /** jnode.dump.methodmap: "true" logs the bootstrap method map. */
     public static String L2_DUMP_METHODMAP = "@jnode.dump.methodmap@";
 }

@@ -23,6 +23,7 @@ package org.jnode.vm.x86.compiler.l2;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.HashSet;
+import java.util.IdentityHashMap;
 import java.util.List;
 import java.util.Set;
 import org.jnode.assembler.Label;
@@ -581,6 +582,13 @@ public class X86Level2Compiler extends AbstractX86Compiler {
     public static LinearScanAllocator allocateRanges(IRControlFlowGraph cfg) {
         List liveVariables = cfg.computeLiveVariables();
         LiveRange[] liveRanges = getLiveRanges(liveVariables);
+        // OPT-14 (ANCHOR-L2-248): weighted victim choice needs the per-range
+        // spill cost before the scan. Without it every cost ties at 0 and the
+        // allocator falls back to the legacy farthest-end victim (which is
+        // what let loop-carried values get evicted: the MiniSieve probe
+        // rounds measured 17-27 forcedSpills against a 3-GPR pool and
+        // per-iteration home round-trips on the induction variables).
+        cfg.assignLoopSpillCosts(liveRanges);
         return allocate(liveRanges, forcedSpills(cfg, liveRanges));
     }
 
@@ -589,17 +597,59 @@ public class X86Level2Compiler extends AbstractX86Compiler {
      * ANCHOR-L2-235 the emitters save none of them around calls either)
      * do not survive calls -- nothing preserves them, saveRegisters is a no-op in
      * every x86 stack frame -- and nothing survives the native unwinder.
-     * Returns the ranges that must take stack homes: any range with a
-     * call-like quad at an address the range is live at (arguments
-     * consumed BY the call are read before the clobber and stay put), plus
-     * any range whose last use is inside a handler block. Requires dense
-     * post-fixup addresses.
+     * Returns the ranges that must take stack homes:
+     * (a) any range spanning a REAL call ({@code isRealCall}: the quads
+     * whose emission transfers control out of the frame without a register
+     * preservation bracket), (b) any range whose last use is inside a
+     * handler entry block, and (c) -- ANCHOR-L2-249 (OPT-14, trap
+     * precision) -- any range whose interval CROSSES a handler entry:
+     * created before it ({@code assignAddress <= entryStart}) and used at
+     * or after it ({@code lastUse >= entryStart}).
+     * <p/>
+     * Rule (c) exists because a trapping-only quad (array ops, field
+     * loads, divides: {@code isTrapOnly} stops being call-like for the
+     * span rule) still destroys the pooled registers on its exceptional
+     * edge: the dispatcher leaves garbage (observed: zeros) in EBX/ESI/ECX
+     * on the way into a same-frame handler. Every value the exceptional
+     * path carries onward -- post-join reads bind pre-try versions (the
+     * S6.4 approximation), and the deSSA join-edge copies read them AFTER
+     * the handler, in blocks no handler-region analysis can see -- must
+     * therefore sit in a home the transition cannot clobber. The
+     * entry-span test is that condition stated without dominance or
+     * liveness: def before the transition, use at/after it. Values whose
+     * interval ends inside the try (normal-flow-only) are not forced, and
+     * a def INSIDE the entry block executes after the clobber, so it needs
+     * no protection -- the rule is exact on both sides.
+     * <p/>
+     * MEASURED BOOT FAILURE of the first rule-(c) draft (region live-in
+     * via the idom closure): the pure-L2 image died in VmSystem.initialize
+     * -- a join-edge copy stored a dispatcher-zero into a join home and
+     * the next instruction dereferenced it ([null-4], EIP in
+     * `mov eax,[eax-4]`); the region closure missed the post-handler
+     * edge-copy blocks (post-deSSA split blocks have no idom), and rule
+     * (b) only covers last uses INSIDE the entry block. trapreg=false
+     * boots: the legacy blanket span covered the hole by accident.
+     * <p/>
+     * ANCHOR-L2-249 soundness chain for the span relaxation: getfield
+     * faults like L1A with no helper call (ANCHOR-L2-075), array and
+     * divide traps are instruction-level. getstatic is DELIBERATELY kept
+     * a real call: its first-access cinit stub is pusha/popa-bracketed on
+     * the host probes, but at boot scale every getstatic is a first
+     * access through the compile-request entry point, and the measured
+     * cost of the conservatism is negligible.
+     * Kill switch: jnode.l2.trapreg (CompilerFlags.L2_TRAPREG); "false"
+     * restores the legacy rule where EVERY isCallLike quad forces its
+     * spanning ranges (which is what made the probe loops spill 17-27
+     * ranges against a 3-GPR pool -- the class-init and array-trap spans
+     * sat inside the bodies).
+     * Requires dense post-fixup addresses.
      *
      * @param cfg fixed-up graph
      * @param liveRanges ranges over the same graph
      * @return identity set over {@code liveRanges} instances
      */
     public static Set<LiveRange> forcedSpills(IRControlFlowGraph cfg, LiveRange[] liveRanges) {
+        final boolean trapPrecise = !"false".equals(CompilerFlags.L2_TRAPREG);
         final HashSet<Integer> callAddrs = new HashSet<Integer>();
         final ArrayList<int[]> handlerRanges = new ArrayList<int[]>();
         for (Object b0 : (Iterable<?>) cfg) {
@@ -609,7 +659,10 @@ public class X86Level2Compiler extends AbstractX86Compiler {
             }
             for (Object q0 : (List<?>) b.getQuads()) {
                 final Quad q = (Quad) q0;
-                if (IRControlFlowGraph.isCallLike(q)) {
+                final boolean spansIt = trapPrecise
+                    ? IRControlFlowGraph.isRealCall(q)
+                    : IRControlFlowGraph.isCallLike(q);
+                if (spansIt) {
                     callAddrs.add(Integer.valueOf(q.getAddress()));
                 }
             }
@@ -633,20 +686,35 @@ public class X86Level2Compiler extends AbstractX86Compiler {
             // NPE: b.clone() result homed in EBX, clobbered by BitSet.get).
             final int def = lr.getAssignAddress();
             final int last = lr.getLastUseAddress();
+            boolean isForced = false;
             for (Integer c : callAddrs) {
                 final int call = c.intValue();
                 if (def <= call && call <= last) {
-                    forced.add(lr);
+                    isForced = true;
                     break;
                 }
             }
-            if (!forced.contains(lr)) {
+            if (!isForced) {
                 for (int[] h : handlerRanges) {
+                    // (b) legacy: last use inside the handler entry block.
                     if (h[0] <= last && last < h[1]) {
-                        forced.add(lr);
+                        isForced = true;
+                        break;
+                    }
+                    // (c) ANCHOR-L2-249: the entry-span rule -- the value
+                    // was created before the exceptional transition and is
+                    // used at/after it, so the transition's register
+                    // clobber is on its live path. assignAddress is the
+                    // POST-def address, so assignAddress <= h[0] means the
+                    // def quad precedes the entry.
+                    if (trapPrecise && def <= h[0] && h[0] <= last) {
+                        isForced = true;
                         break;
                     }
                 }
+            }
+            if (isForced) {
+                forced.add(lr);
             }
         }
         return forced;

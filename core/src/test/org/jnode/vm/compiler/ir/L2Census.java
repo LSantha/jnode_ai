@@ -1615,7 +1615,7 @@ public class L2Census {
 
     /**
      * ANCHOR-L2-235 (G13) corpus lint: no register-held value may span a
-     * call-like quad address or end inside a handler block. The emitters
+     * REAL call quad address or end inside a handler block. The emitters
      * keep ZERO call-preserves since ANCHOR-L2-235 (nothing in the x86
      * frames is callee-saved -- saveRegisters is a no-op everywhere), so
      * this invariant, enforced at allocation time by
@@ -1624,9 +1624,15 @@ public class L2Census {
      * alive across calls. Corpus-wide mirror of
      * L2PipelineTest#testNoRegisterSpansCall over exactly forcedSpills'
      * address arithmetic: the fixture pins the mechanism, this pins every
-     * real method. One REGSPANSCALL line per violating range on stdout;
-     * the report always carries REGSPANSCALL violations=<n>, so a lint
-     * that never ran cannot read as a clean corpus (ANCHOR-L2-187).
+     * real method. Since ANCHOR-L2-249 the span rule follows
+     * {@code isRealCall} (trap-only quads no longer clobber; the
+     * jnode.l2.trapreg kill switch restores the legacy isCallLike span
+     * exactly as forcedSpills does), so the lint reads the same flag --
+     * running it against a tree built with the other flag value MUST fail,
+     * that is the mirror contract. One REGSPANSCALL line per violating
+     * range on stdout; the report always carries REGSPANSCALL
+     * violations=<n>, so a lint that never ran cannot read as a clean
+     * corpus (ANCHOR-L2-187).
      */
     static void checkNoRegisterSpansCall(VmMethod method) {
         try {
@@ -1636,6 +1642,8 @@ public class L2Census {
                 throw new IllegalStateException("cfg=" + (cfg != null)
                     + " ranges=" + (ranges != null));
             }
+            final boolean trapPrecise =
+                !"false".equals(org.jnode.vm.compiler.CompilerFlags.L2_TRAPREG);
             final ArrayList callAddrs = new ArrayList();
             final ArrayList handlerRanges = new ArrayList();
             for (Object b0 : (Iterable<?>) cfg) {
@@ -1645,7 +1653,10 @@ public class L2Census {
                 }
                 for (Object q0 : (List<?>) b.getQuads()) {
                     final Quad q = (Quad) q0;
-                    if (IRControlFlowGraph.isCallLike(q)) {
+                    final boolean spansIt = trapPrecise
+                        ? IRControlFlowGraph.isRealCall(q)
+                        : IRControlFlowGraph.isCallLike(q);
+                    if (spansIt) {
                         callAddrs.add(Integer.valueOf(q.getAddress()));
                     }
                 }
@@ -1676,6 +1687,16 @@ public class L2Census {
                     if (h[0] <= last && last < h[1]) {
                         reportRegSpanCall(method, "register " + lr
                             + " reaches handler [" + h[0] + "," + h[1] + ")");
+                    }
+                    // ANCHOR-L2-249 rule (c) mirror: an entry-crossing range
+                    // (created before the handler entry, used at/after it)
+                    // is forced to a stack home by production's
+                    // forcedSpills -- the exceptional transition clobbers
+                    // the pooled registers and the value flows over the
+                    // handler edge. Mirrors the same flag as the span rule.
+                    if (trapPrecise && def <= h[0] && h[0] <= last) {
+                        reportRegSpanCall(method, "register " + lr
+                            + " crosses handler entry @" + h[0]);
                     }
                 }
             }
