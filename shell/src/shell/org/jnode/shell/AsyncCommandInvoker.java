@@ -188,7 +188,7 @@ public abstract class AsyncCommandInvoker implements SimpleCommandInvoker,
                 ((Thread) threadProcess).interrupt();
             }
 
-            boolean stopped = false;
+            boolean stopRequested = false;
             try {
                 AccessController.doPrivileged(new PrivilegedAction<Void>() {
                     public Void run() {
@@ -196,17 +196,17 @@ public abstract class AsyncCommandInvoker implements SimpleCommandInvoker,
                         return null;
                     }
                 });
-                stopped = !threadProcess.isAlive();
+                stopRequested = true;
             } catch (Throwable ex) {
-                stopped = false;
+                stopRequested = false;
             }
 
-            if (stopped) {
+            if (stopRequested) {
                 reportJobControl("ctrl-c: Returning focus to console. ("
-                        + cmdName + " has been killed)");
+                        + cmdName + " stop requested)");
             } else {
                 reportJobControl("ctrl-c: Returning focus to console. ("
-                        + cmdName + " is still running)");
+                        + cmdName + " could not be stopped)");
             }
         }
     }
