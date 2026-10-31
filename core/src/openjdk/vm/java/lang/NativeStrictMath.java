@@ -51,8 +51,6 @@ exception statement from your version. */
 
 package java.lang;
 
-import gnu.classpath.Configuration;
-
 /**
  * Helper class containing useful mathematical functions and constants.
  * This class mirrors {@link Math}, but is 100% portable, because it uses
@@ -417,9 +415,6 @@ public final strictfp class NativeStrictMath {
         x = abs(x);
         double z;
         int n;
-        if (Configuration.DEBUG && (x <= PI / 4 || x != x
-                || x == Double.POSITIVE_INFINITY))
-            throw new InternalError("Assertion failure");
         if (x < 3 * PI / 4) // If |x| is small.
         {
             z = x - PIO2_1;
@@ -660,8 +655,6 @@ public final strictfp class NativeStrictMath {
      * @return x * 2**n
      */
     private static double scale(double x, int n) {
-        if (Configuration.DEBUG && abs(n) >= 2048)
-            throw new InternalError("Assertion failure");
         if (x == 0 || x == Double.NEGATIVE_INFINITY
                 || !(x < Double.POSITIVE_INFINITY) || n == 0)
             return x;
@@ -694,8 +687,6 @@ public final strictfp class NativeStrictMath {
      * @return sin(x+y)
      */
     private static double sin(double x, double y) {
-        if (Configuration.DEBUG && abs(x + y) > 0.7854)
-            throw new InternalError("Assertion failure");
         if (abs(x) < 1 / TWO_27)
             return x; // If |x| ~< 2**-27, already know answer.
 
@@ -715,8 +706,6 @@ public final strictfp class NativeStrictMath {
      * @return cos(x+y)
      */
     private static double cos(double x, double y) {
-        if (Configuration.DEBUG && abs(x + y) > 0.7854)
-            throw new InternalError("Assertion failure");
         x = abs(x);
         if (x < 1 / TWO_27)
             return 1; // If |x| ~< 2**-27, already know answer.
@@ -740,9 +729,6 @@ public final strictfp class NativeStrictMath {
      * @return tan(x+y)
      */
     private static double tan(double x, double y, boolean invert) {
-        // PI/2 is irrational, so no double is a perfect multiple of it.
-        if (Configuration.DEBUG && (abs(x + y) > 0.7854 || (x == 0 && invert)))
-            throw new InternalError("Assertion failure");
         boolean negative = x < 0;
         if (negative) {
             x = -x;
@@ -1866,8 +1852,27 @@ public final strictfp class NativeStrictMath {
      * @see StrictMath#hypot(double, double)
      */
     public static double hypot(double x, double y) {
-        //todo improve it
-        return x*x + y*y;
+        x = abs(x);
+        y = abs(y);
+        if (x == Double.POSITIVE_INFINITY || y == Double.POSITIVE_INFINITY)
+            return Double.POSITIVE_INFINITY;
+        if (x != x || y != y)
+            return Double.NaN;
+        if (x == 0)
+            return y;
+        if (x < y) {
+            double t = x;
+            x = y;
+            y = t;
+        }
+        double mx = x;
+        int exp = (int) (Double.doubleToLongBits(mx) >> 52) - 1023;
+        if (exp < -20) {
+            x *= TWO_54;
+            y *= TWO_54;
+        }
+        double r = y / x;
+        return mx * sqrt(1 + r * r);
     }
 
     /**

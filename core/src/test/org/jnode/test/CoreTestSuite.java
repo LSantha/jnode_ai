@@ -20,6 +20,7 @@
 
 package org.jnode.test;
 
+import org.jnode.driver.serial.console.AsyncSerialConsoleWriterTest;
 import org.jnode.plugin.model.PluginDescriptorModelTest;
 import org.jnode.test.threads.ThreadingTestJUnit4;
 import org.jnode.test.util.NumberUtilsTest;
@@ -54,16 +55,17 @@ import org.junit.runners.Suite.SuiteClasses;
     WaitTest.class,
     JavaCommandParserTest.class,
     ThreadingTestJUnit4.class,
+    L2HostTest.class,
+    L2ModeMatrixTest.class,
+    L2PipelineTest.class,
     X86Level1ACompilerVisitorTest.class,
     X86RegisterPoolTest.class,
     X86StreamTest.class,
     VmTypeStateTest.class,
-    L2HostTest.class,
-    L2ModeMatrixTest.class,
-    L2PipelineTest.class,
     CoreTestSuiteMembershipTest.class,
     CompilerUnionPolicyTest.class,
     PluginDescriptorModelTest.class,
+    AsyncSerialConsoleWriterTest.class,
 }
 )
 public class CoreTestSuite {

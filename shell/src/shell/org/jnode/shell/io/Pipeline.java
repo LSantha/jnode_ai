@@ -249,7 +249,7 @@ public class Pipeline {
             }
             this.notifyAll();
         }
-        return (off == 0) ? -1 : off;
+        return off;
     }
     
     synchronized void flush() throws IOException {

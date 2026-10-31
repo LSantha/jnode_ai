@@ -41,6 +41,10 @@ public abstract class VmConstObject extends VmSystemObject implements Uninterrup
     public static final int CONST_METHODREF = 10;
     public static final int CONST_IMETHODREF = 11;
 
+    public static final int CONST_METHODHANDLE = 15;
+    public static final int CONST_METHODTYPE = 16;
+    public static final int CONST_INVOKEDYNAMIC = 18;
+
     /**
      * Gets the type of this object.
      *

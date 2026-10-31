@@ -52,6 +52,12 @@ public final class VmCP extends VmSystemObject {
 
     public static final int TYPE_NAMEANDTYPE = 12;
 
+    public static final int TYPE_METHODHANDLE = 15;
+
+    public static final int TYPE_METHODTYPE = 16;
+
+    public static final int TYPE_INVOKEDYNAMIC = 18;
+
     private Object[] cp;
 
     private int used;
@@ -203,6 +209,30 @@ public final class VmCP extends VmSystemObject {
     }
 
     protected void setConstIMethodRef(int index, VmConstIMethodRef value) {
+        set(index, value);
+    }
+
+    public VmConstMethodHandle getConstMethodHandle(int index) {
+        return (VmConstMethodHandle) get(index);
+    }
+
+    protected void setConstMethodHandle(int index, VmConstMethodHandle value) {
+        set(index, value);
+    }
+
+    public VmConstMethodType getConstMethodType(int index) {
+        return (VmConstMethodType) get(index);
+    }
+
+    protected void setConstMethodType(int index, VmConstMethodType value) {
+        set(index, value);
+    }
+
+    public VmConstInvokeDynamic getConstInvokeDynamic(int index) {
+        return (VmConstInvokeDynamic) get(index);
+    }
+
+    protected void setConstInvokeDynamic(int index, VmConstInvokeDynamic value) {
         set(index, value);
     }
 

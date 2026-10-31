@@ -72,9 +72,14 @@
       <argument argLabel="name"/>
     </syntax>
     <syntax alias="echo" description="Print the arguments">
-      <repeat>
-        <argument argLabel="text"/>
-      </repeat>
+      <sequence>
+        <optionSet>
+          <option argLabel="n" shortName="n" description="if set, suppress the trailing newline"/>
+        </optionSet>
+        <repeat>
+          <argument argLabel="text"/>
+        </repeat>
+      </sequence>
     </syntax>
     <syntax alias="env">
       <empty description="Print the system properties"/>
