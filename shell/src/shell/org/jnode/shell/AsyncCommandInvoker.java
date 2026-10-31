@@ -182,20 +182,32 @@ public abstract class AsyncCommandInvoker implements SimpleCommandInvoker,
     private void doCtrlC() {
         if (threadProcess != null && threadProcess.isAlive()
                 && blockingThread != null && blockingThread.isAlive()) {
-            reportJobControl("ctrl-c: Returning focus to console. ("
-                    + cmdName + " has been killed)");
             unblock();
 
             if (threadProcess instanceof Thread) {
                 ((Thread) threadProcess).interrupt();
             }
 
-            AccessController.doPrivileged(new PrivilegedAction<Void>() {
-                public Void run() {
-                    threadProcess.stop(new ThreadDeath());
-                    return null;
-                }
-            });
+            boolean stopped = false;
+            try {
+                AccessController.doPrivileged(new PrivilegedAction<Void>() {
+                    public Void run() {
+                        threadProcess.stop(new ThreadDeath());
+                        return null;
+                    }
+                });
+                stopped = !threadProcess.isAlive();
+            } catch (Throwable ex) {
+                stopped = false;
+            }
+
+            if (stopped) {
+                reportJobControl("ctrl-c: Returning focus to console. ("
+                        + cmdName + " has been killed)");
+            } else {
+                reportJobControl("ctrl-c: Returning focus to console. ("
+                        + cmdName + " is still running)");
+            }
         }
     }
 
