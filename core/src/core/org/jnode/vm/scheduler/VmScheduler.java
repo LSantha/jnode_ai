@@ -127,15 +127,19 @@ public final class VmScheduler {
      * @param thread
      */
     final void unregisterThread(VmThread thread) {
-        allThreadsLock.lock();
+        queueLock.lock();
         try {
-            allThreadsQueue.remove(thread);
-            //todo recent change, more testing needed
-            //remove the thread from readyQueue and sleepQueue too
-            readyQueue.remove(thread);
-            sleepQueue.remove(thread);
+            allThreadsLock.lock();
+            try {
+                allThreadsQueue.remove(thread);
+                //remove the thread from readyQueue and sleepQueue too
+                readyQueue.remove(thread);
+                sleepQueue.remove(thread);
+            } finally {
+                allThreadsLock.unlock();
+            }
         } finally {
-            allThreadsLock.unlock();
+            queueLock.unlock();
         }
     }
 

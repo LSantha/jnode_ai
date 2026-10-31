@@ -25,6 +25,7 @@ import org.jnode.test.threads.ThreadingTestJUnit4;
 import org.jnode.test.util.NumberUtilsTest;
 import org.jnode.test.util.VersionTest;
 import org.jnode.vm.classmgr.VmTypeStateTest;
+import org.jnode.vm.scheduler.VmThreadSchedulingTest;
 import org.jnode.vm.x86.compiler.l1a.X86Level1ACompilerVisitorTest;
 import org.jnode.vm.x86.compiler.l1a.X86RegisterPoolTest;
 import org.junit.runner.RunWith;
@@ -54,6 +55,7 @@ import org.junit.runners.Suite.SuiteClasses;
     X86RegisterPoolTest.class,
     X86StreamTest.class,
     VmTypeStateTest.class,
+    VmThreadSchedulingTest.class,
     AsyncSerialConsoleWriterTest.class,
 }
 )

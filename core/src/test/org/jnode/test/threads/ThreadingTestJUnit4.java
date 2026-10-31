@@ -109,6 +109,36 @@ public class ThreadingTestJUnit4 {
         assertTrue("Thread should have been interrupted", interrupted[0]);
     }
 
+    /**
+     * A thread that is stopped while sleeping must not be scheduled again.
+     * This is the observable contract behind issue #621; the JNode scheduler
+     * implementation that enforces it (VmThread.wakeUpByScheduler) can only
+     * run in-VM, so the host suite pins the contract instead.
+     */
+    @Test
+    @SuppressWarnings("deprecation")
+    public void testStoppedSleepingThreadDoesNotResume() throws InterruptedException {
+        final boolean[] resumed = {false};
+        Thread t = new Thread(new Runnable() {
+            public void run() {
+                try {
+                    Thread.sleep(10000);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                }
+                resumed[0] = true;
+            }
+        });
+
+        t.start();
+        Thread.sleep(50);
+        t.stop();
+        t.join(1000);
+
+        assertFalse("Stopped sleeping thread should not be alive", t.isAlive());
+        assertFalse("Stopped sleeping thread must not resume", resumed[0]);
+    }
+
     @Test
     public void testThreadPriority() throws InterruptedException {
         Thread t = new Thread(new Runnable() {
