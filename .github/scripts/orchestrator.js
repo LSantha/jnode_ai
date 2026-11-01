@@ -133,7 +133,7 @@ module.exports = async ({ github, context, core }) => {
     // persistently red PR would otherwise grow it until the body is unwritable.
     const persisted = Object.assign({}, state);
     if (Array.isArray(state.history)) {
-      persisted.history = state.history.slice(-h.MAX_HISTORY_ENTRIES);
+      persisted.history = state.history.slice(-createHelpers.MAX_HISTORY_ENTRIES);
     }
     markdown += `\n<!-- ORCHESTRATOR_STATE:\n${JSON.stringify(persisted, null, 2)}\n-->`;
 
@@ -431,9 +431,12 @@ module.exports = async ({ github, context, core }) => {
         // Park instead; the
         // Java CI success wakeup re-runs review on green.
         if (isReviewPhase && state.current_task.pr && !(await h.isCIGreen(state.current_task.pr))) {
-          state.current_task.review_pending_ci = true;
-          state.current_task.review_in_progress = false;
-          state.history.push({ event: 'retrigger_deferred', task: state.current_task.issue, reason: 'ci_not_green', timestamp: new Date().toISOString() });
+          h.parkForCI(state.current_task, state.current_task.pr, {
+            event: 'retrigger_deferred',
+            reason: 'ci_not_green',
+            history: state.history,
+            extra: { task: state.current_task.issue }
+          });
           core.info(`Orchestrator: PR #${state.current_task.pr} CI not green; not prompting for review yet.`);
         } else {
           const msg = isMultiStepTask(state.current_task) && state.current_task.phase === 'FEEDBACK' ? "/oc fix Address review feedback."
@@ -545,9 +548,11 @@ module.exports = async ({ github, context, core }) => {
                     core.warning(`review trigger failed for PR #${task.pr}: ${err.message}`);
                   }
                 } else {
-                  task.review_pending_ci = true;
-                  task.review_in_progress = false;
-                  state.history.push({ event: 'review_deferred_ci', task: task.issue, pr: foundPr, timestamp: new Date().toISOString() });
+                  h.parkForCI(task, foundPr, {
+                    event: 'review_deferred_ci',
+                    history: state.history,
+                    extra: { task: task.issue }
+                  });
                   core.info(`Task #${task.issue}: PR #${foundPr} CI not green; deferring review prompt.`);
                 }
               } else if (SHORT_CIRCUIT_LABELS.some(l => labels.includes(l))) {
@@ -598,7 +603,12 @@ module.exports = async ({ github, context, core }) => {
                     const ciGreen = await h.isCIGreen(task.pr);
                     const forbidden = diffSafe ? false : await h.touchesForbiddenPath(task.pr);
                     if (!ciGreen) {
-                      task.review_pending_ci = true;
+                      h.parkForCI(task, task.pr, {
+                        event: 'merge_deferred',
+                        reason: 'ci_not_green',
+                        history: state.history,
+                        extra: { task: task.issue }
+                      });
                       await github.rest.issues.createComment({
                         owner: context.repo.owner, repo: context.repo.repo, issue_number: task.pr,
                         body: "Agent review passed but auto-merge deferred: Java CI is not green yet. Will re-check when CI completes."
@@ -663,9 +673,11 @@ module.exports = async ({ github, context, core }) => {
                     core.warning(`review trigger failed for PR #${task.pr}: ${err.message}`);
                   }
                 } else {
-                  task.review_pending_ci = true;
-                  task.review_in_progress = false;
-                  state.history.push({ event: 'review_deferred_ci', task: task.issue, pr: task.pr, timestamp: new Date().toISOString() });
+                  h.parkForCI(task, task.pr, {
+                    event: 'review_deferred_ci',
+                    history: state.history,
+                    extra: { task: task.issue }
+                  });
                   core.info(`Task #${task.issue}: PR #${task.pr} CI not green after feedback; deferring review prompt.`);
                 }
               }
@@ -684,9 +696,11 @@ module.exports = async ({ github, context, core }) => {
           // retries >= 3 and fail the task -- advancing the queue with no review
           // ever requested and no label or comment left behind.
           if (task.phase === 'REVIEW' && task.pr && !(await h.isCIGreen(task.pr))) {
-            task.review_pending_ci = true;
-            task.review_in_progress = false;
-            state.history.push({ event: 'review_pending_ci', task: task.issue, pr: task.pr, reason: 'retry suppressed: CI not green', timestamp: new Date().toISOString() });
+            h.parkForCI(task, task.pr, {
+              reason: 'retry suppressed: CI not green',
+              history: state.history,
+              extra: { task: task.issue }
+            });
             core.info(`Task #${task.issue} retry suppressed: PR #${task.pr} CI not green.`);
             await updateMasterIssue(masterIssueNumber, state);
             return;
@@ -762,10 +776,12 @@ module.exports = async ({ github, context, core }) => {
         // wakeup re-enters REVIEW on green.
         if (!(await h.isCIGreen(task.pr))) {
           task.phase = 'REVIEW';
-          task.review_in_progress = false;
-          task.review_pending_ci = true;
+          h.parkForCI(task, task.pr, {
+            event: 'human_approved_ci_red',
+            history: state.history,
+            extra: { task: task.issue }
+          });
           task.retries = 0;
-          state.history.push({ event: 'human_approved_ci_red', task: task.issue, pr: task.pr, timestamp: new Date().toISOString() });
           await updateMasterIssue(masterIssueNumber, state);
           await github.rest.issues.createComment({
             owner: context.repo.owner, repo: context.repo.repo, issue_number: task.pr,

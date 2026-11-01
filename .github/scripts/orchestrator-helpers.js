@@ -54,6 +54,34 @@ module.exports = function createHelpers({ github, context, core }) {
     });
   }
 
+  /**
+   * Park a task whose review cannot be requested yet because CI is not green.
+   *
+   * The two flags exist to tell three states apart, so they must move together:
+   * a review was requested (review_in_progress true), a review is waiting on CI
+   * and no prompt exists (review_pending_ci true), and neither. Every park site
+   * goes through here so the pair cannot drift. The caller supplies the history
+   * event (and any extra fields) and keeps its own state write and comments.
+   *
+   * `flags` owns the two flags; `opts.history` is the array to append to when it
+   * is not `flags.history` (the orchestrator keeps task flags on current_task
+   * but history on the master state).
+   */
+  function parkForCI(flags, prNumber, opts) {
+    opts = opts || {};
+    var history = opts.history || flags.history;
+    flags.review_in_progress = false;
+    flags.review_pending_ci = true;
+    var entry = { event: opts.event || "review_pending_ci", timestamp: new Date().toISOString() };
+    if (prNumber != null) entry.pr = prNumber;
+    if (opts.reason) entry.reason = opts.reason;
+    if (opts.extra) {
+      Object.keys(opts.extra).forEach(function (k) { entry[k] = opts.extra[k]; });
+    }
+    history.push(entry);
+    return entry;
+  }
+
   /** Find an open PR whose branch or body references the given issue number. */
   async function findPRForIssue(issueNumber) {
     var pulls = await github.rest.pulls.list({
@@ -504,7 +532,7 @@ module.exports = function createHelpers({ github, context, core }) {
     isAutoMergeEligible: isAutoMergeEligible,
     isDiffSafe: isDiffSafe,
     touchesForbiddenPath: touchesForbiddenPath,
-    MAX_HISTORY_ENTRIES: MAX_HISTORY_ENTRIES,
+    parkForCI: parkForCI,
     DEFAULT_MAX_TURNS: DEFAULT_MAX_TURNS,
     isCIGreen: isCIGreen,
     SAFE_AUTO_MERGE_KINDS: SAFE_AUTO_MERGE_KINDS,

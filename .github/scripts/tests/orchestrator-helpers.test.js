@@ -211,3 +211,33 @@ test("mergePR still merges when the commit list cannot be read", async () => {
   assert.strictEqual("commit_message" in calls.merge[0], false);
   assert.strictEqual(calls.deleteRef.length, 1);
 });
+
+test("parkForCI owns the flag pair and the history entry", () => {
+  const { h } = helpersFor();
+  const task = { review_in_progress: true, review_pending_ci: false, history: [] };
+  h.parkForCI(task, 99, {
+    event: "merge_deferred",
+    reason: "ci_not_green",
+    extra: { task: 42 }
+  });
+  assert.strictEqual(task.review_in_progress, false);
+  assert.strictEqual(task.review_pending_ci, true);
+  assert.strictEqual(task.history.length, 1);
+  assert.strictEqual(task.history[0].event, "merge_deferred");
+  assert.strictEqual(task.history[0].reason, "ci_not_green");
+  assert.strictEqual(task.history[0].pr, 99);
+  assert.strictEqual(task.history[0].task, 42);
+});
+
+test("parkForCI appends to a separate history array for the orchestrator shape", () => {
+  const { h } = helpersFor();
+  const task = { review_in_progress: true, review_pending_ci: false };
+  const history = [];
+  h.parkForCI(task, 99, { history });
+  assert.strictEqual(task.review_in_progress, false);
+  assert.strictEqual(task.review_pending_ci, true);
+  assert.strictEqual(task.history, undefined, "the flags object is not given a history field");
+  assert.strictEqual(history.length, 1);
+  assert.strictEqual(history[0].event, "review_pending_ci");
+  assert.strictEqual(history[0].pr, 99);
+});
