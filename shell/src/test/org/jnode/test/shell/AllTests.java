@@ -20,6 +20,7 @@
  
 package org.jnode.test.shell;
 
+import org.jnode.shell.AsyncCommandInvokerTest;
 import org.jnode.test.shell.help.DefaultHelpTest;
 import org.junit.runner.RunWith;
 import org.junit.runners.Suite;
@@ -27,6 +28,7 @@ import org.junit.runners.Suite;
 @RunWith(Suite.class)
 @Suite.SuiteClasses({CompletionInfoTest.class, PathnamePatternTest.class, CompletionTest.class,
     DefaultSyntaxCompletionTest.class, DefaultHelpTest.class, ExecuteJavaPackagePrivateTest.class,
+    AsyncCommandInvokerTest.class,
     org.jnode.test.shell.alias.AllTests.class, org.jnode.test.shell.bjorne.AllTests.class,
     org.jnode.test.shell.syntax.AllTests.class, org.jnode.test.shell.io.AllTests.class })
 public class AllTests {
