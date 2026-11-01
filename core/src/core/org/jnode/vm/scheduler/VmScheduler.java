@@ -249,15 +249,23 @@ public final class VmScheduler {
             // Get access to queues
             queueLock.lock();
 
-            final VmThread newThread = sleepQueue.first(VmMagic.currentProcessor());
-            if (newThread != null) {
+            while (true) {
+                final VmThread newThread = sleepQueue.first(VmMagic.currentProcessor());
+                if (newThread == null) {
+                    return null;
+                }
+                // Never resurrect a thread that is being stopped.
+                if (newThread.isStopping()) {
+                    sleepQueue.remove(newThread);
+                    continue;
+                }
                 final long curTime = VmSystem.currentKernelMillis();
                 if (newThread.canWakeup(curTime)) {
                     sleepQueue.remove(newThread);
                     return newThread;
                 }
+                return null;
             }
-            return null;
         } finally {
             // Release access to queues
             queueLock.unlock();

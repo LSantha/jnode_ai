@@ -448,28 +448,23 @@ public abstract class VmProcessor extends VmSystemObject implements org.jnode.vm
 
             // Determine the new thread.
 
-            VmThread newThread;
-            while (true) {
-                // Should we wakeup a sleeping thread?
-                newThread = scheduler.popFirstSleepingThread();
+            // Should we wakeup a sleeping thread?
+            VmThread newThread = scheduler.popFirstSleepingThread();
 
-                // Take the first thread from the ready queue
-                if (newThread == null) {
-                    newThread = scheduler.popFirstReadyThread();
-                }
-
-                // It no other thread want to run, that means that the idle thread
-                // has been halted, we give up.
-                if (newThread == null) {
-                    Unsafe.debug("No Threads to run!\n");
-                    scheduler.dump();
-                    Unsafe.die("No thread to run in reschedule");
-                }
-
-                if (newThread.wakeUpByScheduler()) {
-                    break;
-                }
+            // Take the first thread from the ready queue
+            if (newThread == null) {
+                newThread = scheduler.popFirstReadyThread();
             }
+
+            // It no other thread want to run, that means that the idle thread
+            // has been halted, we give up.
+            if (newThread == null) {
+                Unsafe.debug("No Threads to run!\n");
+                scheduler.dump();
+                Unsafe.die("No thread to run in reschedule");
+            }
+
+            newThread.wakeUpByScheduler();
             this.nextThread = newThread;
 
             final int priority = newThread.priority;
