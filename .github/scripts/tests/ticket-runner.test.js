@@ -2292,6 +2292,29 @@ test("ticket-runner.js event handling suite", async (t) => {
     assert.ok(fixes[0].body.includes("CI-HEAL:abc123"));
   });
 
+  await t.test("Java CI cancelled does not post a heal", async () => {
+    const initialBody = _replaceOrAppendStatus("Task", {
+      phase: "REVIEW",
+      pr: 99,
+      turn: 0,
+      max_turns: 3,
+      retries: 0,
+      started: new Date().toISOString(),
+      history: []
+    }, 42);
+
+    const mocks = createMocks("workflow_run", {
+      issueBody: initialBody,
+      runName: "Java CI",
+      runConclusion: "cancelled",
+      issueLabels: [{ name: "kind/bug" }]
+    });
+    await runTicketRunner(mocks);
+
+    const fixes = mocks.calls.createComment.filter(c => c.body.includes("/oc fix CI failed"));
+    assert.strictEqual(fixes.length, 0, "a cancelled run is not a failure to heal");
+  });
+
   await t.test("Java CI success ignores FEEDBACK phase", async () => {
     const initialBody = _replaceOrAppendStatus("Task", {
       phase: "FEEDBACK",
