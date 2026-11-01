@@ -279,14 +279,10 @@ module.exports = async ({ github, context, core }) => {
       // review_in_progress false here would double-prompt on the next green CI
       // wakeup. Park instead; the wakeup posts the prompt on green.
       if (state.phase === "REVIEW" && state.pr && !(await h.isCIGreen(state.pr))) {
-        await updateIssueState(issueNumber, Object.assign({}, state, {
-          review_in_progress: false,
-          review_pending_ci: true,
-          history: state.history.concat([{
-            event: "review_deferred_ci", reason: "manual run while CI not green",
-            timestamp: new Date().toISOString()
-          }])
-        }));
+        h.parkForCI(state, state.pr, {
+          event: "review_deferred_ci", reason: "manual run while CI not green"
+        });
+        await updateIssueState(issueNumber, state);
         await github.rest.issues.createComment({
           owner, repo, issue_number: issueNumber,
           body: "Review is waiting for Java CI to go green on PR #" + state.pr + ". Not re-requesting review yet; the runner posts it as soon as CI completes."
@@ -688,10 +684,8 @@ module.exports = async ({ github, context, core }) => {
   async function approveAndMerge(issueNumber, state, prNumber, force) {
     if (!force && !(await h.isCIGreen(prNumber))) {
       state.phase = "REVIEW";
-      state.review_in_progress = false;
-      state.review_pending_ci = true;
+      h.parkForCI(state, prNumber, { event: "human_approved_ci_red" });
       state.retries = 0;
-      state.history.push({ event: "human_approved_ci_red", timestamp: new Date().toISOString() });
       await updateIssueState(issueNumber, state);
       await github.rest.issues.createComment({
         owner, repo, issue_number: prNumber,
@@ -883,17 +877,6 @@ module.exports = async ({ github, context, core }) => {
     state.history.push({ event: "review_requested", pr: prNumber, timestamp: new Date().toISOString() });
   }
 
-  /** Park a ticket whose review cannot be requested yet because CI is not green. */
-  async function parkForCI(issueNumber, state, prNumber, reason) {
-    state.review_in_progress = false;
-    // Parked means no prompt was posted. handleReviewCompletion reads this flag
-    // to tell "never asked" from "asked, no answer".
-    state.review_pending_ci = true;
-    state.history.push({ event: "review_pending_ci", reason: reason, timestamp: new Date().toISOString() });
-    await updateIssueState(issueNumber, state);
-    core.info("Ticket runner: #" + issueNumber + " parked on PR #" + prNumber + ", review waits for CI: " + reason);
-  }
-
   async function handleDevCompletion(issueNumber, state, phaseFailed) {
     var prNumber = await findPRForIssueWithComment(issueNumber);
     if (prNumber) {
@@ -926,7 +909,8 @@ module.exports = async ({ github, context, core }) => {
         await updateIssueState(issueNumber, state);
         core.info("Ticket runner: #" + issueNumber + " -> REVIEW on PR #" + prNumber);
       } else {
-        await parkForCI(issueNumber, state, prNumber, "CI not green after DEV");
+        h.parkForCI(state, prNumber, { reason: "CI not green after DEV" });
+        await updateIssueState(issueNumber, state);
         core.info("Ticket runner: #" + issueNumber + " -> REVIEW on PR #" + prNumber
           + ", review waits for CI (Java CI wakeup will request it)");
       }
@@ -1019,8 +1003,7 @@ module.exports = async ({ github, context, core }) => {
           // not passed, and a human approval only re-checks CI. Park with
           // review_pending_ci set; the
           // Java CI success wakeup clears it and posts the prompt on green.
-          state.review_pending_ci = true;
-          state.history.push({ event: "merge_deferred", reason: "ci_not_green", timestamp: new Date().toISOString() });
+          h.parkForCI(state, state.pr, { event: "merge_deferred", reason: "ci_not_green" });
           await updateIssueState(issueNumber, state);
           await github.rest.issues.createComment({
             owner, repo, issue_number: state.pr,
@@ -1146,7 +1129,8 @@ module.exports = async ({ github, context, core }) => {
     state.history.push({ event: "feedback_done", timestamp: new Date().toISOString() });
     var ciGreen = await h.isCIGreen(state.pr);
     if (!ciGreen) {
-      await parkForCI(issueNumber, state, state.pr, "CI not green after feedback");
+      h.parkForCI(state, state.pr, { reason: "CI not green after feedback" });
+      await updateIssueState(issueNumber, state);
       return;
     }
     await updateIssueState(issueNumber, state);
@@ -1166,7 +1150,8 @@ module.exports = async ({ github, context, core }) => {
     // ticket to agent/failed on the third stray. Hoisted above the increment so
     // a defer is free regardless of caller.
     if (state.phase === "REVIEW" && state.pr && !(await h.isCIGreen(state.pr))) {
-      await parkForCI(issueNumber, state, state.pr, "retry suppressed: CI not green");
+      h.parkForCI(state, state.pr, { reason: "retry suppressed: CI not green" });
+      await updateIssueState(issueNumber, state);
       return;
     }
     state.retries += 1;
@@ -1308,9 +1293,7 @@ module.exports = async ({ github, context, core }) => {
     }
     var ciGreen = await h.isCIGreen(found);
     if (!ciGreen) {
-      st.review_in_progress = false;
-      st.review_pending_ci = true;
-      st.history.push({ event: "review_pending_ci", timestamp: new Date().toISOString() });
+      h.parkForCI(st, found);
       try {
         await github.rest.issues.update({ owner, repo, issue_number: issueNumber, body: replaceOrAppendStatus(body, st, issueNumber) });
       } catch (_) { /* state already rebuilt above; wakeup will re-read */ }
