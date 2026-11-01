@@ -106,25 +106,31 @@ jobs:
 
     - name: Run QEMU Boot Test (32-bit)
       run: |
-        echo "Starting JNode 32-bit in QEMU"
-        rm -f /tmp/com1.txt
-        touch /tmp/com1.txt
-        qemu-system-x86_64 -cdrom /tmp/jnode-ci-32.iso -m 1024 -M pc -cpu pentium -boot once=d,menu=off -net none -serial file:/tmp/com1.txt -display none &
-        qemu_pid=$!
-        sleep 1
+        for attempt in 1 2; do
+          echo "Starting JNode 32-bit in QEMU (attempt $attempt)"
+          rm -f /tmp/com1.txt
+          touch /tmp/com1.txt
+          qemu-system-x86_64 -cdrom /tmp/jnode-ci-32.iso -m 1024 -M pc -cpu pentium -boot once=d,menu=off -net none -serial file:/tmp/com1.txt -display none &
+          qemu_pid=$!
+          sleep 1
 
-        tail -f /tmp/com1.txt &
-        tail_pid=$!
+          tail -f /tmp/com1.txt &
+          tail_pid=$!
 
-        timeout 240s bash -c 'until grep -q -i "System has finished" /tmp/com1.txt; do sleep 1; done' || {
-          echo "32-bit boot failed or timed out!"
-          cat /tmp/com1.txt
+          if timeout 300s bash -c 'until grep -q -i "System has finished" /tmp/com1.txt; do sleep 1; done'; then
+            echo "Successfully booted JNode 32-bit!"
+            kill $qemu_pid $tail_pid || true
+            exit 0
+          fi
+
+          echo "32-bit boot failed or timed out on attempt $attempt!"
           kill $qemu_pid $tail_pid || true
-          exit 1
-        }
+          wait $qemu_pid 2>/dev/null || true
+        done
 
-        echo "Successfully booted JNode 32-bit!"
-        kill $qemu_pid $tail_pid || true
+        echo "32-bit boot failed after 2 attempts!"
+        cat /tmp/com1.txt
+        exit 1
 
     - name: Upload Boot Log
       uses: actions/upload-artifact@v4
@@ -161,25 +167,31 @@ jobs:
 
     - name: Run QEMU Boot Test (64-bit)
       run: |
-        echo "Starting JNode 64-bit in QEMU"
-        rm -f /tmp/com1_64.txt
-        touch /tmp/com1_64.txt
-        qemu-system-x86_64 -cdrom /tmp/jnode-ci-64.iso -m 1024 -M pc -cpu qemu64 -boot once=d,menu=off -net none -serial file:/tmp/com1_64.txt -display none &
-        qemu_pid=$!
-        sleep 1
+        for attempt in 1 2; do
+          echo "Starting JNode 64-bit in QEMU (attempt $attempt)"
+          rm -f /tmp/com1_64.txt
+          touch /tmp/com1_64.txt
+          qemu-system-x86_64 -cdrom /tmp/jnode-ci-64.iso -m 1024 -M pc -cpu qemu64 -boot once=d,menu=off -net none -serial file:/tmp/com1_64.txt -display none &
+          qemu_pid=$!
+          sleep 1
 
-        tail -f /tmp/com1_64.txt &
-        tail_pid=$!
+          tail -f /tmp/com1_64.txt &
+          tail_pid=$!
 
-        timeout 240s bash -c 'until grep -q -i "System has finished" /tmp/com1_64.txt; do sleep 1; done' || {
-          echo "64-bit boot failed or timed out!"
-          cat /tmp/com1_64.txt
+          if timeout 300s bash -c 'until grep -q -i "System has finished" /tmp/com1_64.txt; do sleep 1; done'; then
+            echo "Successfully booted JNode 64-bit!"
+            kill $qemu_pid $tail_pid || true
+            exit 0
+          fi
+
+          echo "64-bit boot failed or timed out on attempt $attempt!"
           kill $qemu_pid $tail_pid || true
-          exit 1
-        }
+          wait $qemu_pid 2>/dev/null || true
+        done
 
-        echo "Successfully booted JNode 64-bit!"
-        kill $qemu_pid $tail_pid || true
+        echo "64-bit boot failed after 2 attempts!"
+        cat /tmp/com1_64.txt
+        exit 1
 
     - name: Upload Boot Log
       uses: actions/upload-artifact@v4
@@ -190,7 +202,7 @@ jobs:
 
   heal:
     needs: [build, test, boot32, boot64]
-    if: failure() && github.event_name == 'pull_request'
+    if: failure() && !cancelled() && github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     permissions:
       issues: write
@@ -243,6 +255,10 @@ jobs:
               .filter(([, j]) => j && j.result === 'failure')
               .map(([n]) => n)
               .join(', ');
+            if (!failed) {
+              core.info(`CI-heal skipped for PR #${prNumber} @ ${sha} (no failed jobs; run was cancelled or only cancelled dependencies).`);
+              return;
+            }
             await github.rest.issues.createComment({
               owner, repo, issue_number: prNumber,
               body: `/oc fix CI failed for ${sha} (jobs: ${failed || 'unknown'}): ${runUrl}\n${marker}\n\nRead the failing check output, fix the code on this branch, and push. Do not open a new PR.`

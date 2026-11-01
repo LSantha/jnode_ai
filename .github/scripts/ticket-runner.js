@@ -507,6 +507,15 @@ module.exports = async ({ github, context, core }) => {
     var run = context.payload.workflow_run;
     var conclusion = run.conclusion;
     if (conclusion === "skipped") return;
+    // Only a real failure warrants a heal. A cancelled run is normally a
+    // transient stall (or a maintainer cancelling a hung QEMU boot); waking an
+    // agent for it posts /oc fix on a branch that has nothing to fix and
+    // restarts the whole pipeline. ant.yml's heal job applies the same rule.
+    var failed = conclusion === "failure" || conclusion === "timed_out";
+    if (conclusion !== "success" && !failed) {
+      core.info("Ticket runner: Java CI " + conclusion + " (no heal)");
+      return;
+    }
     var sha = run.head_sha || "";
     var runUrl = "https://github.com/" + owner + "/" + repo + "/actions/runs/" + run.id;
     core.info("Ticket runner: Java CI " + conclusion + " for " + sha);
