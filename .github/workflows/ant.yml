@@ -202,7 +202,7 @@ jobs:
 
   heal:
     needs: [build, test, boot32, boot64]
-    if: failure() && github.event_name == 'pull_request'
+    if: failure() && !cancelled() && github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     permissions:
       issues: write
@@ -255,6 +255,10 @@ jobs:
               .filter(([, j]) => j && j.result === 'failure')
               .map(([n]) => n)
               .join(', ');
+            if (!failed) {
+              core.info(`CI-heal skipped for PR #${prNumber} @ ${sha} (no failed jobs; run was cancelled or only cancelled dependencies).`);
+              return;
+            }
             await github.rest.issues.createComment({
               owner, repo, issue_number: prNumber,
               body: `/oc fix CI failed for ${sha} (jobs: ${failed || 'unknown'}): ${runUrl}\n${marker}\n\nRead the failing check output, fix the code on this branch, and push. Do not open a new PR.`
