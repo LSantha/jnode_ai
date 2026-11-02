@@ -31,6 +31,8 @@ import org.jnode.shell.syntax.CommandSyntaxException;
 import org.jnode.shell.syntax.FileArgument;
 import org.jnode.shell.syntax.FlagArgument;
 import org.jnode.shell.syntax.IntegerArgument;
+import org.jnode.shell.syntax.MuAlternation;
+import org.jnode.shell.syntax.MuSyntax;
 import org.jnode.shell.syntax.OptionSyntax;
 import org.jnode.shell.syntax.Syntax;
 import org.junit.Assert;
@@ -57,6 +59,24 @@ public class AlternativesSyntaxTest {
     public void testConstructor() {
         new AlternativesSyntax(new OptionSyntax("intArg", 'i'), new OptionSyntax("fileArg", 'f'),
                 new OptionSyntax("flagArg", "xxx"));
+    }
+
+    @org.junit.Test
+    public void testNullAlternativeIsTolerated() throws Exception {
+        Test test = new Test();
+        Syntax syntax = new AlternativesSyntax(new OptionSyntax("intArg", 'i'), null,
+                new OptionSyntax("fileArg", 'f'));
+        Syntax[] children = syntax.getChildren();
+        Assert.assertEquals(3, children.length);
+        Assert.assertNull(children[1]);
+
+        Assert.assertEquals("( -i <intArg> ) | ( -f <fileArg> )",
+                syntax.format(test.getArgumentBundle()));
+
+        MuSyntax prepared = syntax.prepare(test.getArgumentBundle());
+        MuSyntax[] alternatives = ((MuAlternation) prepared).getAlternatives();
+        Assert.assertEquals(3, alternatives.length);
+        Assert.assertNull(alternatives[1]);
     }
 
     @org.junit.Test
