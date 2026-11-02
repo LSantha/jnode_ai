@@ -50,6 +50,7 @@ function issue(number, body, over) {
 function mock({ issues = [], runs = {}, comments = {}, prSha = SHA, prState = "open", prLabels = [] } = {}) {
   const created = [];
   const removed = [];
+  const cancelled = [];
   const github = {
     paginate: async (fn, params) => (await fn(params)).data,
     rest: {
@@ -76,13 +77,17 @@ function mock({ issues = [], runs = {}, comments = {}, prSha = SHA, prState = "o
       actions: {
         listWorkflowRuns: async ({ workflow_id }) => ({
           data: { workflow_runs: runs[workflow_id] || [] }
-        })
+        }),
+        cancelWorkflowRun: async ({ run_id }) => {
+          cancelled.push(run_id);
+          return { status: 202 };
+        }
       }
     }
   };
   const context = { repo: { owner: "o", repo: "r" } };
   const core = { info: () => {}, warning: () => {}, error: () => {} };
-  return { github: github, context: context, core: core, created: created, removed: removed };
+  return { github: github, context: context, core: core, created: created, removed: removed, cancelled: cancelled };
 }
 
 function ci(status, conclusion, over) {
@@ -113,6 +118,60 @@ test("skips a ticket with an agent run in flight", async () => {
     runs: { "opencode.yml": [{ status: "in_progress", display_title: "Issue #1 - fix" }] }
   });
   await watchdog(Object.assign(m, { env: ENV }));
+  assert.equal(m.created.length, 0);
+});
+
+test("treats an active run with a fresh updated_at as in flight", async () => {
+  const m = mock({
+    issues: [issue(1, ticketBody(state()))],
+    runs: {
+      "opencode.yml": [{ status: "in_progress", display_title: "Issue #1 - fix", updated_at: iso(5) }]
+    }
+  });
+  await watchdog(Object.assign(m, { env: ENV }));
+  assert.equal(m.created.length, 0);
+  assert.equal(m.cancelled.length, 0);
+});
+
+test("cancels a hung agent run and nudges the ticket", async () => {
+  const m = mock({
+    issues: [issue(1, ticketBody(state()))],
+    runs: {
+      "opencode.yml": [{
+        id: 777, status: "in_progress", display_title: "Issue #1 - fix", updated_at: iso(90)
+      }]
+    }
+  });
+  await watchdog(Object.assign(m, { env: ENV }));
+  assert.deepEqual(m.cancelled, [777], "the hung run must be cancelled before the nudge");
+  assert.equal(m.created.length, 1);
+  assert.match(m.created[0].body, /^\/run\b/);
+});
+
+test("does not cancel anything in dry-run", async () => {
+  const m = mock({
+    issues: [issue(1, ticketBody(state()))],
+    runs: {
+      "opencode.yml": [{
+        id: 777, status: "in_progress", display_title: "Issue #1 - fix", updated_at: iso(90)
+      }]
+    }
+  });
+  await watchdog(Object.assign(m, { env: Object.assign({}, ENV, { WATCHDOG_DRY_RUN: "1" }) }));
+  assert.equal(m.created.length, 0);
+  assert.equal(m.cancelled.length, 0);
+});
+
+test("hung-run staleness is configurable", async () => {
+  const runs = {
+    "opencode.yml": [{
+      id: 888, status: "in_progress", display_title: "Issue #1 - fix", updated_at: iso(30)
+    }]
+  };
+  const env = Object.assign({}, ENV, { WATCHDOG_RUN_STALE_MIN: "60" });
+  const m = mock({ issues: [issue(1, ticketBody(state()))], runs: runs });
+  await watchdog(Object.assign(m, { env: env }));
+  assert.deepEqual(m.cancelled, [], "30m old is not stale at a 60m threshold");
   assert.equal(m.created.length, 0);
 });
 

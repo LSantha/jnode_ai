@@ -21,9 +21,12 @@
 package org.jnode.fs.service.def;
 
 import java.io.IOException;
+import java.lang.reflect.Field;
 import java.util.Map;
 
 import org.jnode.driver.Device;
+import org.jnode.fs.FSDirectory;
+import org.jnode.fs.FSEntry;
 import org.jnode.fs.FileSystem;
 import org.junit.After;
 import org.junit.Before;
@@ -31,10 +34,13 @@ import org.junit.Test;
 
 import static junit.framework.Assert.assertEquals;
 import static junit.framework.Assert.assertFalse;
+import static junit.framework.Assert.assertSame;
 import static junit.framework.Assert.assertTrue;
 import static junit.framework.Assert.fail;
+import static org.mockito.Mockito.anyString;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -59,6 +65,64 @@ public class FileSystemAPIImplTest {
     public void tearDown() throws Exception {
         api = null;
         vfs = null;
+    }
+
+    @Test
+    public void testInvalidCacheHitFallsThroughToParentDirectory() throws Exception {
+        FSDirectory parentDirectory = mock(FSDirectory.class);
+        FSEntry parentEntry = mock(FSEntry.class);
+        when(parentEntry.isValid()).thenReturn(true);
+        when(parentEntry.isDirectory()).thenReturn(true);
+        when(parentEntry.getDirectory()).thenReturn(parentDirectory);
+
+        FSEntry liveEntry = mock(FSEntry.class);
+        when(liveEntry.isValid()).thenReturn(true);
+        when(liveEntry.isFile()).thenReturn(true);
+        when(parentDirectory.getEntry("child")).thenReturn(liveEntry);
+
+        FSEntry invalidEntry = mock(FSEntry.class);
+        when(invalidEntry.isValid()).thenReturn(false);
+
+        FSEntryCache cache = getEntryCache();
+        cache.setEntry("parent", parentEntry);
+        cache.setEntry("parent/child", invalidEntry);
+
+        assertTrue("An invalid cached entry must not hide an existing file",
+            api.fileExists("parent/child"));
+        assertTrue(api.isFile("parent/child"));
+        assertSame(liveEntry, cache.getEntry("parent/child"));
+        verify(parentDirectory).getEntry("child");
+    }
+
+    @Test
+    public void testInvalidCacheHitDoesNotTriggerCreation() throws Exception {
+        FSDirectory parentDirectory = mock(FSDirectory.class);
+        FSEntry parentEntry = mock(FSEntry.class);
+        when(parentEntry.isValid()).thenReturn(true);
+        when(parentEntry.isDirectory()).thenReturn(true);
+        when(parentEntry.getDirectory()).thenReturn(parentDirectory);
+
+        FSEntry liveEntry = mock(FSEntry.class);
+        when(liveEntry.isValid()).thenReturn(true);
+        when(liveEntry.isDirectory()).thenReturn(true);
+        when(parentDirectory.getEntry("child")).thenReturn(liveEntry);
+
+        FSEntry invalidEntry = mock(FSEntry.class);
+        when(invalidEntry.isValid()).thenReturn(false);
+
+        FSEntryCache cache = getEntryCache();
+        cache.setEntry("parent", parentEntry);
+        cache.setEntry("parent/child", invalidEntry);
+
+        assertFalse("An existing directory must not be recreated",
+            api.mkDir("parent/child"));
+        verify(parentDirectory, never()).addDirectory(anyString());
+    }
+
+    private FSEntryCache getEntryCache() throws Exception {
+        Field field = FileSystemAPIImpl.class.getDeclaredField("entryCache");
+        field.setAccessible(true);
+        return (FSEntryCache) field.get(api);
     }
 
     @Test

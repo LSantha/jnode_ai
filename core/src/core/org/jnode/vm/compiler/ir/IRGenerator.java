@@ -105,6 +105,7 @@ import org.jnode.vm.classmgr.VmClassLoader;
 import org.jnode.vm.classmgr.VmConstClass;
 import org.jnode.vm.classmgr.VmConstFieldRef;
 import org.jnode.vm.classmgr.VmConstIMethodRef;
+import org.jnode.vm.classmgr.VmConstInvokeDynamic;
 import org.jnode.vm.classmgr.VmConstMethodRef;
 import org.jnode.vm.classmgr.VmConstString;
 import org.jnode.vm.classmgr.VmMethod;
@@ -1245,6 +1246,10 @@ public class IRGenerator<T> extends BytecodeVisitor {
 //            currentBlock.add(new InterfaceCallAssignQuad(address, currentBlock, stackOffset, methodRef, varOffs));
 //            stackOffset += typeSizeInfo.getStackSlots(returnType);
 //        }
+    }
+
+    public void visit_invokedynamic(VmConstInvokeDynamic indy) {
+        throw new UnsupportedOperationException("invokedynamic is not supported");
     }
 
     public void visit_new(VmConstClass clazz) {

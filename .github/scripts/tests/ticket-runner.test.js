@@ -159,6 +159,7 @@ function createMocks(eventName, {
         }
       },
       pulls: {
+        listReviews: async () => ({ data: [] }),
         list: async () => {
           if (prListOverride) return { data: prListOverride };
           return {
@@ -602,6 +603,51 @@ test("merge safety gate helpers", async (t) => {
     };
     const h = createHelpers({ github: gh, context: { repo: { owner: "t", repo: "t" } }, core: { info: () => {}, warning: () => {} } });
     assert.strictEqual(await h.getAgentReviewVerdict(99), null);
+  });
+
+  await t.test("getAgentReviewVerdict finds a verdict posted only as a native PR review", async () => {
+    // The agent tried a native approval, GitHub blocked it (maintainer-authored
+    // PR), and the agent fell back to a COMMENT review. The verdict then lives
+    // only in the review stream - issue #807 stalled exactly this way.
+    const gh = {
+      rest: {
+        issues: { listComments: async () => ({ data: [] }) },
+        pulls: {
+          listReviews: async () => ({
+            data: [
+              { state: "COMMENTED", body: "Inline note only" },
+              { state: "COMMENTED", body: "## Review\n\nAll good.\n\nVerdict: approve\nAssisted-by: opencode/deepseek-v4.1-flash-free" }
+            ]
+          })
+        }
+      }
+    };
+    const h = createHelpers({ github: gh, context: { repo: { owner: "t", repo: "t" } }, core: { info: () => {}, warning: () => {} } });
+    assert.strictEqual(await h.getAgentReviewVerdict(99), "approve");
+  });
+
+  await t.test("getAgentReviewVerdict honors a request-changes verdict from a review", async () => {
+    const gh = {
+      rest: {
+        issues: { listComments: async () => ({ data: [] }) },
+        pulls: {
+          listReviews: async () => ({ data: [{ state: "CHANGES_REQUESTED", body: "Needs work.\n\nVerdict: request-changes" }] })
+        }
+      }
+    };
+    const h = createHelpers({ github: gh, context: { repo: { owner: "t", repo: "t" } }, core: { info: () => {}, warning: () => {} } });
+    assert.strictEqual(await h.getAgentReviewVerdict(99), "request-changes");
+  });
+
+  await t.test("getAgentReviewVerdict prefers the issue comment over an older review verdict", async () => {
+    const gh = {
+      rest: {
+        issues: { listComments: async () => ({ data: [{ body: "Verdict: request-changes" }] }) },
+        pulls: { listReviews: async () => ({ data: [{ body: "Verdict: approve" }] }) }
+      }
+    };
+    const h = createHelpers({ github: gh, context: { repo: { owner: "t", repo: "t" } }, core: { info: () => {}, warning: () => {} } });
+    assert.strictEqual(await h.getAgentReviewVerdict(99), "request-changes");
   });
 });
 
@@ -2244,6 +2290,29 @@ test("ticket-runner.js event handling suite", async (t) => {
     const fixes = mocks.calls.createComment.filter(c => c.issue_number === 99 && c.body.includes("/oc fix CI failed"));
     assert.strictEqual(fixes.length, 1, "marker dedupes the second identical run");
     assert.ok(fixes[0].body.includes("CI-HEAL:abc123"));
+  });
+
+  await t.test("Java CI cancelled does not post a heal", async () => {
+    const initialBody = _replaceOrAppendStatus("Task", {
+      phase: "REVIEW",
+      pr: 99,
+      turn: 0,
+      max_turns: 3,
+      retries: 0,
+      started: new Date().toISOString(),
+      history: []
+    }, 42);
+
+    const mocks = createMocks("workflow_run", {
+      issueBody: initialBody,
+      runName: "Java CI",
+      runConclusion: "cancelled",
+      issueLabels: [{ name: "kind/bug" }]
+    });
+    await runTicketRunner(mocks);
+
+    const fixes = mocks.calls.createComment.filter(c => c.body.includes("/oc fix CI failed"));
+    assert.strictEqual(fixes.length, 0, "a cancelled run is not a failure to heal");
   });
 
   await t.test("Java CI success ignores FEEDBACK phase", async () => {

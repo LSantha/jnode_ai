@@ -177,7 +177,7 @@ public abstract class VmThread extends VmSystemObject implements org.jnode.vm.fa
     /**
      * Is this thread in the process of being stopped?
      */
-    private boolean stopping;
+    private volatile boolean stopping;
 
     /**
      * Name of this thread.
@@ -485,9 +485,10 @@ public abstract class VmThread extends VmSystemObject implements org.jnode.vm.fa
                 case WAITING_NOTIFY:
                 case WAITING_NOTIFY_TIMEOUT: {
                     // Remove from queues
-                    wakeUpByScheduler();
-                    // Add to ready queue
-                    proc.getScheduler().addToReadyQueue(this, false, "thread.interrupt");
+                    if (wakeUpByScheduler()) {
+                        // Add to ready queue
+                        proc.getScheduler().addToReadyQueue(this, false, "thread.interrupt");
+                    }
                     break;
                 }
             }
@@ -846,18 +847,20 @@ public abstract class VmThread extends VmSystemObject implements org.jnode.vm.fa
      * This thread is selected as new thread by the scheduler. Set the thread
      * state to running.
      *
+     * @return {@code false} if the thread is being stopped and must not run.
      * @throws UninterruptiblePragma
      */
     @KernelSpace
     @Uninterruptible
-    final void wakeUpByScheduler() {
-        switch (threadState) {
-            case ASLEEP:
-            case RUNNING:
-            case YIELDING: {
-                // Do nothing
-                break;
+    final boolean wakeUpByScheduler() {
+        if (!canBeScheduled(threadState, stopping)) {
+            if (!stopping && (threadState != STOPPED) && (threadState != DESTROYED)) {
+                Unsafe.debug("Incorrect threadState in wakeUpByScheduler ");
+                Unsafe.debug(threadState);
             }
+            return false;
+        }
+        switch (threadState) {
             case WAITING_ENTER:
             case WAITING_NOTIFY:
             case WAITING_NOTIFY_TIMEOUT: {
@@ -866,11 +869,30 @@ public abstract class VmThread extends VmSystemObject implements org.jnode.vm.fa
                 break;
             }
             default: {
-                Unsafe.debug("Incorrect threadState in wakeUpByScheduler ");
-                Unsafe.debug(threadState);
+                break;
             }
         }
         threadState = RUNNING;
+        return true;
+    }
+
+    @KernelSpace
+    @Uninterruptible
+    static boolean canBeScheduled(int threadState, boolean stopping) {
+        if (stopping) {
+            return false;
+        }
+        switch (threadState) {
+            case ASLEEP:
+            case RUNNING:
+            case YIELDING:
+            case WAITING_ENTER:
+            case WAITING_NOTIFY:
+            case WAITING_NOTIFY_TIMEOUT:
+                return true;
+            default:
+                return false;
+        }
     }
 
     /**

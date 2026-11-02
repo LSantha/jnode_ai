@@ -21,6 +21,7 @@
 package org.jnode.vm.compiler;
 
 import org.jnode.vm.classmgr.VmConstIMethodRef;
+import org.jnode.vm.classmgr.VmConstInvokeDynamic;
 import org.jnode.vm.classmgr.VmConstMethodRef;
 import org.jnode.vm.classmgr.VmMethod;
 
@@ -62,6 +63,11 @@ public class VerifyingCompilerBytecodeVisitor<T extends CompilerBytecodeVisitor>
     public void visit_invokeinterface(VmConstIMethodRef methodRef, int count) {
         verifyInvoke(methodRef);
         super.visit_invokeinterface(methodRef, count);
+    }
+
+    @Override
+    public void visit_invokedynamic(VmConstInvokeDynamic indy) {
+        throw new UnsupportedOperationException("invokedynamic not supported");
     }
 
     /**

@@ -24,7 +24,12 @@ jobs:
        github.event.comment.author_association == 'MEMBER' || 
        github.event.comment.author_association == 'OWNER')
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    # 45 minutes was not enough for deep VM/kernel debugging tickets: issue
+    # #621 (scheduler stop/sleep-queue work) produced a full baseline,
+    # reproduction and instrumentation trail and was killed at the timeout with
+    # the root cause still open. 90 gives a hard ticket room for build plus
+    # QEMU experiments; routine tickets finish in minutes either way.
+    timeout-minutes: 90
     env:
       # This forces actions to use Node 24 and clears the warning
       FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true

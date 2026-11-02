@@ -49,7 +49,7 @@ public class AlternativesSyntax extends GroupSyntax {
         Syntax[] childSyntaxes = getChildren();
         MuSyntax[] muSyntaxes = new MuSyntax[childSyntaxes.length];
         for (int i = 0; i < childSyntaxes.length; i++) {
-            muSyntaxes[i] = childSyntaxes[i].prepare(bundle);
+            muSyntaxes[i] = childSyntaxes[i] == null ? null : childSyntaxes[i].prepare(bundle);
         }
         return new MuAlternation(muSyntaxes);
     }
@@ -58,6 +58,9 @@ public class AlternativesSyntax extends GroupSyntax {
     public String format(ArgumentBundle bundle) {
         StringBuilder sb = new StringBuilder();
         for (Syntax childSyntax : getChildren()) {
+            if (childSyntax == null) {
+                continue;
+            }
             String formatted = childSyntax.format(bundle);
             if (sb.length() > 0) {
                 sb.append(" | ");
