@@ -20,6 +20,9 @@
  
 package org.jnode.test.shell.syntax;
 
+import java.util.Arrays;
+import java.util.HashSet;
+
 import org.jnode.nanoxml.XMLElement;
 import org.jnode.shell.syntax.ArgumentBundle;
 import org.jnode.shell.syntax.ArgumentSyntax;
@@ -73,11 +76,12 @@ public class GroupSyntaxTest {
     }
 
     @org.junit.Test
-    public void testChildLabels() {
+    public void testChildLabelsCollectsLabelledChildren() {
         SymbolSyntax symbol = new SymbolSyntax("sl", "x", null);
         GroupSyntax group = new ConcreteGroup("g", "desc", symbol, new ArgumentSyntax("al",
             "fileArg"));
-        Assert.assertTrue(group.childLabels().isEmpty());
+        Assert.assertEquals(new HashSet<String>(Arrays.asList("sl", "al")),
+            group.childLabels());
     }
 
     @org.junit.Test
@@ -87,16 +91,57 @@ public class GroupSyntaxTest {
         Assert.assertTrue(group.childLabels().isEmpty());
     }
 
-    /**
-     * A child label is only visible through childLabels() when the child itself is a
-     * GroupSyntax that collects labels from its own children; a labelled leaf Syntax
-     * reports an empty label set.
-     */
     @org.junit.Test
-    public void testChildLabelsDoesNotIncludeLeafLabels() {
+    public void testChildLabelsIgnoresUnlabelledChildren() {
+        GroupSyntax group = new ConcreteGroup("g", null, new SymbolSyntax(null, "x", null),
+            new ArgumentSyntax("fileArg"));
+        Assert.assertTrue(group.childLabels().isEmpty());
+    }
+
+    @org.junit.Test
+    public void testChildLabelsIncludesNestedLabels() {
         GroupSyntax inner = new SequenceSyntax("inner", new ArgumentSyntax("fileArg"));
         GroupSyntax outer = new ConcreteGroup("outer", null, inner);
-        Assert.assertTrue(outer.childLabels().isEmpty());
+        Assert.assertEquals(new HashSet<String>(Arrays.asList("inner")),
+            outer.childLabels());
+    }
+
+    @org.junit.Test
+    public void testChildLabelsIncludesGrandchildLabels() {
+        GroupSyntax inner = new SequenceSyntax("inner", new ArgumentSyntax("deep",
+            "fileArg"));
+        GroupSyntax outer = new ConcreteGroup("outer", null, inner);
+        Assert.assertEquals(new HashSet<String>(Arrays.asList("inner", "deep")),
+            outer.childLabels());
+    }
+
+    @org.junit.Test
+    public void testNullChildIsTolerated() {
+        SymbolSyntax symbol = new SymbolSyntax("sl", "x", null);
+        GroupSyntax group = new OptionalSyntax("o", new Syntax[] {symbol, null});
+        Assert.assertEquals(2, group.getChildren().length);
+        Assert.assertSame(symbol, group.getChildren()[0]);
+        Assert.assertNull(group.getChildren()[1]);
+        Assert.assertSame(group, symbol.getParent());
+        Assert.assertEquals(new HashSet<String>(Arrays.asList("sl")),
+            group.childLabels());
+    }
+
+    @org.junit.Test
+    public void testNullChildSerializesAsEmpty() {
+        GroupSyntax group = new OptionalSyntax("o", new Syntax[] {null});
+        XMLElement element = group.toXML();
+        Assert.assertEquals(1, element.getChildren().size());
+        Assert.assertEquals("empty", element.getChildren().get(0).getName());
+    }
+
+    @org.junit.Test
+    public void testToStringSkipsNullChild() {
+        GroupSyntax group = new OptionalSyntax("o", new Syntax[] {
+            new SymbolSyntax(null, "x", null), null});
+        String str = group.toString();
+        Assert.assertFalse(str, str.contains("null"));
+        Assert.assertTrue(str, str.contains("symbol=x"));
     }
 
     @org.junit.Test

@@ -43,6 +43,12 @@ public abstract class GroupSyntax extends Syntax {
         this.syntaxes = syntaxes;
         this.childLabels = new HashSet<String>();
         for (Syntax syntax : syntaxes) {
+            if (syntax == null) {
+                continue;
+            }
+            if (syntax.isLabelled()) {
+                childLabels.add(syntax.getLabel());
+            }
             childLabels.addAll(syntax.childLabels());
             syntax.setParent(this);
         }
@@ -52,11 +58,16 @@ public abstract class GroupSyntax extends Syntax {
     public String toString() {
         StringBuilder sb = new StringBuilder();
         sb.append("label='").append(label).append("', children=[");
-        for (int i = 0; i < syntaxes.length; i++) {
-            if (i != 0) {
+        boolean first = true;
+        for (Syntax syntax : syntaxes) {
+            if (syntax == null) {
+                continue;
+            }
+            if (!first) {
                 sb.append(", ");
             }
-            sb.append(syntaxes[i]);
+            first = false;
+            sb.append(syntax);
         }
         sb.append("]");
         return sb.toString();
