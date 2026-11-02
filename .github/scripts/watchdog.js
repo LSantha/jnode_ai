@@ -14,6 +14,12 @@
  *
  * Safety rules (see the design in the PR/issue):
  *   - an agent run, CI run, or orchestrator run in flight -> skip;
+ *     A run that is active but whose log has been quiet for
+ *     WATCHDOG_RUN_STALE_MIN minutes is NOT "in flight": it is a hung agent
+ *     (the opencode client can wedge with status still in_progress - seen on
+ *     #621 and #623). Such runs are cancelled before the nudge, because the
+ *     runner will not advance a phase while a run is active, so a bare /run
+ *     would start a second agent beside the dead one.
  *   - require positive evidence: idle beyond a generous timeout, or a CI run
  *     that completed and whose wakeup was missed;
  *   - one nudge per state snapshot (hidden marker), a cooldown, an attempt cap;
@@ -82,6 +88,22 @@ function minutesSince(t, now) {
 
 function isActiveRun(run) {
   return ACTIVE_RUN_STATUSES.indexOf(run && run.status) >= 0;
+}
+
+// A run GitHub still reports as active but whose log has gone quiet is a hung
+// agent, not a busy one. Seen twice: issue #621's CI-heal run and #623's DEV
+// run both sat "in_progress" for 75+ minutes with updated_at frozen after ~11
+// minutes of work, blocking every nudge. A run whose updated_at is stale by
+// this many minutes is treated as not-in-flight so the ticket can be recovered,
+// and is cancelled before the nudge (a fresh /run would collide with the wedged
+// run still holding the ticket). Missing/unparseable updated_at fails closed:
+// the run stays "in flight", so an API change cannot disable the guard.
+function stuckRun(run, staleMin, now) {
+  if (!isActiveRun(run)) return null;
+  var t = Date.parse(run.updated_at || "");
+  if (isNaN(t)) return null;
+  var age = (now - t) / 60000;
+  return age >= staleMin ? Math.round(age) : null;
 }
 
 // Run titles look like "Issue #42 - ..." or "PR #42 - ...". Match the number
@@ -157,7 +179,9 @@ function config(env) {
     cooldown: num("WATCHDOG_COOLDOWN_MIN", 30),
     maxAttempts: num("WATCHDOG_MAX_ATTEMPTS", 3),
     maxActions: num("WATCHDOG_MAX_ACTIONS", 20),
-    lockMin: num("WATCHDOG_LOCK_MIN", 25)
+    lockMin: num("WATCHDOG_LOCK_MIN", 25),
+    // Minutes without a log update before an "active" run counts as hung.
+    runStaleMin: num("WATCHDOG_RUN_STALE_MIN", 25)
   };
 }
 
@@ -264,11 +288,16 @@ async function inspectTicket(ctx, issue) {
   }
 
   var ocRuns = runsFor(ctx.runs.opencode, issue.number, state.pr);
+  var stuck = [];
   for (var j = 0; j < ocRuns.length; j++) {
-    if (isActiveRun(ocRuns[j])) {
+    var staleMin = stuckRun(ocRuns[j], cfg.runStaleMin, now);
+    if (staleMin) {
+      stuck.push(ocRuns[j]);
+    } else if (isActiveRun(ocRuns[j])) {
       return { note: "#" + issue.number + " agent run in flight" };
     }
   }
+  var stuckExtra = stuck.length ? { stuckRuns: stuck } : null;
   // Give the workflow_run handler time to consume a just-finished agent run
   // before concluding the wakeup was lost.
   var agentDone = latestCompletedTime(ocRuns);
@@ -283,7 +312,7 @@ async function inspectTicket(ctx, issue) {
   if (state.phase === "DEV" || state.phase === "FEEDBACK") {
     if (idle < cfg.devTimeout) return { note: "#" + issue.number + " " + state.phase + " idle " + Math.round(idle) + "m" };
     return decision("run", state.phase + " idle " + Math.round(idle) + "m",
-      ticketKey(issue.number, state, last, "dev"), attempt);
+      ticketKey(issue.number, state, last, "dev"), attempt, stuckExtra);
   }
 
   if (state.phase !== "REVIEW") return null;
@@ -300,7 +329,7 @@ async function inspectTicket(ctx, issue) {
   if (state.review_in_progress) {
     if (idle < cfg.reviewTimeout) return { note: "#" + issue.number + " review in flight" };
     return decision("run", "review_in_progress stale " + Math.round(idle) + "m",
-      ticketKey(issue.number, state, last, "stale-review"), attempt);
+      ticketKey(issue.number, state, last, "stale-review"), attempt, stuckExtra);
   }
 
   var pr;
@@ -317,7 +346,12 @@ async function inspectTicket(ctx, issue) {
     if (sha && ctx.runs.java[k].head_sha === sha) ciRuns.push(ctx.runs.java[k]);
   }
   for (var m = 0; m < ciRuns.length; m++) {
-    if (isActiveRun(ciRuns[m])) return { note: "#" + issue.number + " CI in flight" };
+    var staleCi = stuckRun(ciRuns[m], cfg.runStaleMin, now);
+    if (staleCi) {
+      stuck.push(ciRuns[m]);
+    } else if (isActiveRun(ciRuns[m])) {
+      return { note: "#" + issue.number + " CI in flight" };
+    }
   }
   var completed = null;
   for (var n = 0; n < ciRuns.length; n++) {
@@ -327,7 +361,7 @@ async function inspectTicket(ctx, issue) {
   if (!completed) {
     if (idle < cfg.reviewTimeout) return { note: "#" + issue.number + " no CI record, idle " + Math.round(idle) + "m" };
     return decision("run", "REVIEW with no CI record idle " + Math.round(idle) + "m",
-      ticketKey(issue.number, state, last, "no-ci"), attempt);
+      ticketKey(issue.number, state, last, "no-ci"), attempt, stuck.length ? { stuckRuns: stuck } : null);
   }
   var ciEnd = parseTs(completed.updated_at || completed.created_at);
   if (minutesSince(ciEnd, now) < cfg.ciSettle) {
@@ -335,7 +369,7 @@ async function inspectTicket(ctx, issue) {
   }
   if (completed.conclusion === "success") {
     return decision("run", "CI green but review not requested",
-      ticketKey(issue.number, state, last, "ci-green:" + sha.slice(0, 7)), attempt);
+      ticketKey(issue.number, state, last, "ci-green:" + sha.slice(0, 7)), attempt, stuck.length ? { stuckRuns: stuck } : null);
   }
   // Only a real failure warrants a heal; cancelled/skipped/neutral/stale would
   // make the sweep chase a run that never needed a fix (ant.yml heals on
@@ -353,7 +387,8 @@ async function inspectTicket(ctx, issue) {
   }
   return decision("heal", "CI " + completed.conclusion + " and heal missing",
     ticketKey(issue.number, state, last, "ci-red:" + sha.slice(0, 7)), attempt,
-    { sha: sha, runUrl: completed.html_url || "" });
+    Object.assign({ sha: sha, runUrl: completed.html_url || "" },
+      stuck.length ? { stuckRuns: stuck } : null));
 }
 
 // Reports whether the orchestrator's current task still has a run in flight
@@ -363,10 +398,12 @@ async function inspectTicket(ctx, issue) {
 // completion the orchestrator is about to consume (orchestrator.js re-posts the
 // child /oc prompt on its own wakeup).
 async function childRunState(ctx, task) {
-  var state = { inFlight: false, justFinished: false };
+  var state = { inFlight: false, justFinished: false, stuckRuns: [] };
   var ocRuns = runsFor(ctx.runs.opencode, task.issue, task.pr);
   for (var i = 0; i < ocRuns.length; i++) {
-    if (isActiveRun(ocRuns[i])) state.inFlight = true;
+    if (stuckRun(ocRuns[i], ctx.cfg.runStaleMin, ctx.now)) {
+      state.stuckRuns.push(ocRuns[i]);
+    } else if (isActiveRun(ocRuns[i])) state.inFlight = true;
   }
   if (!state.inFlight) {
     var done = latestCompletedTime(ocRuns);
@@ -388,7 +425,9 @@ async function childRunState(ctx, task) {
     if (ctx.runs.java[j].head_sha === sha) ciRuns.push(ctx.runs.java[j]);
   }
   for (var k = 0; k < ciRuns.length; k++) {
-    if (isActiveRun(ciRuns[k])) state.inFlight = true;
+    if (stuckRun(ciRuns[k], ctx.cfg.runStaleMin, ctx.now)) {
+      state.stuckRuns.push(ciRuns[k]);
+    } else if (isActiveRun(ciRuns[k])) state.inFlight = true;
   }
   if (!state.inFlight) {
     var ciDone = latestCompletedTime(ciRuns);
@@ -446,7 +485,8 @@ async function inspectMaster(ctx, issue) {
   }
   return decision("orchestrate", "task #" + task.issue + " " + task.phase + " idle " + Math.round(idle) + "m",
     "master:" + issue.number + ":" + task.issue + ":" + task.phase + ":" + new Date(last).toISOString(),
-    "master:" + issue.number + ":" + task.issue + ":" + task.phase + ":");
+    "master:" + issue.number + ":" + task.issue + ":" + task.phase + ":",
+    child.stuckRuns && child.stuckRuns.length ? { stuckRuns: child.stuckRuns } : null);
 }
 
 async function performAction(ctx, issue, plan) {
@@ -456,8 +496,26 @@ async function performAction(ctx, issue, plan) {
   var marker = WATCHDOG_PREFIX + plan.key + " -->";
 
   if (ctx.cfg.dryRun) {
-    ctx.core.info("Watchdog: DRY-RUN " + plan.action + " on #" + issue.number + " (" + plan.reason + ")");
+    var would = (plan.stuckRuns || []).map(function (r) { return r.id; }).join(", ");
+    ctx.core.info("Watchdog: DRY-RUN " + plan.action + " on #" + issue.number + " (" + plan.reason + ")" +
+      (would ? "; would cancel hung run(s): " + would : ""));
     return;
+  }
+
+  // Cancel any run whose log went quiet before nudging. A wedged run still
+  // holds the ticket (the runner will not advance a phase while its run is
+  // active), so posting /run first would start a second agent beside the dead
+  // one. Cancel is a no-op if the run finished on its own in the meantime.
+  var stuckRuns = plan.stuckRuns || [];
+  for (var s = 0; s < stuckRuns.length; s++) {
+    var rid = stuckRuns[s].id;
+    if (!rid) continue;
+    try {
+      await github.rest.actions.cancelWorkflowRun({ owner: owner, repo: repo, run_id: rid });
+      ctx.core.info("Watchdog: cancelled hung run " + rid + " before " + plan.action + " (" + plan.reason + ")");
+    } catch (err) {
+      ctx.core.warning("Watchdog: could not cancel hung run " + rid + ": " + err.message);
+    }
   }
 
   if (plan.action === "run") {
