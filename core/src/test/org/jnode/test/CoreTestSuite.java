@@ -21,6 +21,7 @@
 package org.jnode.test;
 
 import org.jnode.driver.serial.console.AsyncSerialConsoleWriterTest;
+import org.jnode.plugin.model.PluginJarTest;
 import org.jnode.test.threads.ThreadingTestJUnit4;
 import org.jnode.test.util.NumberUtilsTest;
 import org.jnode.test.util.VersionTest;
@@ -57,6 +58,7 @@ import org.junit.runners.Suite.SuiteClasses;
     VmTypeStateTest.class,
     VmThreadSchedulingTest.class,
     AsyncSerialConsoleWriterTest.class,
+    PluginJarTest.class,
 }
 )
 public class CoreTestSuite {

@@ -34,6 +34,8 @@ import org.jnode.plugin.model.PluginDescriptorModel;
  * @author Levente S\u00e1ntha
  */
 public class JIFSFpluginJar extends JIFSFile {
+    private static final int COPY_CHUNK_SIZE = 8192;
+
     private String id;
     protected ByteBuffer buffer;
 
@@ -66,22 +68,49 @@ public class JIFSFpluginJar extends JIFSFile {
 
     public void read(long fileOffset, ByteBuffer destBuf) {
         refresh();
-        if (buffer == null) {
+        final ByteBuffer src = buffer;
+        if (src == null || fileOffset < 0 || !destBuf.hasRemaining()) {
             return;
         }
-        ByteBuffer buf = buffer;
-        buf.position((int) fileOffset);
-        buf = (ByteBuffer) buf.slice().limit(destBuf.remaining());
-        destBuf.put(buf);
+        final ByteBuffer source = src.duplicate();
+        if (fileOffset >= source.limit()) {
+            return;
+        }
+        source.position((int) fileOffset);
+        final int length = Math.min(source.remaining(), destBuf.remaining());
+        source.limit(source.position() + length);
+        copy(source, destBuf, length);
+    }
+
+    private static void copy(ByteBuffer src, ByteBuffer dest, int length) {
+        if (length <= 0) {
+            return;
+        }
+        if (!dest.isReadOnly() && src.hasArray() && dest.hasArray()) {
+            System.arraycopy(src.array(), src.arrayOffset() + src.position(),
+                dest.array(), dest.arrayOffset() + dest.position(), length);
+            src.position(src.position() + length);
+            dest.position(dest.position() + length);
+            return;
+        }
+        final byte[] chunk = new byte[Math.min(length, COPY_CHUNK_SIZE)];
+        int remaining = length;
+        while (remaining > 0) {
+            final int count = Math.min(remaining, chunk.length);
+            src.get(chunk, 0, count);
+            dest.put(chunk, 0, count);
+            remaining -= count;
+        }
     }
 
     public long getLength() {
         refresh();
-        if (buffer == null) {
+        final ByteBuffer src = buffer;
+        if (src == null) {
             return 0;
         }
-        ByteBuffer buf = buffer;
-        buf.position(0);
-        return buf.remaining();
+        final ByteBuffer copy = src.duplicate();
+        copy.position(0);
+        return copy.remaining();
     }
 }
