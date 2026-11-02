@@ -85,7 +85,7 @@ public class PluginJar implements BootableObject, ResourceLoader {
             //get a reference to the plugin jar data
             if (VmUtils.isWritingImage()) {
                 //buildtime
-                initBuffer = pluginIs.array();
+                initBuffer = toByteArray(pluginIs);
             } else {
                 //runtime
                 buffer = pluginIs;
@@ -210,6 +210,17 @@ public class PluginJar implements BootableObject, ResourceLoader {
             }
         }
         return map;
+    }
+
+    static byte[] toByteArray(ByteBuffer pluginIs) {
+        if (pluginIs.hasArray() && pluginIs.arrayOffset() == 0 &&
+            pluginIs.position() == 0 && pluginIs.limit() == pluginIs.capacity() &&
+            pluginIs.array().length == pluginIs.capacity()) {
+            return pluginIs.array();
+        }
+        final byte[] data = new byte[pluginIs.remaining()];
+        pluginIs.duplicate().get(data);
+        return data;
     }
 
     public ByteBuffer getBuffer() {
