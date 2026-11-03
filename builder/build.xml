@@ -70,6 +70,15 @@
            excludes="**/*-template.java,**/package-info.java"
            srcdir="${my-src.dir}/builder/">
 			<bootclasspath path="${jnode-core.jar}"/>
+			<!-- JDK 9+ ships no rt.jar, so includeJavaRuntime alone can no
+			     longer supply the java.* types these tasks use. Compile them
+			     against the classlib jar (the Java 6 platform of the JNode
+			     build) and the Ant jar, exactly like every other builder
+			     source, so pre-compile is host-JDK independent (JDK 6-11). -->
+			<classpath>
+				<pathelement location="${classlib.jar}"/>
+				<pathelement location="${ant.jar}"/>
+			</classpath>
 			<compilerarg value="${compilerarg}"/>
 			<include name="org/jnode/ant/taskdefs/TemplateTask.java"/>
 			<include name="org/jnode/ant/taskdefs/FileSetTask.java"/>
