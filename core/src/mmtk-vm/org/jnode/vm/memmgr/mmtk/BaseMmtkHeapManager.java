@@ -147,6 +147,9 @@ public abstract class BaseMmtkHeapManager extends VmHeapManager implements
         // Allocate the raw space
         size += this.headerSize;
         final Address ptr = alloc(size, align, this.headerSize, allocator);
+        if (ptr.isZero()) {
+            throwOutOfMemory();
+        }
 
         // Initialize the header
         final Address objPtr = ptr.add(headerSize);

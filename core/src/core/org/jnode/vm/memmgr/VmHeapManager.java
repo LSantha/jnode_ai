@@ -59,14 +59,14 @@ public abstract class VmHeapManager extends VmSystemObject implements org.jnode.
     /**
      * Has this manager been initialized yet
      */
-    private boolean inited = false;
+    private volatile boolean inited = false;
 
     /**
      * The current debug flags
      */
     protected int heapFlags = TRACE_BASIC | TRACE_OOM | TRACE_ALLOC;
 
-    protected OutOfMemoryError OOME;
+    protected volatile OutOfMemoryError OOME;
 
     /**
      * The memory access helper
@@ -125,10 +125,7 @@ public abstract class VmHeapManager extends VmSystemObject implements org.jnode.
 
         final Object obj = allocObject((VmNormalClass<?>) cls, size);
         if (obj == null) {
-            if ((heapFlags & TRACE_OOM) != 0) {
-                debug("Out of memory");
-            }
-            throw OOME;
+            throwOutOfMemory();
         }
         return obj;
     }
@@ -177,15 +174,7 @@ public abstract class VmHeapManager extends VmSystemObject implements org.jnode.
         }
 
         arrayCls.incTotalLength(elements);
-        final Object obj = newArray0(arrayCls, elemSize, elements, slotSize);
-        if (obj == null) {
-            if ((heapFlags & TRACE_OOM) != 0) {
-                debug("Out of memory");
-            }
-            throw OOME;
-        }
-
-        return obj;
+        return newArray0(arrayCls, elemSize, elements, slotSize);
     }
 
     /**
@@ -220,6 +209,9 @@ public abstract class VmHeapManager extends VmSystemObject implements org.jnode.
             size = normalClass.getObjectSize();
         }
         final Object newObj = allocObject(objectClass, size);
+        if (newObj == null) {
+            throwOutOfMemory();
+        }
         helper.copy(objectPtr, ObjectReference.fromObject(newObj).toAddress(),
             Extent.fromIntZeroExtend(size));
         return newObj;
@@ -262,6 +254,9 @@ public abstract class VmHeapManager extends VmSystemObject implements org.jnode.
         final int size = (VmArray.DATA_OFFSET * slotSize)
             + (elemSize * elements);
         final Object array = allocObject(vmClass, size);
+        if (array == null) {
+            throwOutOfMemory();
+        }
         final Address arrayPtr = ObjectReference.fromObject(array).toAddress();
         arrayPtr.store(elements, Offset.fromIntSignExtend(VmArray.LENGTH_OFFSET
             * slotSize));
@@ -278,10 +273,32 @@ public abstract class VmHeapManager extends VmSystemObject implements org.jnode.
         if (!inited) {
             // Unsafe.debug("testInitid.initialize");
             initialize();
+            // Constructing the error can allocate, so publish inited first to
+            // let those allocations use this now initialized heap manager.
+            // throwOutOfMemory() also handles a still-null OOME lazily.
             inited = true;
             OOME = new OutOfMemoryError();
             // Unsafe.debug("eo-testInitid.initialize");
         }
+    }
+
+    /**
+     * Throw the OutOfMemoryError for a failed allocation. The error is shared
+     * by all failed allocations on this heap manager. It is created lazily if
+     * another thread has not published it yet, so a failure can never throw a
+     * null error.
+     */
+    @NoInline
+    protected final void throwOutOfMemory() {
+        OutOfMemoryError error = OOME;
+        if (error == null) {
+            error = new OutOfMemoryError();
+            OOME = error;
+        }
+        if ((heapFlags & TRACE_OOM) != 0) {
+            debug("Out of memory");
+        }
+        throw error;
     }
 
     /**
