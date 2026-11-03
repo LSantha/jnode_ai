@@ -514,6 +514,22 @@ public abstract class AbstractBootImageBuilder extends AbstractPluginsTask {
         // nulled target recreates loaders on demand. Revert on boot NPE in
         // getSystemClassLoader paths.
         noCopyPatterns.add("sun.misc.Launcher");
+        // Batch 4 (strict-collect target, JDK-6-era classlib against JDK 11):
+        // These target types' non-constant statics are assigned entirely inside
+        // their own <clinit> in the classlib, and the compiler (l1a/l1b) emits
+        // writeClassInitialize at the first getstatic/putstatic of each field,
+        // so a null host value is safely lazily re-initialized on first access.
+        // Host copies were either layout-inexact (ReflectionFactory,
+        // SecurityConstants, ProviderList/ProviderConfig) or held a live host
+        // instance (Pattern held by FloatingDecimal.hexFloatPattern), which the
+        // no-copy path replaces with a null that <clinit> re-materializes.
+        // Revert on boot NPE in getstatic accessors for these types.
+        noCopyPatterns.add("sun.misc.FloatingDecimal");
+        noCopyPatterns.add("sun.reflect.ReflectionFactory");
+        noCopyPatterns.add("sun.security.util.SecurityConstants");
+        noCopyPatterns.add("sun.util.LocaleServiceProviderPool");
+        noCopyPatterns.add("sun.security.jca.ProviderList");
+        noCopyPatterns.add("sun.security.jca.Providers");
         final String noCopyProp = getProject().getProperty("jnode.bootimage.nocopy");
         if (noCopyProp != null) {
             parseNoCopyClasses(noCopyProp);
