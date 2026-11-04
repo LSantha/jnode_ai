@@ -254,12 +254,13 @@
 
 	<!-- Build the java object file  -->
 	<target name="java-image" depends="asm-native">
-		<!-- Bootimage builder selection (build-time opt-in for isolation):
-		     -Djnode.bootimage.builder=org.jnode.build.x86.IsolatedBootImageBuilder
-		     Strict in-exact checking can also be enabled on the legacy builder via
-		     -Djnode.bootimage.strict=true. Legacy builder stays the default. -->
-		<property name="jnode.bootimage.builder" value="org.jnode.build.x86.BootImageBuilder"/>
-		<taskdef name="bootimage" classname="${jnode.bootimage.builder}" classpathref="cp-x86" />
+		<!-- Single build-time opt-in for target-heap isolation checks:
+		     -Djnode.bootimage.strict=true fails the build on an in-exact
+		     host/JNode match, =collect only records violations (for surveying
+		     a new host JDK). Legacy builder behaviour stays the default;
+		     failOnInexact="..." and noCopyClasses="..." can also be set as
+		     attributes on this task. -->
+		<taskdef name="bootimage" classname="org.jnode.build.x86.BootImageBuilder" classpathref="cp-x86" />
 
 		<bootimage 
 			destfile="${build.bootimage.dir}/bootimage.bin" 

@@ -458,6 +458,12 @@ public abstract class AbstractBootImageBuilder extends AbstractPluginsTask {
 
         debug = (getProject().getProperty("jnode.debug") != null);
 
+        // NOTE before flipping failOnInexact to default-on: read the property
+        // first and apply the default afterwards. The "!failOnInexact" guard
+        // below assumes strict starts off, so with a default-on flag it would
+        // skip the property entirely and -Djnode.bootimage.strict=false|collect
+        // would be silently ignored (the trap the removed
+        // IsolatedBootImageBuilder subclass had from the other side).
         if (!failOnInexact && getProject().getProperty("jnode.bootimage.strict") != null) {
             final String strictProp = getProject().getProperty("jnode.bootimage.strict");
             if ("collect".equalsIgnoreCase(strictProp)) {
