@@ -23,11 +23,15 @@ package org.jnode.fs.iso9660;
 import java.io.IOException;
 import java.io.UnsupportedEncodingException;
 
+import org.apache.log4j.Logger;
+
 /**
  * @author Chira
  * @author Ewout Prangsma (epr@users.sourceforge.net)
  */
 public class EntryRecord extends Descriptor {
+
+    private static final Logger log = Logger.getLogger(EntryRecord.class);
 
     private final int entryLength;
     private final int extAttributeLength;
@@ -38,6 +42,7 @@ public class EntryRecord extends Descriptor {
     private final int flags;
     private final int interleaveSize;
     private final String identifier;
+    private final boolean identifierValid;
 
     private final ISO9660Volume volume;
     private final String encoding;
@@ -62,6 +67,7 @@ public class EntryRecord extends Descriptor {
         this.interleaveSize = getUInt8(buff, offset + 28);
         // This must be after flags, because of isDirectory.
         this.identifier = getFileIdentifier(buff, offset, isDirectory(), encoding);
+        this.identifierValid = (identifier != null);
     }
 
     public void readFileData(long offset, byte[] buffer, int bufferOffset, int size)
@@ -120,6 +126,13 @@ public class EntryRecord extends Descriptor {
     }
 
     /**
+     * @return {@code true} if the file identifier could be read from the record.
+     */
+    public final boolean isIdentifierValid() {
+        return identifierValid;
+    }
+
+    /**
      * @return Returns the volume.
      */
     public final ISO9660Volume getVolume() {
@@ -127,7 +140,21 @@ public class EntryRecord extends Descriptor {
     }
 
     private final String getFileIdentifier(byte[] buff, int offset, boolean isDir, String encoding) {
+        // Policy: a record whose file identifier does not fit in the buffer is
+        // malformed. Log it and return null so ISO9660Directory can skip the
+        // record and keep the rest of the listing available. This keeps an
+        // unchecked StringIndexOutOfBoundsException out of the Iterator contract.
+        if ((offset + 33) > buff.length) {
+            log.warn("Skipping ISO9660 directory record at offset " + offset +
+                ": record is too short to hold a file identifier length");
+            return null;
+        }
         final int fidLength = getUInt8(buff, offset + 33);
+        if ((offset + 33 + fidLength) > buff.length) {
+            log.warn("Skipping ISO9660 directory record at offset " + offset +
+                ": file identifier length " + fidLength + " exceeds buffer length " + buff.length);
+            return null;
+        }
         if (isDir) {
             final int buff34 = getUInt8(buff, offset + 34);
             if ((fidLength == 1) && (buff34 == 0x00)) {
