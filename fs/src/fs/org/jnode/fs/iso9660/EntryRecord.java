@@ -38,6 +38,7 @@ public class EntryRecord extends Descriptor {
     private final int flags;
     private final int interleaveSize;
     private final String identifier;
+    private final boolean fileIdentifierValid;
 
     private final ISO9660Volume volume;
     private final String encoding;
@@ -61,6 +62,7 @@ public class EntryRecord extends Descriptor {
         this.fileUnitSize = getUInt8(buff, offset + 27);
         this.interleaveSize = getUInt8(buff, offset + 28);
         // This must be after flags, because of isDirectory.
+        this.fileIdentifierValid = isFileIdentifierInBounds(buff, offset);
         this.identifier = getFileIdentifier(buff, offset, isDirectory(), encoding);
     }
 
@@ -126,13 +128,38 @@ public class EntryRecord extends Descriptor {
         return volume;
     }
 
-    private final String getFileIdentifier(byte[] buff, int offset, boolean isDir, String encoding) {
+    /**
+     * Checks whether the file identifier declared by this record fits inside the
+     * buffer it was read from.
+     *
+     * @return {@code true} if the identifier can be read safely.
+     */
+    final boolean isFileIdentifierValid() {
+        return fileIdentifierValid;
+    }
+
+    private static final boolean isFileIdentifierInBounds(byte[] buff, int offset) {
+        final int fidLengthOffset = offset + 32;
+        if (fidLengthOffset < 0 || fidLengthOffset >= buff.length) {
+            return false;
+        }
         final int fidLength = getUInt8(buff, offset + 33);
-        if (isDir) {
+        return fidLength <= (buff.length - offset - 33);
+    }
+
+    private final String getFileIdentifier(byte[] buff, int offset, boolean isDir, String encoding) {
+        // Policy: a record whose file identifier does not fit in the buffer is
+        // malformed, so it is skipped (and logged by ISO9660Directory) instead
+        // of allowing getDChars to throw StringIndexOutOfBoundsException.
+        if (!fileIdentifierValid) {
+            return "";
+        }
+        final int fidLength = getUInt8(buff, offset + 33);
+        if (isDir && (fidLength == 1)) {
             final int buff34 = getUInt8(buff, offset + 34);
-            if ((fidLength == 1) && (buff34 == 0x00)) {
+            if (buff34 == 0x00) {
                 return ".";
-            } else if ((fidLength == 1) && (buff34 == 0x01)) {
+            } else if (buff34 == 0x01) {
                 return "..";
             }
         }

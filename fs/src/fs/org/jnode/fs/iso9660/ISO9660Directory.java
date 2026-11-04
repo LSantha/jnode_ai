@@ -22,6 +22,8 @@ package org.jnode.fs.iso9660;
 
 import java.io.IOException;
 import java.util.Iterator;
+import java.util.NoSuchElementException;
+import org.jnode.bootlog.BootLogInstance;
 import org.jnode.fs.FSDirectory;
 import org.jnode.fs.FSEntry;
 import org.jnode.fs.FileSystem;
@@ -61,10 +63,25 @@ public final class ISO9660Directory implements FSDirectory {
 
             public FSEntry next() {
                 final ISO9660Volume volume = parent.getVolume();
-                final EntryRecord fEntry =
-                    new EntryRecord(volume, buffer, offset + 1, parent.getEncoding());
-                offset += fEntry.getLengthOfDirectoryEntry();
-                return new ISO9660Entry((ISO9660FileSystem) entry.getFileSystem(), fEntry);
+                while (hasNext()) {
+                    final int recordOffset = offset;
+                    final EntryRecord fEntry =
+                        new EntryRecord(volume, buffer, offset + 1, parent.getEncoding());
+                    final int entryLength = fEntry.getLengthOfDirectoryEntry();
+                    offset += (entryLength > 0) ? entryLength : 1;
+                    if (!fEntry.isFileIdentifierValid()) {
+                        // Policy: skip a malformed directory record (whose file
+                        // identifier runs past the extent) and log it, so that
+                        // the listing continues instead of throwing an
+                        // unchecked exception through the iterator.
+                        BootLogInstance.get().warn(
+                            "Skipping malformed ISO9660 directory record at offset " +
+                                recordOffset + " in extent " + parent.getLocationOfExtent());
+                        continue;
+                    }
+                    return new ISO9660Entry((ISO9660FileSystem) entry.getFileSystem(), fEntry);
+                }
+                throw new NoSuchElementException();
             }
 
             /**
