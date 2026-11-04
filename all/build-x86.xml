@@ -51,6 +51,56 @@
 		<equals arg1="${jnode.bits}" arg2="64"/>
 	</condition>
 
+	<!-- 64-bit only. On 64-bit JNAsm is disabled, so the kernel is assembled
+	     ahead of time by yasm into jnode.o and linked into the boot image by
+	     BootImageBuilder.copyKernel(); on 32-bit the kernel is compiled inside
+	     the bootimage build itself. That makes jnode.o a separate artifact with
+	     its own up-to-date check, and the Asm task only compares jnode.asm's
+	     mtime against jnode.o, so it cannot see that the boot image is about to
+	     be rebuilt for a different reason (a rebuilt memory manager plugin or
+	     plugin list). The result is an image stitched together from two
+	     builds: a fresh bootimage stamped ${jnode-vm-ver} wrapped around a
+	     kernel carrying the version banner of an earlier build.
+
+	     Re-assemble the kernel exactly when the bootimage build itself would
+	     not be a no-op, i.e. mirror AbstractBootImageBuilder's own up-to-date
+	     test (bootimage.bin missing, or older than the plugin list or the
+	     memory manager plugin). Kernel and bootimage are then always stamped
+	     by the same run, while a build with nothing changed leaves both alone
+	     instead of re-assembling the kernel and dragging a full image rebuild
+	     along with it. Ordinary source changes are already covered by the
+	     dependset in asm-native (asm sources plus the generated java.inc), and
+	     the bootimage task re-runs whenever jnode.o is newer than bootimage.bin.
+
+	     Revert on: a 64-bit image whose kernel version banner disagrees with
+	     the one reported by vminfo. -->
+	<target name="kernel-rebuild-check">
+		<condition property="jnode.rebuild.kernel64">
+			<and>
+				<equals arg1="${jnode.bits}" arg2="64"/>
+				<or>
+					<not>
+						<available file="${build.bootimage.dir}/bootimage.bin" />
+					</not>
+					<not>
+						<uptodate targetfile="${build.bootimage.dir}/bootimage.bin"
+							srcfile="${system-plugin-list}" />
+					</not>
+					<not>
+						<uptodate targetfile="${build.bootimage.dir}/bootimage.bin">
+							<srcfiles dir="${plugins.dir}" includes="${jnode.memmgr.plugin.id}_*.jar" />
+						</uptodate>
+					</not>
+				</or>
+			</and>
+		</condition>
+	</target>
+
+	<target name="force-kernel-rebuild" depends="kernel-rebuild-check"
+		if="jnode.rebuild.kernel64">
+		<delete file="${build.native.dir}/output/jnode.o" />
+	</target>
+
   <!-- Properties for building the boot files for windows NT/2K/XP -->
   <property name="jnode.install-nt.dir" value="C:\jnode" />
   <!-- (hd0,0) stands for harddisk 0, partition 0 -->
@@ -155,7 +205,7 @@
 		</copy>
 	</target>
 
-	<target name="asm-native" depends="prepare">
+	<target name="asm-native" depends="prepare,force-kernel-rebuild">
 		<taskdef name="genconst" classname="org.jnode.build.x86.AsmConstBuilder" classpathref="cp-x86" />
 		<taskdef name="asm" classname="org.jnode.ant.taskdefs.Asm" classpathref="cp-x86" />
 
@@ -306,11 +356,24 @@
 		<attribute name="dir" />
 		<attribute name="destfile" />
 		<attribute name="menufile" default="${grub.menu.cdrom}" />
+		<!-- Kernels to stage. Defaults to the kernel of the architecture being
+		     built; the combined CD passes an explicit pattern to take both. -->
+		<attribute name="kernelincludes" default="jnode${jnode.bits}.gz" />
 		<sequential>
 			<mkdir dir="@{dir}/boot/grub" />
 			<mkdir dir="@{dir}/licenses" />
+			<!-- Drop only the kernels this CD must not carry: the staging
+			     directory is shared with the builds of the other architecture
+			     (and with the combined CD, whose pattern is deliberately
+			     wider), so a leftover jnode*.gz would otherwise ship on every
+			     CD built afterwards. Everything else is left staged: Ant's
+			     copy then skips unchanged files, which is what lets the ISO
+			     below be skipped as well when nothing has actually changed. -->
+			<delete>
+				<fileset dir="@{dir}" includes="jnode*.gz" excludes="@{kernelincludes}" />
+			</delete>
 			<copy todir="@{dir}">
-				<fileset dir="${jnode.kernel.dir}" includes="jnode*.gz"/>
+				<fileset dir="${jnode.kernel.dir}" includes="@{kernelincludes}"/>
 			</copy>
 			<copy todir="@{dir}">
 				<fileset dir="${initjars.dir}" />
@@ -322,7 +385,19 @@
             <copy file="${my-lib.dir}/fat.s15" todir="@{dir}/boot/grub" />
             <copy file="${my-lib.dir}/grub.s1" todir="@{dir}/boot/grub" />
             <copy file="${my-lib.dir}/grub.s2" todir="@{dir}/boot/grub" />
-            <copy file="@{menufile}" tofile="@{dir}/boot/grub/menu.lst" overwrite="true" />
+            <!-- No overwrite: an unchanged menu must not touch the staging
+                 file, or the ISO below would never be up to date. -->
+            <copy file="@{menufile}" tofile="@{dir}/boot/grub/menu.lst" />
+            <!-- Only write the ISO when something staged is newer than it. A
+                 no-change build then leaves the image alone instead of
+                 producing a byte-identical copy of it every run. -->
+            <if>
+                <not>
+                    <uptodate targetfile="@{destfile}">
+                        <srcfiles dir="@{dir}" />
+                    </uptodate>
+                </not>
+                <then>
             <if>
                 <equals arg1="${jnode.enable.mkisofs}" arg2="true" />
                 <then>
@@ -355,6 +430,11 @@
             <!-- Save full VM version next to the iso so a built artifact
                  is self-identifying on disk. -->
             <echo file="@{destfile}.vm-version" message="${jnode-vm-ver}"/>
+                </then>
+                <else>
+                    <echo message="[cdrom] @{destfile} is up to date, not rebuilding it" />
+                </else>
+            </if>
         </sequential>
 	</macrodef>
 
@@ -393,7 +473,12 @@
 	</target>
 
 	<target name="cdrom_64-lite" depends="prepare">
-		<create-cdrom destfile="${jnode-x86_64-lite.iso}" dir="${my-build.dir}/cdrom-lite"
+		<!-- Stage into a 64-bit specific directory. Sharing cdrom-lite with the
+		     32-bit target made every CD carry both kernels (create-cdrom copies
+		     jnode*.gz and never cleans the directory), so the 64-bit image
+		     contained a jnode32.gz left over from a 32-bit build and vice versa,
+		     making its content depend on which architecture was built last. -->
+		<create-cdrom destfile="${jnode-x86_64-lite.iso}" dir="${my-build.dir}/cdrom-lite64"
 			menufile="${grub.menu.cdrom.64}" />
 
 		<taskdef name="vmware" classname="org.jnode.build.VMwareBuilderTask" classpathref="cp-x86" />
@@ -411,7 +496,7 @@
 	<!-- Combined 32-bit + 64-bit lite CDROM (both jnode32.gz and jnode64.gz on one ISO) -->
 	<target name="cdrom-combined-lite" depends="prepare">
 		<create-cdrom destfile="${jnode-x86-combined-lite.iso}" dir="${my-build.dir}/cdrom-combined-lite"
-			menufile="${grub.menu.cdrom.combined}" />
+			menufile="${grub.menu.cdrom.combined}" kernelincludes="jnode*.gz" />
 
 		<taskdef name="vmware" classname="org.jnode.build.VMwareBuilderTask" classpathref="cp-x86" />
 		<vmware
