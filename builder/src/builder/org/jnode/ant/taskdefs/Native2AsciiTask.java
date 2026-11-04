@@ -138,11 +138,29 @@ public class Native2AsciiTask extends FileSetTask {
     }
 
     private void writeAscii(File file, String contents) throws IOException {
-        final Writer w = new OutputStreamWriter(new FileOutputStream(file), "US-ASCII");
+        // Write to a sibling temp file and rename it over the target, so an
+        // interrupted build cannot leave the checked source truncated.
+        final File dir = file.getAbsoluteFile().getParentFile();
+        final File tmp = File.createTempFile(file.getName(), ".tmp", dir);
+        boolean replaced = false;
         try {
-            w.write(contents);
+            final Writer w = new OutputStreamWriter(new FileOutputStream(tmp), "US-ASCII");
+            try {
+                w.write(contents);
+            } finally {
+                w.close();
+            }
+            if (!tmp.renameTo(file)) {
+                // Windows cannot rename over an existing file.
+                if (!file.delete() || !tmp.renameTo(file)) {
+                    throw new IOException("Cannot replace " + file);
+                }
+            }
+            replaced = true;
         } finally {
-            w.close();
+            if (!replaced) {
+                tmp.delete();
+            }
         }
     }
 

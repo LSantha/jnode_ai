@@ -200,6 +200,13 @@ public abstract class AbstractBootImageBuilder extends AbstractPluginsTask {
     private final Set<String> noCopyPatterns = new HashSet<String>();
 
     /**
+     * Raw {@code noCopyClasses} task attribute captured before the pattern
+     * set is reset in {@link #doExecute()}; re-applied afterwards so the
+     * attribute is not lost.
+     */
+    private String noCopyClasses;
+
+    /**
      * Strict-mode audit: distinct {@code Type.field} statics copied from host.
      * Populated only when strict or collect mode is on.
      */
@@ -540,6 +547,9 @@ public abstract class AbstractBootImageBuilder extends AbstractPluginsTask {
         if (noCopyProp != null) {
             parseNoCopyClasses(noCopyProp);
         }
+        // The attribute was captured before noCopyPatterns.clear(), so apply
+        // it on top of the defaults and the property here.
+        parseNoCopyClasses(noCopyClasses);
         if (!noCopyPatterns.isEmpty()) {
             log("Bootimage no-copy statics: " + noCopyPatterns, Project.MSG_VERBOSE);
         }
@@ -2017,6 +2027,8 @@ public abstract class AbstractBootImageBuilder extends AbstractPluginsTask {
      * @param csv e.g. {@code "a.b.C,x.y.*"}.
      */
     public final void setNoCopyClasses(String csv) {
-        parseNoCopyClasses(csv);
+        // Ant sets attributes before execute(); storing the raw value keeps it
+        // from being wiped by the pattern reset in doExecute().
+        this.noCopyClasses = csv;
     }
 }

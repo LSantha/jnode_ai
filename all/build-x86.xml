@@ -370,6 +370,17 @@
 			     CD built afterwards. Everything else is left staged: Ant's
 			     copy then skips unchanged files, which is what lets the ISO
 			     below be skipped as well when nothing has actually changed. -->
+			<!-- A deleted kernel makes no surviving staged file newer, so the
+			     ISO check below would still consider the old image current and
+			     keep shipping the removed kernel. Drop the ISO when this
+			     delete has work to do, forcing a rebuild from the actual
+			     staging set. -->
+			<condition property="jnode.cdrom.kernel.removed">
+				<resourcecount when="greater" count="0">
+					<fileset dir="@{dir}" includes="jnode*.gz" excludes="@{kernelincludes}" />
+				</resourcecount>
+			</condition>
+			<delete file="@{destfile}" if="jnode.cdrom.kernel.removed" />
 			<delete>
 				<fileset dir="@{dir}" includes="jnode*.gz" excludes="@{kernelincludes}" />
 			</delete>
@@ -443,7 +454,7 @@
 	<target name="cdrom" depends="prepare">
 		<copy file="${sources.dist.tar.gz}" todir="${my-build.dir}/cdrom-full" />
 		<create-cdrom destfile="${jnode-x86.iso}" dir="${my-build.dir}/cdrom-full"
-			menufile="${grub.menu.cdrom.combined}" />
+			menufile="${grub.menu.cdrom.combined}" kernelincludes="jnode*.gz" />
 
 		<taskdef name="vmware" classname="org.jnode.build.VMwareBuilderTask" classpathref="cp-x86" />
 		<vmware 

@@ -64,6 +64,14 @@ public class ObjectEmitter {
     private final HashMap<String, FieldInfo> fieldInfos = new HashMap<String, FieldInfo>();
 
     /**
+     * Cached instance field layouts (superclasses first) keyed by JNode type
+     * name, so String/Class/Integer/Long emission does not rebuild the same
+     * list for every object.
+     */
+    private final HashMap<String, List<VmField>> instanceFieldLayouts =
+        new HashMap<String, List<VmField>>();
+
+    /**
      * When true, any in-exact host/JNode field match fails the build instead
      * of just warning. Opt-in isolation mode; legacy default is false.
      */
@@ -276,13 +284,12 @@ public class ObjectEmitter {
                 // Metadata-driven: derive layout from JNode VmType so field
                 // order, int-vs-ref slots and 32/64-bit sizes cannot drift.
                 // All slots except vmClass are zero/null in the boot image.
-                final VmType<?> vmClass = loaderContext.loadClass(c.getName(), true);
+                final VmType<?> target = loaderContext.loadClass(c.getName(), true);
                 final VmType<?> jnodeClass = loaderContext.loadClass("java.lang.Class", true);
                 final List<VmField> fields = getInstanceFieldsInEmitOrder(jnodeClass);
                 if (fields.isEmpty()) {
                     throw new BuildException("No instance fields found in JNode java.lang.Class");
                 }
-                final VmType<?> target = loaderContext.loadClass(c.getName(), true);
                 for (VmField f : fields) {
                     if (f.isStatic()) {
                         throw new BuildException("Static field in instance list: " + f);
@@ -299,10 +306,6 @@ public class ObjectEmitter {
                     } else {
                         bis.writeObjectRef(null);
                     }
-                }
-                // Keep unused variable explicit for readers/debuggers.
-                if (vmClass == null) {
-                    throw new BuildException("Unreachable");
                 }
             }
         } catch (ClassNotFoundException ex) {
@@ -377,27 +380,31 @@ public class ObjectEmitter {
      * Collect non-static instance fields in emit order (superclasses first),
      * driven by JNode metadata instead of hardcoded host assumptions.
      */
-    private List<VmField> getInstanceFieldsInEmitOrder(VmType<?> type) {
-        final ArrayList<VmField> acc = new ArrayList<VmField>();
-        collectInstanceFields(type, acc);
-        return acc;
+    private List<VmField> getInstanceFieldsInEmitOrder(VmType<?> type) throws BuildException {
+        final String typeName = type.getName();
+        List<VmField> fields = instanceFieldLayouts.get(typeName);
+        if (fields == null) {
+            final ArrayList<VmField> acc = new ArrayList<VmField>();
+            collectInstanceFields(type, acc);
+            fields = Collections.unmodifiableList(acc);
+            instanceFieldLayouts.put(typeName, fields);
+        }
+        return fields;
     }
 
-    private void collectInstanceFields(VmType<?> type, List<VmField> acc) {
+    private void collectInstanceFields(VmType<?> type, List<VmField> acc) throws BuildException {
         if (type == null) {
             return;
         }
+        final VmNormalClass<?> superClass;
         try {
-            final VmNormalClass<?> superClass = type.getSuperClass();
-            if (superClass != null && !"java.lang.Object".equals(superClass.getName())) {
-                collectInstanceFields(superClass, acc);
-            } else if (superClass != null) {
-                // Include Object's fields too (normally none) for completeness.
-                collectInstanceFields(superClass, acc);
-            }
+            superClass = type.getSuperClass();
         } catch (Exception ex) {
-            // getSuperClass can throw when called too early; fall back to
-            // declared fields only. Callers validate non-emptiness.
+            // A partial layout would silently corrupt the image; fail fast.
+            throw new BuildException("Cannot resolve superclass of " + type.getName(), ex);
+        }
+        if (superClass != null) {
+            collectInstanceFields(superClass, acc);
         }
         final int n = type.getNoDeclaredFields();
         for (int idx = 0; idx < n; idx++) {
