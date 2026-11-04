@@ -22,6 +22,7 @@ package org.jnode.fs.iso9660;
 
 import java.io.IOException;
 import java.util.Iterator;
+import java.util.NoSuchElementException;
 import org.jnode.fs.FSDirectory;
 import org.jnode.fs.FSEntry;
 import org.jnode.fs.FileSystem;
@@ -55,16 +56,35 @@ public final class ISO9660Directory implements FSDirectory {
 
             final byte[] buffer = parent.getExtentData();
 
+            private EntryRecord nextRecord;
+
             public boolean hasNext() {
-                return ((offset < buffer.length) && LittleEndian.getUInt8(buffer, offset) > 0);
+                if (nextRecord == null) {
+                    nextRecord = readNextRecord();
+                }
+                return nextRecord != null;
             }
 
             public FSEntry next() {
-                final ISO9660Volume volume = parent.getVolume();
-                final EntryRecord fEntry =
-                    new EntryRecord(volume, buffer, offset + 1, parent.getEncoding());
-                offset += fEntry.getLengthOfDirectoryEntry();
+                if (!hasNext()) {
+                    throw new NoSuchElementException();
+                }
+                final EntryRecord fEntry = nextRecord;
+                nextRecord = null;
                 return new ISO9660Entry((ISO9660FileSystem) entry.getFileSystem(), fEntry);
+            }
+
+            private EntryRecord readNextRecord() {
+                final ISO9660Volume volume = parent.getVolume();
+                while ((offset < buffer.length) && LittleEndian.getUInt8(buffer, offset) > 0) {
+                    final EntryRecord fEntry =
+                        new EntryRecord(volume, buffer, offset + 1, parent.getEncoding());
+                    offset += fEntry.getLengthOfDirectoryEntry();
+                    if (fEntry.isIdentifierValid()) {
+                        return fEntry;
+                    }
+                }
+                return null;
             }
 
             /**
