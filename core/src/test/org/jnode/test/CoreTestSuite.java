@@ -21,6 +21,7 @@
 package org.jnode.test;
 
 import org.jnode.driver.serial.console.AsyncSerialConsoleWriterTest;
+import org.jnode.driver.serial.console.RawKeyboardReaderTest;
 import org.jnode.plugin.model.PluginJarTest;
 import org.jnode.test.core.HeapHammerTest;
 import org.jnode.test.threads.ThreadingTestJUnit4;
@@ -60,6 +61,7 @@ import org.junit.runners.Suite.SuiteClasses;
     VmTypeStateTest.class,
     VmThreadSchedulingTest.class,
     AsyncSerialConsoleWriterTest.class,
+    RawKeyboardReaderTest.class,
     PluginJarTest.class,
     HeapHammerTest.class,
     VmHeapManagerOomeTest.class,
