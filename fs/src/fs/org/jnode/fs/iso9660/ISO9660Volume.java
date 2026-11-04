@@ -41,6 +41,10 @@ public class ISO9660Volume implements ISO9660Constants {
 
     private final SupplementaryVolumeDescriptor supplementaryVolumeDescriptor;
 
+    private boolean rockRidge;
+
+    private int rockRidgeSkipLength;
+
     /**
      * Initialize this instance.
      *
@@ -109,6 +113,12 @@ public class ISO9660Volume implements ISO9660Constants {
         api.read((startLBN * blockSize) + offset, ByteBuffer.wrap(buffer, bufferOffset, length));
     }
 
+    byte[] readBytes(long startLBN, long offset, int length) throws IOException {
+        byte[] buffer = new byte[length];
+        readFromLBN(startLBN, offset, buffer, 0, length);
+        return buffer;
+    }
+
     /**
      * Gets the root directory entry of this volume.
      */
@@ -126,6 +136,22 @@ public class ISO9660Volume implements ISO9660Constants {
 
     public SupplementaryVolumeDescriptor getSupplementaryVolumeDescriptor() {
         return supplementaryVolumeDescriptor;
+    }
+
+    boolean isRockRidge() {
+        return rockRidge;
+    }
+
+    void setRockRidge(boolean rockRidge) {
+        this.rockRidge = rockRidge;
+    }
+
+    int getRockRidgeSkipLength() {
+        return rockRidgeSkipLength;
+    }
+
+    void setRockRidgeSkipLength(int rockRidgeSkipLength) {
+        this.rockRidgeSkipLength = rockRidgeSkipLength;
     }
 
     public long getSize() {
