@@ -33,6 +33,10 @@ public class EntryRecord extends Descriptor {
 
     private static final Logger log = Logger.getLogger(EntryRecord.class);
 
+    private static final int SUSP_ENTRY_HEADER_LENGTH = 4;
+
+    private static final int SUSP_NM_CONTINUE = 0x01;
+
     private final int entryLength;
     private final int extAttributeLength;
     private final long extentLocation;
@@ -66,8 +70,17 @@ public class EntryRecord extends Descriptor {
         this.fileUnitSize = getUInt8(buff, offset + 27);
         this.interleaveSize = getUInt8(buff, offset + 28);
         // This must be after flags, because of isDirectory.
-        this.identifier = getFileIdentifier(buff, offset, isDirectory(), encoding);
-        this.identifierValid = (identifier != null);
+        String fileIdentifier = getFileIdentifier(buff, offset, isDirectory(), encoding);
+        if (fileIdentifier != null) {
+            final int fidLength = getUInt8(buff, offset + 33);
+            final String rockRidgeName =
+                getRockRidgeName(buff, offset, fidLength, fileIdentifier);
+            if ((rockRidgeName != null) && (rockRidgeName.length() > 0)) {
+                fileIdentifier = rockRidgeName;
+            }
+        }
+        this.identifier = fileIdentifier;
+        this.identifierValid = (fileIdentifier != null);
     }
 
     public void readFileData(long offset, byte[] buffer, int bufferOffset, int size)
@@ -179,6 +192,79 @@ public class EntryRecord extends Descriptor {
         } catch (UnsupportedEncodingException ex) {
             throw new RuntimeException(ex);
         }
+    }
+
+    private String getRockRidgeName(byte[] buff, int offset, int fidLength,
+        String isoIdentifier) {
+        int position = offset + 33 + fidLength;
+        if ((fidLength & 0x01) == 0) {
+            position++;
+        }
+
+        int end = offset + entryLength;
+        if (end > buff.length) {
+            end = buff.length;
+        }
+        if (position >= end) {
+            return null;
+        }
+
+        final boolean rootRecord = ".".equals(isoIdentifier);
+        boolean enabled = volume.isRockRidge();
+        String name = null;
+        boolean continued = false;
+
+        while ((position + SUSP_ENTRY_HEADER_LENGTH) <= end) {
+            final int length = buff[position + 2] & 0xFF;
+            if ((length < SUSP_ENTRY_HEADER_LENGTH) || ((position + length) > end)) {
+                break;
+            }
+
+            if (isSignature(buff, position, 'S', 'P')) {
+                if (rootRecord && (length >= 7) &&
+                    ((buff[position + 4] & 0xFF) == 0xBE) &&
+                    ((buff[position + 5] & 0xFF) == 0xEF)) {
+                    volume.setRockRidge(true);
+                    enabled = true;
+                }
+            } else if (isSignature(buff, position, 'S', 'T')) {
+                break;
+            } else if (enabled && isSignature(buff, position, 'N', 'M')) {
+                if (length < 5) {
+                    break;
+                }
+                final int flags = buff[position + 4] & 0xFF;
+                final String fragment =
+                    decodeName(buff, position + 5, length - 5);
+                if (continued && (name != null)) {
+                    name = name + fragment;
+                } else {
+                    name = fragment;
+                }
+                continued = (flags & SUSP_NM_CONTINUE) != 0;
+                if (!continued) {
+                    return name;
+                }
+            } else if (continued) {
+                return null;
+            }
+
+            position += length;
+        }
+
+        return continued ? null : name;
+    }
+
+    private String decodeName(byte[] buff, int offset, int length) {
+        try {
+            return new String(buff, offset, length, encoding);
+        } catch (UnsupportedEncodingException ex) {
+            throw new RuntimeException(ex);
+        }
+    }
+
+    private static boolean isSignature(byte[] buff, int offset, char first, char second) {
+        return (buff[offset] == (byte) first) && (buff[offset + 1] == (byte) second);
     }
 
     /**

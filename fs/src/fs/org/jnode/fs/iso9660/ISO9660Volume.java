@@ -41,6 +41,8 @@ public class ISO9660Volume implements ISO9660Constants {
 
     private final SupplementaryVolumeDescriptor supplementaryVolumeDescriptor;
 
+    private boolean rockRidge;
+
     /**
      * Initialize this instance.
      *
@@ -126,6 +128,14 @@ public class ISO9660Volume implements ISO9660Constants {
 
     public SupplementaryVolumeDescriptor getSupplementaryVolumeDescriptor() {
         return supplementaryVolumeDescriptor;
+    }
+
+    boolean isRockRidge() {
+        return rockRidge;
+    }
+
+    void setRockRidge(boolean rockRidge) {
+        this.rockRidge = rockRidge;
     }
 
     public long getSize() {
