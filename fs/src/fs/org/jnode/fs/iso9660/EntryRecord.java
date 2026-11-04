@@ -23,11 +23,25 @@ package org.jnode.fs.iso9660;
 import java.io.IOException;
 import java.io.UnsupportedEncodingException;
 
+import org.apache.log4j.Logger;
+
 /**
  * @author Chira
  * @author Ewout Prangsma (epr@users.sourceforge.net)
  */
 public class EntryRecord extends Descriptor {
+
+    private static final Logger log = Logger.getLogger(EntryRecord.class);
+
+    private static final int SUSP_ENTRY_HEADER_LENGTH = 4;
+
+    private static final int SUSP_NM_CONTINUE = 0x01;
+
+    private static final int SUSP_CE_LENGTH = 28;
+
+    private static final int MAX_CONTINUATION_AREAS = 8;
+
+    private static final int MAX_CONTINUATION_LENGTH = 0x10000;
 
     private final int entryLength;
     private final int extAttributeLength;
@@ -38,6 +52,7 @@ public class EntryRecord extends Descriptor {
     private final int flags;
     private final int interleaveSize;
     private final String identifier;
+    private final boolean identifierValid;
 
     private final ISO9660Volume volume;
     private final String encoding;
@@ -61,7 +76,17 @@ public class EntryRecord extends Descriptor {
         this.fileUnitSize = getUInt8(buff, offset + 27);
         this.interleaveSize = getUInt8(buff, offset + 28);
         // This must be after flags, because of isDirectory.
-        this.identifier = getFileIdentifier(buff, offset, isDirectory(), encoding);
+        String fileIdentifier = getFileIdentifier(buff, offset, isDirectory(), encoding);
+        if (fileIdentifier != null) {
+            final int fidLength = getUInt8(buff, offset + 33);
+            final String rockRidgeName =
+                getRockRidgeName(buff, offset, fidLength, fileIdentifier);
+            if ((rockRidgeName != null) && (rockRidgeName.length() > 0)) {
+                fileIdentifier = rockRidgeName;
+            }
+        }
+        this.identifier = fileIdentifier;
+        this.identifierValid = (fileIdentifier != null);
     }
 
     public void readFileData(long offset, byte[] buffer, int bufferOffset, int size)
@@ -120,6 +145,13 @@ public class EntryRecord extends Descriptor {
     }
 
     /**
+     * @return {@code true} if the file identifier could be read from the record.
+     */
+    public final boolean isIdentifierValid() {
+        return identifierValid;
+    }
+
+    /**
      * @return Returns the volume.
      */
     public final ISO9660Volume getVolume() {
@@ -127,7 +159,26 @@ public class EntryRecord extends Descriptor {
     }
 
     private final String getFileIdentifier(byte[] buff, int offset, boolean isDir, String encoding) {
+        // Policy: a record whose file identifier is empty or does not fit in the
+        // buffer is malformed. Log it and return null so ISO9660Directory can
+        // skip the record and keep the rest of the listing available. This keeps
+        // unchecked bounds exceptions out of the Iterator contract.
+        if ((offset + 33) > buff.length) {
+            log.warn("Skipping ISO9660 directory record at offset " + offset +
+                ": record is too short to hold a file identifier length");
+            return null;
+        }
         final int fidLength = getUInt8(buff, offset + 33);
+        if (fidLength < 1) {
+            log.warn("Skipping ISO9660 directory record at offset " + offset +
+                ": invalid file identifier length " + fidLength);
+            return null;
+        }
+        if ((offset + 33 + fidLength) > buff.length) {
+            log.warn("Skipping ISO9660 directory record at offset " + offset +
+                ": file identifier length " + fidLength + " exceeds buffer length " + buff.length);
+            return null;
+        }
         if (isDir) {
             final int buff34 = getUInt8(buff, offset + 34);
             if ((fidLength == 1) && (buff34 == 0x00)) {
@@ -147,6 +198,117 @@ public class EntryRecord extends Descriptor {
         } catch (UnsupportedEncodingException ex) {
             throw new RuntimeException(ex);
         }
+    }
+
+    private String getRockRidgeName(byte[] buff, int offset, int fidLength,
+        String isoIdentifier) {
+        int position = offset + 33 + fidLength;
+        if ((fidLength & 0x01) == 0) {
+            position++;
+        }
+
+        int end = offset + entryLength;
+        if (end > buff.length) {
+            end = buff.length;
+        }
+        if (position >= end) {
+            return null;
+        }
+
+        final boolean rootRecord = ".".equals(isoIdentifier);
+        boolean enabled = volume.isRockRidge();
+        if (!rootRecord && enabled) {
+            position += volume.getRockRidgeSkipLength();
+        }
+
+        String name = null;
+        boolean continued = false;
+        byte[] area = buff;
+        int areaPosition = position;
+        int areaEnd = end;
+        int continuationAreas = 0;
+
+        while (true) {
+            boolean restart = false;
+
+            while ((areaPosition + SUSP_ENTRY_HEADER_LENGTH) <= areaEnd) {
+                final int length = area[areaPosition + 2] & 0xFF;
+                if ((length < SUSP_ENTRY_HEADER_LENGTH) ||
+                    ((areaPosition + length) > areaEnd)) {
+                    return continued ? null : name;
+                }
+
+                if (isSignature(area, areaPosition, 'S', 'P')) {
+                    if (rootRecord && (length >= 7) &&
+                        ((area[areaPosition + 4] & 0xFF) == 0xBE) &&
+                        ((area[areaPosition + 5] & 0xFF) == 0xEF)) {
+                        volume.setRockRidge(true);
+                        volume.setRockRidgeSkipLength(area[areaPosition + 6] & 0xFF);
+                        enabled = true;
+                    }
+                } else if (isSignature(area, areaPosition, 'S', 'T')) {
+                    return continued ? null : name;
+                } else if (enabled && isSignature(area, areaPosition, 'N', 'M')) {
+                    if (length < 5) {
+                        return continued ? null : name;
+                    }
+                    final int flags = area[areaPosition + 4] & 0xFF;
+                    final String fragment =
+                        decodeName(area, areaPosition + 5, length - 5);
+                    if (continued && (name != null)) {
+                        name = name + fragment;
+                    } else {
+                        name = fragment;
+                    }
+                    continued = (flags & SUSP_NM_CONTINUE) != 0;
+                    if (!continued) {
+                        return name;
+                    }
+                } else if (enabled && isSignature(area, areaPosition, 'C', 'E')) {
+                    if ((length < SUSP_CE_LENGTH) ||
+                        (continuationAreas >= MAX_CONTINUATION_AREAS)) {
+                        return continued ? null : name;
+                    }
+                    final long block = getUInt32LE(area, areaPosition + 5);
+                    final long areaOffset = getUInt32LE(area, areaPosition + 13);
+                    final long areaLength = getUInt32LE(area, areaPosition + 21);
+                    if ((areaLength < 1) || (areaLength > MAX_CONTINUATION_LENGTH)) {
+                        return continued ? null : name;
+                    }
+                    try {
+                        area = volume.readBytes(block, areaOffset, (int) areaLength);
+                    } catch (IOException ex) {
+                        log.warn("Unable to read Rock Ridge continuation area", ex);
+                        return continued ? null : name;
+                    }
+                    areaPosition = 0;
+                    areaEnd = area.length;
+                    continuationAreas++;
+                    restart = true;
+                    break;
+                } else if (continued) {
+                    return null;
+                }
+
+                areaPosition += length;
+            }
+
+            if (!restart) {
+                return continued ? null : name;
+            }
+        }
+    }
+
+    private String decodeName(byte[] buff, int offset, int length) {
+        try {
+            return new String(buff, offset, length, encoding);
+        } catch (UnsupportedEncodingException ex) {
+            throw new RuntimeException(ex);
+        }
+    }
+
+    private static boolean isSignature(byte[] buff, int offset, char first, char second) {
+        return (buff[offset] == (byte) first) && (buff[offset + 1] == (byte) second);
     }
 
     /**

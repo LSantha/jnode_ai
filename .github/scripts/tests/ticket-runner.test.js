@@ -42,7 +42,8 @@ function createMocks(eventName, {
   reviewUser = { login: "LSantha", type: "User" },
   reviewAssociation = "OWNER",
   reviewState = "approved",
-  orchestratorMasters = []
+  orchestratorMasters = [],
+  activeRuns = {}
 } = {}) {
   const logs = { info: [], error: [], warn: [] };
   const calls = {
@@ -51,7 +52,8 @@ function createMocks(eventName, {
     createComment: [],
     addLabels: [],
     mergePR: [],
-    listComments: []
+    listComments: [],
+    listWorkflowRuns: []
   };
   const updateIssueDetails = [];
 
@@ -195,6 +197,12 @@ function createMocks(eventName, {
       checks: {
         listForRef: async () => {
           return { data: { check_runs: checkRuns } };
+        }
+      },
+      actions: {
+        listWorkflowRuns: async ({ workflow_id }) => {
+          calls.listWorkflowRuns.push(workflow_id);
+          return { data: activeRuns[workflow_id] || [] };
         }
       },
       git: {
@@ -678,6 +686,63 @@ test("ticket-runner.js event handling suite", async (t) => {
     assert.strictEqual(state.max_turns, 5);
   });
 
+  await t.test("/run defers when an agent run is already in flight", async () => {
+    // The double-start race: two wakeups in the same second both started DEV
+    // on #824, each posting /oc Please proceed 1s apart.
+    const mocks = createMocks("issue_comment", {
+      commentBody: "/run",
+      activeRuns: {
+        "opencode.yml": [{ status: "in_progress", display_title: "Issue #42 - Fix bug" }]
+      }
+    });
+    mocks.setIssueComments([{ body: "## Triage\nBlast radius: low; actionable." }]);
+    await runTicketRunner(mocks);
+
+    assert.strictEqual(_parseState(mocks.getIssueBody()), null, "no DEV state written while a run is live");
+    assert.strictEqual(mocks.calls.createComment.length, 0, "no second agent started");
+    assert.ok(mocks.calls.listWorkflowRuns.includes("opencode.yml"), "the runs API is consulted");
+  });
+
+  await t.test("/run still starts DEV when the only runs for the issue are completed", async () => {
+    const mocks = createMocks("issue_comment", {
+      commentBody: "/run",
+      activeRuns: {
+        "opencode.yml": [{ status: "completed", display_title: "Issue #42 - Fix bug" }]
+      }
+    });
+    mocks.setIssueComments([{ body: "## Triage\nBlast radius: low; actionable." }]);
+    await runTicketRunner(mocks);
+
+    assert.strictEqual(mocks.calls.createComment.length, 1);
+    assert.ok(mocks.calls.createComment[0].body.includes("/oc Please proceed"));
+  });
+
+  await t.test("Auto-start on a kind label defers when a Triage run is in flight", async () => {
+    // The other half of #824: ticket-runner's labeled-but-untriaged request and
+    // auto-triage's opened-event request raced, both checking the comment
+    // stream before either post existed.
+    const mocks = createMocks("issues", {
+      labelName: "kind/bug",
+      activeRuns: {
+        "triage.yml": [{ status: "queued", display_title: "Triage #42 - fs: unguarded fidLength" }]
+      }
+    });
+    await runTicketRunner(mocks);
+
+    assert.strictEqual(mocks.calls.createComment.length, 0, "no duplicate /oc triage request");
+  });
+
+  await t.test("A runs API failure fails closed and defers", async () => {
+    const mocks = createMocks("issue_comment", { commentBody: "/run" });
+    mocks.setIssueComments([{ body: "## Triage\nBlast radius: low; actionable." }]);
+    mocks.github.rest.actions.listWorkflowRuns = async () => { throw new Error("runs API down"); };
+    await runTicketRunner(mocks);
+
+    assert.strictEqual(_parseState(mocks.getIssueBody()), null, "an outage must not start a second agent");
+    assert.strictEqual(mocks.calls.createComment.length, 0);
+    assert.ok(mocks.logs.warn.some(w => /could not read workflow runs/.test(w)));
+  });
+
   await t.test("/run on an untriaged ticket requests triage instead of starting DEV", async () => {
     const mocks = createMocks("issue_comment", { commentBody: "/run" });
     await runTicketRunner(mocks);
@@ -971,6 +1036,56 @@ test("ticket-runner.js event handling suite", async (t) => {
     assert.strictEqual(mocks.calls.createComment.length, 1);
     assert.strictEqual(mocks.calls.createComment[0].issue_number, 42);
     assert.ok(mocks.calls.createComment[0].body.includes("/oc Please proceed"));
+  });
+
+  await t.test("Workflow run parks DEV without a retry when the run was cancelled", async () => {
+    // Cancelling a duplicate agent is not a failed turn: on #824 the cancel
+    // made the runner post a replacement trigger and start a third agent.
+    const initialBody = _replaceOrAppendStatus("Task", {
+      phase: "DEV",
+      pr: null,
+      turn: 0,
+      max_turns: 3,
+      retries: 0,
+      started: new Date().toISOString(),
+      history: []
+    }, 42);
+
+    const mocks = createMocks("workflow_run", {
+      issueBody: initialBody,
+      runConclusion: "cancelled",
+      prHeadRef: "unrelated-branch",
+      prBody: "unrelated"
+    });
+    await runTicketRunner(mocks);
+
+    const state = _parseState(mocks.getIssueBody());
+    assert.strictEqual(state.phase, "DEV", "stays parked in DEV");
+    assert.strictEqual(state.retries, 0, "a cancel costs no retry");
+    assert.strictEqual(mocks.calls.createComment.length, 0, "no replacement agent started");
+  });
+
+  await t.test("A cancelled DEV run still advances to REVIEW when a PR exists", async () => {
+    const initialBody = _replaceOrAppendStatus("Task", {
+      phase: "DEV",
+      pr: null,
+      turn: 0,
+      max_turns: 3,
+      retries: 0,
+      started: new Date().toISOString(),
+      history: []
+    }, 42);
+
+    const mocks = createMocks("workflow_run", {
+      issueBody: initialBody,
+      runConclusion: "cancelled",
+      prBody: "Closes #42"
+    });
+    await runTicketRunner(mocks);
+
+    const state = _parseState(mocks.getIssueBody());
+    assert.strictEqual(state.phase, "REVIEW", "delivered work is judged, not discarded");
+    assert.strictEqual(state.pr, 99);
   });
 
   await t.test("DEV fails permanently after 3 retries", async () => {

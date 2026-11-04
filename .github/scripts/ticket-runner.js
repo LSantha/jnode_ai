@@ -246,12 +246,24 @@ module.exports = async ({ github, context, core }) => {
       var triage = await triageStatus(issueNumber);
       if (!triage.present || !triage.clear || triage.count > 3) {
         if (!triage.requested) {
-          await h.triggerTask(issueNumber, "/oc triage issue #" + issueNumber + "\n\nTriage run ONLY. Load the jnode-triage-issue skill and obey it. Output is exactly one ## Triage comment plus kind/area label edits. FORBIDDEN in this run: git checkout -b, git push, gh pr create, any branch, any PR.");
+          if (await hasActiveRunFor(issueNumber)) {
+            core.info("Ticket runner: #" + issueNumber + " triage request deferred: a run is already in flight.");
+          } else {
+            await h.triggerTask(issueNumber, "/oc triage issue #" + issueNumber + "\n\nTriage run ONLY. Load the jnode-triage-issue skill and obey it. Output is exactly one ## Triage comment plus kind/area label edits. FORBIDDEN in this run: git checkout -b, git push, gh pr create, any branch, any PR.");
+          }
         }
         core.info("Ticket runner: #" + issueNumber + " /run deferred: waiting for a clear ## Triage report.");
         return;
       }
-      // Clear triage: initialize and start DEV.
+      // Clear triage: initialize and start DEV. A live agent run means the
+      // stall this /run is nudging is already being worked, so starting a
+      // second one is the #824 duplicate; defer to the in-flight run's
+      // completion instead (a genuinely stalled run is not in flight, so the
+      // escape hatch still works when it is needed).
+      if (await hasActiveRunFor(issueNumber)) {
+        core.info("Ticket runner: #" + issueNumber + " /run deferred: an agent run is already in flight.");
+        return;
+      }
       state = initState(customMaxTurns);
       state.history.push({ event: "start", timestamp: new Date().toISOString() });
 
@@ -420,6 +432,12 @@ module.exports = async ({ github, context, core }) => {
       core.info("Ticket runner: auto-start skipped for #" + issueNumber + ", state appeared meanwhile.");
       return false;
     }
+    if (await hasActiveRunFor(issueNumber)) {
+      // Nothing durable is written before this point, so deferring costs
+      // nothing: the in-flight run's completion wakes this path again.
+      core.info("Ticket runner: auto-start deferred for #" + issueNumber + ", an agent run is already in flight.");
+      return false;
+    }
     var st = initState();
     st.history.push({ event: "auto_start", reason: reason, timestamp: new Date().toISOString() });
     var newBody = replaceOrAppendStatus(body, st, issueNumber);
@@ -445,6 +463,10 @@ module.exports = async ({ github, context, core }) => {
     if (!t.present) {
       if (t.requested) {
         core.info("Ticket runner: #" + issueNumber + " already has a triage request; waiting for its report.");
+        return;
+      }
+      if (await hasActiveRunFor(issueNumber)) {
+        core.info("Ticket runner: #" + issueNumber + " triage request deferred: a run is already in flight.");
         return;
       }
       core.info("Ticket runner: #" + issueNumber + " labeled " + label + " but untriaged; requesting triage first.");
@@ -476,6 +498,43 @@ module.exports = async ({ github, context, core }) => {
   // Hidden marker so CI-failure comments post exactly once per SHA.
   function ciHealMarker(sha) {
     return "<!-- CI-HEAL:" + sha + " -->";
+  }
+
+  // Is an agent (opencode or Triage) run for this issue queued or in flight?
+  // Seen on #824: the opencode completion and the Triage completion landed one
+  // second apart, and both auto-start wakeups passed their guards before either
+  // had posted, so two agents ran the same ticket and each then opened a PR.
+  // The runs API is the only authoritative in-flight signal (agent/in-progress
+  // is never applied), so every trigger this runner posts is second-guessed
+  // against it. The check runs immediately before the post: that catches every
+  // staggered publisher and narrows the simultaneous case to the sibling's run
+  // registration lag, which is the documented residual. Fails closed - an API
+  // error reads as "busy" so a runs outage cannot start a second agent.
+  async function hasActiveRunFor(issueNumber) {
+    try {
+      var workflows = ["opencode.yml", "triage.yml"];
+      for (var i = 0; i < workflows.length; i++) {
+        var res = await github.rest.actions.listWorkflowRuns({
+          owner: owner, repo: repo, workflow_id: workflows[i], per_page: 100
+        });
+        var runs = (res && res.data) ? res.data : [];
+        for (var j = 0; j < runs.length; j++) {
+          if (runs[j].status !== "queued" && runs[j].status !== "in_progress") continue;
+          if (refsNumber(runs[j].display_title || "", issueNumber)) return true;
+        }
+      }
+    } catch (err) {
+      core.warning("Ticket runner: could not read workflow runs for #" + issueNumber + ": " + err.message);
+      return true;
+    }
+    return false;
+  }
+
+  // Run titles look like "Issue #42 - ...". Match the number as a standalone
+  // token so #420 does not match #42.
+  function refsNumber(text, number) {
+    if (!text) return false;
+    return new RegExp("(^|[^0-9A-Za-z_])#" + number + "(?![0-9])").test(text);
   }
 
   // Post /oc fix for a CI failure unless already posted (marker), the PR is
@@ -623,8 +682,12 @@ module.exports = async ({ github, context, core }) => {
     }
 
     var phaseFailed = conclusion !== "success";
+    // A cancelled run is not a failed turn: it produced no work to judge, and
+    // counting it as one made cancelling a duplicate agent spawn its
+    // replacement (#824). Thread the distinction into the phase handlers.
+    var cancelled = conclusion === "cancelled";
 
-    await advancePhase(runIssueNumber, state, phaseFailed);
+    await advancePhase(runIssueNumber, state, phaseFailed, cancelled);
   }
 
   async function handlePullRequestReview() {
@@ -764,7 +827,7 @@ module.exports = async ({ github, context, core }) => {
   // PHASE ADVANCEMENT (called from workflow_run handler)
   // ================================================================
 
-  async function advancePhase(issueNumber, state, phaseFailed) {
+  async function advancePhase(issueNumber, state, phaseFailed, cancelled) {
     core.info("Ticket runner: advancing #" + issueNumber + " phase=" + state.phase + " failed=" + phaseFailed);
 
     var issueOpen = true;
@@ -821,7 +884,7 @@ module.exports = async ({ github, context, core }) => {
 
     switch (state.phase) {
       case "DEV":
-        await handleDevCompletion(issueNumber, state, phaseFailed);
+        await handleDevCompletion(issueNumber, state, phaseFailed, cancelled);
         break;
       case "REVIEW":
         await handleReviewCompletion(issueNumber, state, phaseFailed);
@@ -886,7 +949,7 @@ module.exports = async ({ github, context, core }) => {
     state.history.push({ event: "review_requested", pr: prNumber, timestamp: new Date().toISOString() });
   }
 
-  async function handleDevCompletion(issueNumber, state, phaseFailed) {
+  async function handleDevCompletion(issueNumber, state, phaseFailed, cancelled) {
     var prNumber = await findPRForIssueWithComment(issueNumber);
     if (prNumber) {
       state.pr = prNumber;
@@ -927,6 +990,15 @@ module.exports = async ({ github, context, core }) => {
     }
 
     if (phaseFailed) {
+      if (cancelled) {
+        // Cancelling a run (a human, or the watchdog's hung-run cancel) is not
+        // evidence the DEV turn failed. Retrying here is how cancelling one of
+        // two duplicate agents on #824 produced a third: every cancel posted a
+        // replacement trigger. Leave the phase parked instead - the surviving
+        // run's completion, a watchdog nudge, or a manual /run advances it.
+        core.info("Ticket runner: #" + issueNumber + " run cancelled, not a failed turn; DEV parked without a retry.");
+        return;
+      }
       await retryOrFail(issueNumber, state);
       return;
     }
