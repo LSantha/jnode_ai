@@ -49,7 +49,7 @@ public class EntryRecordTest {
 
     @Test
     public void testValidDirectoryRecord() throws Exception {
-        byte[] buffer = createRecord(".", 1, 0x02);
+        byte[] buffer = createRecord("\u0000", 1, 0x02);
 
         EntryRecord record = new EntryRecord(mock(ISO9660Volume.class), buffer, 1, ENCODING);
 
@@ -58,9 +58,32 @@ public class EntryRecordTest {
     }
 
     @Test
+    public void testValidParentDirectoryRecord() throws Exception {
+        byte[] buffer = createRecord("\u0001", 1, 0x02);
+
+        EntryRecord record = new EntryRecord(mock(ISO9660Volume.class), buffer, 1, ENCODING);
+
+        assertTrue(record.isIdentifierValid());
+        assertEquals("..", record.getFileIdentifier());
+    }
+
+    @Test
     public void testFileIdentifierLengthBeyondBuffer() throws Exception {
         EntryRecord record = new EntryRecord(mock(ISO9660Volume.class),
             createRecord("FOO.TXT;1", 0xFF, 0), 1, ENCODING);
+
+        assertFalse(record.isIdentifierValid());
+        assertNull(record.getFileIdentifier());
+    }
+
+    @Test
+    public void testEmptyDirectoryIdentifierAtBufferEnd() throws Exception {
+        byte[] buffer = new byte[33];
+        buffer[0] = 33;
+        buffer[25] = 0x02;
+        buffer[32] = 0;
+
+        EntryRecord record = new EntryRecord(mock(ISO9660Volume.class), buffer, 1, ENCODING);
 
         assertFalse(record.isIdentifierValid());
         assertNull(record.getFileIdentifier());

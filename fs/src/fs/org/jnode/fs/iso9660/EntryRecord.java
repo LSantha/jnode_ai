@@ -140,16 +140,21 @@ public class EntryRecord extends Descriptor {
     }
 
     private final String getFileIdentifier(byte[] buff, int offset, boolean isDir, String encoding) {
-        // Policy: a record whose file identifier does not fit in the buffer is
-        // malformed. Log it and return null so ISO9660Directory can skip the
-        // record and keep the rest of the listing available. This keeps an
-        // unchecked StringIndexOutOfBoundsException out of the Iterator contract.
+        // Policy: a record whose file identifier is empty or does not fit in the
+        // buffer is malformed. Log it and return null so ISO9660Directory can
+        // skip the record and keep the rest of the listing available. This keeps
+        // unchecked bounds exceptions out of the Iterator contract.
         if ((offset + 33) > buff.length) {
             log.warn("Skipping ISO9660 directory record at offset " + offset +
                 ": record is too short to hold a file identifier length");
             return null;
         }
         final int fidLength = getUInt8(buff, offset + 33);
+        if (fidLength < 1) {
+            log.warn("Skipping ISO9660 directory record at offset " + offset +
+                ": invalid file identifier length " + fidLength);
+            return null;
+        }
         if ((offset + 33 + fidLength) > buff.length) {
             log.warn("Skipping ISO9660 directory record at offset " + offset +
                 ": file identifier length " + fidLength + " exceeds buffer length " + buff.length);
