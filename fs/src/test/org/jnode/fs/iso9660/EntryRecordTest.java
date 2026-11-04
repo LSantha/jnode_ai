@@ -142,6 +142,70 @@ public class EntryRecordTest {
     }
 
     @Test
+    public void testRockRidgeNameContinuationInContinuationArea() throws Exception {
+        ISO9660Volume volume = mock(ISO9660Volume.class);
+        when(volume.isRockRidge()).thenReturn(true);
+        when(volume.getRockRidgeSkipLength()).thenReturn(0);
+        String first = repeat('a', 146);
+        String second = repeat('b', 26);
+        byte[] continuation = nmEntry(second, false);
+        when(volume.readBytes(24L, 0L, continuation.length)).thenReturn(continuation);
+        byte[] buffer = createRecord("DATAINPU.TXT;1", 14, 0,
+            concat(nmEntry(first, true), ceEntry(24, 0, continuation.length)));
+
+        EntryRecord record = new EntryRecord(volume, buffer, 1, ENCODING);
+
+        assertEquals(first + second, record.getFileIdentifier());
+    }
+
+    @Test
+    public void testRockRidgeLongDirectoryNameFromMkisofsLayout() throws Exception {
+        ISO9660Volume volume = mock(ISO9660Volume.class);
+        when(volume.isRockRidge()).thenReturn(true);
+        when(volume.getRockRidgeSkipLength()).thenReturn(0);
+        String first = repeat('d', 146);
+        String second = repeat('e', 26);
+        byte[] continuation = nmEntry(second, false);
+        when(volume.readBytes(24L, 0L, continuation.length)).thenReturn(continuation);
+        byte[] buffer = createRecord("DXXXXXXX", 8, 0x02,
+            concat(nmEntry(first, true), ceEntry(24, 0, continuation.length)));
+
+        EntryRecord record = new EntryRecord(volume, buffer, 1, ENCODING);
+
+        assertEquals(first + second, record.getFileIdentifier());
+    }
+
+    @Test
+    public void testRockRidgeLongFileNameFromMkisofsLayout() throws Exception {
+        ISO9660Volume volume = mock(ISO9660Volume.class);
+        when(volume.isRockRidge()).thenReturn(true);
+        when(volume.getRockRidgeSkipLength()).thenReturn(0);
+        String first = repeat('f', 146);
+        String second = repeat('g', 7);
+        byte[] continuation = nmEntry(second, false);
+        when(volume.readBytes(24L, 0L, continuation.length)).thenReturn(continuation);
+        byte[] buffer = createRecord("FYYYYYYY.BIN;1", 14, 0,
+            concat(nmEntry(first, true), ceEntry(24, 0, continuation.length)));
+
+        EntryRecord record = new EntryRecord(volume, buffer, 1, ENCODING);
+
+        assertEquals(first + second, record.getFileIdentifier());
+    }
+
+    @Test
+    public void testRockRidgeSkipsSystemUsePrefix() throws Exception {
+        ISO9660Volume volume = mock(ISO9660Volume.class);
+        when(volume.isRockRidge()).thenReturn(true);
+        when(volume.getRockRidgeSkipLength()).thenReturn(2);
+        byte[] buffer = createRecord("FILE.TXT;1", 10, 0,
+            concat(new byte[] {0x55, 0x66}, nmEntry("RealName.txt", false)));
+
+        EntryRecord record = new EntryRecord(volume, buffer, 1, ENCODING);
+
+        assertEquals("RealName.txt", record.getFileIdentifier());
+    }
+
+    @Test
     public void testUnknownSuspEntriesAreSkippedByLength() throws Exception {
         ISO9660Volume volume = mock(ISO9660Volume.class);
         when(volume.isRockRidge()).thenReturn(true);
@@ -253,6 +317,39 @@ public class EntryRecordTest {
         data[0] = (byte) (continued ? 0x01 : 0);
         System.arraycopy(nameBytes, 0, data, 1, nameBytes.length);
         return suspEntry("NM", 1, data);
+    }
+
+    private static byte[] ceEntry(long block, long offset, long length) {
+        byte[] data = new byte[24];
+        putUInt32LE(data, 0, block);
+        putUInt32BE(data, 4, block);
+        putUInt32LE(data, 8, offset);
+        putUInt32BE(data, 12, offset);
+        putUInt32LE(data, 16, length);
+        putUInt32BE(data, 20, length);
+        return suspEntry("CE", 1, data);
+    }
+
+    private static void putUInt32LE(byte[] buffer, int offset, long value) {
+        buffer[offset] = (byte) (value & 0xFF);
+        buffer[offset + 1] = (byte) ((value >> 8) & 0xFF);
+        buffer[offset + 2] = (byte) ((value >> 16) & 0xFF);
+        buffer[offset + 3] = (byte) ((value >> 24) & 0xFF);
+    }
+
+    private static void putUInt32BE(byte[] buffer, int offset, long value) {
+        buffer[offset] = (byte) ((value >> 24) & 0xFF);
+        buffer[offset + 1] = (byte) ((value >> 16) & 0xFF);
+        buffer[offset + 2] = (byte) ((value >> 8) & 0xFF);
+        buffer[offset + 3] = (byte) (value & 0xFF);
+    }
+
+    private static String repeat(char value, int count) {
+        StringBuilder builder = new StringBuilder(count);
+        for (int i = 0; i < count; i++) {
+            builder.append(value);
+        }
+        return builder.toString();
     }
 
     private static byte[] suspEntry(String signature, int version, byte[] data) {

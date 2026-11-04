@@ -37,6 +37,12 @@ public class EntryRecord extends Descriptor {
 
     private static final int SUSP_NM_CONTINUE = 0x01;
 
+    private static final int SUSP_CE_LENGTH = 28;
+
+    private static final int MAX_CONTINUATION_AREAS = 8;
+
+    private static final int MAX_CONTINUATION_LENGTH = 0x10000;
+
     private final int entryLength;
     private final int extAttributeLength;
     private final long extentLocation;
@@ -211,48 +217,86 @@ public class EntryRecord extends Descriptor {
 
         final boolean rootRecord = ".".equals(isoIdentifier);
         boolean enabled = volume.isRockRidge();
-        String name = null;
-        boolean continued = false;
-
-        while ((position + SUSP_ENTRY_HEADER_LENGTH) <= end) {
-            final int length = buff[position + 2] & 0xFF;
-            if ((length < SUSP_ENTRY_HEADER_LENGTH) || ((position + length) > end)) {
-                break;
-            }
-
-            if (isSignature(buff, position, 'S', 'P')) {
-                if (rootRecord && (length >= 7) &&
-                    ((buff[position + 4] & 0xFF) == 0xBE) &&
-                    ((buff[position + 5] & 0xFF) == 0xEF)) {
-                    volume.setRockRidge(true);
-                    enabled = true;
-                }
-            } else if (isSignature(buff, position, 'S', 'T')) {
-                break;
-            } else if (enabled && isSignature(buff, position, 'N', 'M')) {
-                if (length < 5) {
-                    break;
-                }
-                final int flags = buff[position + 4] & 0xFF;
-                final String fragment =
-                    decodeName(buff, position + 5, length - 5);
-                if (continued && (name != null)) {
-                    name = name + fragment;
-                } else {
-                    name = fragment;
-                }
-                continued = (flags & SUSP_NM_CONTINUE) != 0;
-                if (!continued) {
-                    return name;
-                }
-            } else if (continued) {
-                return null;
-            }
-
-            position += length;
+        if (!rootRecord && enabled) {
+            position += volume.getRockRidgeSkipLength();
         }
 
-        return continued ? null : name;
+        String name = null;
+        boolean continued = false;
+        byte[] area = buff;
+        int areaPosition = position;
+        int areaEnd = end;
+        int continuationAreas = 0;
+
+        while (true) {
+            boolean restart = false;
+
+            while ((areaPosition + SUSP_ENTRY_HEADER_LENGTH) <= areaEnd) {
+                final int length = area[areaPosition + 2] & 0xFF;
+                if ((length < SUSP_ENTRY_HEADER_LENGTH) ||
+                    ((areaPosition + length) > areaEnd)) {
+                    return continued ? null : name;
+                }
+
+                if (isSignature(area, areaPosition, 'S', 'P')) {
+                    if (rootRecord && (length >= 7) &&
+                        ((area[areaPosition + 4] & 0xFF) == 0xBE) &&
+                        ((area[areaPosition + 5] & 0xFF) == 0xEF)) {
+                        volume.setRockRidge(true);
+                        volume.setRockRidgeSkipLength(area[areaPosition + 6] & 0xFF);
+                        enabled = true;
+                    }
+                } else if (isSignature(area, areaPosition, 'S', 'T')) {
+                    return continued ? null : name;
+                } else if (enabled && isSignature(area, areaPosition, 'N', 'M')) {
+                    if (length < 5) {
+                        return continued ? null : name;
+                    }
+                    final int flags = area[areaPosition + 4] & 0xFF;
+                    final String fragment =
+                        decodeName(area, areaPosition + 5, length - 5);
+                    if (continued && (name != null)) {
+                        name = name + fragment;
+                    } else {
+                        name = fragment;
+                    }
+                    continued = (flags & SUSP_NM_CONTINUE) != 0;
+                    if (!continued) {
+                        return name;
+                    }
+                } else if (enabled && isSignature(area, areaPosition, 'C', 'E')) {
+                    if ((length < SUSP_CE_LENGTH) ||
+                        (continuationAreas >= MAX_CONTINUATION_AREAS)) {
+                        return continued ? null : name;
+                    }
+                    final long block = getUInt32LE(area, areaPosition + 5);
+                    final long areaOffset = getUInt32LE(area, areaPosition + 13);
+                    final long areaLength = getUInt32LE(area, areaPosition + 21);
+                    if ((areaLength < 1) || (areaLength > MAX_CONTINUATION_LENGTH)) {
+                        return continued ? null : name;
+                    }
+                    try {
+                        area = volume.readBytes(block, areaOffset, (int) areaLength);
+                    } catch (IOException ex) {
+                        log.warn("Unable to read Rock Ridge continuation area", ex);
+                        return continued ? null : name;
+                    }
+                    areaPosition = 0;
+                    areaEnd = area.length;
+                    continuationAreas++;
+                    restart = true;
+                    break;
+                } else if (continued) {
+                    return null;
+                }
+
+                areaPosition += length;
+            }
+
+            if (!restart) {
+                return continued ? null : name;
+            }
+        }
     }
 
     private String decodeName(byte[] buff, int offset, int length) {
