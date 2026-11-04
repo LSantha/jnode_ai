@@ -299,7 +299,10 @@ public final class DefaultHeapManager extends VmHeapManager {
                 }
                 result = gcHeap.alloc(vmClass, alignedSize);
                 if (result == null) {
-                    helper.die("Out of GC heap memory.");
+                    // Deliberately deliver a catchable OOME instead of killing
+                    // the VM with helper.die(); callers keep the normal
+                    // allocation failure contract even while GC is active.
+                    throwOutOfMemory();
                 }
             } else {
                 while (result == null) {
@@ -335,7 +338,7 @@ public final class DefaultHeapManager extends VmHeapManager {
                                     debug(size);
                                     debug(")");
                                 }
-                                throw OOME;
+                                throwOutOfMemory();
                                 // Unsafe.die();
                             }
                         } else {

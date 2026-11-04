@@ -20,22 +20,86 @@
  
 package org.jnode.test.core;
 
+import java.util.ArrayList;
+import java.util.List;
+
+import org.junit.Test;
+
+import static org.junit.Assert.assertNotNull;
+import static org.junit.Assert.assertSame;
+import static org.junit.Assert.assertTrue;
+
 /**
- * Hammer the heap by allocating and dropping large numbers of objects (byte arrays)
- *
- * @author crawley@jnode.org
+ * Verify that heap exhaustion is delivered as a catchable OutOfMemoryError in
+ * the allocating thread and that the VM remains usable afterwards.
  */
 public class HeapHammerTest {
 
-    /**
-     * @param args
-     */
+    private static final int CHUNK_SIZE = 512 * 1024 * 1024;
+
+    private static final int BOOT_PROBE_BYTES = 1536 * 1024 * 1024;
+
     public static void main(String[] args) {
-        System.out.println("Starting HeapHammerTest ...");
-        for (int i = 0; i < 10000000; i++) {
-            Object dummy = new byte[i % 100];
+        if ((requestOversizedArray() == null) && (exhaustAndCatch() == null)) {
+            throw new AssertionError(
+                "heap exhaustion must surface as OutOfMemoryError");
         }
-        System.out.println("done");
+        if (!recoverAfterOutOfMemory()) {
+            throw new AssertionError(
+                "VM did not recover after a catchable OutOfMemoryError");
+        }
+        System.out.println("HeapHammerTest: OutOfMemoryError delivery OK");
     }
 
+    @Test
+    public void testOutOfMemoryErrorIsCatchableInAllocatingThread() {
+        final Thread allocatingThread = Thread.currentThread();
+        final OutOfMemoryError caught = exhaustAndCatch();
+
+        assertNotNull("heap exhaustion must surface as OutOfMemoryError", caught);
+        assertSame("the error must be caught by the allocating thread",
+            allocatingThread, Thread.currentThread());
+
+        assertTrue("VM did not recover after a catchable OutOfMemoryError",
+            recoverAfterOutOfMemory());
+    }
+
+    private static OutOfMemoryError requestOversizedArray() {
+        try {
+            final byte[] oversized = new byte[BOOT_PROBE_BYTES];
+            oversized[0] = 1;
+            return null;
+        } catch (OutOfMemoryError ex) {
+            return ex;
+        }
+    }
+
+    private static OutOfMemoryError exhaustAndCatch() {
+        try {
+            exhaustHeap();
+            return null;
+        } catch (OutOfMemoryError ex) {
+            return ex;
+        }
+    }
+
+    private static void exhaustHeap() {
+        final List<byte[]> retained = new ArrayList<byte[]>();
+        while (true) {
+            retained.add(new byte[CHUNK_SIZE]);
+        }
+    }
+
+    private static boolean recoverAfterOutOfMemory() {
+        for (int i = 0; i < 5; i++) {
+            System.gc();
+            try {
+                final byte[] small = new byte[1024];
+                small[0] = 1;
+                return small[0] == 1;
+            } catch (OutOfMemoryError ignored) {
+            }
+        }
+        return false;
+    }
 }
