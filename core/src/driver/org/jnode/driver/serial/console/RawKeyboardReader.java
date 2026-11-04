@@ -70,23 +70,46 @@ public class RawKeyboardReader extends KeyboardReader {
      */
     private final class InputPump implements Runnable {
         public void run() {
+            boolean failureLogged = false;
             while (true) {
-                int b = serialPort.readSingle();
-                if (b == -1) {
-                    return;
-                }
-                b &= 0xFF;
-                if (b == 0x03) {
-                    fireControlKey(KeyEvent.VK_C, (char) 0x03);
-                } else if (b == 0x1A) {
-                    fireControlKey(KeyEvent.VK_Z, (char) 0x1A);
-                } else {
-                    synchronized (queue) {
-                        queue.addLast(Byte.valueOf((byte) b));
-                        queue.notify();
+                try {
+                    int b = serialPort.readSingle();
+                    if (b == -1) {
+                        return;
                     }
+                    b &= 0xFF;
+                    if (b == 0x03) {
+                        fireControlKey(KeyEvent.VK_C, (char) 0x03);
+                    } else if (b == 0x1A) {
+                        fireControlKey(KeyEvent.VK_Z, (char) 0x1A);
+                    } else {
+                        synchronized (queue) {
+                            queue.addLast(Byte.valueOf((byte) b));
+                            queue.notify();
+                        }
+                    }
+                } catch (RuntimeException ex) {
+                    if (!failureLogged) {
+                        failureLogged = true;
+                        log.error("Serial agent input pump failed; dropping input", ex);
+                    }
+                    pauseAfterFailure();
+                } catch (OutOfMemoryError ex) {
+                    if (!failureLogged) {
+                        failureLogged = true;
+                        log.error("Serial agent input pump failed; dropping input", ex);
+                    }
+                    pauseAfterFailure();
                 }
             }
+        }
+    }
+
+    private static void pauseAfterFailure() {
+        try {
+            Thread.sleep(1);
+        } catch (InterruptedException ex) {
+            Thread.currentThread().interrupt();
         }
     }
 
