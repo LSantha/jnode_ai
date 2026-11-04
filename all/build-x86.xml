@@ -380,7 +380,12 @@
 					<fileset dir="@{dir}" includes="jnode*.gz" excludes="@{kernelincludes}" />
 				</resourcecount>
 			</condition>
-			<delete file="@{destfile}" if="jnode.cdrom.kernel.removed" />
+			<if>
+				<isset property="jnode.cdrom.kernel.removed" />
+				<then>
+					<delete file="@{destfile}" />
+				</then>
+			</if>
 			<delete>
 				<fileset dir="@{dir}" includes="jnode*.gz" excludes="@{kernelincludes}" />
 			</delete>
