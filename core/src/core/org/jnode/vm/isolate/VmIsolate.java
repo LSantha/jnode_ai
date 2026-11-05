@@ -203,9 +203,23 @@ public final class VmIsolate {
         }
     }
 
+    /**
+     * Walk the isolated statics of all registered isolates. This is a GC root
+     * walker, invoked from the mark phase, so it must not allocate or acquire
+     * locks. Read the isolates field directly instead of going through the
+     * lazily creating StaticData.isolates(): that initializer would run
+     * new LinkedList during mark, when the shared statics holding the field
+     * have already been visited and the write barrier is disabled, leaving a
+     * white object that sweep frees while the field still references it.
+     * A null list simply means no isolate has been registered yet.
+     */
     public static boolean walkIsolates(ObjectVisitor visitor) {
-        for (int i = 0; i < StaticData.isolates.size(); i++) {
-            VmIsolate isolate = StaticData.isolates.get(i);
+        final List<VmIsolate> isolates = StaticData.isolates;
+        if (isolates == null) {
+            return true;
+        }
+        for (int i = 0; i < isolates.size(); i++) {
+            VmIsolate isolate = isolates.get(i);
             if (!isolate.isolatedStaticsTable.walk(visitor))
                 return false;
         }
@@ -218,7 +232,7 @@ public final class VmIsolate {
         if (ist != null)
             l.add(ist);
 
-        for (VmIsolate is : StaticData.isolates.toArray(new VmIsolate[StaticData.isolates.size()])) {
+        for (VmIsolate is : StaticData.isolates().toArray(new VmIsolate[StaticData.isolates().size()])) {
             ist = is.getIsolatedStaticsTable();
             if (ist != null)
                 l.add(ist);
@@ -239,11 +253,32 @@ public final class VmIsolate {
          */
         private static transient VmIsolate rootIsolate;
         /**
-         * Non-root isolates.
+         * Non-root isolates. Transient so no host build-time list leaks into
+         * the boot image; recreated lazily, like rootIsolate above.
          */
-        private static final List<VmIsolate> isolates = new LinkedList<VmIsolate>();
+        private static transient List<VmIsolate> isolates;
 
         private static int nextId = 0;
+
+        /**
+         * Live list of non-root isolates, created on first use so the boot
+         * image never carries host-side instances.
+         *
+         * @return the isolates list, never null.
+         */
+        static List<VmIsolate> isolates() {
+            List<VmIsolate> list = isolates;
+            if (list == null) {
+                synchronized (StaticData.class) {
+                    list = isolates;
+                    if (list == null) {
+                        list = new LinkedList<VmIsolate>();
+                        isolates = list;
+                    }
+                }
+            }
+            return list;
+        }
 
         static final VmIsolate getRoot() {
             if (rootIsolate == null) {
@@ -323,7 +358,7 @@ public final class VmIsolate {
                 }
             });
         }
-        StaticData.isolates.add(this);
+        StaticData.isolates().add(this);
     }
 
     /**
@@ -350,7 +385,7 @@ public final class VmIsolate {
      */
     public static VmIsolate[] getVmIsolates() {
         //todo security
-        return StaticData.isolates.toArray(new VmIsolate[0]);
+        return StaticData.isolates().toArray(new VmIsolate[0]);
     }
 
     /**
@@ -576,7 +611,7 @@ public final class VmIsolate {
         }
 
         this.creator.removeChild(this);
-        StaticData.isolates.remove(this);
+        StaticData.isolates().remove(this);
 
         changeState(State.EXITED);
     }
