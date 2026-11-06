@@ -25,16 +25,26 @@
 
 // Effort per model. OpenCode's accepted set is provider-dependent; record what
 // actually works for each model rather than forcing one value on all of them.
+// "max" is the strongest lever where the model offers it (pulse-alpha), and is
+// deliberately not applied to deepseek-free: that would change the effort of
+// every ticket run as a side effect, which is a decision to take on its own.
 const MODEL_VARIANTS = {
-  "opencode/deepseek-v4.1-flash-free": "high"
+  "opencode/deepseek-v4.1-flash-free": "high",
+  "opencode/pulse-alpha-free": "max"
 };
 
 const DEFAULT_VARIANT = "high";
 
 // Role = what the run is for. The verb in the trigger comment picks the role
 // (see resolveModel); triage.yml asks for its own by name.
+//
+// coding is the workhorse: every ticket's DEV turn and every /oc fix. It runs
+// pulse-alpha (free, and the only role where the effort matters most), which
+// also keeps the review and triage roles on deepseek - a different model
+// reviewing the work than the one that wrote it. First live trial: the ticket
+// filed immediately after this change.
 const ROLE_MODELS = {
-  coding: "opencode/deepseek-v4.1-flash-free",
+  coding: "opencode/pulse-alpha-free",
   review: "opencode/deepseek-v4.1-flash-free",
   triage: "opencode/deepseek-v4.1-flash-free"
 };
