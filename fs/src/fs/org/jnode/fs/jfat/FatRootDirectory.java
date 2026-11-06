@@ -56,7 +56,7 @@ public class FatRootDirectory extends FatDirectory {
 
         FatMarshal entry = new FatMarshal(32);
         ByteBuffer dest = entry.getByteBuffer();
-        long rootDirectoryOffset = bootSector.getFirstDataSector() * bootSector.getBytesPerSector();
+        long rootDirectoryOffset = bootSector.getFirstRootDirSector() * bootSector.getBytesPerSector();
 
         dest.limit(dest.position() + entry.length());
         getFatFileSystem().getApi().read(rootDirectoryOffset + 32 * index, dest);

@@ -407,6 +407,10 @@ public class BootSector {
         return FirstDataSector;
     }
 
+    public long getFirstRootDirSector() {
+        return FirstDataSector - RootDirSectors;
+    }
+
     public long getNrRootDirEntries() {
         return BPB_RootEntCnt;
     }
