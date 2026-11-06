@@ -49,6 +49,7 @@ help         Output these messages
             <test name="org.jnode.test.fs.command.SyncCommandTest" todir="${basedir}/build/reports/junit"/>
             <test name="org.jnode.fs.service.def.FileSystemAPIImplTest" todir="${basedir}/build/reports/junit"/>
             <test name="org.jnode.fs.iso9660.EntryRecordTest" todir="${basedir}/build/reports/junit"/>
+            <test name="org.jnode.test.partitions.ibm.IBMPartitionTableEntryTest" todir="${basedir}/build/reports/junit"/>
         </junit>
 	</target>
 
