@@ -24,7 +24,6 @@ import java.io.File;
 import java.nio.ByteBuffer;
 import java.util.Iterator;
 
-import org.jnode.driver.block.BlockDeviceAPI;
 import org.jnode.driver.block.FileDevice;
 import org.jnode.emu.naming.BasicNameSpace;
 import org.jnode.fs.FSDirectory;
@@ -180,7 +179,11 @@ public class FatFileSystemTest {
         String expectedStructure =
             "type: JFAT vol: total:" + totalSpace + " free:" + freeSpace + "\n" +
                 "  ; \n" +
-                "    test.txt; 18; ff035bff2dcf972ee7dfd023455997ef\n";
+                "    dir1; \n" +
+                "      test.txt; 18; 80aeb09eb86de4c4a7d1f877451dc2a2\n" +
+                "    dir2; \n" +
+                "      test.txt; 18; 1b20f937ce4a3e9241cc907086169ad7\n" +
+                "    test.txt; 18; fd99fcfc86ba71118bd64c2d9f4b54a4\n";
 
         DataStructureAsserts.assertStructure(fs, expectedStructure);
     }

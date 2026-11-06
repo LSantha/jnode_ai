@@ -201,10 +201,24 @@ public class Fat12ChainTest {
     }
 
     @Test
+    public void testNonContiguousChainFollowing() throws Exception {
+        assertEquals("FAT[6] non-contiguous link", 8, fat().get(6));
+        assertEquals("FAT[8] non-contiguous link", 7, fat().get(8));
+        assertEquals("FAT[7] EOF", 0xFFF, fat().get(7));
+        FatChain chain = new FatChain(fs, Fat12ImageBuilder.NONCONTIG_START_CLUSTER);
+        assertEquals("Non-contiguous chain size", 3, chain.size());
+        FatChain.ChainIterator it = chain.listIterator(0);
+        assertEquals("chain[0]", 6, it.next());
+        assertEquals("chain[1]", 8, it.next());
+        assertEquals("chain[2]", 7, it.next());
+        assertFalse(it.hasNext());
+    }
+
+    @Test
     public void testFreeEntries() throws Exception {
-        assertEquals("FAT[6] free", 0, fat().get(6));
+        assertEquals("FAT[9] free", 0, fat().get(9));
         assertEquals("FAT[343] free", 0, fat().get(343));
-        assertTrue("6 is free", fat().isFreeEntry(6));
+        assertTrue("9 is free", fat().isFreeEntry(9));
         assertTrue("343 is free", fat().isFreeEntry(343));
         assertFalse("2 is allocated", fat().isFreeEntry(2));
     }
@@ -237,6 +251,11 @@ public class Fat12ChainTest {
         assertNotNull("SINGLE.TXT should exist", single);
         assertTrue(single.isFile());
         assertEquals("SINGLE.TXT length", Fat12ImageBuilder.SINGLE_LENGTH, single.getFile().getLength());
+
+        FSEntry nonc = root.getEntry(Fat12ImageBuilder.NONCONTIG_NAME);
+        assertNotNull("NONC.TXT should exist", nonc);
+        assertTrue(nonc.isFile());
+        assertEquals("NONC.TXT length", Fat12ImageBuilder.NONCONTIG_LENGTH, nonc.getFile().getLength());
     }
 
     @Test
@@ -289,6 +308,35 @@ public class Fat12ChainTest {
         buf.get(actual);
         assertArrayEquals("FatChain read bytes",
                 Fat12ImageBuilder.expectedContent(length), actual);
+    }
+
+    @Test
+    public void testNonContiguousFileReadByteIdentical() throws Exception {
+        FSDirectory root = fs.getRootEntry().getDirectory();
+        FSEntry entry = root.getEntry(Fat12ImageBuilder.NONCONTIG_NAME);
+        assertNotNull(entry);
+        FSFile file = entry.getFile();
+        int length = Fat12ImageBuilder.NONCONTIG_LENGTH;
+        assertEquals(length, file.getLength());
+        byte[] expected = Fat12ImageBuilder.expectedContent(length);
+        ByteBuffer buf = ByteBuffer.allocate(length);
+        file.read(0, buf);
+        buf.flip();
+        byte[] actual = new byte[buf.remaining()];
+        buf.get(actual);
+        assertArrayEquals("NONC.TXT bytes in chain order 6,8,7", expected, actual);
+        assertEquals("byte 1023 end cluster6", (byte) 0xFF, actual[1023]);
+        assertEquals("byte 1024 start cluster8", (byte) 0, actual[1024]);
+        assertEquals("byte 2047 end cluster8", (byte) 0xFF, actual[2047]);
+        assertEquals("byte 2048 start cluster7", (byte) 0, actual[2048]);
+
+        FatChain chain = new FatChain(fs, Fat12ImageBuilder.NONCONTIG_START_CLUSTER);
+        ByteBuffer chainBuf = ByteBuffer.allocate(length);
+        chain.read(0, chainBuf);
+        chainBuf.flip();
+        byte[] chainActual = new byte[chainBuf.remaining()];
+        chainBuf.get(chainActual);
+        assertArrayEquals("FatChain NONC.TXT bytes", expected, chainActual);
     }
 
     @Test

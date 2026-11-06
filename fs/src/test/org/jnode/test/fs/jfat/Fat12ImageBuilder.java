@@ -86,21 +86,16 @@ import org.jnode.util.LittleEndian;
  * {@code Fat12} ever disagree, the builder (spec) is trusted and the
  * code is the suspect, per the ticket instruction.</p>
  *
- * <p>Trusted-source note (implementation mapping): the spec root
- * directory starts at sector 5, but JFAT's {@code FatRootDirectory}
- * reads it at {@code FirstDataSector*512} (sector 19) and
- * {@code Fat12.getClusterPosition()} places cluster 2 at
- * {@code rootOffset + 224*32} (sector 33), i.e. JFAT double-counts
- * the root directory. To keep the read-path tests meaningful the
- * builder writes directory entries at JFAT's {@code rootDirOffset()}
- * and file data at JFAT's {@code clusterPosition()} rather than at
- * the spec positions. BPB fields and FAT packing remain spec-valid
- * either way; only data placement follows the implementation mapping.
- * A second spec-relevant quirk: {@code BootSector.setBS_DrvNum()} and
- * friends write at FAT32 EBPB offsets (64+), while the FAT12 decoder
- * reads them at 36+. The builder therefore patches EBPB at the spec
- * offsets (36+) after {@code BootSector.write()} instead of relying
- * on those setters.</p>
+ * <p>Trusted-source note: directory entries and file data are placed at
+ * the spec positions: root directory at sector 5 (byte 2560) and
+ * cluster 2 at sector 19 (byte 9728, {@code FirstDataSector*512}).
+ * If the builder and JFAT ever disagree on a spec position, the
+ * builder (spec) is trusted and the code is the suspect, per the
+ * ticket instruction. A spec-relevant quirk:
+ * {@code BootSector.setBS_DrvNum()} and friends write at FAT32 EBPB
+ * offsets (64+), while the FAT12 decoder reads them at 36+. The
+ * builder therefore patches EBPB at the spec offsets (36+) after
+ * {@code BootSector.write()} instead of relying on those setters.</p>
  *
  * <p>Live content (beyond entries 0/1, single-level root):</p>
  *
@@ -109,6 +104,8 @@ import org.jnode.util.LittleEndian;
  * FAT entry 1    = 0xFFF
  * 2 -&gt; 3 -&gt; 4 -&gt; 0xFFF   MULTI.TXT (3 clusters, even/odd/even coverage)
  * 5 -&gt; 0xFFF               SINGLE.TXT (1 cluster)
+ * 6 -&gt; 8 -&gt; 7 -&gt; 0xFFF   NONC.TXT (non-contiguous chain: proves the
+ *                             reader consults FAT entries, not adjacency)
  * 340 -&gt; 341 -&gt; 342 -&gt; 0xFFF  straddle chain: entry 341 at offset 511
  *                             (bytes 511-512 cross the 512-byte FAT boundary)
  * everything else = 0 (free)
@@ -132,31 +129,34 @@ final class Fat12ImageBuilder {
     static final long IMAGE_BYTES = (long) TOT_SEC16 * BYTES_PER_SECTOR;
     /** FirstDataSector = 1 + 2*2 + 14 = 19. */
     static final int FIRST_DATA_SECTOR = 19;
+    static final int ROOT_DIR_SECTORS = 14;
 
     static final int MULTI_START_CLUSTER = 2;
     static final int MULTI_LENGTH = 2500;
     static final int SINGLE_START_CLUSTER = 5;
     static final int SINGLE_LENGTH = 100;
+    static final int NONCONTIG_START_CLUSTER = 6;
+    static final int NONCONTIG_LENGTH = 2500;
     static final int STRADDLE_HEAD = 340;
 
     static final String MULTI_NAME = "MULTI.TXT";
     static final String SINGLE_NAME = "SINGLE.TXT";
+    static final String NONCONTIG_NAME = "NONC.TXT";
 
     private Fat12ImageBuilder() {
     }
 
-    /** Byte offset where JFAT's FatRootDirectory reads the root directory. */
+    /** Byte offset of the root directory: (FirstDataSector - RootDirSectors) * 512. */
     static long rootDirOffset() {
-        return (long) FIRST_DATA_SECTOR * BYTES_PER_SECTOR;
+        return (long) (FIRST_DATA_SECTOR - ROOT_DIR_SECTORS) * BYTES_PER_SECTOR;
     }
 
-    /** Byte offset where JFAT's Fat12.getClusterPosition() maps cluster 0's base. */
+    /** Byte offset of cluster data: FirstDataSector * 512 + (index - 2) * clusterSize. */
     static long clusterPosition(int index) {
         if (index == 0) {
             return rootDirOffset();
         }
-        long filesOffset = rootDirOffset() + (long) ROOT_ENT_CNT * 32;
-        return filesOffset + (long) (index - 2) * CLUSTER_SIZE;
+        return (long) FIRST_DATA_SECTOR * BYTES_PER_SECTOR + (long) (index - 2) * CLUSTER_SIZE;
     }
 
     static byte[] expectedContent(int length) {
@@ -186,15 +186,6 @@ final class Fat12ImageBuilder {
             fat[offset] = (byte) (b1 | ((value & 0x0F) << 4));
             fat[offset + 1] = (byte) ((b2 & 0x00) | ((value >> 4) & 0xFF));
         }
-    }
-
-    static int getFat12Entry(byte[] fat, int index) {
-        int offset = (int) Math.floor(1.5 * index);
-        int value = (fat[offset] & 0xFF) | ((fat[offset + 1] & 0xFF) << 8);
-        if ((index % 2) == 0) {
-            return value & 0xFFF;
-        }
-        return value >> 4;
     }
 
     /** Raw 32-byte short directory entry (DOS date 1980-01-01, archive attr). */
@@ -232,6 +223,9 @@ final class Fat12ImageBuilder {
         setFat12Entry(fat, 3, 4);
         setFat12Entry(fat, 4, 0xFFF);
         setFat12Entry(fat, 5, 0xFFF);
+        setFat12Entry(fat, NONCONTIG_START_CLUSTER, 8);
+        setFat12Entry(fat, 8, 7);
+        setFat12Entry(fat, 7, 0xFFF);
         setFat12Entry(fat, STRADDLE_HEAD, STRADDLE_HEAD + 1);
         setFat12Entry(fat, STRADDLE_HEAD + 1, STRADDLE_HEAD + 2);
         setFat12Entry(fat, STRADDLE_HEAD + 2, 0xFFF);
@@ -278,8 +272,10 @@ final class Fat12ImageBuilder {
 
         byte[] multi = makeDirEntry(MULTI_NAME, MULTI_START_CLUSTER, MULTI_LENGTH);
         byte[] single = makeDirEntry(SINGLE_NAME, SINGLE_START_CLUSTER, SINGLE_LENGTH);
+        byte[] nonc = makeDirEntry(NONCONTIG_NAME, NONCONTIG_START_CLUSTER, NONCONTIG_LENGTH);
         api.write(rootDirOffset(), ByteBuffer.wrap(multi));
         api.write(rootDirOffset() + 32, ByteBuffer.wrap(single));
+        api.write(rootDirOffset() + 64, ByteBuffer.wrap(nonc));
 
         byte[] multiData = expectedContent(MULTI_LENGTH);
         for (int off = 0; off < multiData.length;) {
@@ -293,6 +289,15 @@ final class Fat12ImageBuilder {
 
         byte[] singleData = expectedContent(SINGLE_LENGTH);
         api.write(clusterPosition(SINGLE_START_CLUSTER), ByteBuffer.wrap(singleData));
+
+        int[] noncChain = new int[]{NONCONTIG_START_CLUSTER, 8, 7};
+        byte[] noncData = expectedContent(NONCONTIG_LENGTH);
+        for (int ci = 0; ci < noncChain.length && ci * CLUSTER_SIZE < noncData.length; ci++) {
+            int off = ci * CLUSTER_SIZE;
+            int chunk = Math.min(CLUSTER_SIZE, noncData.length - off);
+            ByteBuffer buf = ByteBuffer.wrap(noncData, off, chunk);
+            api.write(clusterPosition(noncChain[ci]), buf);
+        }
 
         api.flush();
     }

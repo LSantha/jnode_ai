@@ -57,15 +57,11 @@ public class Fat12 extends Fat {
     public long getClusterPosition(int index) {
         BootSector bootSector = getBootSector();
 
-        long rootDirectoryOffset = bootSector.getFirstDataSector() * bootSector.getBytesPerSector();
-
         if (index == 0) {
-            return rootDirectoryOffset;
+            return bootSector.getFirstRootDirSector() * bootSector.getBytesPerSector();
         }
 
-        // Need to account for the size of the root directory entry for following clusters
-        long filesOffset = rootDirectoryOffset + bootSector.getNrRootDirEntries() * 32;
-        return filesOffset + ((index - firstCluster()) * getClusterSize());
+        return getClusterSector(index) * (long) bootSector.getBytesPerSector();
     }
 
     public boolean isEofChain(int entry) {
