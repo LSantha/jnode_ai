@@ -438,6 +438,43 @@ module.exports = async ({ github, context, core }) => {
       core.info("Ticket runner: auto-start deferred for #" + issueNumber + ", an agent run is already in flight.");
       return false;
     }
+    // Serialize against a sibling wakeup. A labeled event and a Triage
+    // completion can wake this runner within the same second - that is how
+    // #824 got two agents and #834 got two identical "/oc Please proceed"
+    // comments 2s apart: both wakeups passed their guards before either had
+    // written state or posted, and the in-flight check above cannot see a
+    // run that has not registered yet. A jittered settle before the post makes
+    // the sibling's trigger comment (visible ~1-2s after it posts) and its run
+    // (a few seconds later) detectable by whichever runner wakes later. The
+    // jitter is per-run (run id mod 7) so two concurrent wakeups do not wake
+    // from the settle at the same moment. Skipped in unit tests, which have
+    // no concurrent publisher and no run id.
+    if (process.env.GITHUB_RUN_ID) {
+      // AUTO_START_SETTLE_MS lets a test drive the re-check without sleeping;
+      // unset in production, the jitter above applies.
+      var settle = Number(process.env.AUTO_START_SETTLE_MS);
+      var jitter = isNaN(settle)
+        ? 8000 + (Number(process.env.GITHUB_RUN_ID) % 7) * 3000
+        : settle;
+      await new Promise(function (r) { setTimeout(r, jitter); });
+      var again = await github.rest.issues.get({ owner, repo, issue_number: issueNumber });
+      if (parseState((again.data && again.data.body) || "")) {
+        core.info("Ticket runner: auto-start skipped for #" + issueNumber + ", state appeared during the settle.");
+        return false;
+      }
+      var cmts = await github.rest.issues.listComments({ owner, repo, issue_number: issueNumber, per_page: 100 });
+      var list = (cmts && cmts.data) ? cmts.data : [];
+      for (var ci = 0; ci < list.length; ci++) {
+        if ((list[ci].body || "").indexOf("/oc Please proceed with this task.") >= 0) {
+          core.info("Ticket runner: auto-start deferred for #" + issueNumber + ", a sibling wakeup already posted the DEV trigger.");
+          return false;
+        }
+      }
+      if (await hasActiveRunFor(issueNumber)) {
+        core.info("Ticket runner: auto-start deferred for #" + issueNumber + ", an agent run appeared during the settle.");
+        return false;
+      }
+    }
     var st = initState();
     st.history.push({ event: "auto_start", reason: reason, timestamp: new Date().toISOString() });
     var newBody = replaceOrAppendStatus(body, st, issueNumber);

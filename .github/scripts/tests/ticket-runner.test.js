@@ -1038,6 +1038,51 @@ test("ticket-runner.js event handling suite", async (t) => {
     assert.ok(mocks.calls.createComment[0].body.includes("/oc Please proceed"));
   });
 
+  await t.test("Auto-start defers when a sibling wakeup already posted the DEV trigger", async () => {
+    // The #834 shape: a labeled event and a Triage completion woke the runner
+    // within 2s and both posted "/oc Please proceed", starting two agents. The
+    // jittered settle makes the sibling's comment visible to the later runner.
+    const prevRun = process.env.GITHUB_RUN_ID;
+    const prevSettle = process.env.AUTO_START_SETTLE_MS;
+    process.env.GITHUB_RUN_ID = "4242";
+    process.env.AUTO_START_SETTLE_MS = "0";
+    try {
+      const mocks = createMocks("issues", { labelName: "kind/bug" });
+      mocks.setIssueComments([
+        { body: "## Triage\nBlast radius: low; actionable." },
+        { body: "/oc Please proceed with this task." }
+      ]);
+      await runTicketRunner(mocks);
+
+      assert.strictEqual(_parseState(mocks.getIssueBody()), null, "no state written when deferring");
+      assert.strictEqual(mocks.calls.createComment.length, 0, "no second DEV trigger posted");
+      assert.ok(mocks.logs.info.some(m => /sibling wakeup already posted/.test(m)));
+    } finally {
+      if (prevRun === undefined) delete process.env.GITHUB_RUN_ID; else process.env.GITHUB_RUN_ID = prevRun;
+      if (prevSettle === undefined) delete process.env.AUTO_START_SETTLE_MS; else process.env.AUTO_START_SETTLE_MS = prevSettle;
+    }
+  });
+
+  await t.test("Auto-start proceeds after the settle when no sibling posted", async () => {
+    const prevRun = process.env.GITHUB_RUN_ID;
+    const prevSettle = process.env.AUTO_START_SETTLE_MS;
+    process.env.GITHUB_RUN_ID = "4242";
+    process.env.AUTO_START_SETTLE_MS = "0";
+    try {
+      const mocks = createMocks("issues", { labelName: "kind/bug" });
+      mocks.setIssueComments([{ body: "## Triage\nBlast radius: low; actionable." }]);
+      await runTicketRunner(mocks);
+
+      assert.strictEqual(mocks.calls.createComment.length, 1);
+      assert.ok(mocks.calls.createComment[0].body.includes("/oc Please proceed"));
+      const state = _parseState(mocks.getIssueBody());
+      assert.strictEqual(state.phase, "DEV");
+    } finally {
+      if (prevRun === undefined) delete process.env.GITHUB_RUN_ID; else process.env.GITHUB_RUN_ID = prevRun;
+      if (prevSettle === undefined) delete process.env.AUTO_START_SETTLE_MS; else process.env.AUTO_START_SETTLE_MS = prevSettle;
+    }
+  });
+
   await t.test("Workflow run parks DEV without a retry when the run was cancelled", async () => {
     // Cancelling a duplicate agent is not a failed turn: on #824 the cancel
     // made the runner post a replacement trigger and start a third agent.

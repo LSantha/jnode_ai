@@ -125,9 +125,28 @@ jobs:
               if (!isTrustedAuthor(issue.user)) { core.info('Issue #' + number + ' authored by an untrusted author, skipping auto re-triage.'); return; }
               const body = comment.body || '';
               if (/^\s*\/(oc|run|orchestrate)(\s|$)/.test(body)) { core.info('Slash-command comment, routed elsewhere.'); return; }
-              // Agent result comments post as the owner via PAT: only the session
-              // link distinguishes them from genuine reporter replies.
+              // Agent result comments post as the owner via PAT, so the author
+              // cannot tell them from a reporter reply. The session link covers
+              // opencode.yml's comments, but the triage action posts its report
+              // WITHOUT one - which is how #834 read its own triage report as a
+              // reporter reply and re-triaged twice. Use the shared report
+              // predicates (the same ones the label decider and the auto-start
+              // gate use, so the repo cannot disagree with itself about what
+              // counts as a report) plus the runner's status-message shapes.
               if (body.includes('opencode.ai/s/')) { core.info('Agent result comment, not a reporter reply.'); return; }
+              const { isTriggerComment, isTriageComment, isRefusalComment, isNeedsInfoComment } =
+                require('./.github/scripts/report-signals.js');
+              if (isTriggerComment(body) || isTriageComment(body) ||
+                  isRefusalComment(body) || isNeedsInfoComment(body)) {
+                core.info('Automation report on #' + number + ', not a reporter reply.'); return;
+              }
+              // The runner's own status comments, including emoji-led ones. One
+              // optional leading token is skipped so the emoji prefix does not
+              // have to appear in this file (AGENTS.md files and workflow YAML
+              // here are US-ASCII).
+              if (/^\s*(?:[^\s]+\s+)?(?:Working on this|Plan:|Created PR #|Opened PR #|Ticket runner:|Run: )/.test(body)) {
+                core.info('Runner status message on #' + number + ', not a reporter reply.'); return;
+              }
 
               const full = await getIssue(number);
               const labels = labelNames(full);
