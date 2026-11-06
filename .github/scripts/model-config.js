@@ -38,13 +38,15 @@ const DEFAULT_VARIANT = "high";
 // Role = what the run is for. The verb in the trigger comment picks the role
 // (see resolveModel); triage.yml asks for its own by name.
 //
-// coding is the workhorse: every ticket's DEV turn and every /oc fix. It runs
-// pulse-alpha (free, and the only role where the effort matters most), which
-// also keeps the review and triage roles on deepseek - a different model
-// reviewing the work than the one that wrote it. First live trial: the ticket
-// filed immediately after this change.
+// coding is the workhorse: every ticket's DEV turn and every /oc fix. It ran
+// pulse-alpha-free at max from 2026-11-06 19:28 until the provider took the
+// model down that evening ("Upstream request failed: Model is unavailable",
+// which burned three DEV retries on #838 and failed the ticket on an
+// infrastructure error). Reverted to deepseek, which carried this role all
+// session. To retry pulse-alpha: set coding back to
+// "opencode/pulse-alpha-free" - both model and effort entries above are intact.
 const ROLE_MODELS = {
-  coding: "opencode/pulse-alpha-free",
+  coding: "opencode/deepseek-v4.1-flash-free",
   review: "opencode/deepseek-v4.1-flash-free",
   triage: "opencode/deepseek-v4.1-flash-free"
 };
