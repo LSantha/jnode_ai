@@ -25,12 +25,13 @@
 
 // Effort per model. OpenCode's accepted set is provider-dependent; record what
 // actually works for each model rather than forcing one value on all of them.
-// "max" is the strongest lever where the model offers it (pulse-alpha), and is
-// deliberately not applied to deepseek-free: that would change the effort of
-// every ticket run as a side effect, which is a decision to take on its own.
+// "max" is the strongest lever where the model offers it; it is deliberately
+// not applied to deepseek-free, where changing the effort of every run is a
+// decision to take on its own.
 const MODEL_VARIANTS = {
   "opencode/deepseek-v4.1-flash-free": "high",
-  "opencode/pulse-alpha-free": "max"
+  "opencode/pulse-alpha-free": "max",
+  "opencode/crouton-alpha-free": "max"
 };
 
 const DEFAULT_VARIANT = "high";
@@ -38,15 +39,20 @@ const DEFAULT_VARIANT = "high";
 // Role = what the run is for. The verb in the trigger comment picks the role
 // (see resolveModel); triage.yml asks for its own by name.
 //
-// coding is the workhorse: every ticket's DEV turn and every /oc fix. It ran
-// pulse-alpha-free at max from 2026-11-06 19:28 until the provider took the
-// model down that evening ("Upstream request failed: Model is unavailable",
-// which burned three DEV retries on #838 and failed the ticket on an
-// infrastructure error). Reverted to deepseek, which carried this role all
-// session. To retry pulse-alpha: set coding back to
-// "opencode/pulse-alpha-free" - both model and effort entries above are intact.
+// coding is the workhorse: every ticket's DEV turn and every /oc fix, and the
+// review role is deliberately a different model, so the work is checked by
+// something other than what wrote it. History of this slot, newest first:
+//   - crouton-alpha-free at max (from 2026-11-06 21:45): free, six-level effort
+//     ladder (minimal..max), trialled after pulse-alpha's provider went down
+//     mid-evening. Revert is a one-line flip if it behaves or disappears.
+//   - pulse-alpha-free at max (19:28-21:40 same day): one strong outing - the
+//     #834 MBR test, plus the #837 JFAT deep review that survived an
+//     independent validity round - then the provider returned "Upstream request
+//     failed: Model is unavailable" and burned three DEV retries on #838.
+//   - deepseek-v4.1-flash-free at high: carried the role all session before
+//     that, and is the known-good fallback.
 const ROLE_MODELS = {
-  coding: "opencode/deepseek-v4.1-flash-free",
+  coding: "opencode/crouton-alpha-free",
   review: "opencode/deepseek-v4.1-flash-free",
   triage: "opencode/deepseek-v4.1-flash-free"
 };
