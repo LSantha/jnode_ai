@@ -256,6 +256,16 @@ public class IBMPartitionTableEntryTest {
         return new byte[512];
     }
 
+    @Test
+    public void testUnknownSystemIndicatorCodeMapsToUnknown() {
+        byte[] mbr = wellFormedMbr(0, 0x80);
+        mbr[ENTRY_OFFSETS[0] + 4] = (byte) 0x13;
+        IBMPartitionTableEntry entry = new IBMPartitionTableEntry(null, mbr, 0);
+
+        assertEquals(0x13, entry.getSystemIndicatorCode());
+        assertEquals(IBMPartitionTypes.PARTTYPE_UNKNOWN, entry.getSystemIndicator());
+    }
+
     private static byte[] wellFormedMbr(int partNr, int bootIndicator) {
         byte[] mbr = newMbr();
         int ofs = ENTRY_OFFSETS[partNr];
