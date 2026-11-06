@@ -75,8 +75,58 @@ public class FakeIDEIO implements IDEIO, IDEConstants {
     final List<Integer> writtenCommands = new ArrayList<Integer>();
     final List<Integer> writtenWords = new ArrayList<Integer>();
     final List<Integer> readWords = new ArrayList<Integer>();
+    final List<Integer> writtenSectorCounts = new ArrayList<Integer>();
+    final List<Integer> writtenLbaLows = new ArrayList<Integer>();
+    final List<Integer> writtenLbaMids = new ArrayList<Integer>();
+    final List<Integer> writtenLbaHighs = new ArrayList<Integer>();
+    final List<Integer> writtenSelects = new ArrayList<Integer>();
     int errorRegValue;
     int lastControlValue = -1;
+
+    public List<Integer> getWrittenCommands() {
+        return writtenCommands;
+    }
+
+    public List<Integer> getWrittenWords() {
+        return writtenWords;
+    }
+
+    public List<Integer> getReadWords() {
+        return readWords;
+    }
+
+    public List<Integer> getWrittenSectorCounts() {
+        return writtenSectorCounts;
+    }
+
+    public List<Integer> getWrittenLbaLows() {
+        return writtenLbaLows;
+    }
+
+    public List<Integer> getWrittenLbaMids() {
+        return writtenLbaMids;
+    }
+
+    public List<Integer> getWrittenLbaHighs() {
+        return writtenLbaHighs;
+    }
+
+    public List<Integer> getWrittenSelects() {
+        return writtenSelects;
+    }
+
+    public void clearObservations() {
+        writtenCommands.clear();
+        writtenWords.clear();
+        readWords.clear();
+        writtenSectorCounts.clear();
+        writtenLbaLows.clear();
+        writtenLbaMids.clear();
+        writtenLbaHighs.clear();
+        writtenSelects.clear();
+        errorRegValue = 0;
+        lastControlValue = -1;
+    }
 
     // ---- runtime state ----
     private Phase current;
@@ -151,6 +201,7 @@ public class FakeIDEIO implements IDEIO, IDEConstants {
     }
 
     public void setSectorCountReg(int sectorCount) {
+        writtenSectorCounts.add(sectorCount & 0xFF);
     }
 
     public int getSectorReg() {
@@ -170,12 +221,15 @@ public class FakeIDEIO implements IDEIO, IDEConstants {
     }
 
     public void setLbaLowReg(int value) {
+        writtenLbaLows.add(value & 0xFF);
     }
 
     public void setLbaMidReg(int value) {
+        writtenLbaMids.add(value & 0xFF);
     }
 
     public void setLbaHighReg(int value) {
+        writtenLbaHighs.add(value & 0xFF);
     }
 
     public int getSelectReg() {
@@ -183,6 +237,7 @@ public class FakeIDEIO implements IDEIO, IDEConstants {
     }
 
     public void setSelectReg(int select) {
+        writtenSelects.add(select & 0xFF);
     }
 
     public int getStatusReg() {
