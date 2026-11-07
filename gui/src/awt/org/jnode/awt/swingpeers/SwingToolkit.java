@@ -97,7 +97,6 @@ import javax.swing.UIManager;
 import javax.swing.border.Border;
 import javax.swing.border.EmptyBorder;
 import javax.swing.plaf.metal.MetalLookAndFeel;
-import javax.swing.plaf.metal.OceanTheme;
 import org.jnode.awt.JNodeAwtContext;
 import org.jnode.awt.JNodeToolkit;
 import org.jnode.annotation.SharedStatics;
@@ -669,7 +668,7 @@ public final class SwingToolkit extends JNodeToolkit {
         });
 
         try {
-            MetalLookAndFeel.setCurrentTheme(new OceanTheme());
+            MetalLookAndFeel.setCurrentTheme(new JNodeOceanTheme());
             UIManager.setLookAndFeel(new MetalLookAndFeel());
         } catch (Exception x) {
             log.warn("Look And Feel not found: ", x);
