@@ -54,6 +54,7 @@ public class FatFailurePathTest {
 
     private static class FailingFileDevice extends FileDevice {
         private boolean armed;
+        private boolean runtimeArmed;
         private int writesBeforeFail;
 
         private FailingFileDevice(File file, String mode) throws Exception {
@@ -65,8 +66,20 @@ public class FatFailurePathTest {
             writesBeforeFail = n;
         }
 
+        private void armRuntimeFailAfterWrites(int n) {
+            runtimeArmed = true;
+            writesBeforeFail = n;
+        }
+
         @Override
         public void write(long devOffset, ByteBuffer srcBuf) throws IOException {
+            if (runtimeArmed) {
+                if (writesBeforeFail == 0) {
+                    runtimeArmed = false;
+                    throw new IllegalStateException("simulated runtime device failure");
+                }
+                writesBeforeFail--;
+            }
             if (armed) {
                 if (writesBeforeFail == 0) {
                     armed = false;
@@ -160,6 +173,28 @@ public class FatFailurePathTest {
             cache.getUInt32(256);
             fail("expected IOException from eviction flush");
         } catch (IOException expected) {
+        }
+        long value = cache.getUInt32(256);
+        assertEquals(0L, value);
+        cache.setInt32(2, 0x33333333);
+        assertEquals(0x33333333L, cache.getUInt32(2));
+        assertEquals(2, cache.usedEntries());
+        fs.close();
+    }
+
+    @Test
+    public void testEvictionFlushRuntimeFailureKeepsCacheUsable() throws Exception {
+        FatFileSystem fs = formatAndOpenRW();
+        Fat fat = fs.getFat();
+        FatCache cache = new FatCache(fat, 2, 512);
+        cache.setInt32(2, 0x11111111);
+        cache.setInt32(130, 0x22222222);
+        assertEquals(2, cache.usedEntries());
+        device.armRuntimeFailAfterWrites(0);
+        try {
+            cache.getUInt32(256);
+            fail("expected RuntimeException from eviction flush");
+        } catch (IllegalStateException expected) {
         }
         long value = cache.getUInt32(256);
         assertEquals(0L, value);

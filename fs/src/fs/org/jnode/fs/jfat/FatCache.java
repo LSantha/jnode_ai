@@ -25,6 +25,7 @@ import java.nio.ByteBuffer;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Stack;
+
 import org.apache.log4j.Logger;
 import org.jnode.driver.block.BlockDeviceAPI;
 import org.jnode.util.LittleEndian;
@@ -111,6 +112,11 @@ public class FatCache {
             try {
                 e.free();
             } catch (IOException ex) {
+                log.warn("FatCache eviction flush failed for address " + e.getAddress().get()
+                    + ", abandoning dirty element and keeping cache usable", ex);
+                e.abandon();
+                throw ex;
+            } catch (RuntimeException ex) {
                 log.warn("FatCache eviction flush failed for address " + e.getAddress().get()
                     + ", abandoning dirty element and keeping cache usable", ex);
                 e.abandon();

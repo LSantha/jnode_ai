@@ -494,11 +494,7 @@ public class FatChain {
 
         int savedHead = head;
         int savedEnd = 0;
-        try {
-            savedEnd = getEndCluster();
-        } catch (Exception ex) {
-            log.warn("write snapshot failed", ex);
-        }
+        boolean savedEndCaptured = false;
         List<Integer> allocatedClusters = new ArrayList<Integer>();
         try {
         boolean empty = src.remaining() == 0;
@@ -544,6 +540,10 @@ public class FatChain {
                 last = allocateTail(n, m, p.getOffset(), false);
             collectAllocated(allocatedClusters, last);
 
+            if (!savedEndCaptured) {
+                savedEnd = cluster;
+                savedEndCaptured = true;
+            }
             if (cluster != 0) {
                 fat.set(cluster, last);
                 ((ChainIterator) i).appendChain(last);
@@ -597,6 +597,10 @@ public class FatChain {
                 last = allocateTail(n);
                 collectAllocated(allocatedClusters, last);
 
+                if (!savedEndCaptured) {
+                    savedEnd = cluster;
+                    savedEndCaptured = true;
+                }
                 if (cluster != 0) {
                     fat.set(cluster, last);
                     ((ChainIterator) i).appendChain(last);
