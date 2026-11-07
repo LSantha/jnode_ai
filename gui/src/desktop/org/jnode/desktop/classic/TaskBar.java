@@ -59,6 +59,7 @@ import javax.swing.plaf.metal.OceanTheme;
 import org.apache.log4j.Logger;
 import org.jnode.awt.JNodeGraphicsConfiguration;
 import org.jnode.awt.JNodeToolkit;
+import org.jnode.awt.swingpeers.JNodeOceanTheme;
 import org.jnode.plugin.ExtensionPoint;
 
 /**
@@ -173,6 +174,15 @@ public class TaskBar extends JPanel {
         ocean_theme.addActionListener(new SetLFAction("javax.swing.plaf.metal.MetalLookAndFeel") {
             public void actionPerformed(ActionEvent e) {
                 MetalLookAndFeel.setCurrentTheme(new OceanTheme());
+                super.actionPerformed(e);
+            }
+        });
+
+        JMenuItem jnode_theme = new JMenuItem("JNode");
+        lfMenu.add(jnode_theme);
+        jnode_theme.addActionListener(new SetLFAction("javax.swing.plaf.metal.MetalLookAndFeel") {
+            public void actionPerformed(ActionEvent e) {
+                MetalLookAndFeel.setCurrentTheme(new JNodeOceanTheme());
                 super.actionPerformed(e);
             }
         });

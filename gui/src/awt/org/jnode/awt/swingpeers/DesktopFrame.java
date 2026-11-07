@@ -45,7 +45,7 @@ import org.jnode.awt.JNodeAwtContext;
 public final class DesktopFrame extends JFrame implements JNodeAwtContext {
     private static final long serialVersionUID = 1L;
     private static final String DESKTOP_BACKGROUND = "desktop.background";
-    private static final Color DESKTOP_BACKGROUND_COLOR = new Color(110, 190, 235);
+    private static final Color DESKTOP_BACKGROUND_COLOR = JNodeOceanTheme.DESKTOP_BG;
     private final JDesktopPane desktop;
     private static final Logger log = Logger.getLogger(DesktopFrame.class);
     private BufferedImage backgroundImage;

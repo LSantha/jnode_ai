@@ -8,16 +8,16 @@
  * by the Free Software Foundation; either version 2.1 of the License, or
  * (at your option) any later version.
  *
- * This library is distributed in the hope that it will be useful, but 
+ * This library is distributed in the hope that it will be useful, but
  * WITHOUT ANY WARRANTY; without even the implied warranty of MERCHANTABILITY
- * or FITNESS FOR A PARTICULAR PURPOSE. See the GNU Lesser General Public 
+ * or FITNESS FOR A PARTICULAR PURPOSE. See the GNU Lesser General Public
  * License for more details.
  *
  * You should have received a copy of the GNU Lesser General Public License
- * along with this library; If not, write to the Free Software Foundation, Inc., 
+ * along with this library; If not, write to the Free Software Foundation, Inc.,
  * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
  */
- 
+
 package org.jnode.desktop.classic;
 
 import java.awt.AWTError;
@@ -55,6 +55,7 @@ import javax.swing.SwingUtilities;
 import org.apache.log4j.Logger;
 import org.jnode.awt.JNodeAwtContext;
 import org.jnode.awt.JNodeToolkit;
+import org.jnode.awt.swingpeers.JNodeOceanTheme;
 import org.jnode.plugin.ExtensionPoint;
 import org.jnode.plugin.PluginClassLoader;
 import org.jnode.vm.VmSystem;
@@ -206,6 +207,10 @@ public class Desktop implements Runnable {
                 awtRoot.add(taskBar, BorderLayout.SOUTH);
                 awtRoot.add(desktopPane, BorderLayout.CENTER);
 
+                // Use the theme's desktop color for the desktop background
+                desktopPane.setBackground(JNodeOceanTheme.DESKTOP_BG);
+                desktopPane.setOpaque(true);
+
                 awtRoot.invalidate();
                 awtRoot.repaint();
 
@@ -217,11 +222,11 @@ public class Desktop implements Runnable {
                 JMenuItem desktopColor = new JMenuItem("Desktop color");
                 desktopColor.addActionListener(desktopColorAction);
                 desktopMenu.add(desktopColor);
-                
+
                 for (JMenuItem item : taskBar.chgSizeMenuItem) {
                     desktopMenu.add(item);
                 }
-                
+
                 desktopPane.addMouseListener(new MouseAdapter() {
                     public void mousePressed(MouseEvent event) {
                         if (event.getButton() == MouseEvent.BUTTON2) {
@@ -260,7 +265,7 @@ public class Desktop implements Runnable {
             final Component c = event.getChild();
             if (c instanceof JInternalFrame) {
                 taskBar.windowBar.removeFrame((JInternalFrame) c);
-            } 
+            }
         }
     }
 
