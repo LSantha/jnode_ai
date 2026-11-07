@@ -29,7 +29,7 @@ import org.jnode.driver.block.BlockDeviceAPI;
  * @author Luke Quinane
  */
 public class Fat16 extends Fat {
-    protected Fat16(BootSector bs, BlockDeviceAPI api) {
+    protected Fat16(BootSector bs, BlockDeviceAPI api) throws IOException {
         super(bs, api);
     }
 
@@ -44,7 +44,9 @@ public class Fat16 extends Fat {
     public int set(int index, int element) throws IOException {
         long old = getUInt16(index);
 
-        setInt16(index, element & 0xFFFF);
+        int masked = element & 0xFFFF;
+        setInt16(index, masked);
+        noteFreeTransition((int) (old & 0x0000FFFF), masked);
 
         return (int) (old & 0x0000FFFF);
     }

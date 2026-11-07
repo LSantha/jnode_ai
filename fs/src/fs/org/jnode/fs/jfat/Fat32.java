@@ -29,7 +29,7 @@ import org.jnode.driver.block.BlockDeviceAPI;
  * @author gvt
  */
 public class Fat32 extends Fat {
-    protected Fat32(BootSector bs, BlockDeviceAPI api) {
+    protected Fat32(BootSector bs, BlockDeviceAPI api) throws IOException {
         super(bs, api);
     }
 
@@ -48,7 +48,9 @@ public class Fat32 extends Fat {
     public int set(int index, int element) throws IOException {
         long old = getUInt32(index);
 
-        setInt32(index, (int) ((element & 0x0FFFFFFF) | (old & 0xF0000000)));
+        int masked = element & 0x0FFFFFFF;
+        setInt32(index, (int) (masked | (old & 0xF0000000)));
+        noteFreeTransition((int) (old & 0x0FFFFFFF), masked);
 
         return (int) (old & 0x0FFFFFFF);
     }
