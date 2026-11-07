@@ -58,10 +58,15 @@ public class FatFile extends FatEntry implements FSFile, FSFileSlackSpace {
         int newClusters = (int) (newLength / clusterSize);
         if ((newLength % clusterSize) != 0) newClusters++;
 
+        if (oldClusters == newClusters) return;
+
         getChain().free(oldClusters - newClusters);
     }
 
     public void setLength(long length) throws IOException {
+        if (length < 0)
+            throw new IOException("length<0");
+
         long l = getLength();
 
         if (length == l) return;
