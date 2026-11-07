@@ -401,22 +401,49 @@ module.exports = function createHelpers({ github, context, core }) {
    * rebuilt here or the Reviewed-by trailer cannot be added at all. Returns null
    * when there is nothing to attribute, which leaves the merge call untouched.
    */
-  function buildMergeMessage(commitMessages, models) {
+  function buildMergeMessage(commitMessages, models, prBody) {
     if (!Array.isArray(models) || models.length === 0) return null;
     var parts = [];
     var split = (Array.isArray(commitMessages) ? commitMessages : []).map(splitMessage);
-    for (var i = 0; i < split.length; i++) {
-      var chunk;
-      if (i === 0) {
-        chunk = split[0].body;
-      } else {
-        chunk = split[i].subject ? split[i].subject : "";
-        if (split[i].body) chunk += (chunk ? "\n\n" : "") + split[i].body;
-      }
+    var lead = split.length ? split[0].body : "";
+    // The agent commits are subject-plus-trailer by construction (the
+    // prepare-commit-msg hook appends Assisted-by and the agent writes nothing
+    // else), so without a fallback the squash body degenerates to trailers and
+    // says nothing about the change - which is what #840's merge message came
+    // out as. The PR description is the prose source for exactly this case.
+    if (!hasSubstance(lead)) {
+      var desc = stripRunLinks(prBody);
+      if (desc) lead = desc;
+    }
+    if (lead) parts.push(lead);
+    for (var i = 1; i < split.length; i++) {
+      var chunk = "";
+      if (split[i].subject) chunk = split[i].subject;
+      if (split[i].body) chunk += (chunk ? "\n\n" : "") + split[i].body;
       if (chunk) parts.push(chunk);
     }
     parts.push("Reviewed-by: " + models.join(", "));
     return parts.join("\n\n");
+  }
+
+  // True when the text says something beyond attribution trailers. An empty
+  // body and a body of only "Assisted-by: x" lines are both "no substance".
+  function hasSubstance(text) {
+    if (!text) return false;
+    return text.split("\n").some(function (line) {
+      var t = line.trim();
+      return t.length > 0 && !/^[A-Za-z-]+-by:\s/i.test(t);
+    });
+  }
+
+  // The PR body ends with a "[github run](...)" line the agent appends; it is
+  // noise in a permanent merge message. Everything else (including "Closes
+  // #N") is worth keeping.
+  function stripRunLinks(body) {
+    if (!body) return "";
+    return body.split("\n").filter(function (line) {
+      return !/^\[github run\]\(/.test(line.trim());
+    }).join("\n").trim();
   }
 
   /** Return true if the user object represents a bot. */
@@ -449,7 +476,7 @@ module.exports = function createHelpers({ github, context, core }) {
         if (Array.isArray(list)) {
           commitMessage = buildMergeMessage(list.map(function (c) {
             return (c && c.commit && c.commit.message) || "";
-          }), models);
+          }), models, pr.body);
         } else {
           core.warning("mergePR: listCommits returned no data for PR #" + prNumber +
             "; merge will use the repository default message");

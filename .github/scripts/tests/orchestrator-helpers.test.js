@@ -165,6 +165,36 @@ test("buildMergeMessage never repeats the first commit subject", () => {
   );
 });
 
+test("buildMergeMessage falls back to the PR description when the commits carry only trailers", () => {
+  // The agent's commits are subject-plus-Assisted-by by construction; without
+  // the fallback the merged message says nothing about the change (#840).
+  const { h } = helpersFor();
+  const msg = h.buildMergeMessage(
+    ["Fixed FatChain beyond-EOF writes\n\nAssisted-by: resolver-a",
+     "Added LGPL header, tests 177/0\n\nAssisted-by: resolver-a"],
+    ["reviewer-b"],
+    "Fixed FatChain: deterministic getCluster, gap-zeroing.\n\nCloses #840\n\n[github run](https://github.com/o/r/actions/runs/1)"
+  );
+  assert.ok(
+    msg.includes("Fixed FatChain: deterministic getCluster, gap-zeroing."),
+    "the PR description carries the substance"
+  );
+  assert.ok(msg.includes("Closes #840"), "useful PR-body lines are kept");
+  assert.ok(!msg.includes("github run"), "the run link is stripped");
+  assert.ok(msg.includes("Reviewed-by: reviewer-b"), "attribution still appended");
+});
+
+test("buildMergeMessage prefers the commit body over the PR description when it has substance", () => {
+  const { h } = helpersFor();
+  const msg = h.buildMergeMessage(
+    ["#42 - Subject\n\nReal explanation here."],
+    ["reviewer-a"],
+    "PR description that should be ignored."
+  );
+  assert.ok(msg.includes("Real explanation here."));
+  assert.ok(!msg.includes("should be ignored"));
+});
+
 test("buildMergeMessage reproduces a multi-commit squash body", () => {
   const { h } = helpersFor();
   const msg = h.buildMergeMessage(
