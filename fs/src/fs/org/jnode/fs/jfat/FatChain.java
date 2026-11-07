@@ -197,6 +197,8 @@ public class FatChain {
         //
         for (; found < (n - m - k) && i >= fat.firstCluster(); i--) {
             if (fat.isFreeEntry(i)) {
+                if (zero)
+                    fat.clearCluster(i);
                 fat.set(i, l);
                 if (dolog)
                     mylog((n - found - 1) + "\t|allo|\t" + i + " " + l);
@@ -208,7 +210,10 @@ public class FatChain {
         if (offset > 0) {
             for (; i >= fat.firstCluster(); i--) {
                 if (fat.isFreeEntry(i)) {
-                    fat.clearCluster(i, 0, offset);
+                    if (zero)
+                        fat.clearCluster(i);
+                    else
+                        fat.clearCluster(i, 0, offset);
                     fat.set(i, l);
                     if (dolog)
                         mylog((n - found - 1) + "\t|part|\t" + i + " " + l);
@@ -305,8 +310,11 @@ public class FatChain {
     }
 
     public void free(int n) throws IOException {
-        if (n <= 0)
-            throw new IllegalArgumentException("n<=0");
+        if (n == 0)
+            return;
+
+        if (n < 0)
+            throw new IOException("n<0");
 
         int count = size();
 
@@ -405,6 +413,24 @@ public class FatChain {
         }
     }
 
+    private void zeroRange(long from, long to) throws IOException {
+        if (from >= to)
+            return;
+        int clsize = fat.getClusterSize();
+        long pos = from;
+        ChainIterator it = listIterator((int) (from / clsize));
+        while (pos < to) {
+            if (!it.hasNext())
+                break;
+            int cluster = it.next();
+            int start = (int) (pos % clsize);
+            int end = (int) Math.min(clsize, start + (to - pos));
+            if (end > start)
+                fat.clearCluster(cluster, start, end);
+            pos += end - start;
+        }
+    }
+
     /*
      * length is used to zero the last cluster allocated to a chain when this is
      * required i.e. from FatFile
@@ -419,6 +445,8 @@ public class FatChain {
 
         if (offset < 0)
             throw new IllegalArgumentException("offset<0");
+
+        boolean empty = src.remaining() == 0;
 
         // ChainPosition p = new ChainPosition ( offset );
         ChainPosition p = position;
@@ -452,7 +480,7 @@ public class FatChain {
             if ((lst % clsize) != 0)
                 n++;
 
-            last = allocateTail(n, m, p.getOffset());
+            last = allocateTail(n, m, p.getOffset(), src.remaining() == 0);
 
             if (cluster != 0) {
                 fat.set(cluster, last);
@@ -531,6 +559,9 @@ public class FatChain {
                 src.limit(limit);
             }
         }
+
+        if (empty && offset > length)
+            zeroRange(length, offset);
     }
 
     /*
