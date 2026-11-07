@@ -179,13 +179,25 @@ public class FatCache {
         byte[] data = c.getData();
 
         if (ofs == elementSize - 1 && offset - fat.getFirst(0) + 1 < fatsize) {
+            int oldLow = data[ofs] & 0xFF;
+            int oldHigh = data[ofs + 1] & 0xFF;
             LittleEndian.setInt8(data, ofs, value);
             LittleEndian.setInt8(data, ofs + 1, value >> 8);
             c.setDirty();
 
-            CacheElement next = get(addr + 1);
-            LittleEndian.setInt8(next.getData(), 0, value >> 8);
-            next.setDirty();
+            try {
+                CacheElement next = get(addr + 1);
+                LittleEndian.setInt8(next.getData(), 0, value >> 8);
+                next.setDirty();
+            } catch (IOException ex) {
+                data[ofs] = (byte) oldLow;
+                data[ofs + 1] = (byte) oldHigh;
+                throw ex;
+            } catch (RuntimeException ex) {
+                data[ofs] = (byte) oldLow;
+                data[ofs + 1] = (byte) oldHigh;
+                throw ex;
+            }
             return;
         }
 

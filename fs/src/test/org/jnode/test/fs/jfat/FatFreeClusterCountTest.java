@@ -98,6 +98,28 @@ public class FatFreeClusterCountTest {
         fs.close();
     }
 
+    @Test
+    public void testCounterMatchesScanOnFat12Image() throws Exception {
+        tempImage = Fat12ImageBuilder.createImageFile("jfat12-freecount");
+        FatFileSystem fs = mountRW(tempImage);
+        assertTrue(fs.getBootSector().isFat12());
+        Fat fat = fs.getFat();
+        assertCounterMatches(fs, "fat12 mount");
+        int mountCount = fat.getFreeClusterCount();
+        int straddle = fat.get(341);
+        assertTrue(straddle != 0);
+        fat.set(341, straddle);
+        assertCounterMatches(fs, "fat12 no-op set on straddling entry");
+        fat.set(341, 0);
+        assertCounterMatches(fs, "fat12 free straddling entry");
+        assertEquals(mountCount + 1, fat.getFreeClusterCount());
+        fat.set(341, straddle);
+        assertCounterMatches(fs, "fat12 reuse straddling entry");
+        assertEquals(mountCount, fat.getFreeClusterCount());
+        runSequence(fs);
+        fs.close();
+    }
+
     private void runSequence(FatFileSystem fs) throws Exception {
         Fat fat = fs.getFat();
         assertCounterMatches(fs, "mount");
@@ -167,8 +189,17 @@ public class FatFreeClusterCountTest {
         int scanned = fat.freeEntries();
         int counter = fat.getFreeClusterCount();
         assertEquals(stage + ": counter must equal freeEntries() scan", scanned, counter);
-        assertTrue(stage + ": off-by-one counter+1 must not match scan", scanned + 1 != counter);
-        assertTrue(stage + ": off-by-one counter-1 must not match scan", scanned - 1 != counter);
+        fat.set(0, fat.get(0));
+        assertEquals(stage + ": no-op set on used entry must not move counter", counter,
+            fat.getFreeClusterCount());
+        for (int i = 2; i < fat.size(); i++) {
+            if (fat.get(i) == 0) {
+                fat.set(i, 0);
+                break;
+            }
+        }
+        assertEquals(stage + ": no-op set on free entry must not move counter", counter,
+            fat.getFreeClusterCount());
         assertEquals(stage + ": getFreeSpace must be counter * clusterSize", (long) counter
             * fs.getClusterSize(), fs.getFreeSpace());
         assertEquals(stage + ": getUsableSpace must equal getFreeSpace", fs.getFreeSpace(),
