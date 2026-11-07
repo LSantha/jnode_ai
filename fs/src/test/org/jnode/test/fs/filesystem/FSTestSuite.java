@@ -30,6 +30,7 @@ import org.jnode.test.fs.filesystem.tests.TreeFSTest;
 import org.jnode.test.fs.jfat.Fat12ChainTest;
 import org.jnode.test.fs.jfat.FatDirectoryExtensionTest;
 import org.jnode.test.fs.jfat.FatFileSystemTest;
+import org.jnode.test.fs.jfat.FatBeyondEofWriteTest;
 import org.jnode.test.fs.jfat.FatReadWriteTest;
 import org.jnode.test.fs.jfat.FatWriteBench;
 import org.jnode.test.fs.jfat.FatWriteTest;
@@ -58,6 +59,7 @@ import org.junit.runners.Suite.SuiteClasses;
     NTFSFileSystemTest.class,
     FatReadWriteTest.class,
     FatWriteTest.class,
+    FatBeyondEofWriteTest.class,
     FatDirectoryExtensionTest.class,
     FatFileSystemTest.class,
     Fat12ChainTest.class,
