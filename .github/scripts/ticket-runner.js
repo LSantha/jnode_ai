@@ -742,8 +742,13 @@ module.exports = async ({ github, context, core }) => {
       return;
     }
 
-    // Find the issue whose ticket-runner state references this PR
+    // Find the issue whose ticket-runner state references this PR. When the
+    // state block was wiped by an issue-body edit, rebuild it from the PR
+    // linkage instead of dropping the human approval on the floor (#856).
     var found = await findIssueByPR(prNumber);
+    if (!found) {
+      found = await recoverLostStateForPR(prNumber);
+    }
     if (!found) {
       core.info("Ticket runner: no issue with TICKET_RUNNER_STATE.pr === " + prNumber);
       return;
@@ -752,6 +757,12 @@ module.exports = async ({ github, context, core }) => {
     var state = found.state;
     if (state.phase !== "HUMAN_REVIEW") {
       core.info("Ticket runner: issue #" + found.issueNumber + " not in HUMAN_REVIEW phase. Skipping.");
+      if (found.recovered) {
+        await github.rest.issues.createComment({
+          owner, repo, issue_number: prNumber,
+          body: recoveredStateLostReply(found, prNumber)
+        });
+      }
       return;
     }
 
@@ -844,16 +855,25 @@ module.exports = async ({ github, context, core }) => {
     core.info("Ticket runner: /oc approve on PR #" + prNumber + (force ? " (force)" : ""));
     var found = await findIssueByPR(prNumber);
     if (!found) {
+      found = await recoverLostStateForPR(prNumber);
+    }
+    if (!found) {
       await github.rest.issues.createComment({
         owner, repo, issue_number: prNumber,
         body: "⚠️ No ticket-runner ticket references PR #" + prNumber + "; there is nothing to advance. `/oc approve` merges only ticket-runner PRs - link the PR to its issue (Closes #N on an issue tracked with `/run`)."
       });
       return;
     }
+    if (found.recovered) {
+      core.warning("Ticket runner: the TICKET_RUNNER_STATE block was missing for #" + found.issueNumber
+        + " (issue body rewritten without it); rebuilt it at " + found.state.phase + " for PR #" + prNumber + ".");
+    }
     if (found.state.phase !== "HUMAN_REVIEW") {
       await github.rest.issues.createComment({
         owner, repo, issue_number: prNumber,
-        body: "⚠️ `/oc approve` only applies while a ticket is in HUMAN_REVIEW; #" + found.issueNumber + " is in " + found.state.phase + "."
+        body: found.recovered
+          ? recoveredStateLostReply(found, prNumber)
+          : "⚠️ `/oc approve` only applies while a ticket is in HUMAN_REVIEW; #" + found.issueNumber + " is in " + found.state.phase + "."
       });
       return;
     }
@@ -1428,20 +1448,163 @@ module.exports = async ({ github, context, core }) => {
     return true;
   }
 
-  /** Search open issues for one whose TICKET_RUNNER_STATE.pr matches the given PR number. */
-  async function findIssueByPR(prNumber) {
-    // First, try to fetch PR to extract head branch ref or Closes/Fixes/Resolves #N
+  /** Issue number a PR links to via its opencode/issueN- head ref or Closes/Fixes/Resolves #N. */
+  async function linkedIssueNumberForPR(prNumber) {
     try {
       var prData = await github.rest.pulls.get({
         owner, repo, pull_number: prNumber
       });
       var headRef = (prData.data.head && prData.data.head.ref) || "";
       var prBody = prData.data.body || "";
-
       var issueMatch = headRef.match(/^opencode\/issue(\d+)-/) ||
                        prBody.match(/(?:Closes|Fixes|Resolves)\s+#(\d+)/i);
-      if (issueMatch) {
-        var linkedIssue = parseInt(issueMatch[1], 10);
+      if (issueMatch) return parseInt(issueMatch[1], 10);
+    } catch (_) { /* no linkage readable */ }
+    return null;
+  }
+
+  /** Reply for an approval that arrived after the state block was rebuilt at REVIEW. */
+  function recoveredStateLostReply(found, prNumber) {
+    var stage = found.state.review_pending_ci
+      ? "the agent review is parked waiting for Java CI to go green; the Java CI wakeup will re-request it once CI completes"
+      : "the agent review is being re-requested";
+    return "⚠️ Ticket runner state was lost (the issue body was rewritten without its `TICKET_RUNNER_STATE` block) and has been rebuilt at "
+      + found.state.phase + " for #" + found.issueNumber + "; " + stage
+      + ". This approval did not merge PR #" + prNumber + " - approve again once the ticket is back in HUMAN_REVIEW.";
+  }
+
+  /** Persist a rebuilt state block at the given phase; returns { state, body } or null. */
+  async function persistRecoveredState(issueNumber, baseBody, prNumber, phase) {
+    var st = initState();
+    st.phase = phase;
+    st.pr = prNumber;
+    st.review_in_progress = false;
+    st.started = new Date().toISOString();
+    st.history.push({
+      event: "state_recovered",
+      reason: "runner state block missing; rebuilt from existing PR #" + prNumber + " at " + phase,
+      pr: prNumber,
+      timestamp: new Date().toISOString()
+    });
+    var newBody = replaceOrAppendStatus(baseBody, st, issueNumber);
+    try {
+      await github.rest.issues.update({
+        owner, repo, issue_number: issueNumber,
+        body: newBody
+      });
+    } catch (err) {
+      core.warning("recoverLostStateForPR: body update failed for #" + issueNumber + ": " + err.message);
+      return null;
+    }
+    return { state: st, body: newBody };
+  }
+
+  /**
+   * True when a PR comment shows the runner already routed this PR to HUMAN_REVIEW.
+   * The approval-routing evidence ("Awaiting human approval" / "Routing to
+   * HUMAN_REVIEW") must be the newest relevant comment: a later "/oc fix
+   * Address ... feedback" request means the ticket left HUMAN_REVIEW for
+   * FEEDBACK, so an older approval marker is stale and must not rebuild at
+   * HUMAN_REVIEW (it would merge work whose changes_requested was never
+   * addressed). All comment pages are read so very long threads cannot
+   * silently compare against a truncated window.
+   */
+  async function prWasAwaitingHumanApproval(prNumber) {
+    try {
+      var list = [];
+      var page = 1;
+      while (true) {
+        var comments = await github.rest.issues.listComments({
+          owner, repo, issue_number: prNumber, per_page: 100, page: page
+        });
+        var batch = (comments && comments.data) ? comments.data : comments;
+        if (!Array.isArray(batch) || batch.length === 0) break;
+        list = list.concat(batch);
+        if (batch.length < 100) break;
+        page += 1;
+      }
+      var lastApproval = -1;
+      var lastFeedback = -1;
+      for (var i = 0; i < list.length; i++) {
+        var b = (list[i] && list[i].body) || "";
+        if (b.indexOf("Awaiting human approval") >= 0 || b.indexOf("Routing to HUMAN_REVIEW") >= 0) lastApproval = i;
+        if (b.indexOf("/oc fix Address") >= 0) lastFeedback = i;
+      }
+      return lastApproval >= 0 && lastApproval > lastFeedback;
+    } catch (err) {
+      core.warning("recoverLostStateForPR: PR comment read failed for #" + prNumber + ": " + err.message);
+    }
+    return false;
+  }
+
+  /**
+   * Rebuild a lost TICKET_RUNNER_STATE block for a PR-linked issue whose body
+   * was rewritten without the marker (#856), for the approve/review readers.
+   * Returns { issueNumber, body, state, recovered: true } or null.
+   *
+   * When the newest PR-comment evidence shows the ticket had already
+   * reached HUMAN_REVIEW (the runner posts "Awaiting human approval" /
+   * "Routing to HUMAN_REVIEW" on that transition, and PR comments survive
+   * an issue-body edit), the block is rebuilt at HUMAN_REVIEW so the
+   * pending approval merges. Stale evidence (a newer "/oc fix Address
+   * ... feedback" request) does not qualify. Without that evidence the
+   * existing workflow_run recovery owns it: the block is rebuilt at REVIEW
+   * and the agent review is re-requested, so an approval can never
+   * short-circuit a review that never ran.
+   */
+  async function recoverLostStateForPR(prNumber) {
+    var linkedIssue = await linkedIssueNumberForPR(prNumber);
+    if (!linkedIssue) return null;
+
+    var issueData;
+    try {
+      issueData = await github.rest.issues.get({ owner, repo, issue_number: linkedIssue });
+    } catch (err) {
+      core.warning("recoverLostStateForPR: cannot read #" + linkedIssue + ": " + err.message);
+      return null;
+    }
+    if (issueData.data.pull_request) return null;
+    var body = issueData.data.body || "";
+    if (parseState(body)) return null;
+
+    var foundPR;
+    try {
+      foundPR = await h.findPRForIssue(linkedIssue);
+    } catch (err) {
+      core.warning("recoverLostStateForPR: findPRForIssue failed for #" + linkedIssue + ": " + err.message);
+      return null;
+    }
+    if (foundPR !== prNumber) return null;
+
+    if (await prWasAwaitingHumanApproval(prNumber)) {
+      var persisted = await persistRecoveredState(linkedIssue, body, prNumber, "HUMAN_REVIEW");
+      if (!persisted) return null;
+      core.info("Ticket runner: #" + linkedIssue + " lost its runner state but PR #" + prNumber
+        + " was already awaiting human approval; rebuilding block at HUMAN_REVIEW.");
+      return { issueNumber: linkedIssue, body: persisted.body, state: persisted.state, recovered: true };
+    }
+
+    var recovered = await recoverLostState(linkedIssue, "success");
+    if (!recovered) return null;
+    var after;
+    try {
+      after = await github.rest.issues.get({ owner, repo, issue_number: linkedIssue });
+    } catch (err) {
+      core.warning("recoverLostStateForPR: cannot re-read #" + linkedIssue + ": " + err.message);
+      return null;
+    }
+    var afterBody = after.data.body || "";
+    var afterState = parseState(afterBody);
+    if (!afterState) return null;
+    return { issueNumber: linkedIssue, body: afterBody, state: afterState, recovered: true };
+  }
+
+  /** Search open issues for one whose TICKET_RUNNER_STATE.pr matches the given PR number. */
+  async function findIssueByPR(prNumber) {
+    // First, try to fetch PR to extract head branch ref or Closes/Fixes/Resolves #N
+    try {
+      var linkedIssue = await linkedIssueNumberForPR(prNumber);
+      if (linkedIssue) {
         var issueData = await github.rest.issues.get({
           owner, repo, issue_number: linkedIssue
         });
