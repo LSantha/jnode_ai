@@ -760,7 +760,7 @@ module.exports = async ({ github, context, core }) => {
       if (found.recovered) {
         await github.rest.issues.createComment({
           owner, repo, issue_number: prNumber,
-          body: "⚠️ Ticket runner state was lost (the issue body was rewritten without its `TICKET_RUNNER_STATE` block) and has been rebuilt at REVIEW for #" + found.issueNumber + "; the agent review is being re-requested. This approval did not merge PR #" + prNumber + " - approve again once the ticket is back in HUMAN_REVIEW."
+          body: recoveredStateLostReply(found, prNumber)
         });
       }
       return;
@@ -872,7 +872,7 @@ module.exports = async ({ github, context, core }) => {
       await github.rest.issues.createComment({
         owner, repo, issue_number: prNumber,
         body: found.recovered
-          ? "⚠️ Ticket runner state was lost (the issue body was rewritten without its `TICKET_RUNNER_STATE` block) and has been rebuilt at " + found.state.phase + " for #" + found.issueNumber + "; the agent review is being re-requested. This approval did not merge PR #" + prNumber + " - approve again once the ticket is back in HUMAN_REVIEW."
+          ? recoveredStateLostReply(found, prNumber)
           : "⚠️ `/oc approve` only applies while a ticket is in HUMAN_REVIEW; #" + found.issueNumber + " is in " + found.state.phase + "."
       });
       return;
@@ -1463,7 +1463,17 @@ module.exports = async ({ github, context, core }) => {
     return null;
   }
 
-  /** Persist a rebuilt state block at the given phase and return the state. */
+  /** Reply for an approval that arrived after the state block was rebuilt at REVIEW. */
+  function recoveredStateLostReply(found, prNumber) {
+    var stage = found.state.review_pending_ci
+      ? "the agent review is parked waiting for Java CI to go green; the Java CI wakeup will re-request it once CI completes"
+      : "the agent review is being re-requested";
+    return "⚠️ Ticket runner state was lost (the issue body was rewritten without its `TICKET_RUNNER_STATE` block) and has been rebuilt at "
+      + found.state.phase + " for #" + found.issueNumber + "; " + stage
+      + ". This approval did not merge PR #" + prNumber + " - approve again once the ticket is back in HUMAN_REVIEW.";
+  }
+
+  /** Persist a rebuilt state block at the given phase; returns { state, body } or null. */
   async function persistRecoveredState(issueNumber, baseBody, prNumber, phase) {
     var st = initState();
     st.phase = phase;
@@ -1476,24 +1486,51 @@ module.exports = async ({ github, context, core }) => {
       pr: prNumber,
       timestamp: new Date().toISOString()
     });
-    await github.rest.issues.update({
-      owner, repo, issue_number: issueNumber,
-      body: replaceOrAppendStatus(baseBody, st, issueNumber)
-    });
-    return st;
+    var newBody = replaceOrAppendStatus(baseBody, st, issueNumber);
+    try {
+      await github.rest.issues.update({
+        owner, repo, issue_number: issueNumber,
+        body: newBody
+      });
+    } catch (err) {
+      core.warning("recoverLostStateForPR: body update failed for #" + issueNumber + ": " + err.message);
+      return null;
+    }
+    return { state: st, body: newBody };
   }
 
-  /** True when a PR comment shows the runner already routed this PR to HUMAN_REVIEW. */
+  /**
+   * True when a PR comment shows the runner already routed this PR to HUMAN_REVIEW.
+   * The approval-routing evidence ("Awaiting human approval" / "Routing to
+   * HUMAN_REVIEW") must be the newest relevant comment: a later "/oc fix
+   * Address ... feedback" request means the ticket left HUMAN_REVIEW for
+   * FEEDBACK, so an older approval marker is stale and must not rebuild at
+   * HUMAN_REVIEW (it would merge work whose changes_requested was never
+   * addressed). All comment pages are read so very long threads cannot
+   * silently compare against a truncated window.
+   */
   async function prWasAwaitingHumanApproval(prNumber) {
     try {
-      var comments = await github.rest.issues.listComments({
-        owner, repo, issue_number: prNumber, per_page: 100
-      });
-      var list = (comments && comments.data) ? comments.data : comments;
+      var list = [];
+      var page = 1;
+      while (true) {
+        var comments = await github.rest.issues.listComments({
+          owner, repo, issue_number: prNumber, per_page: 100, page: page
+        });
+        var batch = (comments && comments.data) ? comments.data : comments;
+        if (!Array.isArray(batch) || batch.length === 0) break;
+        list = list.concat(batch);
+        if (batch.length < 100) break;
+        page += 1;
+      }
+      var lastApproval = -1;
+      var lastFeedback = -1;
       for (var i = 0; i < list.length; i++) {
         var b = (list[i] && list[i].body) || "";
-        if (b.indexOf("Awaiting human approval") >= 0 || b.indexOf("Routing to HUMAN_REVIEW") >= 0) return true;
+        if (b.indexOf("Awaiting human approval") >= 0 || b.indexOf("Routing to HUMAN_REVIEW") >= 0) lastApproval = i;
+        if (b.indexOf("/oc fix Address") >= 0) lastFeedback = i;
       }
+      return lastApproval >= 0 && lastApproval > lastFeedback;
     } catch (err) {
       core.warning("recoverLostStateForPR: PR comment read failed for #" + prNumber + ": " + err.message);
     }
@@ -1505,13 +1542,15 @@ module.exports = async ({ github, context, core }) => {
    * was rewritten without the marker (#856), for the approve/review readers.
    * Returns { issueNumber, body, state, recovered: true } or null.
    *
-   * When the PR comments show the ticket had already reached HUMAN_REVIEW
-   * (the runner posts "Awaiting human approval" / "Routing to HUMAN_REVIEW"
-   * on that transition, and PR comments survive an issue-body edit), the
-   * block is rebuilt at HUMAN_REVIEW so the pending approval merges. Without
-   * that evidence the existing workflow_run recovery owns it: the block is
-   * rebuilt at REVIEW and the agent review is re-requested, so an approval
-   * can never short-circuit a review that never ran.
+   * When the newest PR-comment evidence shows the ticket had already
+   * reached HUMAN_REVIEW (the runner posts "Awaiting human approval" /
+   * "Routing to HUMAN_REVIEW" on that transition, and PR comments survive
+   * an issue-body edit), the block is rebuilt at HUMAN_REVIEW so the
+   * pending approval merges. Stale evidence (a newer "/oc fix Address
+   * ... feedback" request) does not qualify. Without that evidence the
+   * existing workflow_run recovery owns it: the block is rebuilt at REVIEW
+   * and the agent review is re-requested, so an approval can never
+   * short-circuit a review that never ran.
    */
   async function recoverLostStateForPR(prNumber) {
     var linkedIssue = await linkedIssueNumberForPR(prNumber);
@@ -1538,16 +1577,22 @@ module.exports = async ({ github, context, core }) => {
     if (foundPR !== prNumber) return null;
 
     if (await prWasAwaitingHumanApproval(prNumber)) {
-      var st = await persistRecoveredState(linkedIssue, body, prNumber, "HUMAN_REVIEW");
+      var persisted = await persistRecoveredState(linkedIssue, body, prNumber, "HUMAN_REVIEW");
+      if (!persisted) return null;
       core.info("Ticket runner: #" + linkedIssue + " lost its runner state but PR #" + prNumber
         + " was already awaiting human approval; rebuilding block at HUMAN_REVIEW.");
-      var fresh = await github.rest.issues.get({ owner, repo, issue_number: linkedIssue });
-      return { issueNumber: linkedIssue, body: fresh.data.body || body, state: st, recovered: true };
+      return { issueNumber: linkedIssue, body: persisted.body, state: persisted.state, recovered: true };
     }
 
     var recovered = await recoverLostState(linkedIssue, "success");
     if (!recovered) return null;
-    var after = await github.rest.issues.get({ owner, repo, issue_number: linkedIssue });
+    var after;
+    try {
+      after = await github.rest.issues.get({ owner, repo, issue_number: linkedIssue });
+    } catch (err) {
+      core.warning("recoverLostStateForPR: cannot re-read #" + linkedIssue + ": " + err.message);
+      return null;
+    }
     var afterBody = after.data.body || "";
     var afterState = parseState(afterBody);
     if (!afterState) return null;

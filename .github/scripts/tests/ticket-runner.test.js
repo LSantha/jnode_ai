@@ -1740,6 +1740,114 @@ test("ticket-runner.js event handling suite", async (t) => {
     assert.ok(state.history.some(h => h.event === "state_recovered"));
   });
 
+  await t.test("/oc approve with stale HUMAN_REVIEW evidence rebuilds at REVIEW and does not merge", async () => {
+    // A stale "Awaiting human approval" must not resurrect HUMAN_REVIEW when
+    // a newer "/oc fix Address human review feedback." request shows the
+    // ticket left HUMAN_REVIEW for FEEDBACK after a changes_requested.
+    // Rebuilding at HUMAN_REVIEW here would merge unreviewed work.
+    const mocks = createMocks("issue_comment", {
+      commentBody: "/oc approve",
+      commentOnPR: true,
+      issueBody: "Corrected issue body (state block wiped by the rewrite)",
+      issueLabels: [{ name: "kind/bug" }]
+    });
+    mocks.setCommentsOnPR([
+      { body: "Agent review passed. Awaiting human approval via native GitHub PR Review UI, or `/oc approve` on the PR." },
+      { body: "/oc fix Address human review feedback." }
+    ]);
+
+    await runTicketRunner(mocks);
+
+    const state = _parseState(mocks.getIssueBody());
+    assert.ok(state, "a state block was rebuilt");
+    assert.strictEqual(state.phase, "REVIEW", "stale approval evidence rebuilds at REVIEW");
+    assert.strictEqual(state.pr, 99);
+    assert.deepStrictEqual(mocks.calls.mergePR, [], "stale evidence must not merge");
+    assert.ok(
+      mocks.calls.createComment.some(c => c.issue_number === 99 && c.body.includes("/oc review")),
+      "the review is re-requested on the existing PR"
+    );
+    assert.ok(
+      mocks.calls.createComment.some(c => c.issue_number === 99 && c.body.includes("Ticket runner state was lost")),
+      "the refusal names the lost state as the cause"
+    );
+  });
+
+  await t.test("/oc approve with fresh HUMAN_REVIEW evidence after older feedback still merges", async () => {
+    // The mirror of the stale case: an older feedback request does not block
+    // a newer routing comment. A ticket that went FEEDBACK, re-reviewed, and
+    // reached HUMAN_REVIEW again has approval evidence newer than the last
+    // feedback request, so the stranded approval must merge.
+    const mocks = createMocks("issue_comment", {
+      commentBody: "/oc approve",
+      commentOnPR: true,
+      issueBody: "Corrected issue body (state block wiped by the rewrite)",
+      issueLabels: [{ name: "kind/bug" }]
+    });
+    mocks.setCommentsOnPR([
+      { body: "/oc fix Address review feedback." },
+      { body: "Agent review passed but the diff exceeds the auto-merge safety budget (isDiffSafe). Routing to HUMAN_REVIEW - approve via the GitHub PR Review UI or `/oc approve` on the PR to merge." }
+    ]);
+
+    await runTicketRunner(mocks);
+
+    const state = _parseState(mocks.getIssueBody());
+    assert.ok(state, "a state block was rebuilt");
+    assert.strictEqual(state.phase, "DONE");
+    assert.deepStrictEqual(mocks.calls.mergePR, [99]);
+    assert.ok(state.history.some(h => h.event === "state_recovered"));
+  });
+
+  await t.test("/oc approve recovering at REVIEW on red CI parks instead of claiming re-request", async () => {
+    // When the REVIEW rebuild parks for CI, nothing is re-requested yet: the
+    // Java CI wakeup posts the review prompt on green. The lost-state reply
+    // must say so instead of telling the maintainer an agent is running.
+    const mocks = createMocks("issue_comment", {
+      commentBody: "/oc approve",
+      commentOnPR: true,
+      issueBody: "Corrected issue body (state block wiped by the rewrite)",
+      issueLabels: [{ name: "kind/bug" }]
+    });
+    mocks.setCheckRuns(javaCiChecks("failure"));
+
+    await runTicketRunner(mocks);
+
+    const state = _parseState(mocks.getIssueBody());
+    assert.ok(state, "a state block was rebuilt");
+    assert.strictEqual(state.phase, "REVIEW");
+    assert.strictEqual(state.review_pending_ci, true, "parked for the CI wakeup");
+    assert.deepStrictEqual(mocks.calls.mergePR, [], "no merge on red CI");
+    assert.strictEqual(
+      mocks.calls.createComment.filter(c => c.body.includes("/oc review")).length, 0,
+      "no review prompt while CI is red"
+    );
+    const lost = mocks.calls.createComment.filter(c => c.body.includes("Ticket runner state was lost"));
+    assert.strictEqual(lost.length, 1, "the lost-state reply was posted");
+    assert.ok(lost[0].body.includes("parked waiting for Java CI"), "the reply names the parked case");
+    assert.ok(!lost[0].body.includes("is being re-requested"), "the reply does not claim a review is running");
+  });
+
+  await t.test("/oc approve with a failing state persist does not throw and does not merge", async () => {
+    // A transient issues.update failure during recovery must degrade to the
+    // refusal reply instead of throwing out of the handler with no reply.
+    const mocks = createMocks("issue_comment", {
+      commentBody: "/oc approve",
+      commentOnPR: true,
+      issueBody: "Corrected issue body (state block wiped by the rewrite)",
+      issueLabels: [{ name: "kind/bug" }]
+    });
+    mocks.setCommentsOnPR([{ body: "Agent review passed. Awaiting human approval via native GitHub PR Review UI, or `/oc approve` on the PR." }]);
+    mocks.github.rest.issues.update = async () => { throw new Error("API down"); };
+
+    await runTicketRunner(mocks);
+
+    assert.deepStrictEqual(mocks.calls.mergePR, [], "nothing merges when the persist fails");
+    assert.ok(
+      mocks.calls.createComment.some(c => c.issue_number === 99 && c.body.includes("No ticket-runner ticket references PR #99")),
+      "the refusal reply is posted instead of throwing"
+    );
+  });
+
   await t.test("REVIEW retry does not prompt on red CI", async () => {
     // A review workflow completed with no verdict, which routes to retryOrFail.
     // With CI red the retry must not re-post /oc review -- that is the race the
