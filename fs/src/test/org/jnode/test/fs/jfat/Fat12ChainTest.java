@@ -48,9 +48,9 @@ import static org.junit.Assert.*;
  * {@link Fat12ImageBuilder} fixture. See the builder for full geometry
  * documentation (BPB fields, FAT count/size, root-directory sectors,
  * 12-bit packing). {@code Fat12.set()} is unimplemented upstream, so
- * allocation/free/write cases are intentionally absent; EOF assertions
- * avoid the 0xFF0-0xFF7 boundary where the implementation threshold
- * (0xFF0) differs from the spec (0xFF8).
+ * allocation/free/write cases are intentionally absent; EOF boundary is
+ * pinned per spec (0xFF8) in {@code FatFailurePathTest} and
+ * {@link #testUnambiguousEofMarkers}.
  */
 public class Fat12ChainTest {
 
@@ -225,9 +225,9 @@ public class Fat12ChainTest {
 
     @Test
     public void testUnambiguousEofMarkers() throws Exception {
-        // 0xFF8 and 0xFFF are EOF under both the impl threshold (0xFF0) and the
-        // spec (0xFF8); 0xFEF/0x123/0x000 are not. The 0xFF0-0xFF7 boundary is
-        // a known impl/spec divergence and is deliberately not pinned here.
+        // 0xFF8 is the spec EOF threshold: values below it (0xFF0 reserved,
+        // 0xFF7 bad-cluster) are not EOF. 0xFEF/0x123/0x000 are not either.
+        // The 0xFF8 boundary is pinned in FatFailurePathTest.
         assertTrue("0xFF8 EOF", fat().isEofChain(0xFF8));
         assertTrue("0xFFF EOF", fat().isEofChain(0xFFF));
         assertFalse("0xFEF not EOF", fat().isEofChain(0xFEF));

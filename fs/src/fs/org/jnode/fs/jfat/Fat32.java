@@ -60,4 +60,12 @@ public class Fat32 extends Fat {
     public int eofChain() {
         return 0x0FFFFFFF;
     }
+
+    public boolean isBadCluster(int entry) {
+        return (entry == 0x0FFFFFF7);
+    }
+
+    public boolean isReservedEntry(int entry) {
+        return (entry >= 0x0FFFFFF0 && entry <= 0x0FFFFFF6);
+    }
 }

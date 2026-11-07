@@ -24,6 +24,8 @@ import java.io.FileNotFoundException;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.nio.ByteBuffer;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.NoSuchElementException;
 
 import org.apache.log4j.Logger;
@@ -180,6 +182,9 @@ public class FatChain {
         if (dolog)
             mylog("found[" + found + "] last[" + last + "]");
 
+        List<Integer> allocated = new ArrayList<Integer>();
+        allocated.add(last);
+        try {
         fat.set(last, fat.eofChain());
         if (dolog)
             mylog(n + "\t|allo|\t" + last + " " + fat.eofChain());
@@ -200,6 +205,7 @@ public class FatChain {
                 if (zero)
                     fat.clearCluster(i);
                 fat.set(i, l);
+                allocated.add(i);
                 if (dolog)
                     mylog((n - found - 1) + "\t|allo|\t" + i + " " + l);
                 l = i;
@@ -215,6 +221,7 @@ public class FatChain {
                     else
                         fat.clearCluster(i, 0, offset);
                     fat.set(i, l);
+                    allocated.add(i);
                     if (dolog)
                         mylog((n - found - 1) + "\t|part|\t" + i + " " + l);
                     l = i;
@@ -229,6 +236,7 @@ public class FatChain {
             if (fat.isFreeEntry(i)) {
                 fat.clearCluster(i);
                 fat.set(i, l);
+                allocated.add(i);
                 if (dolog)
                     mylog((n - found - 1) + "\t|zero|\t" + i + " " + l);
                 l = i;
@@ -265,6 +273,44 @@ public class FatChain {
             mylog("LastFree: " + fat.getLastFree());
 
         return l;
+        } catch (IOException ex) {
+            rollbackAllocated(allocated);
+            throw ex;
+        } catch (RuntimeException ex) {
+            rollbackAllocated(allocated);
+            throw ex;
+        }
+    }
+
+    private void rollbackAllocated(List<Integer> allocated) {
+        if (allocated == null || allocated.isEmpty()) {
+            return;
+        }
+        for (int idx = allocated.size() - 1; idx >= 0; idx--) {
+            try {
+                fat.set(allocated.get(idx), fat.freeEntry());
+            } catch (Exception ex) {
+                log.warn("rollback failed to free cluster " + allocated.get(idx), ex);
+            }
+        }
+        fat.rewindFree();
+        try {
+            fat.flush();
+        } catch (Exception ex) {
+            log.warn("rollback flush failed", ex);
+        }
+    }
+
+    private void collectAllocated(List<Integer> allocated, int segmentHead) throws IOException {
+        int cluster = segmentHead;
+        while (cluster != 0 && !allocated.contains(cluster)) {
+            allocated.add(cluster);
+            int next = fat.get(cluster);
+            if (fat.isEofChain(next) || fat.isFree(next)) {
+                break;
+            }
+            cluster = next;
+        }
     }
 
     private int allocateTail(int n, int m, int offset) throws IOException {
@@ -446,6 +492,11 @@ public class FatChain {
         if (offset < 0)
             throw new IllegalArgumentException("offset<0");
 
+        int savedHead = head;
+        int savedEnd = 0;
+        boolean savedEndCaptured = false;
+        List<Integer> allocatedClusters = new ArrayList<Integer>();
+        try {
         boolean empty = src.remaining() == 0;
 
         // ChainPosition p = new ChainPosition ( offset );
@@ -487,7 +538,12 @@ public class FatChain {
                 last = allocateTail(n, n - 1, 0, true);
             else
                 last = allocateTail(n, m, p.getOffset(), false);
+            collectAllocated(allocatedClusters, last);
 
+            if (!savedEndCaptured) {
+                savedEnd = cluster;
+                savedEndCaptured = true;
+            }
             if (cluster != 0) {
                 fat.set(cluster, last);
                 ((ChainIterator) i).appendChain(last);
@@ -539,7 +595,12 @@ public class FatChain {
                     n++;
 
                 last = allocateTail(n);
+                collectAllocated(allocatedClusters, last);
 
+                if (!savedEndCaptured) {
+                    savedEnd = cluster;
+                    savedEndCaptured = true;
+                }
                 if (cluster != 0) {
                     fat.set(cluster, last);
                     ((ChainIterator) i).appendChain(last);
@@ -568,6 +629,35 @@ public class FatChain {
 
         if (empty && !allocated && offset > length)
             zeroRange(length, offset);
+        } catch (IOException ex) {
+            rollbackWrite(allocatedClusters, savedHead, savedEnd, offset);
+            throw ex;
+        } catch (RuntimeException ex) {
+            rollbackWrite(allocatedClusters, savedHead, savedEnd, offset);
+            throw ex;
+        }
+    }
+
+    private void rollbackWrite(List<Integer> allocatedClusters, int savedHead, int savedEnd,
+            long offset) {
+        iterator.reset();
+        position.setPosition(offset);
+        if (allocatedClusters == null || allocatedClusters.isEmpty()) {
+            return;
+        }
+        rollbackAllocated(allocatedClusters);
+        try {
+            if (savedEnd != 0) {
+                fat.set(savedEnd, fat.eofChain());
+            } else {
+                setStartCluster(savedHead);
+            }
+            fat.flush();
+        } catch (Exception ex) {
+            log.warn("rollback link restore failed", ex);
+        }
+        iterator.reset();
+        position.setPosition(offset);
     }
 
     /*
@@ -810,6 +900,11 @@ public class FatChain {
 
             if (fat.isFree(cursor))
                 throw new IOException("free entry in chain at: " + address);
+
+            if (fat.isCorruptChainEntry(cursor)) {
+                log.warn("corrupt chain entry " + cursor + " at cluster " + address);
+                throw new IOException("corrupt chain entry " + cursor + " at cluster " + address);
+            }
 
             index++;
 

@@ -25,11 +25,15 @@ import java.nio.ByteBuffer;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Stack;
+
+import org.apache.log4j.Logger;
 import org.jnode.driver.block.BlockDeviceAPI;
 import org.jnode.util.LittleEndian;
 
 
 public class FatCache {
+
+    private static final Logger log = Logger.getLogger(FatCache.class);
 
     private final float loadFactor = 0.75f;
 
@@ -79,7 +83,17 @@ public class FatCache {
         /**
          * read the element from the device
          */
-        c.read(address);
+        try {
+            c.read(address);
+        } catch (IOException ex) {
+            c.abandon();
+            map.push(c);
+            throw ex;
+        } catch (RuntimeException ex) {
+            c.abandon();
+            map.push(c);
+            throw ex;
+        }
 
         /**
          * and insert the element into the LinkedHashMap
@@ -94,10 +108,31 @@ public class FatCache {
         // if an element was discarded from the LRU cache
         // now we can free it ... this will send the element
         // to storage if is marked as dirty
-        if (!e.isFree())
-            e.free();
+        if (!e.isFree()) {
+            try {
+                e.free();
+            } catch (IOException ex) {
+                log.warn("FatCache eviction flush failed for address " + e.getAddress().get()
+                    + ", preserving dirty element in cache", ex);
+                restoreEvicted(c, e);
+                throw ex;
+            } catch (RuntimeException ex) {
+                log.warn("FatCache eviction flush failed for address " + e.getAddress().get()
+                    + ", preserving dirty element in cache", ex);
+                restoreEvicted(c, e);
+                throw ex;
+            }
+        }
 
         return c;
+    }
+
+    private void restoreEvicted(CacheElement c, CacheElement e) {
+        map.discardFromFree(e);
+        map.remove(c.getAddress());
+        c.abandon();
+        map.push(c);
+        map.requeue(e);
     }
 
     private CacheElement get(long address) throws IOException {
@@ -232,6 +267,7 @@ public class FatCache {
         private final int cacheSize;
         private final CacheKey key = new CacheKey();
         private final Stack<CacheElement> free = new Stack<CacheElement>();
+        private boolean requeueing;
 
         private CacheMap(int cacheSize) {
             super((int) Math.ceil(cacheSize / loadFactor) + 1, loadFactor, true);
@@ -265,6 +301,22 @@ public class FatCache {
             return free.pop();
         }
 
+        private void discardFromFree(CacheElement c) {
+            if (!free.isEmpty() && peek() == c)
+                pop();
+            else if (!free.isEmpty())
+                free.remove(c);
+        }
+
+        private CacheElement requeue(CacheElement c) {
+            requeueing = true;
+            try {
+                return put(c);
+            } finally {
+                requeueing = false;
+            }
+        }
+
         private CacheElement get(long address) {
             key.set(address);
             return get(key);
@@ -278,7 +330,7 @@ public class FatCache {
          * discard the eldest element when the cache is full
          */
         protected boolean removeEldestEntry(Map.Entry<CacheKey, CacheElement> eldest) {
-            boolean remove = (size() > cacheSize);
+            boolean remove = !requeueing && (size() > cacheSize);
 
             /**
              * before going to discard the eldest push it back on the stacked
@@ -448,6 +500,11 @@ public class FatCache {
                 throw new IllegalArgumentException("cannot free a free element");
             flush();
             address.free();
+        }
+
+        private void abandon() {
+            address.free();
+            dirty = false;
         }
 
         public String toString() {
