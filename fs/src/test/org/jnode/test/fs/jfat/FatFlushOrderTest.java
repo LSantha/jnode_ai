@@ -39,11 +39,14 @@ import org.jnode.fs.jfat.Fat;
 import org.jnode.fs.jfat.FatChain;
 import org.jnode.fs.jfat.FatEntry;
 import org.jnode.fs.jfat.FatFileSystem;
+import org.jnode.fs.hfsplus.HfsPlusFileSystem;
+import org.jnode.fs.hfsplus.HfsPlusFileSystemType;
 import org.jnode.fs.jfat.FatFileSystemFormatter;
 import org.jnode.fs.jfat.FatFileSystemType;
 import org.jnode.fs.service.FileSystemService;
 import org.jnode.fs.service.def.FileSystemPlugin;
 import org.jnode.naming.InitialNaming;
+import org.jnode.test.fs.FileSystemTestUtils;
 import org.junit.After;
 import org.junit.Before;
 import org.junit.Test;
@@ -273,12 +276,33 @@ public class FatFlushOrderTest {
     }
 
     @Test
+    public void testFlushOnReadOnlyHfsPlusDoesNotThrow() throws Exception {
+        FileDevice hfsDevice =
+            new FileDevice(FileSystemTestUtils.getTestFile("test/fs/hfsplus/test.hfsplus"), "r");
+        currentDevice = hfsDevice;
+        HfsPlusFileSystemType type = fss.getFileSystemType(HfsPlusFileSystemType.ID);
+        HfsPlusFileSystem hfsFs = type.create(hfsDevice, true);
+        hfsFs.createRootEntry();
+        FSDirectory root = hfsFs.getRootEntry().getDirectory();
+        root.flush();
+        hfsFs.flush();
+        hfsFs.close();
+    }
+
+    @Test
     public void testCrashAfterFatFlushLeavesNoDanglingDirectoryEntry() throws Exception {
         FatFileSystem fs = formatAndOpenRW();
         byte[] data = testData(fs.getClusterSize() * 3);
 
         FSFile file = fs.getRootEntry().getDirectory().addFile(FILE_NAME).getFile();
         file.write(0, ByteBuffer.wrap(data));
+        file.flush();
+
+        byte[] extra = new byte[fs.getClusterSize() * 2];
+        for (int i = 0; i < extra.length; i++) {
+            extra[i] = (byte) ((i + 1) & 0xFF);
+        }
+        file.write(data.length, ByteBuffer.wrap(extra));
 
         device.armCrashOnNextFlush();
         file.flush();
@@ -290,21 +314,23 @@ public class FatFlushOrderTest {
         FatFileSystem roFs = openReadOnly();
         FSDirectory rootDir = roFs.getRootEntry().getDirectory();
         FSEntry entry = rootDir.getEntry(FILE_NAME);
-        if (entry != null) {
-            FatEntry fatEntry = (FatEntry) entry;
-            long length = entry.getFile().getLength();
-            if (length > 0) {
-                Fat fat = roFs.getFat();
-                FatChain chain = fatEntry.getChain();
-                FatChain.ChainIterator iterator = chain.listIterator();
-                while (iterator.hasNext()) {
-                    int cluster = iterator.next();
-                    assertFalse("directory entry must not reference a free cluster: " + cluster,
-                        fat.isFreeEntry(cluster));
-                }
-                ByteBuffer readBuffer = ByteBuffer.allocate((int) length);
-                entry.getFile().read(0, readBuffer);
-            }
+        assertTrue("directory entry flushed before the crash must survive it", entry != null);
+        FatEntry fatEntry = (FatEntry) entry;
+        long length = entry.getFile().getLength();
+        assertTrue("directory entry flushed before the crash must carry its length", length == data.length);
+        Fat fat = roFs.getFat();
+        FatChain chain = fatEntry.getChain();
+        FatChain.ChainIterator iterator = chain.listIterator();
+        while (iterator.hasNext()) {
+            int cluster = iterator.next();
+            assertFalse("directory entry must not reference a free cluster: " + cluster,
+                fat.isFreeEntry(cluster));
+        }
+        ByteBuffer crashReadBuffer = ByteBuffer.allocate((int) length);
+        entry.getFile().read(0, crashReadBuffer);
+        for (int i = 0; i < data.length; i++) {
+            assertTrue("data flushed before the crash must not be corrupted",
+                crashReadBuffer.get(i) == data[i]);
         }
         roFs.close();
 
