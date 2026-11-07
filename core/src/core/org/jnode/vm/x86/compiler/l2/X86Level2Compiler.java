@@ -668,11 +668,55 @@ public class X86Level2Compiler extends AbstractX86Compiler {
             }
         }
         final HashSet<LiveRange> forced = new HashSet<LiveRange>();
+        // ANCHOR-L2-249 rule (d): every array quad's OPERANDS (ref, index,
+        // store value) take stack homes. Measured on the pure-L2 boot
+        // (2026-11-07): with array spans relaxed, register-homed operands
+        // corrupt the boot's own IR machinery no matter which subset of
+        // (ref, index, value) is forced -- ref+index-only panics, value-only
+        // panics, ALL THREE boots; the store value is the sharpest single
+        // operand but no strict subset of the three is boot-green. Every
+        // array cube we can audit is bracketed or EAX/EDX-based and the
+        // write barrier is a no-op on the default heap, so the clobbering
+        // mechanism is not yet identified (see PROGRESS). The cost is
+        // bounded: the operands of one array quad per site; spanning
+        // loop-carried values -- the whole point of the relaxation -- keep
+        // their registers.
+        // <p/>
+        // Constant operands (the null-constant shapes of Quad quads) are
+        // skipped: on those the referenced-ops entry is an IntConstant and
+        // no range exists for it (measured: Probes#nullArrayLength died
+        // with a ClassCastException when this went through the typed
+        // getRef() accessor).
+        final java.util.IdentityHashMap<Variable<?>, Boolean> arrayOperands =
+            new java.util.IdentityHashMap<Variable<?>, Boolean>();
+        for (Object b0 : (Iterable<?>) cfg) {
+            final IRBasicBlock b = (IRBasicBlock) b0;
+            for (Object q0 : (List<?>) b.getQuads()) {
+                final Quad q = (Quad) q0;
+                if (q instanceof org.jnode.vm.compiler.ir.quad.ArrayAssignQuad
+                    || q instanceof org.jnode.vm.compiler.ir.quad.ArrayStoreQuad
+                    || q instanceof org.jnode.vm.compiler.ir.quad.ArrayLengthAssignQuad) {
+                    final Operand[] ops = q.getReferencedOps();
+                    if (ops == null) {
+                        continue;
+                    }
+                    for (int oi = 0; oi < ops.length; oi++) {
+                        if (ops[oi] instanceof Variable) {
+                            arrayOperands.put((Variable<?>) ops[oi], Boolean.TRUE);
+                        }
+                    }
+                }
+            }
+        }
         for (int i = 0; i < liveRanges.length; i++) {
             final LiveRange lr = liveRanges[i];
             if (lr.getVariable() instanceof MethodArgument) {
                 continue;
             }
+            if (arrayOperands.get(lr.getVariable()) != null) {
+                forced.add(lr);
+            }
+
             // NB: assignAddress is the POST-def address (def quad + 1), so
             // a call at exactly `def` runs after the value is homed and can
             // clobber it: the low side is inclusive. The high side is

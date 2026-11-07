@@ -3556,6 +3556,20 @@ public class IRControlFlowGraph<T> implements Iterable<IRBasicBlock<T>> {
      * the gate instead of silently corrupting.
      */
     public static boolean isTrapOnly(Quad q) {
+        // REFERENCE array stores keep the legacy span forcing: the
+        // post-store write barrier (GenericX86CodeGenerator.writeArrayBarrier,
+        // emitted when the heap manager provides one) clobbers EAX/EDX/EBX
+        // and makes a real call, both invisible to the quad-based
+        // callAddrs scan -- ANCHOR-L2-204's discipline for putfield/
+        // putstatic applies to array stores too.
+        if (q instanceof ArrayStoreQuad) {
+            return ((ArrayStoreQuad) q).getType() != Operand.REFERENCE;
+        }
+        // Primitive array loads/stores and array.length are hardware traps
+        // with no call. Measured boot-safe under the entry-span rule (c).
+        if (q instanceof ArrayAssignQuad || q instanceof ArrayLengthAssignQuad) {
+            return true;
+        }
         if (q instanceof RefAssignQuad) {
             return true;
         }

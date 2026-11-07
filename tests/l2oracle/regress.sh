@@ -120,6 +120,17 @@ fi
 WORK=${REGRESS_WORK:-/tmp/jnode-regress}
 mkdir -p "$WORK"
 HJ=${HJ:-/home/levente/ext/prg/java/bin/java}
+# ANCHOR-L2-250: the javac twin of HJ. The census/ref/probe-shape phases
+# compile shape sources and RUN them under $HJ, so the two must agree on
+# the JDK major: a v55 (Java-11) probe class cannot run under a JDK-6
+# HJ (UnsupportedClassVersionError), and a JDK-6 HJ cannot load a JDK-6
+# javac target when the corpus builder moved. Measured 2026-11-07: the
+# machine default for /home/levente/ext/prg/java silently moved 6 -> 11
+# and every census run died at "PROBE SHAPE GENERATION FAILED" with the
+# constant-null-field lint unable to see a corpus that HAS the shape
+# (ANCHOR-L2-187's failure mode). Override both together:
+#   HJ=<jdk6>/java JAVAC=<jdk6>/javac regress.sh ...
+JAVAC=${JAVAC:-"$JAVAC"}
 : > "$ST"
 # ANCHOR-L2-206: $ST is per-run but $LOG used to be append-only, so a reused
 # label kept every earlier run's output and policy_union()'s
@@ -605,7 +616,7 @@ if want census; then
       mkdir -p /tmp/mghost/src/org/jnode/vm/classmgr /tmp/mghost/classes
       printf "package org.jnode.vm;\npublic class VmAddress {\n}\n" > /tmp/mghost/src/org/jnode/vm/VmAddress.java
       printf "package org.jnode.vm.classmgr;\npublic class VmType {\n}\n" > /tmp/mghost/src/org/jnode/vm/classmgr/VmType.java
-      /home/levente/ext/prg/java/bin/javac -d /tmp/mghost/classes \
+      "$JAVAC" -d /tmp/mghost/classes \
         -sourcepath core/src/vmmagic:core/src/classlib:/tmp/mghost/src \
         core/src/vmmagic/org/vmmagic/unboxed/Word.java \
         core/src/vmmagic/org/vmmagic/unboxed/Address.java \
@@ -624,7 +635,7 @@ if want census; then
     # Probes.class check below -- measured 2026-10-08, which said nothing
     # about what was missing (ANCHOR-L2-187: a silent compile failure read
     # as a lint verdict).
-    /home/levente/ext/prg/java/bin/javac -nowarn -d /tmp/probeclasses \
+    "$JAVAC" -nowarn -d /tmp/probeclasses \
       -cp /tmp/mghost/classes \
       -sourcepath core/src/vmmagic:core/src/classlib:/tmp/mghost/src \
       tests/l2oracle/Probes.java core/src/classlib/org/jnode/annotation/*.java \
@@ -635,7 +646,7 @@ if want census; then
     # class is generated at run time instead of committed as a .class so the
     # guard always tracks what the real generator writes; if the generator
     # API disappears this must fail loudly, never shrink the corpus quietly.
-    if ! /home/levente/ext/prg/java/bin/javac -nowarn -d /tmp/probeclasses \
+    if ! "$JAVAC" -nowarn -d /tmp/probeclasses \
         tests/l2oracle/ProxyFormGen.java > /dev/null 2>&1 ||
        ! '"$HJ"' -cp /tmp/probeclasses ProxyFormGen /tmp/probeclasses \
         > /tmp/proxyformgen-'"$LABEL"'.txt 2>&1; then
@@ -824,8 +835,8 @@ if { want oracle || want mauve || want aotoracle; } && { [ ! -f /tmp/l2oracle-re
     mkdir -p /tmp/mghost/src/org/jnode/vm/classmgr /tmp/mghost/classes /tmp/l2oracle-ref
     printf "package org.jnode.vm;\npublic class VmAddress {\n}\n" > /tmp/mghost/src/org/jnode/vm/VmAddress.java
     printf "package org.jnode.vm.classmgr;\npublic class VmType {\n}\n" > /tmp/mghost/src/org/jnode/vm/classmgr/VmType.java
-    /home/levente/ext/prg/java/bin/javac -d /tmp/mghost/classes -sourcepath core/src/vmmagic:core/src/classlib:/tmp/mghost/src /tmp/mghost/src/org/jnode/vm/VmAddress.java /tmp/mghost/src/org/jnode/vm/classmgr/VmType.java core/src/vmmagic/org/vmmagic/unboxed/Word.java core/src/vmmagic/org/vmmagic/unboxed/Address.java core/src/vmmagic/org/vmmagic/unboxed/Offset.java core/src/vmmagic/org/vmmagic/unboxed/Extent.java core/src/vmmagic/org/vmmagic/unboxed/UnboxedObject.java core/src/vmmagic/org/vmmagic/unboxed/ObjectReference.java core/src/classlib/org/jnode/annotation/KernelSpace.java core/src/classlib/org/jnode/annotation/Uninterruptible.java core/src/vmmagic/org/vmmagic/pragma/Uninterruptible.java 2>&1 | tail -n 1
-    /home/levente/ext/prg/java/bin/javac -cp /tmp/mghost/classes -d /tmp/l2oracle-ref tests/l2oracle/Probes.java tests/l2oracle/OracleDriver.java 2>&1 | tail -n 1
+    "$JAVAC" -d /tmp/mghost/classes -sourcepath core/src/vmmagic:core/src/classlib:/tmp/mghost/src /tmp/mghost/src/org/jnode/vm/VmAddress.java /tmp/mghost/src/org/jnode/vm/classmgr/VmType.java core/src/vmmagic/org/vmmagic/unboxed/Word.java core/src/vmmagic/org/vmmagic/unboxed/Address.java core/src/vmmagic/org/vmmagic/unboxed/Offset.java core/src/vmmagic/org/vmmagic/unboxed/Extent.java core/src/vmmagic/org/vmmagic/unboxed/UnboxedObject.java core/src/vmmagic/org/vmmagic/unboxed/ObjectReference.java core/src/classlib/org/jnode/annotation/KernelSpace.java core/src/classlib/org/jnode/annotation/Uninterruptible.java core/src/vmmagic/org/vmmagic/pragma/Uninterruptible.java 2>&1 | tail -n 1
+    "$JAVAC" -cp /tmp/mghost/classes -d /tmp/l2oracle-ref tests/l2oracle/Probes.java tests/l2oracle/OracleDriver.java 2>&1 | tail -n 1
     /home/levente/ext/prg/java/bin/java -cp /tmp/mghost/classes:/tmp/l2oracle-ref OracleDriver /tmp/l2oracle-ref/out-host.txt noforce | tail -n 1'
 fi
 if want oracle || want mauve; then
