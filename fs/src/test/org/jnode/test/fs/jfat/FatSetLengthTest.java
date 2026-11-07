@@ -214,6 +214,125 @@ public class FatSetLengthTest {
         fs.close();
     }
 
+    @Test
+    public void testGrowIntoFirstMissingCluster() throws Exception {
+        prefill(68L * 1024 * 1024);
+        FatFileSystem fs = formatAndOpenRW();
+        FSFile file = fs.getRootEntry().getDirectory().addFile("boundary.bin").getFile();
+        byte[] data = pattern(27);
+        file.write(0, ByteBuffer.wrap(data));
+        file.flush();
+        file.setLength(1500);
+        assertEquals(1500, file.getLength());
+        byte[] read = readAll(file);
+        assertEquals(1500, read.length);
+        assertTrue(Arrays.equals(data, Arrays.copyOf(read, 27)));
+        for (int i = 27; i < read.length; i++) {
+            assertEquals("grown byte " + i, (byte) 0, read[i]);
+        }
+        file.flush();
+        fs.flush();
+        fs.close();
+
+        fs = openReadOnly();
+        FSFile readFile = fs.getRootEntry().getDirectory().getEntry("boundary.bin").getFile();
+        assertEquals(1500, readFile.getLength());
+        byte[] persisted = readAll(readFile);
+        assertEquals(1500, persisted.length);
+        assertTrue(Arrays.equals(data, Arrays.copyOf(persisted, 27)));
+        for (int i = 27; i < persisted.length; i++) {
+            assertEquals("persisted grown byte " + i, (byte) 0, persisted[i]);
+        }
+        fs.close();
+    }
+
+    @Test
+    public void testGrowClusterAlignedPastBoundary() throws Exception {
+        prefill(68L * 1024 * 1024);
+        FatFileSystem fs = formatAndOpenRW();
+        FSFile file = fs.getRootEntry().getDirectory().addFile("aligned.bin").getFile();
+        byte[] data = pattern(2048);
+        file.write(0, ByteBuffer.wrap(data));
+        file.flush();
+        file.setLength(2500);
+        assertEquals(2500, file.getLength());
+        byte[] read = readAll(file);
+        assertEquals(2500, read.length);
+        assertTrue(Arrays.equals(data, Arrays.copyOf(read, 2048)));
+        for (int i = 2048; i < read.length; i++) {
+            assertEquals("grown byte " + i, (byte) 0, read[i]);
+        }
+        file.flush();
+        fs.flush();
+        fs.close();
+
+        fs = openReadOnly();
+        FSFile readFile = fs.getRootEntry().getDirectory().getEntry("aligned.bin").getFile();
+        assertEquals(2500, readFile.getLength());
+        byte[] persisted = readAll(readFile);
+        assertEquals(2500, persisted.length);
+        assertTrue(Arrays.equals(data, Arrays.copyOf(persisted, 2048)));
+        for (int i = 2048; i < persisted.length; i++) {
+            assertEquals("persisted grown byte " + i, (byte) 0, persisted[i]);
+        }
+        fs.close();
+    }
+
+    @Test
+    public void testGrowClusterAlignedBySecondBoundary() throws Exception {
+        prefill(68L * 1024 * 1024);
+        FatFileSystem fs = formatAndOpenRW();
+        FSFile file = fs.getRootEntry().getDirectory().addFile("aligned2.bin").getFile();
+        byte[] data = pattern(2048);
+        file.write(0, ByteBuffer.wrap(data));
+        file.flush();
+        file.setLength(3000);
+        assertEquals(3000, file.getLength());
+        byte[] read = readAll(file);
+        assertEquals(3000, read.length);
+        assertTrue(Arrays.equals(data, Arrays.copyOf(read, 2048)));
+        for (int i = 2048; i < read.length; i++) {
+            assertEquals("grown byte " + i, (byte) 0, read[i]);
+        }
+        file.flush();
+        fs.flush();
+        fs.close();
+
+        fs = openReadOnly();
+        FSFile readFile = fs.getRootEntry().getDirectory().getEntry("aligned2.bin").getFile();
+        assertEquals(3000, readFile.getLength());
+        byte[] persisted = readAll(readFile);
+        assertEquals(3000, persisted.length);
+        assertTrue(Arrays.equals(data, Arrays.copyOf(persisted, 2048)));
+        for (int i = 2048; i < persisted.length; i++) {
+            assertEquals("persisted grown byte " + i, (byte) 0, persisted[i]);
+        }
+        fs.close();
+    }
+
+    @Test
+    public void testGrowEmptyFileWithinFirstCluster() throws Exception {
+        prefill(68L * 1024 * 1024);
+        FatFileSystem fs = formatAndOpenRW();
+        FSFile file = fs.getRootEntry().getDirectory().addFile("empty.bin").getFile();
+        file.setLength(500);
+        assertEquals(500, file.getLength());
+        byte[] read = readAll(file);
+        assertEquals(500, read.length);
+        assertAllZero(read);
+        file.flush();
+        fs.flush();
+        fs.close();
+
+        fs = openReadOnly();
+        FSFile readFile = fs.getRootEntry().getDirectory().getEntry("empty.bin").getFile();
+        assertEquals(500, readFile.getLength());
+        byte[] persisted = readAll(readFile);
+        assertEquals(500, persisted.length);
+        assertAllZero(persisted);
+        fs.close();
+    }
+
     private byte[] pattern(int size) {
         byte[] data = new byte[size];
         for (int i = 0; i < size; i++) {

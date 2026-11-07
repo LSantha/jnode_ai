@@ -470,7 +470,10 @@ public class FatChain {
          * i.next(); else break;
          */
 
-        if (last != clidx) {
+        boolean allocated = false;
+
+        if (last != clidx || (empty && !i.hasNext() && offset > (long) last * clsize)) {
+            allocated = true;
             int chainSize = last;
             int m = clidx - last;
 
@@ -480,7 +483,10 @@ public class FatChain {
             if ((lst % clsize) != 0)
                 n++;
 
-            last = allocateTail(n, m, p.getOffset(), src.remaining() == 0);
+            if (empty)
+                last = allocateTail(n, n - 1, 0, true);
+            else
+                last = allocateTail(n, m, p.getOffset(), false);
 
             if (cluster != 0) {
                 fat.set(cluster, last);
@@ -560,7 +566,7 @@ public class FatChain {
             }
         }
 
-        if (empty && offset > length)
+        if (empty && !allocated && offset > length)
             zeroRange(length, offset);
     }
 
