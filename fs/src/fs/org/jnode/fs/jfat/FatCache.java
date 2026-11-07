@@ -234,12 +234,6 @@ public class FatCache {
         setInt32(fat.position(0, index), element);
     }
 
-    public void flush(long address) throws IOException {
-        CacheElement c = map.get(address);
-        if (c != null)
-            c.flush();
-    }
-
     public void flush() throws IOException {
         for (CacheElement c : map.values()) {
             c.flush();
@@ -380,6 +374,9 @@ public class FatCache {
      * type
      */
     private class CacheKey {
+        // Sentinel for an unused element. Cache addresses are non-negative
+        // FAT element numbers (offset / elementSize over validated
+        // non-negative offsets), so -1 never occurs as a real address.
         private static final long FREE = -1;
 
         private long key;

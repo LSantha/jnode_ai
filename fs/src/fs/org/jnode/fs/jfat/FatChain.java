@@ -741,16 +741,18 @@ public class FatChain {
     public void dump(String fileName) throws IOException, FileNotFoundException {
         int size = size();
         FileOutputStream f = new FileOutputStream(fileName);
-        ByteBuffer buf = ByteBuffer.allocate(fat.getClusterSize());
+        try {
+            ByteBuffer buf = ByteBuffer.allocate(fat.getClusterSize());
 
-        for (int i = 0; i < size; i++) {
-            buf.clear();
-            read(i * fat.getClusterSize(), buf);
-            buf.flip();
-            f.getChannel().write(buf);
+            for (int i = 0; i < size; i++) {
+                buf.clear();
+                read(i * fat.getClusterSize(), buf);
+                buf.flip();
+                f.getChannel().write(buf);
+            }
+        } finally {
+            f.close();
         }
-
-        f.close();
     }
 
     /*
@@ -759,14 +761,16 @@ public class FatChain {
      */
     public void dumpCluster(String fileName, int index) throws IOException, FileNotFoundException {
         FileOutputStream f = new FileOutputStream(fileName);
-        ByteBuffer buf = ByteBuffer.allocate(fat.getClusterSize());
+        try {
+            ByteBuffer buf = ByteBuffer.allocate(fat.getClusterSize());
 
-        buf.clear();
-        read(index * fat.getClusterSize(), buf);
-        buf.flip();
-        f.getChannel().write(buf);
-
-        f.close();
+            buf.clear();
+            read(index * fat.getClusterSize(), buf);
+            buf.flip();
+            f.getChannel().write(buf);
+        } finally {
+            f.close();
+        }
     }
 
     private class ChainPosition {
