@@ -19,14 +19,22 @@ jobs:
   opencode:
     # The triage and approve exclusions are prefix/contains based and mirror each
     # other. Being slightly broad only under-runs an unknown "approve*"/"triage*"
-    # verb, which is the safe direction for an agent trigger.
+    # verb, which is the safe direction for an agent trigger. An anchored
+    # trigger is exempt from the contains half: a body that starts with
+    # "/oc " but not "/oc approve"/"/oc triage" has already picked its own
+    # verb, so quoting another verb later in the prompt (e.g. a review
+    # discussing "/oc approve") must not skip the run (#862). Mirrored and
+    # pinned by .github/scripts/opencode-trigger.js.
     if: |
       (contains(github.event.comment.body, ' /oc ') ||
       startsWith(github.event.comment.body, '/oc ')) &&
-      !(startsWith(github.event.comment.body, '/oc triage') ||
-      contains(github.event.comment.body, ' /oc triage')) &&
+      ((startsWith(github.event.comment.body, '/oc ') &&
+        !startsWith(github.event.comment.body, '/oc approve') &&
+        !startsWith(github.event.comment.body, '/oc triage')) ||
+      (!(startsWith(github.event.comment.body, '/oc triage') ||
+        contains(github.event.comment.body, ' /oc triage')) &&
       !(startsWith(github.event.comment.body, '/oc approve') ||
-      contains(github.event.comment.body, ' /oc approve')) &&
+        contains(github.event.comment.body, ' /oc approve')))) &&
       !contains(github.event.comment.body, 'opencode.ai/s/') &&
       (github.event.comment.author_association == 'COLLABORATOR' || 
        github.event.comment.author_association == 'MEMBER' || 
