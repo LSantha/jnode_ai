@@ -196,6 +196,9 @@ public class FatDirectory extends FatEntry implements FSDirectory, FSDirectoryId
                 if (index > MAXENTRIES)
                     throw new IOException("Directory is full");
 
+                if (isRoot() && !getFatFileSystem().getFat().isFat32())
+                    throw new IOException("Directory is full");
+
                 getChain().allocateAndClear(1);
                 i = 0;
                 index = 0;
@@ -203,6 +206,9 @@ public class FatDirectory extends FatEntry implements FSDirectory, FSDirectoryId
             } catch (IOException ex) {
                 if (ex.getCause() instanceof NoSuchElementException) {
                     if (index > MAXENTRIES)
+                        throw new IOException("Directory is full");
+
+                    if (isRoot() && !getFatFileSystem().getFat().isFat32())
                         throw new IOException("Directory is full");
 
                     getChain().allocateAndClear(1);

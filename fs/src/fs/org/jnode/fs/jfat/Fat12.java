@@ -51,7 +51,19 @@ public class Fat12 extends Fat {
     }
 
     public int set(int index, int element) throws IOException {
-        throw new UnsupportedOperationException("Can't write to FAT-12 yet");
+        int value = element & 0xFFF;
+        int raw = (int) getUInt16(index);
+        int old;
+
+        if ((index % 2) == 0) {
+            old = raw & 0xFFF;
+            setInt16(index, (raw & 0xF000) | value);
+        } else {
+            old = (raw >> 4) & 0xFFF;
+            setInt16(index, (raw & 0x000F) | (value << 4));
+        }
+
+        return old;
     }
 
     public long getClusterPosition(int index) {

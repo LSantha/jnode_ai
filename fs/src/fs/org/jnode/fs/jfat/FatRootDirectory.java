@@ -64,6 +64,23 @@ public class FatRootDirectory extends FatDirectory {
         return createDirEntry(entry, index, allowDeleted);
     }
 
+    @Override
+    public void setFatDirEntry(FatDirEntry entry) throws IOException {
+        if (getFatFileSystem().getFat().isFat32()) {
+            super.setFatDirEntry(entry);
+            return;
+        }
+
+        BootSector bootSector = getFatFileSystem().getBootSector();
+
+        if (entry.getIndex() >= bootSector.getNrRootDirEntries()) {
+            throw new IOException("Directory is full");
+        }
+
+        long rootDirectoryOffset = bootSector.getFirstRootDirSector() * bootSector.getBytesPerSector();
+        getFatFileSystem().getApi().write(rootDirectoryOffset + 32L * entry.getIndex(), entry.getByteBuffer());
+    }
+
     public String getShortName() {
         return getName();
     }
