@@ -476,7 +476,7 @@ module.exports = function createHelpers({ github, context, core }) {
         if (Array.isArray(list)) {
           commitMessage = buildMergeMessage(list.map(function (c) {
             return (c && c.commit && c.commit.message) || "";
-          }), models, pr.body);
+          }), models, (pr.data && pr.data.body) || "");
         } else {
           core.warning("mergePR: listCommits returned no data for PR #" + prNumber +
             "; merge will use the repository default message");

@@ -7,7 +7,7 @@ function createCore() {
   return { info: () => {}, warning: () => {}, error: () => {} };
 }
 
-function createGithub({ reviews = [], comments = [], commits = [] } = {}) {
+function createGithub({ reviews = [], comments = [], commits = [], prBody = null } = {}) {
   const calls = { merge: [], listComments: [], listReviews: [], listCommits: [], deleteRef: [] };
   let getCount = 0;
   const github = {
@@ -20,6 +20,7 @@ function createGithub({ reviews = [], comments = [], commits = [] } = {}) {
               number: 99,
               title: "#42 - Subject",
               head: { ref: "opencode/issue42-fix" },
+              body: prBody,
               merged: getCount > 1
             }
           };
@@ -193,6 +194,31 @@ test("buildMergeMessage prefers the commit body over the PR description when it 
   );
   assert.ok(msg.includes("Real explanation here."));
   assert.ok(!msg.includes("should be ignored"));
+});
+
+test("mergePR falls back to the PR description when the commits carry only trailers", async () => {
+  // The production shape: pulls.get returns { data: { body } }, and the first
+  // commit is subject-plus-Assisted-by. mergePR must read pr.data.body, not
+  // pr.body - the latter is undefined and silently disables the fallback,
+  // which is exactly what #842's merge message did before this test.
+  const { h, calls } = helpersFor({
+    reviews: [{ body: "LGTM\n\nAssisted-by: reviewer-a" }],
+    commits: [
+      { commit: { message: "Fixed the thing\n\nAssisted-by: resolver-a" } },
+      { commit: { message: "#42 - Add tests\n\nReal test description.\n\nAssisted-by: resolver-a" } }
+    ],
+    prBody: "## Summary\n\nFixed the thing properly.\n\nCloses #42\n\n[github run](https://github.com/o/r/actions/runs/1)"
+  });
+  await h.mergePR(99);
+  const message = calls.merge[0].commit_message;
+  assert.ok(message, "an attributed merge carries an explicit message");
+  assert.ok(
+    message.includes("Fixed the thing properly."),
+    "the PR description is the fallback prose source"
+  );
+  assert.ok(!message.includes("github run"), "run links are stripped");
+  assert.ok(message.includes("Reviewed-by: reviewer-a"), "attribution survives");
+  assert.ok(message.includes("Real test description."), "real commit bodies still land");
 });
 
 test("buildMergeMessage reproduces a multi-commit squash body", () => {
