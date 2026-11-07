@@ -492,6 +492,45 @@ module.exports = function createHelpers({ github, context, core }) {
     return trustedAuthor.isTrustedAuthor(user);
   }
 
+  /**
+   * The squash subject GitHub would use, and the issue number it should carry.
+   *
+   * GitHub uses the PR title for a multi-commit squash but the single commit's
+   * SUBJECT for a one-commit squash, and the agent's commit subjects routinely
+   * lack the repo's "#<issue> - " prefix (flagged as a nit on both #821 and
+   * #845). The result is a merged commit like "Fixed FAT12/16 root directory
+   * writes (#845)" with no issue link. So the subject is built here and passed
+   * as commit_title, which overrides both the repo setting and GitHub's
+   * one-commit rule.
+   */
+  function mergeSubject(pr) {
+    var data = pr && pr.data ? pr.data : {};
+    var title = data.title || "";
+    var num = closingIssueNumber(data) || issueFromHeadRef(data) ||
+      issueFromTitle(title);
+    var strip = title.replace(/^#\d+\s*-\s*/, "").trim();
+    var subject = num ? "#" + num + " - " + strip : strip;
+    // GitHub appends " (#N)" itself only on the default-title path; an explicit
+    // commit_title is used verbatim, so the reference is added here.
+    return subject + (data.number ? " (#" + data.number + ")" : "");
+  }
+
+  function closingIssueNumber(data) {
+    var m = (data.body || "").match(/(?:closes|fixes|resolves)\s+#(\d+)/i);
+    return m ? parseInt(m[1], 10) : 0;
+  }
+
+  function issueFromHeadRef(data) {
+    var ref = (data.head && data.head.ref) || "";
+    var m = ref.match(/^opencode\/issue(\d+)-/);
+    return m ? parseInt(m[1], 10) : 0;
+  }
+
+  function issueFromTitle(title) {
+    var m = (title || "").match(/^#(\d+)\s*-/);
+    return m ? parseInt(m[1], 10) : 0;
+  }
+
   /** Squash-merge a PR and delete its head branch. */
   async function mergePR(prNumber) {
     core.info("Merging PR #" + prNumber + "...");
@@ -528,6 +567,7 @@ module.exports = function createHelpers({ github, context, core }) {
     // something to add: an unnecessary commit_message would replace the
     // repository's COMMIT_MESSAGES template for no reason.
     if (commitMessage) mergeArgs.commit_message = commitMessage;
+    mergeArgs.commit_title = mergeSubject(pr);
     try {
       await github.rest.pulls.merge(mergeArgs);
     } catch (err) {

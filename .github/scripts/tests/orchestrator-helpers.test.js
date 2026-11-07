@@ -225,6 +225,25 @@ test("mergePR falls back to the PR description when the commits carry only trail
   assert.ok(message.includes("Real test description."), "real commit bodies still land");
 });
 
+test("mergePR sets a subject carrying the issue number (single-commit squash rule)", async () => {
+  // GitHub uses the single commit's SUBJECT for a one-commit squash, and the
+  // agent's commit subjects lack the "#<issue> - " prefix, so the merged commit
+  // loses the issue link (8bb54c6a4b has no #844). mergePR must pass an
+  // explicit commit_title.
+  const { h, calls } = helpersFor({
+    reviews: [{ body: "LGTM\n\nAssisted-by: reviewer-a" }],
+    commits: [
+      { commit: { message: "Fixed the thing\n\nAssisted-by: resolver-a" } }
+    ],
+    prBody: "## Summary\n\nFixed the thing properly.\n\nCloses #42"
+  });
+  await h.mergePR(99);
+  assert.strictEqual(
+    calls.merge[0].commit_title,
+    "#42 - Subject (#99)"
+  );
+});
+
 test("buildMergeMessage reproduces a multi-commit squash body", () => {
   const { h } = helpersFor();
   const msg = h.buildMergeMessage(
@@ -249,7 +268,7 @@ test("mergePR passes the composed commit_message when a reviewer model was adver
   });
   await h.mergePR(99);
   assert.strictEqual(calls.merge.length, 1);
-  assert.strictEqual("commit_title" in calls.merge[0], false);
+  assert.strictEqual(calls.merge[0].commit_title, "#42 - Subject (#99)");
   assert.strictEqual(calls.merge[0].commit_message, "Body.\n\nReviewed-by: reviewer-a");
 });
 
