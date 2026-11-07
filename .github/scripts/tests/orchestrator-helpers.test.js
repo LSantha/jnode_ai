@@ -216,6 +216,10 @@ test("mergePR falls back to the PR description when the commits carry only trail
     message.includes("Fixed the thing properly."),
     "the PR description is the fallback prose source"
   );
+  assert.ok(
+    message.includes("Assisted-by: resolver-a"),
+    "the writer's trailer survives the description fallback (#845's merge lost it)"
+  );
   assert.ok(!message.includes("github run"), "run links are stripped");
   assert.ok(message.includes("Reviewed-by: reviewer-a"), "attribution survives");
   assert.ok(message.includes("Real test description."), "real commit bodies still land");

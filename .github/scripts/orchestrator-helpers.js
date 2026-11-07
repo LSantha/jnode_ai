@@ -422,6 +422,20 @@ module.exports = function createHelpers({ github, context, core }) {
       if (split[i].body) chunk += (chunk ? "\n\n" : "") + split[i].body;
       if (chunk) parts.push(chunk);
     }
+    // The writer's attribution rides in the commits' Assisted-by trailers, but
+    // the fallback above replaces the commit bodies with the PR description -
+    // which silently dropped crouton's credit on #845's merge. Re-collect the
+    // distinct trailers from the commit messages and the PR body so the writer
+    // survives whatever replaces the prose; skip the ones already present, so a
+    // kept commit body does not end up crediting its author twice.
+    var writers = collectAssistedBy(commitMessages, prBody);
+    var kept = parts.join("\n");
+    var missing = writers.filter(function (w) {
+      return !new RegExp("assisted-by:\\s*" + w.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "\\b", "i").test(kept);
+    });
+    if (missing.length) {
+      parts.push("Assisted-by: " + missing.join(", "));
+    }
     parts.push("Reviewed-by: " + models.join(", "));
     return parts.join("\n\n");
   }
@@ -434,6 +448,28 @@ module.exports = function createHelpers({ github, context, core }) {
       var t = line.trim();
       return t.length > 0 && !/^[A-Za-z-]+-by:\s/i.test(t);
     });
+  }
+
+  // Distinct Assisted-by trailers across the commit messages and the PR body,
+  // in first-seen order. The writer's credit has to survive the description
+  // fallback replacing the commit bodies, so it is collected separately rather
+  // than left inside text that may be dropped.
+  function collectAssistedBy(commitMessages, prBody) {
+    var seen = {};
+    var out = [];
+    var texts = (Array.isArray(commitMessages) ? commitMessages : []).concat([prBody || ""]);
+    for (var i = 0; i < texts.length; i++) {
+      if (!texts[i]) continue;
+      var lines = String(texts[i]).split("\n");
+      for (var j = 0; j < lines.length; j++) {
+        var m = lines[j].match(/^\s*Assisted-by:\s*(\S+)\s*$/i);
+        if (m && !seen[m[1]]) {
+          seen[m[1]] = true;
+          out.push(m[1]);
+        }
+      }
+    }
+    return out;
   }
 
   // The PR body ends with a "[github run](...)" line the agent appends; it is
