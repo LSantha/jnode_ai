@@ -157,6 +157,13 @@ jobs:
       - name: Run opencode
         if: steps.dedupe.outputs.should_run == 'true'
         id: run_agent
+        # Bound the vendored action's own "Get opencode version" pre-step: it is an
+        # unauthenticated curl to api.github.com, which is rate-limited per IP on
+        # shared hosted-runner addresses, so it fails fast (403 -> exit 1) or hangs
+        # indefinitely. A hang otherwise parks the whole job in_progress for 45+
+        # minutes with no output, indistinguishable from a busy agent. The call
+        # takes milliseconds when it succeeds, so five minutes is generous.
+        timeout-minutes: 5
         uses: anomalyco/opencode/github@latest
         env:
           GITHUB_TOKEN: ${{ secrets.GH_PAT }}
