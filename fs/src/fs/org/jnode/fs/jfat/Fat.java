@@ -22,7 +22,11 @@ package org.jnode.fs.jfat;
 
 import java.io.IOException;
 import java.nio.ByteBuffer;
+import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collections;
+import java.util.List;
+import org.apache.log4j.Logger;
 import org.jnode.driver.block.BlockDeviceAPI;
 import org.jnode.fs.FileSystemException;
 
@@ -32,10 +36,14 @@ import org.jnode.fs.FileSystemException;
  */
 public abstract class Fat {
 
+    private static final Logger log = Logger.getLogger(Fat.class);
+
     private final BlockDeviceAPI api;
     private final BootSector bs;
 
     private final FatCache cache;
+
+    private final List<Long> divergentFatSectors;
 
     private int lastfree;
 
@@ -51,6 +59,8 @@ public abstract class Fat {
          * create a suitable cache
          */
         cache = new FatCache(this, 8192, 512);
+
+        divergentFatSectors = compareFatCopies();
 
         /*
          * set lastfree
@@ -267,6 +277,49 @@ public abstract class Fat {
 
     public void flush() throws IOException {
         cache.flush();
+    }
+
+    public final List<Long> compareFatCopies() {
+        List<Long> divergent = new ArrayList<Long>();
+        int nrFats = bs.getNrFats();
+        if (nrFats <= 1) {
+            return divergent;
+        }
+        long sectorsPerFat = bs.getSectorsPerFat();
+        int bytesPerSector = bs.getBytesPerSector();
+        if (sectorsPerFat <= 0 || bytesPerSector <= 0) {
+            return divergent;
+        }
+        byte[] copy0 = new byte[bytesPerSector];
+        byte[] copyN = new byte[bytesPerSector];
+        for (int fatNum = 1; fatNum < nrFats; fatNum++) {
+            for (long s = 0; s < sectorsPerFat; s++) {
+                try {
+                    api.read(getFirst(0) + s * bytesPerSector, ByteBuffer.wrap(copy0));
+                    api.read(getFirst(fatNum) + s * bytesPerSector, ByteBuffer.wrap(copyN));
+                } catch (IOException ex) {
+                    log.warn("FAT copy " + fatNum + " comparison failed at sector "
+                        + (getFirstSector(fatNum) + s) + ", continuing with FAT copy 0", ex);
+                    break;
+                } catch (RuntimeException ex) {
+                    log.warn("FAT copy " + fatNum + " comparison failed at sector "
+                        + (getFirstSector(fatNum) + s) + ", continuing with FAT copy 0", ex);
+                    break;
+                }
+                if (!Arrays.equals(copy0, copyN)) {
+                    long sector = getFirstSector(fatNum) + s;
+                    divergent.add(sector);
+                    log.warn("FAT copy " + fatNum + " differs from FAT copy 0 at sector " + sector
+                        + " (FAT copy 0 sector " + (getFirstSector(0) + s)
+                        + "), continuing with FAT copy 0");
+                }
+            }
+        }
+        return divergent;
+    }
+
+    public final List<Long> getDivergentFatSectors() {
+        return Collections.unmodifiableList(new ArrayList<Long>(divergentFatSectors));
     }
 
     public final boolean isFreeEntry(int entry) throws IOException {

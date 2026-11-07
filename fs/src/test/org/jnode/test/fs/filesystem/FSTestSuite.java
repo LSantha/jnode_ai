@@ -29,6 +29,7 @@ import org.jnode.test.fs.filesystem.tests.FileFSTest;
 import org.jnode.test.fs.filesystem.tests.TreeFSTest;
 import org.jnode.test.fs.jfat.Fat12ChainTest;
 import org.jnode.test.fs.jfat.FatDirectoryExtensionTest;
+import org.jnode.test.fs.jfat.FatCopyComparisonTest;
 import org.jnode.test.fs.jfat.FatFileSystemTest;
 import org.jnode.test.fs.jfat.FatFreeClusterCountTest;
 import org.jnode.test.fs.jfat.FatFailurePathTest;
@@ -71,6 +72,7 @@ import org.junit.runners.Suite.SuiteClasses;
     FatSetLengthTest.class,
     FatDirectoryExtensionTest.class,
     FatFileSystemTest.class,
+    FatCopyComparisonTest.class,
     FatFreeClusterCountTest.class,
     MkfsFatFileSystemTest.class,
     Fat12ChainTest.class,
