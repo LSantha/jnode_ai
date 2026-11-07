@@ -39,9 +39,11 @@ public abstract class Fat {
 
     private int lastfree;
 
+    private int freeClusterCount;
+
     private final ByteBuffer clearbuf;
 
-    protected Fat(BootSector bs, BlockDeviceAPI api) {
+    protected Fat(BootSector bs, BlockDeviceAPI api) throws IOException {
         this.bs = bs;
         this.api = api;
 
@@ -54,6 +56,8 @@ public abstract class Fat {
          * set lastfree
          */
         rewindFree();
+
+        freeClusterCount = freeEntries();
 
         /*
          * and blank the clear buffer
@@ -289,6 +293,20 @@ public abstract class Fat {
             }
         }
         return count;
+    }
+
+    public final int getFreeClusterCount() {
+        return freeClusterCount;
+    }
+
+    protected final void noteFreeTransition(int oldValue, int newValue) {
+        boolean wasFree = isFree(oldValue);
+        boolean nowFree = isFree(newValue);
+        if (wasFree && !nowFree) {
+            freeClusterCount--;
+        } else if (!wasFree && nowFree) {
+            freeClusterCount++;
+        }
     }
 
     public final boolean isFat32() {

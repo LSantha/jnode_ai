@@ -108,12 +108,7 @@ public class FatFileSystem extends AbstractFileSystem<FatRootDirectory> {
     }
 
     public long getFreeSpace() {
-        try {
-            long freeClusters = fat.freeEntries();
-            return freeClusters * getClusterSize();
-        } catch (IOException e) {
-            return -1;
-        }
+        return (long) fat.getFreeClusterCount() * getClusterSize();
     }
 
     public long getTotalSpace() {
