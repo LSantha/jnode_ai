@@ -194,13 +194,12 @@ public class FatEntry extends FatObject implements FSEntry, FSEntryCreated, FSEn
                 entry.setStartCluster(chain.getStartCluster());
                 chain.flush();
             }
-            //
+            getFatFileSystem().getFat().flush();
+            getFatFileSystem().getApi().flush();
             if (entry.isDirty()) {
                 parent.setFatDirEntry(entry);
                 entry.flush();
             }
-            getFatFileSystem().getFat().flush();
-            getFatFileSystem().getApi().flush();
         }
     }
 

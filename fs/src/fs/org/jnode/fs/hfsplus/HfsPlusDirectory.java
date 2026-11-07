@@ -120,7 +120,7 @@ public class HfsPlusDirectory implements FSDirectory, FSDirectoryId {
     @Override
     public void flush() throws IOException {
         if (getFileSystem().isReadOnly()) {
-            throw new ReadOnlyFileSystemException();
+            return;
         }
         boolean flushEntries = isEntriesLoaded() && entries.isDirty();
         if (entry.isDirty() || flushEntries) {
