@@ -453,6 +453,15 @@ public class FatCache {
 
             this.address.set(address);
             elem.clear();
+            // Over-read by one byte on purpose: a FAT12 odd entry at the
+            // last byte of the element (e.g. entry 341 at FAT offset 511,
+            // bytes 511-512 straddling the 512-byte boundary) needs
+            // data[elementSize] via getUInt16. Narrowing this to
+            // elementSize would silently drop the high byte of such
+            // entries. Unlike the write path, which narrows to
+            // elementSize so the extra byte is not emitted to disk,
+            // the read path must keep elementSize + 1.
+            elem.limit(elementSize + 1);
             api.read(address * elementSize, elem);
             elem.clear();
         }

@@ -164,6 +164,39 @@ public class Fat12ChainTest {
         assertEquals("FAT[342] following entry", 0xFFF, fat().get(342));
     }
 
+    /**
+     * Regression test for the 513-byte FAT12 straddle over-read in
+     * {@code FatCache.CacheElement.read()}: entry 341 sits at FAT offset
+     * {@code floor(1.5 * 341) == 511}, so its two bytes are 511-512 and
+     * cross the 512-byte cache-element boundary. That entry is readable
+     * only because the read fetches {@code elementSize + 1} bytes;
+     * narrowing it to {@code elementSize} would leave byte 512 as zero
+     * and decode entry 341 as {@code 0x61 >> 4 == 6} instead of 342.
+     * Expected values are decoded here from the raw FAT bytes read
+     * directly from the device (spec 12-bit packing), not via
+     * {@code Fat12}/{@code FatCache}, so a builder/code disagreement
+     * cannot mask the fault. Entry 341 is the first FAT access in this
+     * test, forcing a cold cache read of the straddling element.
+     */
+    @Test
+    public void testFat12ColdReadStraddlingEntry341FromRawFatBytes() throws Exception {
+        assertTrue("Builder geometry must exceed 342 clusters so the FAT exceeds 512 bytes",
+                fs.getBootSector().getCountOfClusters() > 342);
+        byte[] raw = readRawFat();
+        assertEquals("Entry 341 offset", 511, (3 * 341) / 2);
+        assertEquals("raw FAT[511] middle byte", 0x61, raw[511] & 0xFF);
+        assertEquals("raw FAT[512] top byte of odd entry", 0x15, raw[512] & 0xFF);
+        int expected340 = decodeFat12Entry(raw, 340);
+        int expected341 = decodeFat12Entry(raw, 341);
+        int expected342 = decodeFat12Entry(raw, 342);
+        assertEquals("Builder chain 340 -> 341", 341, expected340);
+        assertEquals("Builder chain 341 -> 342", 342, expected341);
+        assertEquals("Builder chain 342 -> EOF", 0xFFF, expected342);
+        assertEquals("FAT[341] cold straddle read", expected341, fat().get(341));
+        assertEquals("FAT[340] even neighbour", expected340, fat().get(340));
+        assertEquals("FAT[342] following entry", expected342, fat().get(342));
+    }
+
     @Test
     public void testLowChainFollowing() throws Exception {
         FatChain chain = new FatChain(fs, 2);
@@ -376,6 +409,12 @@ public class Fat12ChainTest {
         }
         fat16Device.close();
         fat16Device = null;
+    }
+
+    private static int decodeFat12Entry(byte[] rawFat, int index) {
+        int offset = (3 * index) / 2;
+        int word = (rawFat[offset] & 0xFF) | ((rawFat[offset + 1] & 0xFF) << 8);
+        return (index % 2 == 0) ? (word & 0xFFF) : (word >> 4);
     }
 
     private byte[] readRawFat() throws Exception {
