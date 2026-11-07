@@ -31,7 +31,8 @@
 const MODEL_VARIANTS = {
   "opencode/deepseek-v4.1-flash-free": "high",
   "opencode/pulse-alpha-free": "max",
-  "opencode/crouton-alpha-free": "max"
+  "opencode/crouton-alpha-free": "max",
+  "opencode/inkling-2-small-free": "max"
 };
 
 const DEFAULT_VARIANT = "high";
@@ -51,9 +52,16 @@ const DEFAULT_VARIANT = "high";
 //     failed: Model is unavailable" and burned three DEV retries on #838.
 //   - deepseek-v4.1-flash-free at high: carried the role all session before
 //     that, and is the known-good fallback.
+//
+// review runs inkling-2-small-free at max (from 2026-11-07): Thinking Machines'
+// second-generation model, 594B/17B active, pitched for agentic coding and
+// controllable reasoning effort - a third independent family from both writer
+// and triage, free, and the answer to deepseek's quota being the single point
+// of failure for every review round. deepseek stays on triage and is the
+// review fallback if inkling's rounds come back shallow.
 const ROLE_MODELS = {
   coding: "opencode/crouton-alpha-free",
-  review: "opencode/deepseek-v4.1-flash-free",
+  review: "opencode/inkling-2-small-free",
   triage: "opencode/deepseek-v4.1-flash-free"
 };
 
