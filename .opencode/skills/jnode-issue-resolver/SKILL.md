@@ -87,10 +87,7 @@ If multiple signals conflict, precedence is: **verb > label > issue-body shape**
 
 ```
 parse(comment.body):
-  if !startsWith(body, "/oc "):
-    idx = indexOf(body, " /oc ")            // opencode.yml also allows embedded "/oc "
-    if idx < 0: return "no-trigger"
-    body = body.slice(idx + 1)              // drop the leading space
+  if !startsWith(body, "/oc "): return "no-trigger"   // /oc is line-leading; a quoted or mid-line /oc never triggers
   tail = body.slice(4)                      // drop "/oc "
   m = tail.match(/^\s*(\S+)/)               // first non-whitespace token (handles "/oc  fix", "/oc\tfix")
   verb = m ? m[1] : ""

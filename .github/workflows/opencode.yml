@@ -1,5 +1,10 @@
 name: opencode
-run-name: "Issue #${{ github.event.issue.number }} — ${{ github.event.issue.title }}"
+# The comment id rides first in the run name so a redelivered trigger can be
+# deduped against the run that already handled it: the Runs API exposes the
+# display title, not the triggering payload. First position also keeps the
+# marker safe from GitHub's run-name truncation. The runners parse "Issue #N"
+# out of the same title, so keep that part intact.
+run-name: "[oc:${{ github.event.comment.id }}] Issue #${{ github.event.issue.number || github.event.pull_request.number }} — ${{ github.event.issue.title || github.event.pull_request.title }}"
 
 on:
   issue_comment:
@@ -7,22 +12,67 @@ on:
   pull_request_review_comment:
     types: [created]
 
+# One comment, one agent. The group is keyed on the issue/PR only for a real
+# /oc command; any other comment gets its own unique group (its comment id), so
+# a non-trigger comment can never displace a queued trigger. The gate job's
+# comment-level dedupe is the backstop that turns a redelivered webhook into a
+# no-op instead of a second queued run.
+concurrency:
+  group: >-
+    opencode-${{ startsWith(github.event.comment.body, '/oc ') &&
+    !startsWith(github.event.comment.body, '/oc triage') &&
+    !startsWith(github.event.comment.body, '/oc approve') &&
+    !contains(github.event.comment.body, 'opencode.ai/s/') &&
+    (github.event.issue.number || github.event.pull_request.number) ||
+    github.event.comment.id }}
+  cancel-in-progress: false
+
 jobs:
-  opencode:
-    # The triage and approve exclusions are prefix/contains based and mirror each
-    # other. Being slightly broad only under-runs an unknown "approve*"/"triage*"
-    # verb, which is the safe direction for an agent trigger.
+  gate:
+    # /oc is a line-leading command, never a quote inside prose. The previous
+    # contains(' /oc ') accepted an agent review comment that said
+    # "(after /oc fix)" and started the agent on its own output. This cheap
+    # pre-filter is mirrored - and broadened with token-aware verb exclusion
+    # and the per-comment dedupe - in .github/scripts/trigger-gate.js, which
+    # the step below runs and which is unit-tested.
     if: |
-      (contains(github.event.comment.body, ' /oc ') ||
-      startsWith(github.event.comment.body, '/oc ')) &&
-      !(startsWith(github.event.comment.body, '/oc triage') ||
-      contains(github.event.comment.body, ' /oc triage')) &&
-      !(startsWith(github.event.comment.body, '/oc approve') ||
-      contains(github.event.comment.body, ' /oc approve')) &&
+      startsWith(github.event.comment.body, '/oc ') &&
+      !startsWith(github.event.comment.body, '/oc triage') &&
+      !startsWith(github.event.comment.body, '/oc approve') &&
       !contains(github.event.comment.body, 'opencode.ai/s/') &&
-      (github.event.comment.author_association == 'COLLABORATOR' || 
-       github.event.comment.author_association == 'MEMBER' || 
+      (github.event.comment.author_association == 'COLLABORATOR' ||
+       github.event.comment.author_association == 'MEMBER' ||
        github.event.comment.author_association == 'OWNER')
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      actions: read
+    outputs:
+      run: ${{ steps.gate.outputs.run }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+        with:
+          # The gate runs repository code with a PAT-capable token, so take it
+          # from the trusted base branch, never from a review comment's PR head.
+          ref: ${{ github.event.repository.default_branch }}
+          persist-credentials: false
+      - name: Check this delivery is the first for the comment
+        id: gate
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GH_PAT || secrets.GITHUB_TOKEN }}
+          script: |
+            const gate = require('./.github/scripts/trigger-gate.js');
+            const verdict = await gate.evaluate({ github, context, core });
+            core.setOutput('run', verdict.run ? 'true' : 'false');
+
+  opencode:
+    needs: gate
+    # An empty output means the gate job was skipped (not a trigger) or failed;
+    # both skip the agent. Only an explicit "true" from a passing gate runs it.
+    if: needs.gate.outputs.run == 'true'
     runs-on: ubuntu-latest
     # 45 minutes was not enough for deep VM/kernel debugging tickets: issue
     # #621 (scheduler stop/sleep-queue work) produced a full baseline,
