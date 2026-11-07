@@ -21,11 +21,16 @@
 package org.jnode.test;
 
 import org.jnode.driver.serial.console.AsyncSerialConsoleWriterTest;
+import org.jnode.driver.serial.console.RawKeyboardReaderTest;
 import org.jnode.plugin.model.PluginDescriptorModelTest;
+import org.jnode.plugin.model.PluginJarTest;
+import org.jnode.test.core.HeapHammerTest;
 import org.jnode.test.threads.ThreadingTestJUnit4;
 import org.jnode.test.util.NumberUtilsTest;
 import org.jnode.test.util.VersionTest;
 import org.jnode.vm.classmgr.VmTypeStateTest;
+import org.jnode.vm.memmgr.VmHeapManagerOomeTest;
+import org.jnode.vm.scheduler.VmThreadSchedulingTest;
 import org.jnode.vm.x86.compiler.l1a.X86Level1ACompilerVisitorTest;
 import org.jnode.vm.compiler.ir.L2HostTest;
 import org.jnode.vm.compiler.ir.L2ModeMatrixTest;
@@ -62,10 +67,15 @@ import org.junit.runners.Suite.SuiteClasses;
     X86RegisterPoolTest.class,
     X86StreamTest.class,
     VmTypeStateTest.class,
+    VmThreadSchedulingTest.class,
     CoreTestSuiteMembershipTest.class,
     CompilerUnionPolicyTest.class,
     PluginDescriptorModelTest.class,
     AsyncSerialConsoleWriterTest.class,
+    RawKeyboardReaderTest.class,
+    PluginJarTest.class,
+    HeapHammerTest.class,
+    VmHeapManagerOomeTest.class,
 }
 )
 public class CoreTestSuite {

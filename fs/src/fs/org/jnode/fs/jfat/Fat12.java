@@ -51,21 +51,29 @@ public class Fat12 extends Fat {
     }
 
     public int set(int index, int element) throws IOException {
-        throw new UnsupportedOperationException("Can't write to FAT-12 yet");
+        int value = element & 0xFFF;
+        int raw = (int) getUInt16(index);
+        int old;
+
+        if ((index % 2) == 0) {
+            old = raw & 0xFFF;
+            setInt16(index, (raw & 0xF000) | value);
+        } else {
+            old = (raw >> 4) & 0xFFF;
+            setInt16(index, (raw & 0x000F) | (value << 4));
+        }
+
+        return old;
     }
 
     public long getClusterPosition(int index) {
         BootSector bootSector = getBootSector();
 
-        long rootDirectoryOffset = bootSector.getFirstDataSector() * bootSector.getBytesPerSector();
-
         if (index == 0) {
-            return rootDirectoryOffset;
+            return bootSector.getFirstRootDirSector() * bootSector.getBytesPerSector();
         }
 
-        // Need to account for the size of the root directory entry for following clusters
-        long filesOffset = rootDirectoryOffset + bootSector.getNrRootDirEntries() * 32;
-        return filesOffset + ((index - firstCluster()) * getClusterSize());
+        return getClusterSector(index) * (long) bootSector.getBytesPerSector();
     }
 
     public boolean isEofChain(int entry) {

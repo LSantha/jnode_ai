@@ -143,6 +143,17 @@ public class FatCache {
         CacheElement c = get(addr);
         byte[] data = c.getData();
 
+        if (ofs == elementSize - 1 && offset - fat.getFirst(0) + 1 < fatsize) {
+            LittleEndian.setInt8(data, ofs, value);
+            LittleEndian.setInt8(data, ofs + 1, value >> 8);
+            c.setDirty();
+
+            CacheElement next = get(addr + 1);
+            LittleEndian.setInt8(next.getData(), 0, value >> 8);
+            next.setDirty();
+            return;
+        }
+
         LittleEndian.setInt16(data, ofs, value);
 
         c.setDirty();

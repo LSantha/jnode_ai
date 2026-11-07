@@ -187,6 +187,9 @@ public final class MemoryBlockManager extends VmSystemObject {
      * @return The block number of the first block, or Word.max() if not found.
      */
     private static Word findFreeBlocks(Word freeBlockCount) {
+        if (freeBlockCount.GT(blockCount)) {
+            return Word.max();
+        }
         final Word max = blockCount.sub(freeBlockCount);
         Word nr = nextBlockNr;
         while (nr.LT(max)) {

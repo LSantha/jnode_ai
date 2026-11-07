@@ -246,12 +246,24 @@ module.exports = async ({ github, context, core }) => {
       var triage = await triageStatus(issueNumber);
       if (!triage.present || !triage.clear || triage.count > 3) {
         if (!triage.requested) {
-          await h.triggerTask(issueNumber, "/oc triage issue #" + issueNumber + "\n\nTriage run ONLY. Load the jnode-triage-issue skill and obey it. Output is exactly one ## Triage comment plus kind/area label edits. FORBIDDEN in this run: git checkout -b, git push, gh pr create, any branch, any PR.");
+          if (await hasActiveRunFor(issueNumber)) {
+            core.info("Ticket runner: #" + issueNumber + " triage request deferred: a run is already in flight.");
+          } else {
+            await h.triggerTask(issueNumber, "/oc triage issue #" + issueNumber + "\n\nTriage run ONLY. Load the jnode-triage-issue skill and obey it. Output is exactly one ## Triage comment plus kind/area label edits. FORBIDDEN in this run: git checkout -b, git push, gh pr create, any branch, any PR.");
+          }
         }
         core.info("Ticket runner: #" + issueNumber + " /run deferred: waiting for a clear ## Triage report.");
         return;
       }
-      // Clear triage: initialize and start DEV.
+      // Clear triage: initialize and start DEV. A live agent run means the
+      // stall this /run is nudging is already being worked, so starting a
+      // second one is the #824 duplicate; defer to the in-flight run's
+      // completion instead (a genuinely stalled run is not in flight, so the
+      // escape hatch still works when it is needed).
+      if (await hasActiveRunFor(issueNumber)) {
+        core.info("Ticket runner: #" + issueNumber + " /run deferred: an agent run is already in flight.");
+        return;
+      }
       state = initState(customMaxTurns);
       state.history.push({ event: "start", timestamp: new Date().toISOString() });
 
@@ -279,14 +291,10 @@ module.exports = async ({ github, context, core }) => {
       // review_in_progress false here would double-prompt on the next green CI
       // wakeup. Park instead; the wakeup posts the prompt on green.
       if (state.phase === "REVIEW" && state.pr && !(await h.isCIGreen(state.pr))) {
-        await updateIssueState(issueNumber, Object.assign({}, state, {
-          review_in_progress: false,
-          review_pending_ci: true,
-          history: state.history.concat([{
-            event: "review_deferred_ci", reason: "manual run while CI not green",
-            timestamp: new Date().toISOString()
-          }])
-        }));
+        h.parkForCI(state, state.pr, {
+          event: "review_deferred_ci", reason: "manual run while CI not green"
+        });
+        await updateIssueState(issueNumber, state);
         await github.rest.issues.createComment({
           owner, repo, issue_number: issueNumber,
           body: "Review is waiting for Java CI to go green on PR #" + state.pr + ". Not re-requesting review yet; the runner posts it as soon as CI completes."
@@ -424,6 +432,49 @@ module.exports = async ({ github, context, core }) => {
       core.info("Ticket runner: auto-start skipped for #" + issueNumber + ", state appeared meanwhile.");
       return false;
     }
+    if (await hasActiveRunFor(issueNumber)) {
+      // Nothing durable is written before this point, so deferring costs
+      // nothing: the in-flight run's completion wakes this path again.
+      core.info("Ticket runner: auto-start deferred for #" + issueNumber + ", an agent run is already in flight.");
+      return false;
+    }
+    // Serialize against a sibling wakeup. A labeled event and a Triage
+    // completion can wake this runner within the same second - that is how
+    // #824 got two agents and #834 got two identical "/oc Please proceed"
+    // comments 2s apart: both wakeups passed their guards before either had
+    // written state or posted, and the in-flight check above cannot see a
+    // run that has not registered yet. A jittered settle before the post makes
+    // the sibling's trigger comment (visible ~1-2s after it posts) and its run
+    // (a few seconds later) detectable by whichever runner wakes later. The
+    // jitter is per-run (run id mod 7) so two concurrent wakeups do not wake
+    // from the settle at the same moment. Skipped in unit tests, which have
+    // no concurrent publisher and no run id.
+    if (process.env.GITHUB_RUN_ID) {
+      // AUTO_START_SETTLE_MS lets a test drive the re-check without sleeping;
+      // unset in production, the jitter above applies.
+      var settle = Number(process.env.AUTO_START_SETTLE_MS);
+      var jitter = isNaN(settle)
+        ? 8000 + (Number(process.env.GITHUB_RUN_ID) % 7) * 3000
+        : settle;
+      await new Promise(function (r) { setTimeout(r, jitter); });
+      var again = await github.rest.issues.get({ owner, repo, issue_number: issueNumber });
+      if (parseState((again.data && again.data.body) || "")) {
+        core.info("Ticket runner: auto-start skipped for #" + issueNumber + ", state appeared during the settle.");
+        return false;
+      }
+      var cmts = await github.rest.issues.listComments({ owner, repo, issue_number: issueNumber, per_page: 100 });
+      var list = (cmts && cmts.data) ? cmts.data : [];
+      for (var ci = 0; ci < list.length; ci++) {
+        if ((list[ci].body || "").indexOf("/oc Please proceed with this task.") >= 0) {
+          core.info("Ticket runner: auto-start deferred for #" + issueNumber + ", a sibling wakeup already posted the DEV trigger.");
+          return false;
+        }
+      }
+      if (await hasActiveRunFor(issueNumber)) {
+        core.info("Ticket runner: auto-start deferred for #" + issueNumber + ", an agent run appeared during the settle.");
+        return false;
+      }
+    }
     var st = initState();
     st.history.push({ event: "auto_start", reason: reason, timestamp: new Date().toISOString() });
     var newBody = replaceOrAppendStatus(body, st, issueNumber);
@@ -449,6 +500,10 @@ module.exports = async ({ github, context, core }) => {
     if (!t.present) {
       if (t.requested) {
         core.info("Ticket runner: #" + issueNumber + " already has a triage request; waiting for its report.");
+        return;
+      }
+      if (await hasActiveRunFor(issueNumber)) {
+        core.info("Ticket runner: #" + issueNumber + " triage request deferred: a run is already in flight.");
         return;
       }
       core.info("Ticket runner: #" + issueNumber + " labeled " + label + " but untriaged; requesting triage first.");
@@ -482,6 +537,43 @@ module.exports = async ({ github, context, core }) => {
     return "<!-- CI-HEAL:" + sha + " -->";
   }
 
+  // Is an agent (opencode or Triage) run for this issue queued or in flight?
+  // Seen on #824: the opencode completion and the Triage completion landed one
+  // second apart, and both auto-start wakeups passed their guards before either
+  // had posted, so two agents ran the same ticket and each then opened a PR.
+  // The runs API is the only authoritative in-flight signal (agent/in-progress
+  // is never applied), so every trigger this runner posts is second-guessed
+  // against it. The check runs immediately before the post: that catches every
+  // staggered publisher and narrows the simultaneous case to the sibling's run
+  // registration lag, which is the documented residual. Fails closed - an API
+  // error reads as "busy" so a runs outage cannot start a second agent.
+  async function hasActiveRunFor(issueNumber) {
+    try {
+      var workflows = ["opencode.yml", "triage.yml"];
+      for (var i = 0; i < workflows.length; i++) {
+        var res = await github.rest.actions.listWorkflowRuns({
+          owner: owner, repo: repo, workflow_id: workflows[i], per_page: 100
+        });
+        var runs = (res && res.data) ? res.data : [];
+        for (var j = 0; j < runs.length; j++) {
+          if (runs[j].status !== "queued" && runs[j].status !== "in_progress") continue;
+          if (refsNumber(runs[j].display_title || "", issueNumber)) return true;
+        }
+      }
+    } catch (err) {
+      core.warning("Ticket runner: could not read workflow runs for #" + issueNumber + ": " + err.message);
+      return true;
+    }
+    return false;
+  }
+
+  // Run titles look like "Issue #42 - ...". Match the number as a standalone
+  // token so #420 does not match #42.
+  function refsNumber(text, number) {
+    if (!text) return false;
+    return new RegExp("(^|[^0-9A-Za-z_])#" + number + "(?![0-9])").test(text);
+  }
+
   // Post /oc fix for a CI failure unless already posted (marker), the PR is
   // busy (agent/in-progress), or automation is opted out (no-auto).
   async function postCiFixOnce(prNumber, sha, runUrl) {
@@ -511,6 +603,15 @@ module.exports = async ({ github, context, core }) => {
     var run = context.payload.workflow_run;
     var conclusion = run.conclusion;
     if (conclusion === "skipped") return;
+    // Only a real failure warrants a heal. A cancelled run is normally a
+    // transient stall (or a maintainer cancelling a hung QEMU boot); waking an
+    // agent for it posts /oc fix on a branch that has nothing to fix and
+    // restarts the whole pipeline. ant.yml's heal job applies the same rule.
+    var failed = conclusion === "failure" || conclusion === "timed_out";
+    if (conclusion !== "success" && !failed) {
+      core.info("Ticket runner: Java CI " + conclusion + " (no heal)");
+      return;
+    }
     var sha = run.head_sha || "";
     var runUrl = "https://github.com/" + owner + "/" + repo + "/actions/runs/" + run.id;
     core.info("Ticket runner: Java CI " + conclusion + " for " + sha);
@@ -618,8 +719,12 @@ module.exports = async ({ github, context, core }) => {
     }
 
     var phaseFailed = conclusion !== "success";
+    // A cancelled run is not a failed turn: it produced no work to judge, and
+    // counting it as one made cancelling a duplicate agent spawn its
+    // replacement (#824). Thread the distinction into the phase handlers.
+    var cancelled = conclusion === "cancelled";
 
-    await advancePhase(runIssueNumber, state, phaseFailed);
+    await advancePhase(runIssueNumber, state, phaseFailed, cancelled);
   }
 
   async function handlePullRequestReview() {
@@ -688,10 +793,8 @@ module.exports = async ({ github, context, core }) => {
   async function approveAndMerge(issueNumber, state, prNumber, force) {
     if (!force && !(await h.isCIGreen(prNumber))) {
       state.phase = "REVIEW";
-      state.review_in_progress = false;
-      state.review_pending_ci = true;
+      h.parkForCI(state, prNumber, { event: "human_approved_ci_red" });
       state.retries = 0;
-      state.history.push({ event: "human_approved_ci_red", timestamp: new Date().toISOString() });
       await updateIssueState(issueNumber, state);
       await github.rest.issues.createComment({
         owner, repo, issue_number: prNumber,
@@ -761,7 +864,7 @@ module.exports = async ({ github, context, core }) => {
   // PHASE ADVANCEMENT (called from workflow_run handler)
   // ================================================================
 
-  async function advancePhase(issueNumber, state, phaseFailed) {
+  async function advancePhase(issueNumber, state, phaseFailed, cancelled) {
     core.info("Ticket runner: advancing #" + issueNumber + " phase=" + state.phase + " failed=" + phaseFailed);
 
     var issueOpen = true;
@@ -818,7 +921,7 @@ module.exports = async ({ github, context, core }) => {
 
     switch (state.phase) {
       case "DEV":
-        await handleDevCompletion(issueNumber, state, phaseFailed);
+        await handleDevCompletion(issueNumber, state, phaseFailed, cancelled);
         break;
       case "REVIEW":
         await handleReviewCompletion(issueNumber, state, phaseFailed);
@@ -883,18 +986,7 @@ module.exports = async ({ github, context, core }) => {
     state.history.push({ event: "review_requested", pr: prNumber, timestamp: new Date().toISOString() });
   }
 
-  /** Park a ticket whose review cannot be requested yet because CI is not green. */
-  async function parkForCI(issueNumber, state, prNumber, reason) {
-    state.review_in_progress = false;
-    // Parked means no prompt was posted. handleReviewCompletion reads this flag
-    // to tell "never asked" from "asked, no answer".
-    state.review_pending_ci = true;
-    state.history.push({ event: "review_pending_ci", reason: reason, timestamp: new Date().toISOString() });
-    await updateIssueState(issueNumber, state);
-    core.info("Ticket runner: #" + issueNumber + " parked on PR #" + prNumber + ", review waits for CI: " + reason);
-  }
-
-  async function handleDevCompletion(issueNumber, state, phaseFailed) {
+  async function handleDevCompletion(issueNumber, state, phaseFailed, cancelled) {
     var prNumber = await findPRForIssueWithComment(issueNumber);
     if (prNumber) {
       state.pr = prNumber;
@@ -926,7 +1018,8 @@ module.exports = async ({ github, context, core }) => {
         await updateIssueState(issueNumber, state);
         core.info("Ticket runner: #" + issueNumber + " -> REVIEW on PR #" + prNumber);
       } else {
-        await parkForCI(issueNumber, state, prNumber, "CI not green after DEV");
+        h.parkForCI(state, prNumber, { reason: "CI not green after DEV" });
+        await updateIssueState(issueNumber, state);
         core.info("Ticket runner: #" + issueNumber + " -> REVIEW on PR #" + prNumber
           + ", review waits for CI (Java CI wakeup will request it)");
       }
@@ -934,6 +1027,15 @@ module.exports = async ({ github, context, core }) => {
     }
 
     if (phaseFailed) {
+      if (cancelled) {
+        // Cancelling a run (a human, or the watchdog's hung-run cancel) is not
+        // evidence the DEV turn failed. Retrying here is how cancelling one of
+        // two duplicate agents on #824 produced a third: every cancel posted a
+        // replacement trigger. Leave the phase parked instead - the surviving
+        // run's completion, a watchdog nudge, or a manual /run advances it.
+        core.info("Ticket runner: #" + issueNumber + " run cancelled, not a failed turn; DEV parked without a retry.");
+        return;
+      }
       await retryOrFail(issueNumber, state);
       return;
     }
@@ -1019,8 +1121,7 @@ module.exports = async ({ github, context, core }) => {
           // not passed, and a human approval only re-checks CI. Park with
           // review_pending_ci set; the
           // Java CI success wakeup clears it and posts the prompt on green.
-          state.review_pending_ci = true;
-          state.history.push({ event: "merge_deferred", reason: "ci_not_green", timestamp: new Date().toISOString() });
+          h.parkForCI(state, state.pr, { event: "merge_deferred", reason: "ci_not_green" });
           await updateIssueState(issueNumber, state);
           await github.rest.issues.createComment({
             owner, repo, issue_number: state.pr,
@@ -1146,7 +1247,8 @@ module.exports = async ({ github, context, core }) => {
     state.history.push({ event: "feedback_done", timestamp: new Date().toISOString() });
     var ciGreen = await h.isCIGreen(state.pr);
     if (!ciGreen) {
-      await parkForCI(issueNumber, state, state.pr, "CI not green after feedback");
+      h.parkForCI(state, state.pr, { reason: "CI not green after feedback" });
+      await updateIssueState(issueNumber, state);
       return;
     }
     await updateIssueState(issueNumber, state);
@@ -1166,7 +1268,8 @@ module.exports = async ({ github, context, core }) => {
     // ticket to agent/failed on the third stray. Hoisted above the increment so
     // a defer is free regardless of caller.
     if (state.phase === "REVIEW" && state.pr && !(await h.isCIGreen(state.pr))) {
-      await parkForCI(issueNumber, state, state.pr, "retry suppressed: CI not green");
+      h.parkForCI(state, state.pr, { reason: "retry suppressed: CI not green" });
+      await updateIssueState(issueNumber, state);
       return;
     }
     state.retries += 1;
@@ -1308,9 +1411,7 @@ module.exports = async ({ github, context, core }) => {
     }
     var ciGreen = await h.isCIGreen(found);
     if (!ciGreen) {
-      st.review_in_progress = false;
-      st.review_pending_ci = true;
-      st.history.push({ event: "review_pending_ci", timestamp: new Date().toISOString() });
+      h.parkForCI(st, found);
       try {
         await github.rest.issues.update({ owner, repo, issue_number: issueNumber, body: replaceOrAppendStatus(body, st, issueNumber) });
       } catch (_) { /* state already rebuilt above; wakeup will re-read */ }

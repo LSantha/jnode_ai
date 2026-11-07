@@ -53,6 +53,18 @@ jobs:
         run: |
           chmod -R a-w .
           chmod -R u+w .git
+      - name: Select model and effort for this run
+        # Same single source as opencode.yml: role "triage" resolves through
+        # .github/scripts/model-config.js, so the model and its effort variant
+        # are changed in one place for every agentic role.
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const { modelFor } = require('./.github/scripts/model-config.js');
+            const sel = modelFor('triage');
+            core.info('Model selection: role=triage model=' + sel.model + ' variant=' + sel.variant);
+            core.exportVariable('SELECTED_MODEL', sel.model);
+            core.exportVariable('SELECTED_VARIANT', sel.variant);
       - name: Run opencode triage
         id: run_agent
         uses: anomalyco/opencode/github@latest
@@ -61,8 +73,8 @@ jobs:
           OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY }}
           OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
         with:
-          model: opencode/deepseek-v4.1-flash-free
-          variant: high
+          model: ${{ env.SELECTED_MODEL }}
+          variant: ${{ env.SELECTED_VARIANT }}
           use_github_token: true
           prompt: "You are triaging JNode GitHub issue #${{ github.event.issue.number }}. Load the jnode-triage-issue skill and execute it end to end: kind/area label audit first, then exactly one report opening with '## Triage' and the completed skill template, then the body addendum. Do not call gh issue comment for the report; return the report as your final response and the GitHub action will post it. No preamble, no environment commentary, no branches, commits, pushes, or pull requests. Do not post a completion summary, status update, acknowledgement, or follow-up comment. After applying labels and writing the addendum, return the single report and stop."
 

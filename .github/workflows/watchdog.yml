@@ -27,7 +27,8 @@ permissions:
   issues: write
   pull-requests: read
   checks: read
-  actions: read
+  # write (not read) because a hung run gets cancelled before its nudge
+  actions: write
   contents: read
 
 jobs:

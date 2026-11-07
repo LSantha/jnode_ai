@@ -443,6 +443,7 @@ public class FatChain {
          */
 
         if (last != clidx) {
+            int chainSize = last;
             int m = clidx - last;
 
             long lst = offset + src.remaining() - last * clsize;
@@ -458,7 +459,21 @@ public class FatChain {
                 ((ChainIterator) i).appendChain(last);
             } else {
                 setStartCluster(last);
-                // i = listIterator ( clidx );
+                p.setPosition(offset);
+            }
+
+            if (src.remaining() > 0) {
+                ChainIterator gap = listIterator(chainSize);
+                for (int idx = chainSize; idx < clidx; idx++) {
+                    if (!gap.hasNext())
+                        break;
+                    fat.clearCluster(gap.next());
+                }
+                if (clidx >= chainSize && gap.hasNext()) {
+                    int target = gap.next();
+                    if (p.getOffset() != 0)
+                        fat.clearCluster(target, 0, p.getOffset());
+                }
             }
 
             /*
@@ -467,8 +482,18 @@ public class FatChain {
              */
             int ofs = (int) (length % clsize);
 
-            if (ofs != 0)
+            if (ofs != 0 && cluster != 0)
                 fat.clearCluster(cluster, ofs, clsize);
+
+            if (src.remaining() > 0)
+                try {
+                    i.setPosition(clidx);
+                } catch (NoSuchElementException ex) {
+                    final IOException ioe = new IOException(
+                        "attempt to seek after End Of Chain " + offset);
+                    ioe.initCause(ex);
+                    throw ioe;
+                }
         }
 
         for (int l = src.remaining(), sz = p.getPartial(), ofs = p.getOffset(), size; l > 0; l -=
@@ -486,7 +511,7 @@ public class FatChain {
                     ((ChainIterator) i).appendChain(last);
                 } else {
                     setStartCluster(last);
-                    // i = listIterator ( 0 );
+                    p.setPosition(offset);
                 }
             }
 
@@ -697,24 +722,18 @@ public class FatChain {
         }
 
         private int getCluster(int position) throws IOException {
+            if (position < 0)
+                throw new IllegalArgumentException("negative index: " + position);
+
+            reset();
+            if (position == 0)
+                return 0;
             int cluster = 0;
-
-            if (position > index) {
-                for (int i = index; i < position; i++)
-                    if (hasNext())
-                        cluster = next();
-                    else
-                        break;
-            } else if (position < index) {
-                reset();
-                for (int i = 0; i < position; i++)
-                    if (hasNext())
-                        cluster = next();
-                    else
-                        break;
-            } else
-                cluster = address;
-
+            for (int i = 0; i < position; i++) {
+                if (!hasNext())
+                    return cluster;
+                cluster = next();
+            }
             return cluster;
         }
 

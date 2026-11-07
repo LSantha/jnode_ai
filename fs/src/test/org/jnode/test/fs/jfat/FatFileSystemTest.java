@@ -24,7 +24,6 @@ import java.io.File;
 import java.nio.ByteBuffer;
 import java.util.Iterator;
 
-import org.jnode.driver.block.BlockDeviceAPI;
 import org.jnode.driver.block.FileDevice;
 import org.jnode.emu.naming.BasicNameSpace;
 import org.jnode.fs.FSDirectory;
@@ -180,53 +179,18 @@ public class FatFileSystemTest {
         String expectedStructure =
             "type: JFAT vol: total:" + totalSpace + " free:" + freeSpace + "\n" +
                 "  ; \n" +
-                "    test.txt; 18; ff035bff2dcf972ee7dfd023455997ef\n";
+                "    dir1; \n" +
+                "      test.txt; 18; 80aeb09eb86de4c4a7d1f877451dc2a2\n" +
+                "    dir2; \n" +
+                "      test.txt; 18; 1b20f937ce4a3e9241cc907086169ad7\n" +
+                "    test.txt; 18; fd99fcfc86ba71118bd64c2d9f4b54a4\n";
 
         DataStructureAsserts.assertStructure(fs, expectedStructure);
     }
 
     @Test
     public void testReadFat12Disk() throws Exception {
-        tempFile = File.createTempFile("jfat12-test", ".img");
-        tempFile.deleteOnExit();
-
-        FileDevice fileDevice = new FileDevice(tempFile, "rw");
-        fileDevice.setLength(360L * 512);
-
-        BootSector bs = new BootSector(512);
-        bs.setBS_JmpBoot(new byte[]{(byte) 0xEB, (byte) 0x3C, (byte) 0x90});
-        bs.setBS_OemName("JNODE10");
-        bs.setBPB_BytesPerSector(512);
-        bs.setBPB_SecPerCluster(2);
-        bs.setBPB_RsvSecCount(1);
-        bs.setBPB_NoFATs(2);
-        bs.setBPB_RootEntCnt(224);
-        bs.setBPB_TotSec16(720);
-        bs.setBPB_MediumDescriptor(0xF0);
-        bs.setBPB_FATSz16(2);
-        bs.setBPB_SecPerTrk(9);
-        bs.setBPB_NumHeads(2);
-        bs.setBPB_HiddSec(0);
-        bs.setBPB_TotSec32(0);
-        bs.setBS_DrvNum(0x00);
-        bs.setBS_Reserved1(0);
-        bs.setBS_BootSig(0x29);
-        bs.setBS_VolID(0x12345678);
-        bs.setBS_VolLab("TEST12     ");
-        bs.setBS_FilSysType("FAT12   ");
-
-        bs.write(fileDevice.getAPI(BlockDeviceAPI.class), 0);
-
-        BlockDeviceAPI api = fileDevice.getAPI(BlockDeviceAPI.class);
-        byte[] fatSector = new byte[512];
-        fatSector[0] = (byte) 0xF0;
-        fatSector[1] = (byte) 0xFF;
-        fatSector[2] = (byte) 0xFF;
-        api.write(1 * 512, ByteBuffer.wrap(fatSector));
-        api.write((1 + 2) * 512, ByteBuffer.wrap(fatSector));
-
-        api.flush();
-        fileDevice.close();
+        tempFile = Fat12ImageBuilder.createImageFile("jfat12-test");
 
         FileDevice readOnlyDevice = new FileDevice(tempFile, "r");
         FatFileSystemType type = fss.getFileSystemType(FatFileSystemType.ID);

@@ -54,6 +54,34 @@ module.exports = function createHelpers({ github, context, core }) {
     });
   }
 
+  /**
+   * Park a task whose review cannot be requested yet because CI is not green.
+   *
+   * The two flags exist to tell three states apart, so they must move together:
+   * a review was requested (review_in_progress true), a review is waiting on CI
+   * and no prompt exists (review_pending_ci true), and neither. Every park site
+   * goes through here so the pair cannot drift. The caller supplies the history
+   * event (and any extra fields) and keeps its own state write and comments.
+   *
+   * `flags` owns the two flags; `opts.history` is the array to append to when it
+   * is not `flags.history` (the orchestrator keeps task flags on current_task
+   * but history on the master state).
+   */
+  function parkForCI(flags, prNumber, opts) {
+    opts = opts || {};
+    var history = opts.history || flags.history;
+    flags.review_in_progress = false;
+    flags.review_pending_ci = true;
+    var entry = { event: opts.event || "review_pending_ci", timestamp: new Date().toISOString() };
+    if (prNumber != null) entry.pr = prNumber;
+    if (opts.reason) entry.reason = opts.reason;
+    if (opts.extra) {
+      Object.keys(opts.extra).forEach(function (k) { entry[k] = opts.extra[k]; });
+    }
+    history.push(entry);
+    return entry;
+  }
+
   /** Find an open PR whose branch or body references the given issue number. */
   async function findPRForIssue(issueNumber) {
     var pulls = await github.rest.pulls.list({
@@ -373,22 +401,85 @@ module.exports = function createHelpers({ github, context, core }) {
    * rebuilt here or the Reviewed-by trailer cannot be added at all. Returns null
    * when there is nothing to attribute, which leaves the merge call untouched.
    */
-  function buildMergeMessage(commitMessages, models) {
+  function buildMergeMessage(commitMessages, models, prBody) {
     if (!Array.isArray(models) || models.length === 0) return null;
     var parts = [];
     var split = (Array.isArray(commitMessages) ? commitMessages : []).map(splitMessage);
-    for (var i = 0; i < split.length; i++) {
-      var chunk;
-      if (i === 0) {
-        chunk = split[0].body;
-      } else {
-        chunk = split[i].subject ? split[i].subject : "";
-        if (split[i].body) chunk += (chunk ? "\n\n" : "") + split[i].body;
-      }
+    var lead = split.length ? split[0].body : "";
+    // The agent commits are subject-plus-trailer by construction (the
+    // prepare-commit-msg hook appends Assisted-by and the agent writes nothing
+    // else), so without a fallback the squash body degenerates to trailers and
+    // says nothing about the change - which is what #840's merge message came
+    // out as. The PR description is the prose source for exactly this case.
+    if (!hasSubstance(lead)) {
+      var desc = stripRunLinks(prBody);
+      if (desc) lead = desc;
+    }
+    if (lead) parts.push(lead);
+    for (var i = 1; i < split.length; i++) {
+      var chunk = "";
+      if (split[i].subject) chunk = split[i].subject;
+      if (split[i].body) chunk += (chunk ? "\n\n" : "") + split[i].body;
       if (chunk) parts.push(chunk);
+    }
+    // The writer's attribution rides in the commits' Assisted-by trailers, but
+    // the fallback above replaces the commit bodies with the PR description -
+    // which silently dropped crouton's credit on #845's merge. Re-collect the
+    // distinct trailers from the commit messages and the PR body so the writer
+    // survives whatever replaces the prose; skip the ones already present, so a
+    // kept commit body does not end up crediting its author twice.
+    var writers = collectAssistedBy(commitMessages, prBody);
+    var kept = parts.join("\n");
+    var missing = writers.filter(function (w) {
+      return !new RegExp("assisted-by:\\s*" + w.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "\\b", "i").test(kept);
+    });
+    if (missing.length) {
+      parts.push("Assisted-by: " + missing.join(", "));
     }
     parts.push("Reviewed-by: " + models.join(", "));
     return parts.join("\n\n");
+  }
+
+  // True when the text says something beyond attribution trailers. An empty
+  // body and a body of only "Assisted-by: x" lines are both "no substance".
+  function hasSubstance(text) {
+    if (!text) return false;
+    return text.split("\n").some(function (line) {
+      var t = line.trim();
+      return t.length > 0 && !/^[A-Za-z-]+-by:\s/i.test(t);
+    });
+  }
+
+  // Distinct Assisted-by trailers across the commit messages and the PR body,
+  // in first-seen order. The writer's credit has to survive the description
+  // fallback replacing the commit bodies, so it is collected separately rather
+  // than left inside text that may be dropped.
+  function collectAssistedBy(commitMessages, prBody) {
+    var seen = {};
+    var out = [];
+    var texts = (Array.isArray(commitMessages) ? commitMessages : []).concat([prBody || ""]);
+    for (var i = 0; i < texts.length; i++) {
+      if (!texts[i]) continue;
+      var lines = String(texts[i]).split("\n");
+      for (var j = 0; j < lines.length; j++) {
+        var m = lines[j].match(/^\s*Assisted-by:\s*(\S+)\s*$/i);
+        if (m && !seen[m[1]]) {
+          seen[m[1]] = true;
+          out.push(m[1]);
+        }
+      }
+    }
+    return out;
+  }
+
+  // The PR body ends with a "[github run](...)" line the agent appends; it is
+  // noise in a permanent merge message. Everything else (including "Closes
+  // #N") is worth keeping.
+  function stripRunLinks(body) {
+    if (!body) return "";
+    return body.split("\n").filter(function (line) {
+      return !/^\[github run\]\(/.test(line.trim());
+    }).join("\n").trim();
   }
 
   /** Return true if the user object represents a bot. */
@@ -399,6 +490,45 @@ module.exports = function createHelpers({ github, context, core }) {
   /** Return true if the user is an allowlisted maintainer (fail-closed on a missing user). */
   function isTrustedAuthor(user) {
     return trustedAuthor.isTrustedAuthor(user);
+  }
+
+  /**
+   * The squash subject GitHub would use, and the issue number it should carry.
+   *
+   * GitHub uses the PR title for a multi-commit squash but the single commit's
+   * SUBJECT for a one-commit squash, and the agent's commit subjects routinely
+   * lack the repo's "#<issue> - " prefix (flagged as a nit on both #821 and
+   * #845). The result is a merged commit like "Fixed FAT12/16 root directory
+   * writes (#845)" with no issue link. So the subject is built here and passed
+   * as commit_title, which overrides both the repo setting and GitHub's
+   * one-commit rule.
+   */
+  function mergeSubject(pr) {
+    var data = pr && pr.data ? pr.data : {};
+    var title = data.title || "";
+    var num = closingIssueNumber(data) || issueFromHeadRef(data) ||
+      issueFromTitle(title);
+    var strip = title.replace(/^#\d+\s*-\s*/, "").trim();
+    var subject = num ? "#" + num + " - " + strip : strip;
+    // GitHub appends " (#N)" itself only on the default-title path; an explicit
+    // commit_title is used verbatim, so the reference is added here.
+    return subject + (data.number ? " (#" + data.number + ")" : "");
+  }
+
+  function closingIssueNumber(data) {
+    var m = (data.body || "").match(/(?:closes|fixes|resolves)\s+#(\d+)/i);
+    return m ? parseInt(m[1], 10) : 0;
+  }
+
+  function issueFromHeadRef(data) {
+    var ref = (data.head && data.head.ref) || "";
+    var m = ref.match(/^opencode\/issue(\d+)-/);
+    return m ? parseInt(m[1], 10) : 0;
+  }
+
+  function issueFromTitle(title) {
+    var m = (title || "").match(/^#(\d+)\s*-/);
+    return m ? parseInt(m[1], 10) : 0;
   }
 
   /** Squash-merge a PR and delete its head branch. */
@@ -421,7 +551,7 @@ module.exports = function createHelpers({ github, context, core }) {
         if (Array.isArray(list)) {
           commitMessage = buildMergeMessage(list.map(function (c) {
             return (c && c.commit && c.commit.message) || "";
-          }), models);
+          }), models, (pr.data && pr.data.body) || "");
         } else {
           core.warning("mergePR: listCommits returned no data for PR #" + prNumber +
             "; merge will use the repository default message");
@@ -437,6 +567,7 @@ module.exports = function createHelpers({ github, context, core }) {
     // something to add: an unnecessary commit_message would replace the
     // repository's COMMIT_MESSAGES template for no reason.
     if (commitMessage) mergeArgs.commit_message = commitMessage;
+    mergeArgs.commit_title = mergeSubject(pr);
     try {
       await github.rest.pulls.merge(mergeArgs);
     } catch (err) {
@@ -504,7 +635,7 @@ module.exports = function createHelpers({ github, context, core }) {
     isAutoMergeEligible: isAutoMergeEligible,
     isDiffSafe: isDiffSafe,
     touchesForbiddenPath: touchesForbiddenPath,
-    MAX_HISTORY_ENTRIES: MAX_HISTORY_ENTRIES,
+    parkForCI: parkForCI,
     DEFAULT_MAX_TURNS: DEFAULT_MAX_TURNS,
     isCIGreen: isCIGreen,
     SAFE_AUTO_MERGE_KINDS: SAFE_AUTO_MERGE_KINDS,

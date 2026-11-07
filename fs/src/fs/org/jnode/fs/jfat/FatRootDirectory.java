@@ -50,18 +50,35 @@ public class FatRootDirectory extends FatDirectory {
         BootSector bootSector = getFatFileSystem().getBootSector();
 
         // Check if this is the end of the root entires
-        if (index > bootSector.getNrRootDirEntries()) {
+        if (index >= bootSector.getNrRootDirEntries()) {
             throw new NoSuchElementException();
         }
 
         FatMarshal entry = new FatMarshal(32);
         ByteBuffer dest = entry.getByteBuffer();
-        long rootDirectoryOffset = bootSector.getFirstDataSector() * bootSector.getBytesPerSector();
+        long rootDirectoryOffset = bootSector.getFirstRootDirSector() * bootSector.getBytesPerSector();
 
         dest.limit(dest.position() + entry.length());
         getFatFileSystem().getApi().read(rootDirectoryOffset + 32 * index, dest);
 
         return createDirEntry(entry, index, allowDeleted);
+    }
+
+    @Override
+    public void setFatDirEntry(FatDirEntry entry) throws IOException {
+        if (getFatFileSystem().getFat().isFat32()) {
+            super.setFatDirEntry(entry);
+            return;
+        }
+
+        BootSector bootSector = getFatFileSystem().getBootSector();
+
+        if (entry.getIndex() >= bootSector.getNrRootDirEntries()) {
+            throw new IOException("Directory is full");
+        }
+
+        long rootDirectoryOffset = bootSector.getFirstRootDirSector() * bootSector.getBytesPerSector();
+        getFatFileSystem().getApi().write(rootDirectoryOffset + 32L * entry.getIndex(), entry.getByteBuffer());
     }
 
     public String getShortName() {

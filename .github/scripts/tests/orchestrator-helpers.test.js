@@ -7,7 +7,7 @@ function createCore() {
   return { info: () => {}, warning: () => {}, error: () => {} };
 }
 
-function createGithub({ reviews = [], comments = [], commits = [] } = {}) {
+function createGithub({ reviews = [], comments = [], commits = [], prBody = null } = {}) {
   const calls = { merge: [], listComments: [], listReviews: [], listCommits: [], deleteRef: [] };
   let getCount = 0;
   const github = {
@@ -20,6 +20,7 @@ function createGithub({ reviews = [], comments = [], commits = [] } = {}) {
               number: 99,
               title: "#42 - Subject",
               head: { ref: "opencode/issue42-fix" },
+              body: prBody,
               merged: getCount > 1
             }
           };
@@ -165,6 +166,84 @@ test("buildMergeMessage never repeats the first commit subject", () => {
   );
 });
 
+test("buildMergeMessage falls back to the PR description when the commits carry only trailers", () => {
+  // The agent's commits are subject-plus-Assisted-by by construction; without
+  // the fallback the merged message says nothing about the change (#840).
+  const { h } = helpersFor();
+  const msg = h.buildMergeMessage(
+    ["Fixed FatChain beyond-EOF writes\n\nAssisted-by: resolver-a",
+     "Added LGPL header, tests 177/0\n\nAssisted-by: resolver-a"],
+    ["reviewer-b"],
+    "Fixed FatChain: deterministic getCluster, gap-zeroing.\n\nCloses #840\n\n[github run](https://github.com/o/r/actions/runs/1)"
+  );
+  assert.ok(
+    msg.includes("Fixed FatChain: deterministic getCluster, gap-zeroing."),
+    "the PR description carries the substance"
+  );
+  assert.ok(msg.includes("Closes #840"), "useful PR-body lines are kept");
+  assert.ok(!msg.includes("github run"), "the run link is stripped");
+  assert.ok(msg.includes("Reviewed-by: reviewer-b"), "attribution still appended");
+});
+
+test("buildMergeMessage prefers the commit body over the PR description when it has substance", () => {
+  const { h } = helpersFor();
+  const msg = h.buildMergeMessage(
+    ["#42 - Subject\n\nReal explanation here."],
+    ["reviewer-a"],
+    "PR description that should be ignored."
+  );
+  assert.ok(msg.includes("Real explanation here."));
+  assert.ok(!msg.includes("should be ignored"));
+});
+
+test("mergePR falls back to the PR description when the commits carry only trailers", async () => {
+  // The production shape: pulls.get returns { data: { body } }, and the first
+  // commit is subject-plus-Assisted-by. mergePR must read pr.data.body, not
+  // pr.body - the latter is undefined and silently disables the fallback,
+  // which is exactly what #842's merge message did before this test.
+  const { h, calls } = helpersFor({
+    reviews: [{ body: "LGTM\n\nAssisted-by: reviewer-a" }],
+    commits: [
+      { commit: { message: "Fixed the thing\n\nAssisted-by: resolver-a" } },
+      { commit: { message: "#42 - Add tests\n\nReal test description.\n\nAssisted-by: resolver-a" } }
+    ],
+    prBody: "## Summary\n\nFixed the thing properly.\n\nCloses #42\n\n[github run](https://github.com/o/r/actions/runs/1)"
+  });
+  await h.mergePR(99);
+  const message = calls.merge[0].commit_message;
+  assert.ok(message, "an attributed merge carries an explicit message");
+  assert.ok(
+    message.includes("Fixed the thing properly."),
+    "the PR description is the fallback prose source"
+  );
+  assert.ok(
+    message.includes("Assisted-by: resolver-a"),
+    "the writer's trailer survives the description fallback (#845's merge lost it)"
+  );
+  assert.ok(!message.includes("github run"), "run links are stripped");
+  assert.ok(message.includes("Reviewed-by: reviewer-a"), "attribution survives");
+  assert.ok(message.includes("Real test description."), "real commit bodies still land");
+});
+
+test("mergePR sets a subject carrying the issue number (single-commit squash rule)", async () => {
+  // GitHub uses the single commit's SUBJECT for a one-commit squash, and the
+  // agent's commit subjects lack the "#<issue> - " prefix, so the merged commit
+  // loses the issue link (8bb54c6a4b has no #844). mergePR must pass an
+  // explicit commit_title.
+  const { h, calls } = helpersFor({
+    reviews: [{ body: "LGTM\n\nAssisted-by: reviewer-a" }],
+    commits: [
+      { commit: { message: "Fixed the thing\n\nAssisted-by: resolver-a" } }
+    ],
+    prBody: "## Summary\n\nFixed the thing properly.\n\nCloses #42"
+  });
+  await h.mergePR(99);
+  assert.strictEqual(
+    calls.merge[0].commit_title,
+    "#42 - Subject (#99)"
+  );
+});
+
 test("buildMergeMessage reproduces a multi-commit squash body", () => {
   const { h } = helpersFor();
   const msg = h.buildMergeMessage(
@@ -189,7 +268,7 @@ test("mergePR passes the composed commit_message when a reviewer model was adver
   });
   await h.mergePR(99);
   assert.strictEqual(calls.merge.length, 1);
-  assert.strictEqual("commit_title" in calls.merge[0], false);
+  assert.strictEqual(calls.merge[0].commit_title, "#42 - Subject (#99)");
   assert.strictEqual(calls.merge[0].commit_message, "Body.\n\nReviewed-by: reviewer-a");
 });
 
@@ -210,4 +289,34 @@ test("mergePR still merges when the commit list cannot be read", async () => {
   assert.strictEqual(calls.merge.length, 1);
   assert.strictEqual("commit_message" in calls.merge[0], false);
   assert.strictEqual(calls.deleteRef.length, 1);
+});
+
+test("parkForCI owns the flag pair and the history entry", () => {
+  const { h } = helpersFor();
+  const task = { review_in_progress: true, review_pending_ci: false, history: [] };
+  h.parkForCI(task, 99, {
+    event: "merge_deferred",
+    reason: "ci_not_green",
+    extra: { task: 42 }
+  });
+  assert.strictEqual(task.review_in_progress, false);
+  assert.strictEqual(task.review_pending_ci, true);
+  assert.strictEqual(task.history.length, 1);
+  assert.strictEqual(task.history[0].event, "merge_deferred");
+  assert.strictEqual(task.history[0].reason, "ci_not_green");
+  assert.strictEqual(task.history[0].pr, 99);
+  assert.strictEqual(task.history[0].task, 42);
+});
+
+test("parkForCI appends to a separate history array for the orchestrator shape", () => {
+  const { h } = helpersFor();
+  const task = { review_in_progress: true, review_pending_ci: false };
+  const history = [];
+  h.parkForCI(task, 99, { history });
+  assert.strictEqual(task.review_in_progress, false);
+  assert.strictEqual(task.review_pending_ci, true);
+  assert.strictEqual(task.history, undefined, "the flags object is not given a history field");
+  assert.strictEqual(history.length, 1);
+  assert.strictEqual(history[0].event, "review_pending_ci");
+  assert.strictEqual(history[0].pr, 99);
 });

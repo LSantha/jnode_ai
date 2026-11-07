@@ -20,18 +20,23 @@
 
 package org.jnode.test.fs.filesystem;
 
+import org.jnode.fs.jifs.files.JIFSFpluginJarTest;
 import org.jnode.fs.service.def.FileHandleManagerTest;
 import org.jnode.test.fs.ext4.Ext4FileSystemTest;
 import org.jnode.test.fs.filesystem.tests.BasicFSTest;
 import org.jnode.test.fs.filesystem.tests.ConcurrentAccessFSTest;
 import org.jnode.test.fs.filesystem.tests.FileFSTest;
 import org.jnode.test.fs.filesystem.tests.TreeFSTest;
+import org.jnode.test.fs.jfat.Fat12ChainTest;
 import org.jnode.test.fs.jfat.FatDirectoryExtensionTest;
 import org.jnode.test.fs.jfat.FatFileSystemTest;
+import org.jnode.test.fs.jfat.FatBeyondEofWriteTest;
 import org.jnode.test.fs.jfat.FatReadWriteTest;
+import org.jnode.test.fs.jfat.FatRootDirectoryWriteTest;
 import org.jnode.test.fs.jfat.FatWriteBench;
 import org.jnode.test.fs.jfat.FatWriteTest;
 import org.jnode.test.fs.jfat.JFatLongFileNameTest;
+import org.jnode.test.fs.jfat.MkfsFatFileSystemTest;
 import org.jnode.test.fs.ntfs.NTFSFileSystemTest;
 import org.junit.runner.RunWith;
 import org.junit.runners.Suite;
@@ -56,11 +61,16 @@ import org.junit.runners.Suite.SuiteClasses;
     NTFSFileSystemTest.class,
     FatReadWriteTest.class,
     FatWriteTest.class,
+    FatBeyondEofWriteTest.class,
     FatDirectoryExtensionTest.class,
     FatFileSystemTest.class,
+    MkfsFatFileSystemTest.class,
+    Fat12ChainTest.class,
+    FatRootDirectoryWriteTest.class,
     FatWriteBench.class,
     JFatLongFileNameTest.class,
     FileHandleManagerTest.class,
+    JIFSFpluginJarTest.class,
 }
 )
 public class FSTestSuite {
