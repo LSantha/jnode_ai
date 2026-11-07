@@ -267,14 +267,13 @@ public abstract class AbstractFileSystem<T extends FSEntry> implements FileSyste
     /**
      * Save all unsaved files from entry cache.
      */
-    private final void flushDirectories() {
+    private final void flushDirectories() throws IOException {
         log.info("flushing directories ...");
         for (FSDirectory d : directories.values()) {
             if (log.isDebugEnabled()) {
                 log.debug("flush: flushing directory " + d);
             }
-            //TODO: uncomment this line
-            //d.flush();
+            d.flush();
         }
     }
 
