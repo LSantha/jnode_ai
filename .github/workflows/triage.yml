@@ -67,10 +67,6 @@ jobs:
             core.exportVariable('SELECTED_VARIANT', sel.variant);
       - name: Run opencode triage
         id: run_agent
-        # Same bound as opencode.yml: the vendored action's unauthenticated
-        # version curl is rate-limited per IP on shared runner addresses, so a
-        # hang would otherwise park the job for 45+ minutes. See #870.
-        timeout-minutes: 5
         uses: anomalyco/opencode/github@latest
         env:
           GITHUB_TOKEN: ${{ secrets.GH_PAT }}
