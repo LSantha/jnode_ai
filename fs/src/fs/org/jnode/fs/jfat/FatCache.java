@@ -25,11 +25,14 @@ import java.nio.ByteBuffer;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Stack;
+import org.apache.log4j.Logger;
 import org.jnode.driver.block.BlockDeviceAPI;
 import org.jnode.util.LittleEndian;
 
 
 public class FatCache {
+
+    private static final Logger log = Logger.getLogger(FatCache.class);
 
     private final float loadFactor = 0.75f;
 
@@ -79,7 +82,17 @@ public class FatCache {
         /**
          * read the element from the device
          */
-        c.read(address);
+        try {
+            c.read(address);
+        } catch (IOException ex) {
+            c.abandon();
+            map.push(c);
+            throw ex;
+        } catch (RuntimeException ex) {
+            c.abandon();
+            map.push(c);
+            throw ex;
+        }
 
         /**
          * and insert the element into the LinkedHashMap
@@ -94,8 +107,16 @@ public class FatCache {
         // if an element was discarded from the LRU cache
         // now we can free it ... this will send the element
         // to storage if is marked as dirty
-        if (!e.isFree())
-            e.free();
+        if (!e.isFree()) {
+            try {
+                e.free();
+            } catch (IOException ex) {
+                log.warn("FatCache eviction flush failed for address " + e.getAddress().get()
+                    + ", abandoning dirty element and keeping cache usable", ex);
+                e.abandon();
+                throw ex;
+            }
+        }
 
         return c;
     }
@@ -448,6 +469,11 @@ public class FatCache {
                 throw new IllegalArgumentException("cannot free a free element");
             flush();
             address.free();
+        }
+
+        private void abandon() {
+            address.free();
+            dirty = false;
         }
 
         public String toString() {

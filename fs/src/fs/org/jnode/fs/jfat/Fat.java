@@ -205,6 +205,24 @@ public abstract class Fat {
 
     public abstract int eofChain();
 
+    public boolean isBadCluster(int entry) {
+        return false;
+    }
+
+    public boolean isReservedEntry(int entry) {
+        return false;
+    }
+
+    public boolean isCorruptChainEntry(int entry) {
+        if (isEofChain(entry) || isFree(entry)) {
+            return false;
+        }
+        if (isBadCluster(entry) || isReservedEntry(entry)) {
+            return true;
+        }
+        return (entry < 0 || entry >= size());
+    }
+
     public boolean hasNext(int entry) {
         /*
          * cluster 0(zero) and 1(one) are EndOfChains!

@@ -77,10 +77,18 @@ public class Fat12 extends Fat {
     }
 
     public boolean isEofChain(int entry) {
-        return (entry >= 0xFF0);
+        return (entry >= 0xFF8);
     }
 
     public int eofChain() {
-        return 0xFF0;
+        return 0xFF8;
+    }
+
+    public boolean isBadCluster(int entry) {
+        return (entry == 0xFF7);
+    }
+
+    public boolean isReservedEntry(int entry) {
+        return (entry >= 0xFF0 && entry <= 0xFF6);
     }
 }
