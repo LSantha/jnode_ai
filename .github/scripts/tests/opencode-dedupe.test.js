@@ -13,7 +13,7 @@ const {
 const { resolveModel } = require("../model-config.js");
 
 const OVERRIDE_BODY = "/oc review <!-- MODEL: opencode/deepseek-v4.1-flash-free -->\n\nIndependent second-opinion review.";
-const TITLE_COMMENT_1 = "Issue #849 - title (comment 6706766822)";
+const TITLE_COMMENT_1 = "(comment 6706766822) Issue #849 - title";
 
 const AGENT_REPORT_BODY = [
   "## Re-review - #848 / PR #849 (after /oc fix)",
@@ -64,6 +64,36 @@ test("the PR #849 agent report quoting /oc fix does not re-trigger", () => {
   assert.strictEqual(d.reason, "agent-report-quote");
 });
 
+test("a Verdict: comment review quoting /oc does not re-trigger", () => {
+  const body = [
+    "## Re-review (after /oc fix)",
+    "",
+    "Verdict: comment",
+    "Assisted-by: opencode/crouton-alpha-free"
+  ].join("\n");
+  assert.strictEqual(isReportShaped(body), true);
+  const d = decideShouldRun({ commentId: 6706772253, body: body, currentRunId: 11, runs: [] });
+  assert.strictEqual(d.shouldRun, false);
+  assert.strictEqual(d.reason, "agent-report-quote");
+});
+
+test("a relative [github run] link alone marks a report quoting /oc", () => {
+  const body = [
+    "Done (after /oc fix).",
+    "",
+    "[github run](/LSantha/jnode_ai/actions/runs/42370921813)"
+  ].join("\n");
+  assert.strictEqual(isReportShaped(body), true);
+  const d = decideShouldRun({ commentId: 6706772254, body: body, currentRunId: 11, runs: [] });
+  assert.strictEqual(d.shouldRun, false);
+  assert.strictEqual(d.reason, "agent-report-quote");
+});
+
+test("an absolute [github run] link alone marks a report quoting /oc", () => {
+  const body = "Done /oc fix\n\n[github run](https://github.com/LSantha/jnode_ai/actions/runs/42370921813)";
+  assert.strictEqual(isReportShaped(body), true);
+});
+
 test("a verdict-instructing human prompt still runs (it starts with /oc)", () => {
   const body = "/oc review\n\nYour final line must be exactly one of:\nVerdict: approve\nVerdict: request-changes\nAssisted-by: <model id>";
   const d = decideShouldRun({ commentId: 1, body: body, currentRunId: 10, runs: [] });
@@ -99,6 +129,9 @@ test("a different comment's earlier run does not block this one", () => {
 test("parseCommentIdFromTitle reads the run-name marker", () => {
   assert.strictEqual(parseCommentIdFromTitle(TITLE_COMMENT_1), 6706766822);
   assert.strictEqual(parseCommentIdFromTitle("Issue #849 - title"), null);
+  assert.strictEqual(parseCommentIdFromTitle("Issue #849 - title (comment 6706766822)"), 6706766822);
+  assert.strictEqual(parseCommentIdFromTitle("(comment 6706766822) Issue #849 - title (comment 123)"), 6706766822);
+  assert.strictEqual(parseCommentIdFromTitle("Issue #849 - (comment 123) title"), null);
 });
 
 test("wrapper: no-op run exports SHOULD_RUN=false and sets the output", async () => {
@@ -156,11 +189,12 @@ test("wrapper: a runs-API error fails closed", async () => {
 
 test("opencode.yml wires concurrency, run-name, dedupe step and payload-only selection", () => {
   const text = fs.readFileSync(path.join(__dirname, "..", "..", "workflows", "opencode.yml"), "utf8");
-  assert.match(text, /concurrency:\n\s+group: opencode-comment-\$\{\{[^}]*github\.event\.comment\.id/);
-  assert.match(text, /\(comment \$\{\{ github\.event\.comment\.id \}\}\)/);
+  assert.match(text, /concurrency:\n\s+group: opencode-\$\{\{ github\.event_name \}\}-\$\{\{[^}]*github\.event\.comment\.id/);
+  assert.match(text, /^run-name: "\(comment \$\{\{ github\.event\.comment\.id \}\}\) Issue #/m);
   assert.match(text, /actions: read/);
   assert.match(text, /require\(['"]\.\/\.github\/scripts\/opencode-dedupe\.js['"]\)/);
-  assert.match(text, /steps\.dedupe\.outputs\.should_run != 'false'/);
+  assert.match(text, /steps\.dedupe\.outputs\.should_run == 'true'/);
+  assert.doesNotMatch(text, /steps\.dedupe\.outputs\.should_run != 'false'/);
   assert.match(text, /resolveModel\(\(context\.payload\.comment \|\| \{\}\)\.body\)/);
   assert.doesNotMatch(text, /listComments|getComment|issues\.get/, "selection must not re-read a comment from the API");
 });

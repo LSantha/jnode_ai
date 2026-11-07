@@ -8,7 +8,7 @@
 //      are created for one comment id. The runs API cannot see a comment id,
 //      so opencode.yml puts it in the run name ("(comment <id>)") and this
 //      guard no-ops every run except the earliest for that id. The workflow
-//      concurrency group (keyed on the same id) serializes the pair, so the
+//      concurrency group (keyed on event name and the same id) serializes the pair, so the
 //      later run only checks after the earlier one has registered.
 //   2. Agent self-trigger: agent reports are posted as the maintainer (the
 //      GH_PAT owner passes the collaborator gate) and carry no opencode.ai/s/
@@ -36,7 +36,7 @@ function hasOcMention(body) {
 
 function isReviewReport(body) {
   var b = body || "";
-  return /Verdict:\s*(approve|request-changes)/.test(b) && /Assisted-by:\s*\S+/.test(b);
+  return /Verdict:\s*(approve|request-changes|comment)/.test(b) && /Assisted-by:\s*\S+/.test(b);
 }
 
 function isReportShaped(body) {
@@ -48,13 +48,14 @@ function isReportShaped(body) {
   if (reportSignals.isNeedsInfoComment(b)) return true;
   if (/##\s*[^\n]*Investigation Report/i.test(b)) return true;
   if (/(^|\n)\s*(?:Created|Opened) PR\s+#\d+/.test(b)) return true;
-  if (/\[github run\]\(https?:\/\/[^)]*\/actions\/runs\/\d+\)/.test(b)) return true;
+  if (/\[github run\]\((?:https?:\/\/)?[^)\s]*\/actions\/runs\/\d+\)/.test(b)) return true;
   if (isReviewReport(b)) return true;
   return false;
 }
 
 function parseCommentIdFromTitle(title) {
-  var m = String(title || "").match(/\(comment (\d+)\)/);
+  var s = String(title || "");
+  var m = s.match(/^\(comment (\d+)\)/) || s.match(/\(comment (\d+)\)\s*$/);
   return m ? Number(m[1]) : null;
 }
 
