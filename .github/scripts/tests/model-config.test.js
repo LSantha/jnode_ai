@@ -63,12 +63,12 @@ test("a MODEL override marker selects that model (second-opinion reviews)", () =
   const r = resolveModel("/oc review\n\n<!-- MODEL: opencode/deepseek-v4.1-flash-free --> second opinion");
   assert.strictEqual(r.role, "override");
   assert.strictEqual(r.model, "opencode/deepseek-v4.1-flash-free");
-  assert.strictEqual(r.variant, "high");
+  assert.strictEqual(r.variant, "max", "deepseek runs at its strongest effort");
 });
 
 test("a MODEL override for a coding trigger still overrides", () => {
-  const r = resolveModel("/oc fix\n\n<!-- MODEL: opencode/pulse-alpha-free --> try this one");
-  assert.strictEqual(r.model, "opencode/pulse-alpha-free");
+  const r = resolveModel("/oc fix\n\n<!-- MODEL: opencode/inkling-2-small-free --> try this one");
+  assert.strictEqual(r.model, "opencode/inkling-2-small-free");
   assert.strictEqual(r.variant, "max");
 });
 

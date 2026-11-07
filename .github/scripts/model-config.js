@@ -23,14 +23,12 @@
  */
 'use strict';
 
-// Effort per model. OpenCode's accepted set is provider-dependent; record what
-// actually works for each model rather than forcing one value on all of them.
-// "max" is the strongest lever where the model offers it; it is deliberately
-// not applied to deepseek-free, where changing the effort of every run is a
-// decision to take on its own.
+// Effort per model, at the strongest variant the endpoint reports for each one
+// (owner decision 2026-11-07: max wherever the model offers it, deepseek
+// included). OpenCode's accepted set is provider-dependent, so the record is
+// per model rather than one global value.
 const MODEL_VARIANTS = {
-  "opencode/deepseek-v4.1-flash-free": "high",
-  "opencode/pulse-alpha-free": "max",
+  "opencode/deepseek-v4.1-flash-free": "max",
   "opencode/crouton-alpha-free": "max",
   "opencode/inkling-2-small-free": "max"
 };
@@ -44,14 +42,15 @@ const DEFAULT_VARIANT = "high";
 // review role is deliberately a different model, so the work is checked by
 // something other than what wrote it. History of this slot, newest first:
 //   - crouton-alpha-free at max (from 2026-11-06 21:45): free, six-level effort
-//     ladder (minimal..max), trialled after pulse-alpha's provider went down
-//     mid-evening. Revert is a one-line flip if it behaves or disappears.
+//     ladder (minimal..max). Trialled after pulse-alpha's provider went down
+//     mid-evening; pulse is no longer offered, so its entry is removed rather
+//     than left to fail at dispatch.
 //   - pulse-alpha-free at max (19:28-21:40 same day): one strong outing - the
 //     #834 MBR test, plus the #837 JFAT deep review that survived an
 //     independent validity round - then the provider returned "Upstream request
 //     failed: Model is unavailable" and burned three DEV retries on #838.
-//   - deepseek-v4.1-flash-free at high: carried the role all session before
-//     that, and is the known-good fallback.
+//   - deepseek-v4.1-flash-free: carried the role all session before that, and
+//     is the known-good fallback.
 //
 // review runs inkling-2-small-free at max (from 2026-11-07): Thinking Machines'
 // second-generation model, 594B/17B active, pitched for agentic coding and
