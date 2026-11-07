@@ -205,6 +205,60 @@ public class FatFailurePathTest {
     }
 
     @Test
+    public void testEvictionFlushFailurePreservesDirtyEntry() throws Exception {
+        FatFileSystem fs = formatAndOpenRW();
+        Fat fat = fs.getFat();
+        FatCache cache = new FatCache(fat, 2, 512);
+        cache.setInt32(2, 0x11111111);
+        cache.setInt32(130, 0x22222222);
+        assertEquals(2, cache.usedEntries());
+        device.armFailAfterWrites(0);
+        try {
+            cache.getUInt32(256);
+            fail("expected IOException from eviction flush");
+        } catch (IOException expected) {
+        }
+        assertEquals(0x11111111L, cache.getUInt32(2));
+        assertEquals(0x22222222L, cache.getUInt32(130));
+        assertEquals(2, cache.usedEntries());
+        cache.getUInt32(256);
+        cache.getUInt32(384);
+        cache.getUInt32(512);
+        cache.getUInt32(640);
+        assertEquals(0x11111111L, cache.getUInt32(2));
+        assertEquals(0x22222222L, cache.getUInt32(130));
+        assertEquals(2, cache.usedEntries());
+        fs.close();
+    }
+
+    @Test
+    public void testEvictionFlushRuntimeFailurePreservesDirtyEntry() throws Exception {
+        FatFileSystem fs = formatAndOpenRW();
+        Fat fat = fs.getFat();
+        FatCache cache = new FatCache(fat, 2, 512);
+        cache.setInt32(2, 0x11111111);
+        cache.setInt32(130, 0x22222222);
+        assertEquals(2, cache.usedEntries());
+        device.armRuntimeFailAfterWrites(0);
+        try {
+            cache.getUInt32(256);
+            fail("expected RuntimeException from eviction flush");
+        } catch (IllegalStateException expected) {
+        }
+        assertEquals(0x11111111L, cache.getUInt32(2));
+        assertEquals(0x22222222L, cache.getUInt32(130));
+        assertEquals(2, cache.usedEntries());
+        cache.getUInt32(256);
+        cache.getUInt32(384);
+        cache.getUInt32(512);
+        cache.getUInt32(640);
+        assertEquals(0x11111111L, cache.getUInt32(2));
+        assertEquals(0x22222222L, cache.getUInt32(130));
+        assertEquals(2, cache.usedEntries());
+        fs.close();
+    }
+
+    @Test
     public void testEofMarkersAndCorruptChainIsLoud() throws Exception {
         File fat12File = Fat12ImageBuilder.createImageFile("jfat12-eof");
         FileDevice roDevice = new FileDevice(fat12File, "r");
@@ -312,6 +366,56 @@ public class FatFailurePathTest {
         assertEquals(lengthBefore + retry.length, actual.length);
         for (int i = 0; i < retry.length; i++) {
             assertEquals(retry[i], actual[(int) lengthBefore + i]);
+        }
+        fs.close();
+    }
+
+    @Test
+    public void testFailedWriteToNewFileLeavesNoOrphanedChain() throws Exception {
+        FatFileSystem fs = formatAndOpenRW();
+        Fat fat = fs.getFat();
+        FSFile file = fs.getRootEntry().getDirectory().addFile("new.bin").getFile();
+        file.flush();
+        fs.flush();
+        int[] before = snapshotFat(fat);
+        int freeBefore = fat.freeEntries();
+        assertEquals(0L, file.getLength());
+        assertEquals(0, ((FatEntry) file).getStartCluster());
+        assertEquals(0, ((FatEntry) file).getChain().size());
+        byte[] extra = new byte[fs.getClusterSize() * 2];
+        for (int i = 0; i < extra.length; i++) {
+            extra[i] = (byte) ((i + 3) & 0xFF);
+        }
+        device.armFailAfterWrites(0);
+        try {
+            file.write(0, ByteBuffer.wrap(extra));
+            fail("expected IOException from failing device");
+        } catch (IOException expected) {
+        }
+        int[] after = snapshotFat(fat);
+        assertTrue("FAT state after failed write to a new file must match state before: "
+            + Arrays.toString(before) + " vs " + Arrays.toString(after),
+            Arrays.equals(before, after));
+        assertEquals(freeBefore, fat.freeEntries());
+        assertEquals(0L, file.getLength());
+        assertEquals(0, ((FatEntry) file).getStartCluster());
+        assertEquals(0, ((FatEntry) file).getChain().size());
+        byte[] retry = new byte[fs.getClusterSize()];
+        for (int i = 0; i < retry.length; i++) {
+            retry[i] = (byte) ((i + 4) & 0xFF);
+        }
+        file.write(0, ByteBuffer.wrap(retry));
+        file.flush();
+        assertEquals(retry.length, file.getLength());
+        assertEquals(1, ((FatEntry) file).getChain().size());
+        ByteBuffer readBuffer = ByteBuffer.allocate((int) file.getLength());
+        file.read(0, readBuffer);
+        readBuffer.flip();
+        byte[] actual = new byte[readBuffer.remaining()];
+        readBuffer.get(actual);
+        assertEquals(retry.length, actual.length);
+        for (int i = 0; i < retry.length; i++) {
+            assertEquals(retry[i], actual[i]);
         }
         fs.close();
     }

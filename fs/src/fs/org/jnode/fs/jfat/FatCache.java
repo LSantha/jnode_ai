@@ -113,18 +113,26 @@ public class FatCache {
                 e.free();
             } catch (IOException ex) {
                 log.warn("FatCache eviction flush failed for address " + e.getAddress().get()
-                    + ", abandoning dirty element and keeping cache usable", ex);
-                e.abandon();
+                    + ", preserving dirty element in cache", ex);
+                restoreEvicted(c, e);
                 throw ex;
             } catch (RuntimeException ex) {
                 log.warn("FatCache eviction flush failed for address " + e.getAddress().get()
-                    + ", abandoning dirty element and keeping cache usable", ex);
-                e.abandon();
+                    + ", preserving dirty element in cache", ex);
+                restoreEvicted(c, e);
                 throw ex;
             }
         }
 
         return c;
+    }
+
+    private void restoreEvicted(CacheElement c, CacheElement e) {
+        map.discardFromFree(e);
+        map.remove(c.getAddress());
+        c.abandon();
+        map.push(c);
+        map.requeue(e);
     }
 
     private CacheElement get(long address) throws IOException {
@@ -259,6 +267,7 @@ public class FatCache {
         private final int cacheSize;
         private final CacheKey key = new CacheKey();
         private final Stack<CacheElement> free = new Stack<CacheElement>();
+        private boolean requeueing;
 
         private CacheMap(int cacheSize) {
             super((int) Math.ceil(cacheSize / loadFactor) + 1, loadFactor, true);
@@ -292,6 +301,22 @@ public class FatCache {
             return free.pop();
         }
 
+        private void discardFromFree(CacheElement c) {
+            if (!free.isEmpty() && peek() == c)
+                pop();
+            else if (!free.isEmpty())
+                free.remove(c);
+        }
+
+        private CacheElement requeue(CacheElement c) {
+            requeueing = true;
+            try {
+                return put(c);
+            } finally {
+                requeueing = false;
+            }
+        }
+
         private CacheElement get(long address) {
             key.set(address);
             return get(key);
@@ -305,7 +330,7 @@ public class FatCache {
          * discard the eldest element when the cache is full
          */
         protected boolean removeEldestEntry(Map.Entry<CacheKey, CacheElement> eldest) {
-            boolean remove = (size() > cacheSize);
+            boolean remove = !requeueing && (size() > cacheSize);
 
             /**
              * before going to discard the eldest push it back on the stacked

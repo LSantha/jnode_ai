@@ -640,6 +640,8 @@ public class FatChain {
 
     private void rollbackWrite(List<Integer> allocatedClusters, int savedHead, int savedEnd,
             long offset) {
+        iterator.reset();
+        position.setPosition(offset);
         if (allocatedClusters == null || allocatedClusters.isEmpty()) {
             return;
         }
