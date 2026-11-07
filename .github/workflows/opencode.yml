@@ -7,18 +7,25 @@ on:
   pull_request_review_comment:
     types: [created]
 
+# One agent per issue/PR at a time; a second trigger queues behind the first
+# instead of running a competing agent on the same head. cancel-in-progress
+# stays false so a queued trigger is never dropped mid-run.
+concurrency:
+  group: opencode-${{ github.event.issue.number || github.event.pull_request.number }}
+  cancel-in-progress: false
+
 jobs:
   opencode:
-    # The triage and approve exclusions are prefix/contains based and mirror each
-    # other. Being slightly broad only under-runs an unknown "approve*"/"triage*"
-    # verb, which is the safe direction for an agent trigger.
+    # /oc must lead the body. A mid-line "/oc " (an agent quoting its own
+    # trigger, e.g. "(after /oc fix)") must not start a run - that self-quote
+    # fired a duplicate agent on PR #849. The triage/approve exclusions are
+    # prefix based, matching the line-leading gate. The session-link guard
+    # stays a contains() check: an agent comment is rejected wherever the
+    # link appears.
     if: |
-      (contains(github.event.comment.body, ' /oc ') ||
-      startsWith(github.event.comment.body, '/oc ')) &&
-      !(startsWith(github.event.comment.body, '/oc triage') ||
-      contains(github.event.comment.body, ' /oc triage')) &&
-      !(startsWith(github.event.comment.body, '/oc approve') ||
-      contains(github.event.comment.body, ' /oc approve')) &&
+      startsWith(github.event.comment.body, '/oc ') &&
+      !startsWith(github.event.comment.body, '/oc triage') &&
+      !startsWith(github.event.comment.body, '/oc approve') &&
       !contains(github.event.comment.body, 'opencode.ai/s/') &&
       (github.event.comment.author_association == 'COLLABORATOR' || 
        github.event.comment.author_association == 'MEMBER' || 
@@ -45,6 +52,7 @@ jobs:
       contents: write
       pull-requests: write
       issues: write
+      actions: read
     steps:
       - name: Checkout repository
         uses: actions/checkout@v6
@@ -54,7 +62,21 @@ jobs:
           # Java CI run in action_required (waiting for a maintainer to approve)
           # instead of running it. The PAT is installed below instead.
           persist-credentials: false
+      - name: Dedupe duplicate dispatches of this comment
+        # Backstop for a redelivered webhook: if an earlier run of this
+        # workflow was already dispatched for this comment, this run no-ops
+        # and every later step is skipped. Fail-open on a runs-API error so
+        # an outage cannot suppress a legitimate run.
+        id: dedupe
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GH_PAT || secrets.GITHUB_TOKEN }}
+          script: |
+            const gate = require('./.github/scripts/trigger-gate.js');
+            const act = await gate.dedupeCheck({ github, context, core });
+            core.setOutput('act', act ? 'true' : 'false');
       - name: Select model and effort for this run
+        if: steps.dedupe.outputs.act == 'true'
         # Role -> model + effort variant, from .github/scripts/model-config.js.
         # A review (/oc review) can run a different model from the coding runs
         # (/oc, /oc fix, ...) without a second workflow: the verb is matched
@@ -72,6 +94,7 @@ jobs:
             // an Assisted-by trailer can never name a model that did not make it.
             core.exportVariable('OPENCODE_MODEL', sel.model);
       - name: Configure git identity
+        if: steps.dedupe.outputs.act == 'true'
         env:
           GH_PAT: ${{ secrets.GH_PAT }}
         run: |
@@ -92,28 +115,34 @@ jobs:
           auth=$(printf 'x-access-token:%s' "$GH_PAT" | base64 -w0)
           git config --local http.https://github.com/.extraheader "AUTHORIZATION: basic $auth"
       - name: Clone wiki
+        if: steps.dedupe.outputs.act == 'true'
         run: gh repo clone LSantha/jnode_ai.wiki .wiki
         env:
           GH_TOKEN: ${{ secrets.GH_PAT }}
       - name: Set up JDK 8
+        if: steps.dedupe.outputs.act == 'true'
         uses: actions/setup-java@v4
         with:
           java-version: '8'
           distribution: 'zulu'
       - name: Install QEMU
+        if: steps.dedupe.outputs.act == 'true'
         run: sudo apt-get update -qq && sudo apt-get install -y -qq qemu-system-x86 socat
       - name: Prepare jnode.properties
+        if: steps.dedupe.outputs.act == 'true'
         run: cp .github/qemu/jnode.properties .
       - name: Cache ISO build
+        if: steps.dedupe.outputs.act == 'true'
         id: cache-iso
         uses: actions/cache@v4
         with:
           path: all/build/cdroms/jnode-x86-lite.iso
           key: jnode-iso-${{ hashFiles('**/*.java', '**/build.xml', 'build.sh') }}
       - name: Build ISO
-        if: steps.cache-iso.outputs.cache-hit != 'true'
+        if: steps.dedupe.outputs.act == 'true' && steps.cache-iso.outputs.cache-hit != 'true'
         run: sh build.sh cd-x86-lite
       - name: Run opencode
+        if: steps.dedupe.outputs.act == 'true'
         id: run_agent
         uses: anomalyco/opencode/github@latest
         env:
@@ -126,7 +155,7 @@ jobs:
           use_github_token: true
 
       - name: Apply agent/* label and close if work-product is the comment
-        if: success() || failure() || cancelled()
+        if: steps.dedupe.outputs.act == 'true' && (success() || failure() || cancelled())
         env:
           PREV_CONCLUSION: ${{ steps.run_agent.outcome }}
         uses: actions/github-script@v7

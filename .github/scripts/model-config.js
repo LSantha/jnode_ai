@@ -76,13 +76,14 @@ function modelFor(role) {
   return { role: role, model: model, variant: variantFor(model) };
 }
 
-// Review is the only verb that changes the model today. Match it the way the
-// workflow's own trigger gate matches a verb: anchored at the start of the
-// body. A "/oc fix" prompt that quotes "/oc review" must still run the coding
-// model - a contains() match would flip the model on any body that merely
-// mentions a review (the multi-line /run body already showed how a loose verb
-// match silently misroutes a trigger).
-var REVIEW_RE = /^\s*\/oc\s+review\b/;
+// Review is the only verb that changes the model today. The verb comes from
+// trigger-gate.js parseTrigger, the same line-leading parse the workflow gate
+// uses, so gate and model selection cannot disagree. A "/oc fix" prompt that
+// quotes "/oc review" must still run the coding model - a contains() match
+// would flip the model on any body that merely mentions a review (the
+// multi-line /run body already showed how a loose verb match silently
+// misroutes a trigger).
+var parseTrigger = require("./trigger-gate.js").parseTrigger;
 
 // Per-run model override, for second-opinion reviews. A comment carrying
 // <!-- MODEL: opencode/deepseek-v4.1-flash-free --> runs that model instead of
@@ -115,7 +116,7 @@ function resolveModel(commentBody) {
   if (m && allowedModels()[m[1]]) {
     return { role: "override", model: m[1], variant: variantFor(m[1]) };
   }
-  return modelFor(REVIEW_RE.test(body) ? "review" : "coding");
+  return modelFor(parseTrigger(body).verb === "review" ? "review" : "coding");
 }
 
 module.exports = {
