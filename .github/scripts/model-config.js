@@ -85,8 +85,37 @@ function modelFor(role) {
 // match silently misroutes a trigger).
 var REVIEW_RE = /^\s*\/oc\s+review\b/;
 
+// Per-run model override, for second-opinion reviews. A comment carrying
+// <!-- MODEL: opencode/deepseek-v4.1-flash-free --> runs that model instead of
+// the role's default - so the same PR can be reviewed by two different models
+// (the batch compares their verdicts) without touching the pipeline: the
+// normal round still runs on the role's model, and the override comment is an
+// ordinary /oc review trigger the job already accepts.
+//
+// The allowed set is every model this map knows (the roles' models and the
+// variant entries). An unknown id is ignored rather than honoured, so a stray
+// or injected marker cannot point an agent run at an arbitrary or expensive
+// model - it just falls back to the role default.
+var MODEL_OVERRIDE_RE = /<!--\s*MODEL:\s*([A-Za-z0-9._:\/-]+)\s*-->/;
+
+function allowedModels() {
+  var set = {};
+  var roles = ROLE_MODELS;
+  for (var r in roles) {
+    if (Object.prototype.hasOwnProperty.call(roles, r)) set[roles[r]] = true;
+  }
+  for (var m in MODEL_VARIANTS) {
+    if (Object.prototype.hasOwnProperty.call(MODEL_VARIANTS, m)) set[m] = true;
+  }
+  return set;
+}
+
 function resolveModel(commentBody) {
   var body = commentBody || "";
+  var m = body.match(MODEL_OVERRIDE_RE);
+  if (m && allowedModels()[m[1]]) {
+    return { role: "override", model: m[1], variant: variantFor(m[1]) };
+  }
   return modelFor(REVIEW_RE.test(body) ? "review" : "coding");
 }
 

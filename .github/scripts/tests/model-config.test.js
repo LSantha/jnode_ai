@@ -58,3 +58,28 @@ test("a listed model gets its own declared effort", () => {
   const known = Object.keys(MODEL_VARIANTS)[0];
   assert.strictEqual(variantFor(known), MODEL_VARIANTS[known]);
 });
+
+test("a MODEL override marker selects that model (second-opinion reviews)", () => {
+  const r = resolveModel("/oc review\n\n<!-- MODEL: opencode/deepseek-v4.1-flash-free --> second opinion");
+  assert.strictEqual(r.role, "override");
+  assert.strictEqual(r.model, "opencode/deepseek-v4.1-flash-free");
+  assert.strictEqual(r.variant, "high");
+});
+
+test("a MODEL override for a coding trigger still overrides", () => {
+  const r = resolveModel("/oc fix\n\n<!-- MODEL: opencode/pulse-alpha-free --> try this one");
+  assert.strictEqual(r.model, "opencode/pulse-alpha-free");
+  assert.strictEqual(r.variant, "max");
+});
+
+test("an unknown MODEL id is ignored, not honoured", () => {
+  const r = resolveModel("/oc review\n\n<!-- MODEL: opencode/something-expensive -->");
+  assert.strictEqual(r.role, "review", "falls back to the role default");
+  assert.strictEqual(r.model, ROLE_MODELS.review);
+});
+
+test("no marker means the role default", () => {
+  const r = resolveModel("/oc review\n\nordinary review");
+  assert.strictEqual(r.model, ROLE_MODELS.review);
+  assert.strictEqual(r.role, "review");
+});
