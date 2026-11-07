@@ -20,10 +20,15 @@
 
 package org.jnode.test.fs.jfat;
 
+import java.io.File;
+import java.io.FileInputStream;
+import java.io.FileOutputStream;
+import java.io.RandomAccessFile;
 import java.nio.ByteBuffer;
 import java.util.ArrayList;
 import java.util.Iterator;
 import java.util.List;
+import java.util.NoSuchElementException;
 
 import org.jnode.driver.block.FileDevice;
 import org.jnode.emu.naming.BasicNameSpace;
@@ -32,6 +37,7 @@ import org.jnode.fs.FSEntry;
 import org.jnode.fs.jfat.FatFileSystem;
 import org.jnode.fs.jfat.FatFileSystemType;
 import org.jnode.fs.jfat.FatMarshal;
+import org.jnode.fs.jfat.FatRootDirectory;
 import org.jnode.fs.jfat.FatShortDirEntry;
 import org.jnode.fs.service.FileSystemService;
 import org.jnode.naming.InitialNaming;
@@ -51,6 +57,7 @@ public class MkfsFatFileSystemTest {
 
     private FileDevice device;
     private FileSystemService fss;
+    private File tempImage;
 
     @Before
     public void setUp() throws Exception {
@@ -75,6 +82,10 @@ public class MkfsFatFileSystemTest {
                 device.close();
             } catch (Exception e) {
             }
+        }
+        if (tempImage != null) {
+            tempImage.delete();
+            tempImage = null;
         }
     }
 
@@ -142,10 +153,127 @@ public class MkfsFatFileSystemTest {
         fs.close();
     }
 
+    @Test
+    public void testRootDirectoryBoundaryThrowsNoSuchElement() throws Exception {
+        FatFileSystem fs = mount("test/fs/jfat/test.mkfsfat16label");
+
+        FatRootDirectory root = fs.getRootEntry();
+        int nrRootDirEntries = (int) fs.getBootSector().getNrRootDirEntries();
+        assertTrue(nrRootDirEntries > 0);
+        try {
+            root.getFatDirEntry(nrRootDirEntries, false);
+            fail("Reading at nrRootDirEntries must signal end of root directory");
+        } catch (NoSuchElementException expected) {
+        }
+        fs.close();
+    }
+
+    @Test
+    public void testFullRootDirectoryWithoutEndMarker() throws Exception {
+        tempImage = createFullRootImage();
+        FatFileSystem fs = mount(tempImage);
+
+        assertTrue("Should be FAT12", fs.getBootSector().isFat12());
+        int nrRootDirEntries = (int) fs.getBootSector().getNrRootDirEntries();
+
+        FSDirectory root = fs.getRootEntry().getDirectory();
+        List<String> names = new ArrayList<String>();
+        Iterator<? extends FSEntry> it = root.iterator();
+        while (it.hasNext()) {
+            names.add(it.next().getName());
+        }
+        assertEquals("Full root should list every file entry", nrRootDirEntries - 1, names.size());
+        assertTrue("Root should contain FILE.TXT", names.contains(FILE_TXT));
+        assertFalse("Past-root data sector must not be listed as an entry", names.contains("BOGUS.TXT"));
+        fs.close();
+    }
+
     private FatFileSystem mount(String fixture) throws Exception {
-        device = new FileDevice(FileSystemTestUtils.getTestFile(fixture), "r");
+        return mount(FileSystemTestUtils.getTestFile(fixture));
+    }
+
+    private FatFileSystem mount(File file) throws Exception {
+        device = new FileDevice(file, "r");
         FatFileSystemType type = fss.getFileSystemType(FatFileSystemType.ID);
         return type.create(device, true);
+    }
+
+    private File createFullRootImage() throws Exception {
+        File source = FileSystemTestUtils.getTestFile("test/fs/jfat/test.mkfsfat12");
+        File copy = File.createTempFile("jnode-fullroot", ".img");
+        copy.deleteOnExit();
+
+        FileInputStream in = new FileInputStream(source);
+        try {
+            FileOutputStream out = new FileOutputStream(copy);
+            try {
+                byte[] buffer = new byte[8192];
+                int n;
+                while ((n = in.read(buffer)) != -1) {
+                    out.write(buffer, 0, n);
+                }
+            } finally {
+                out.close();
+            }
+        } finally {
+            in.close();
+        }
+
+        RandomAccessFile raf = new RandomAccessFile(copy, "rw");
+        try {
+            byte[] boot = new byte[512];
+            raf.seek(0);
+            raf.readFully(boot);
+            int bytesPerSector = (boot[11] & 0xFF) | ((boot[12] & 0xFF) << 8);
+            int reservedSectors = (boot[14] & 0xFF) | ((boot[15] & 0xFF) << 8);
+            int nrFats = boot[16] & 0xFF;
+            int nrRootDirEntries = (boot[17] & 0xFF) | ((boot[18] & 0xFF) << 8);
+            int sectorsPerFat = (boot[22] & 0xFF) | ((boot[23] & 0xFF) << 8);
+            int rootDirSectors = ((nrRootDirEntries * 32) + (bytesPerSector - 1)) / bytesPerSector;
+            long rootOffset = (long) (reservedSectors + nrFats * sectorsPerFat) * bytesPerSector;
+            long firstDataOffset = rootOffset + (long) rootDirSectors * bytesPerSector;
+
+            byte[] template = new byte[32];
+            raf.seek(rootOffset + 32);
+            raf.readFully(template);
+
+            for (int i = 2; i < nrRootDirEntries; i++) {
+                byte[] entry = new byte[32];
+                System.arraycopy(template, 0, entry, 0, 32);
+                String number = Integer.toString(i);
+                while (number.length() < 7) {
+                    number = "0" + number;
+                }
+                String name = "F" + number;
+                for (int j = 0; j < 8; j++) {
+                    entry[j] = (byte) name.charAt(j);
+                }
+                entry[8] = 'T';
+                entry[9] = 'X';
+                entry[10] = 'T';
+                raf.seek(rootOffset + 32L * i);
+                raf.write(entry);
+            }
+
+            byte[] bogus = new byte[32];
+            System.arraycopy(template, 0, bogus, 0, 32);
+            String bogusName = "BOGUS   ";
+            for (int j = 0; j < 8; j++) {
+                bogus[j] = (byte) bogusName.charAt(j);
+            }
+            bogus[8] = 'T';
+            bogus[9] = 'X';
+            bogus[10] = 'T';
+            bogus[20] = 'c';
+            bogus[21] = 'd';
+            bogus[26] = 2;
+            bogus[27] = 0;
+            raf.seek(firstDataOffset);
+            raf.write(bogus);
+        } finally {
+            raf.close();
+        }
+        return copy;
     }
 
     private void assertRootFile(FatFileSystem fs, String content) throws Exception {
