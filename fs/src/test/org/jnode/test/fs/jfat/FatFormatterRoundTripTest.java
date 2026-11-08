@@ -41,6 +41,7 @@ import org.jnode.fs.jfat.Fat;
 import org.jnode.fs.jfat.FatEntry;
 import org.jnode.fs.jfat.FatFileSystem;
 import org.jnode.fs.jfat.FatFileSystemFormatter;
+import org.jnode.fs.jfat.FatFormatter;
 import org.jnode.fs.jfat.FatFileSystemType;
 
 /**
@@ -280,6 +281,50 @@ public class FatFormatterRoundTripTest {
         } finally {
             raf.close();
         }
+    }
+
+    /**
+     * Ticket #878, finding A: the formatter's disk-size arithmetic wrapped in int.
+     * {@code FatFormatter.getDiskSize} multiplies the sector count by the sector
+     * size, which overflows int above 4 GiB - at Integer.MAX_VALUE sectors it
+     * evaluated to -512 and the log reported "Size(Bytes): -512". It is now long.
+     */
+    @org.junit.Test
+    public void testDiskSizeDoesNotWrapForHugeSectorCounts() throws Exception {
+        org.junit.Assert.assertEquals(1099511627264L,
+            FatFormatter.getDiskSize(Integer.MAX_VALUE, 512));
+        org.junit.Assert.assertEquals(0L, FatFormatter.getDiskSize(0, 512));
+        // A plain 68 MiB volume is unaffected by the widening.
+        org.junit.Assert.assertEquals(68L * 1024 * 1024,
+            FatFormatter.getDiskSize((int) ((68L * 1024 * 1024) / 512), 512));
+    }
+
+    /**
+     * Ticket #878, finding B: the volume serial was built from a truncated epoch.
+     * {@code FatFormatter.getDriveSerialNumber} passed {@code (int) date.getTime()}
+     * for month/day/hour/minute/second while FatUtils expects epoch MILLISECONDS,
+     * so Calendar received a garbage epoch and the serial was arbitrary. The test
+     * recomputes the published formula from the same long and requires a match -
+     * reintroducing the cast breaks it, whichever the local timezone is.
+     */
+    @org.junit.Test
+    public void testDriveSerialNumberUsesTheUntruncatedEpoch() throws Exception {
+        long now = new java.util.Date().getTime();
+        int year = org.jnode.fs.jfat.FatUtils.getYear(now);
+        int month = org.jnode.fs.jfat.FatUtils.getMonth(now);
+        int day = org.jnode.fs.jfat.FatUtils.getDay(now);
+        int hour = org.jnode.fs.jfat.FatUtils.getHours(now);
+        int minute = org.jnode.fs.jfat.FatUtils.getMinutes(now);
+        int second = org.jnode.fs.jfat.FatUtils.getSeconds(now);
+        int milliSecond = (int) org.jnode.fs.jfat.FatUtils.getMilliSeconds(now);
+
+        int low = day + (month << 8);
+        low += (milliSecond / 10) + (second << 8);
+        int high = minute + (hour << 8);
+        high += year;
+
+        org.junit.Assert.assertEquals(low + (high << 16),
+            FatFormatter.getDriveSerialNumber());
     }
 
     // ------------------------------------------------------------------ helpers

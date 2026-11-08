@@ -183,7 +183,10 @@ public class FatFormatter {
         FatFsInfo fsInfo = new FatFsInfo(sectorSize);
         BootSector bs = new BootSector(sectorSize);
         api.flush();
-        int DiskSize = getDiskSize(nbTotalSectors, sectorSize);
+        // long, not int: a device over 4 GiB wraps this in int arithmetic (at
+        // Integer.MAX_VALUE sectors it evaluated to -512 and the log reported
+        // "Size(Bytes): -512"). Ticket #878.
+        long DiskSize = getDiskSize(nbTotalSectors, sectorSize);
         int SectorPerCluster = get_spc(ClusterSize, sectorSize);
         int UserAreaSize =
                 getUserAreaSize(nbTotalSectors, ReservedSectorCount, NumOfFATs, ClusterSize);
@@ -276,7 +279,7 @@ public class FatFormatter {
         /**
          * The mkjfat informations group
          */
-        int DiskSizeGB = DiskSize / (1000 * 1000 * 1000);
+        long DiskSizeGB = DiskSize / (1000L * 1000 * 1000);
         log.info("Size(Bytes): " + DiskSize + "\tSize(GB): " + DiskSizeGB + "\tSectors :" +
                 nbTotalSectors);
         log.info("Volume ID is :" + toHexString(VolumeID >> 16) + ":" +
@@ -311,7 +314,9 @@ public class FatFormatter {
         }
         /** Write the first fat sector in the right places */
         for (int i = 0; i < NumOfFATs; i++) {
-            int SectorStart = (ReservedSectorCount + (i * FatSize)) * 512;
+            // long: (ReservedSectorCount + (i * FatSize)) * 512 wraps in int past
+            // 4,194,304 sectors. Ticket #878.
+            long SectorStart = ((long) (ReservedSectorCount + (i * FatSize))) * 512;
             this.reservedSector = new byte[12];
             LittleEndian.setInt32(this.reservedSector, 0, ReservedSector_0);
             LittleEndian.setInt32(this.reservedSector, 4, ReservedSector_1);
@@ -332,7 +337,9 @@ public class FatFormatter {
     private void setQuickSectorFree(int systemAreaSize, BlockDeviceAPI api) throws IOException {
         byte[] reserveArray = new byte[512];
         for (int i = 0; i < systemAreaSize; i++) {
-            api.write(i * 512, ByteBuffer.wrap(reserveArray));
+            // long offset: i * 512 in int arithmetic wraps past 4,194,304 sectors.
+            // Ticket #878.
+            api.write(((long) i) * 512, ByteBuffer.wrap(reserveArray));
         }
     }
 
@@ -359,16 +366,22 @@ public class FatFormatter {
 
     /**
      * The method for getting the Serial Number of the Drive.
+     *
+     * FatUtils takes epoch MILLISECONDS, and date.getTime() returns them, so the
+     * raw long is passed through. Passing (int) date.getTime() truncated ~1.76e12
+     * to its low 32 bits and fed Calendar a garbage epoch, which made the volume
+     * serial an arbitrary value rather than the date. Ticket #878.
      */
-    public int getDriveSerialNumber() {
+    public static int getDriveSerialNumber() {
         Date date = new Date();
-        int year = FatUtils.getYear(date.getTime());
-        int month = FatUtils.getMonth((int) date.getTime());
-        int day = FatUtils.getDay((int) date.getTime());
-        int hour = FatUtils.getHours((int) date.getTime());
-        int minute = FatUtils.getMinutes((int) date.getTime());
-        int second = FatUtils.getSeconds((int) date.getTime());
-        int milliSecond = (int) FatUtils.getMilliSeconds(date.getTime());
+        long time = date.getTime();
+        int year = FatUtils.getYear(time);
+        int month = FatUtils.getMonth(time);
+        int day = FatUtils.getDay(time);
+        int hour = FatUtils.getHours(time);
+        int minute = FatUtils.getMinutes(time);
+        int second = FatUtils.getSeconds(time);
+        int milliSecond = (int) FatUtils.getMilliSeconds(time);
 
         int low = day + (month << 8);
         int tmp = (milliSecond / 10) + (second << 8);
@@ -419,8 +432,13 @@ public class FatFormatter {
      * @param sectorSize
      * @return
      */
-    private int getDiskSize(int TotalSectors, int sectorSize) {
-        return (TotalSectors * sectorSize);
+    /**
+     * The Total Disk Size in bytes. Computed in long: sector counts above 4 GiB
+     * wrap in int arithmetic, which is how this reported "-512" for a
+     * Integer.MAX_VALUE-sector device. Ticket #878.
+     */
+    public static long getDiskSize(int TotalSectors, int sectorSize) {
+        return ((long) TotalSectors) * sectorSize;
     }
 
 }
