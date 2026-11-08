@@ -25,6 +25,7 @@ import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.util.Arrays;
 
+import org.jnode.driver.block.BlockDeviceAPI;
 import org.jnode.driver.block.FileDevice;
 import org.jnode.emu.naming.BasicNameSpace;
 import org.jnode.emu.plugin.model.DummyConfigurationElement;
@@ -42,6 +43,7 @@ import org.jnode.fs.jfat.FatEntry;
 import org.jnode.fs.jfat.FatFileSystem;
 import org.jnode.fs.jfat.FatFileSystemFormatter;
 import org.jnode.fs.jfat.FatFileSystemType;
+import org.jnode.fs.jfat.FatFormatter;
 import org.jnode.fs.service.FileSystemService;
 import org.jnode.fs.service.def.FileSystemPlugin;
 import org.jnode.naming.InitialNaming;
@@ -441,6 +443,30 @@ public class FatFailurePathTest {
     }
 
     @Test
+    public void testSubFloorFormatIsRejected() throws Exception {
+        long[] sizes = new long[]{128L * 512L, 2048L * 512L, 8192L * 512L, 65535L * 512L};
+        for (int i = 0; i < sizes.length; i++) {
+            File tmp = File.createTempFile("jfat-subfloor", ".img");
+            tmp.deleteOnExit();
+            FileDevice smallDevice = new FileDevice(tmp, "rw");
+            try {
+                smallDevice.setLength(sizes[i]);
+                FatFileSystemFormatter formatter = new FatFileSystemFormatter(ClusterSize._1Kb);
+                try {
+                    formatter.format(smallDevice);
+                    fail("expected FileSystemException for sub-floor image of " + sizes[i] + " bytes");
+                } catch (FileSystemException expected) {
+                    assertTrue(expected.getMessage().contains("too small"));
+                }
+                java.io.RandomAccessFile raf = new java.io.RandomAccessFile(tmp, "r");
+                try {
+                    assertEquals(0, raf.read());
+                } finally {
+                    raf.close();
+                }
+            } finally {
+                smallDevice.close();
+                tmp.delete();
     public void testSectorCountAboveIntMaxIsRejectedAsTooBig() throws Exception {
         long[] tooBig = new long[] {Integer.MAX_VALUE + 1L, 0xFFFFFFFFL};
         for (int i = 0; i < tooBig.length; i++) {
@@ -463,6 +489,54 @@ public class FatFailurePathTest {
     }
 
     @Test
+    public void testAtFloorFormatIsAccepted() throws Exception {
+        File tmp = File.createTempFile("jfat-atfloor", ".img");
+        tmp.deleteOnExit();
+        FileDevice floorDevice = new FileDevice(tmp, "rw");
+        try {
+            floorDevice.setLength(65536L * 512L);
+            FatFileSystemFormatter formatter = new FatFileSystemFormatter(ClusterSize._1Kb);
+            FatFileSystem fs = formatter.format(floorDevice);
+            fs.close();
+        } finally {
+            floorDevice.close();
+            tmp.delete();
+        }
+    }
+
+    @Test
+    public void testLowLevelFormatterRejectsSubFloorAndOversizeClusterCounts() throws Exception {
+        final boolean[] wrote = new boolean[]{false};
+        BlockDeviceAPI trackingApi = new BlockDeviceAPI() {
+            public long getLength() {
+                return 0;
+            }
+
+            public void read(long devOffset, ByteBuffer dest) {
+            }
+
+            public void write(long devOffset, ByteBuffer src) {
+                wrote[0] = true;
+            }
+
+            public void flush() {
+            }
+        };
+        try {
+            FatFormatter.HDDFormatter(512, 2048, ClusterSize._1Kb, 0, trackingApi);
+            fail("expected IOException for sub-floor HDDFormatter");
+        } catch (IOException expected) {
+            assertTrue(expected.getMessage().contains("too small"));
+        }
+        assertFalse(wrote[0]);
+        try {
+            FatFormatter.HDDFormatter(512, 600000000, ClusterSize._1Kb, 0, trackingApi);
+            fail("expected IOException for oversize cluster count");
+        } catch (IOException expected) {
+            assertTrue(expected.getMessage().contains("2^28"));
+        }
+        assertFalse(wrote[0]);
+    }
     public void testSectorCountAtIntMaxIsNotRejectedAsTooBig() throws Exception {
         PartitionedFileDevice partitioned =
             new PartitionedFileDevice(diskFile, "rw", Integer.MAX_VALUE);

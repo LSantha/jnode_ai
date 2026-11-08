@@ -81,9 +81,11 @@ public class FatFileSystemFormatter extends Formatter<FatFileSystem> {
              * Check the Disks Availability. low end limit - 65536 sectors I
              * suspect that most FAT32 implementations would mount this volume
              * just fine, but the spec says that we shouldn't do this, so we won't.
+             * Policy: the 64K-sector floor is enforced; format fails with
+             * FileSystemException before any write to the device.
              */
             if (numberOfSectors < 65536) {
-                log.error("This drive is too small for FAT32 - there must be at least 64K clusters\n");
+                throw new FileSystemException("This drive is too small for FAT32 - there must be at least 64K clusters");
             }
             
             /*
