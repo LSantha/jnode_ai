@@ -33,6 +33,7 @@ import org.jnode.emu.plugin.model.DummyExtensionPoint;
 import org.jnode.emu.plugin.model.DummyPluginDescriptor;
 import org.jnode.fs.FSEntry;
 import org.jnode.fs.FSFile;
+import org.jnode.fs.FileSystemException;
 import org.jnode.fs.jfat.ClusterSize;
 import org.jnode.fs.jfat.Fat;
 import org.jnode.fs.jfat.FatCache;
@@ -44,6 +45,8 @@ import org.jnode.fs.jfat.FatFileSystemType;
 import org.jnode.fs.service.FileSystemService;
 import org.jnode.fs.service.def.FileSystemPlugin;
 import org.jnode.naming.InitialNaming;
+import org.jnode.partitions.PartitionTableEntry;
+import org.jnode.partitions.ibm.IBMPartitionTableEntry;
 import org.junit.After;
 import org.junit.Before;
 import org.junit.Test;
@@ -88,6 +91,23 @@ public class FatFailurePathTest {
                 writesBeforeFail--;
             }
             super.write(devOffset, srcBuf);
+        }
+    }
+
+    private static class PartitionedFileDevice extends FileDevice {
+        private final PartitionTableEntry entry;
+
+        private PartitionedFileDevice(File file, String mode, long nrSectors) throws Exception {
+            super(file, mode);
+            IBMPartitionTableEntry partition = new IBMPartitionTableEntry(null, new byte[512], 0);
+            partition.setStartLba(0);
+            partition.setNrSectors(nrSectors);
+            entry = partition;
+        }
+
+        @Override
+        public PartitionTableEntry getPartitionTableEntry() {
+            return entry;
         }
     }
 
@@ -418,5 +438,57 @@ public class FatFailurePathTest {
             assertEquals(retry[i], actual[i]);
         }
         fs.close();
+    }
+
+    @Test
+    public void testSectorCountAboveIntMaxIsRejectedAsTooBig() throws Exception {
+        long[] tooBig = new long[] {Integer.MAX_VALUE + 1L, 0xFFFFFFFFL};
+        for (int i = 0; i < tooBig.length; i++) {
+            PartitionedFileDevice partitioned = new PartitionedFileDevice(diskFile, "rw", tooBig[i]);
+            partitioned.setLength(1024L * 1024);
+            try {
+                new FatFileSystemFormatter(ClusterSize._1Kb).format(partitioned);
+                fail("expected FileSystemException for " + tooBig[i] + " sectors");
+            } catch (FileSystemException expected) {
+                assertTrue("expected too big message for " + tooBig[i] + " sectors: "
+                    + expected.getMessage(),
+                    expected.getMessage() != null && expected.getMessage().contains("too big"));
+                assertFalse("must not report too small for " + tooBig[i] + " sectors: "
+                    + expected.getMessage(),
+                    expected.getMessage().contains("too small"));
+            } finally {
+                partitioned.close();
+            }
+        }
+    }
+
+    @Test
+    public void testSectorCountAtIntMaxIsNotRejectedAsTooBig() throws Exception {
+        PartitionedFileDevice partitioned =
+            new PartitionedFileDevice(diskFile, "rw", Integer.MAX_VALUE);
+        partitioned.setLength(80L * 1024 * 1024);
+        try {
+            FatFileSystem fs = new FatFileSystemFormatter(ClusterSize._64Kb).format(partitioned);
+            try {
+                assertTrue(fs.getBootSector().isFat32());
+                assertTrue(fs.getBootSector().getCountOfClusters() > 0);
+                assertEquals(65536, fs.getBootSector().getClusterSize());
+            } finally {
+                fs.close();
+            }
+        } catch (FileSystemException e) {
+            String message = String.valueOf(e.getMessage());
+            Throwable cause = e.getCause();
+            while (cause != null) {
+                message = message + " " + cause;
+                cause = cause.getCause();
+            }
+            assertFalse("Integer.MAX_VALUE sectors must not be rejected as too big: " + message,
+                message.contains("too big"));
+            assertFalse("Integer.MAX_VALUE sectors must not be rejected as too small: " + message,
+                message.contains("too small"));
+        } finally {
+            partitioned.close();
+        }
     }
 }

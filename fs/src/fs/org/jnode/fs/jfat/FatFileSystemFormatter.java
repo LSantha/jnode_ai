@@ -87,16 +87,15 @@ public class FatFileSystemFormatter extends Formatter<FatFileSystem> {
             }
             
             /*
-             * This is a more fundamental limitation on FAT32 - the total sector
-             * count in the root dir 32bit. With a bit of creativity, FAT32
-             * could be extended to handle at least 2^28 clusters There would
-             * need to be an extra field in the FSInfo sector, and the old
-             * sector count could be set to 0xffffffff. This is non standard
-             * though, the Windows FAT driver FASTFAT.SYS won't understand this.
-             * Perhaps a future version of FAT32 and FASTFAT will handle this.
+             * HDDFormatter takes the sector count as an int, so the effective
+             * limit is Integer.MAX_VALUE sectors (about 1 TB at 512 bytes per
+             * sector), not the 2^32-1 sectors the FAT32 BPB field could hold.
+             * Reject larger devices before the cast to int can wrap the count
+             * negative and corrupt the FAT size math.
              */
-            if (numberOfSectors >= (Math.pow(2, 32) - 1)) {
-                log.error("This drive is too big for FAT32 - max 2TB supported :" + numberOfSectors);
+            if (numberOfSectors > Integer.MAX_VALUE) {
+                throw new FileSystemException("This drive is too big for FAT32 - max "
+                        + Integer.MAX_VALUE + " sectors supported : " + numberOfSectors);
             }
 
             // The FAT32 Formatter class constructor
