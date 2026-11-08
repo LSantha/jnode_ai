@@ -120,6 +120,85 @@ fi
 WORK=${REGRESS_WORK:-/tmp/jnode-regress}
 mkdir -p "$WORK"
 HJ=${HJ:-/home/levente/ext/prg/java/bin/java}
+# ANCHOR-L2-251: Java 9+ host support for the VM-bootstrap suites. On 9+
+# the sun.reflect package is owned by the boot-layer module
+# jdk.unsupported, so the classlib shim sun/reflect/ConstantPool.class (the
+# supertype of org.jnode.vm.classmgr.VmConstantPool, which the L2 test
+# harness loads on the HOST) cannot be loaded from the app classpath: the
+# boot loader is authoritative for the package and answers CNFE. The only
+# viable route is to patch the class into the module. On 6/7/8 rt.jar has
+# the real class and nothing is needed. JAVA_TOOL_OPTIONS covers every JVM
+# this script (and the ant JUnit forks it starts) launches, so one export
+# is the whole fix. Measured 2026-11-08 on JDK 11.0.13: full host gate
+# green and the census at parity (OK=11874 FAILED=0 regspancall=0) with
+# the patch; every VM-bootstrap suite fails without it (L2PipelineTest 0
+# tests, NoClassDefFoundError sun/reflect/ConstantPool).
+JVMARGS=""
+JAVACARGS=""
+VMCOMPAT=${VMCOMPAT:-/tmp/vmcompat}
+# ANCHOR-L2-251: the forked all-junit JVM takes its extra args from the
+# environment, not from a -D property: build.sh forwards -D options to
+# the JVM unquoted, so a multi-word value (the --patch-module pair) dies
+# as "Unrecognized option". Ant reads ${env.VMCOMPAT_JVMARGS} natively
+# and <jvmarg line=...> word-splits it.
+export VMCOMPAT_JVMARGS="$JVMARGS"
+# NB: parse WITHOUT touching the positional parameters ($@ is this
+# script's option list; a bare `set --` here would wipe it).
+hjver=$("$HJ" -version 2>&1 | sed -n '1s/.*version "\([0-9]*\)\.\([0-9]*\).*/\1 \2/p')
+hjmaj=$(printf '%s\n' "$hjver" | cut -d' ' -f1)
+hjmin=$(printf '%s\n' "$hjver" | cut -d' ' -f2)
+: "${hjmaj:=1}"
+: "${hjmin:=6}"
+# the /tmp/mghost vmmagic stubs are JDK-version-sensitive (a v55 stub pair
+# is rejected by a JDK-6 javac), so their rebuild guard keys on this stamp
+export HJSTAMP="$hjmaj.$hjmin"
+if [ "$hjmaj" -ge 9 ] || { [ "$hjmaj" -eq 1 ] && [ "$hjmin" -ge 9 ]; }; then
+  mkdir -p "$VMCOMPAT/sun/reflect" "$VMCOMPAT/sun/misc"
+  if [ ! -f "$VMCOMPAT/sun/reflect/ConstantPool.class" ]; then
+    # The shims live in local/classlib (gitignored dev artifact) or in the
+    # packed classlib jar; copy them out, do not build them (their
+    # signatures must stay the JDK-era ones the host code imports):
+    #   sun/reflect/ConstantPool   supertype of VmConstantPool
+    #   sun/misc/ProxyGenerator*  ProxyFormGen proxy builder, removed from
+    #                             jdk.unsupported in 11 (inner classes too)
+    if [ -f local/classlib/sun/reflect/ConstantPool.class ]; then
+      cp local/classlib/sun/reflect/ConstantPool.class "$VMCOMPAT/sun/reflect/"
+      cp local/classlib/sun/misc/ProxyGenerator*.class "$VMCOMPAT/sun/misc/" 2>/dev/null
+    else
+      rm -rf "$VMCOMPAT" && mkdir -p "$VMCOMPAT/sun/reflect" "$VMCOMPAT/sun/misc"
+      unzip -o -q all/lib/classlib.jar 'sun/reflect/ConstantPool.class' \
+        'sun/misc/ProxyGenerator*.class' -d "$VMCOMPAT" 2>/dev/null
+    fi
+  fi
+  if [ -f "$VMCOMPAT/sun/reflect/ConstantPool.class" ]; then
+    # NB: JAVA_TOOL_OPTIONS does NOT carry --patch-module (the launcher
+    # rejects it in that vector -- measured: even `java -version` dies with
+    # "Unrecognized option"). It must be on the command line. Both values
+    # are EXPORTED so the single-quoted `sh -c` phase bodies inherit them
+    # and expand them UNQUOTED: a quoted expansion reaches javac as one
+    # argument with an embedded space, which javac rejects as an invalid
+    # flag (measured). word-split in the child is what we want here.
+    JVMARGS="--patch-module jdk.unsupported=$VMCOMPAT --add-exports java.base/sun.security.action=jdk.unsupported"
+    # -XDstringConcat=inline (9+ ONLY -- javac 6/8 rejects the flag, and
+    # on those the concat already uses StringBuilder): javac 9+ compiles
+    # string concatenation to invokedynamic makeConcatWithConstants
+    # (JEP 280). The L2 IRGenerator rejects invokedynamic (correctly --
+    # there is no backend for it), so a javac-11-compiled
+    # Probes/ProxyFormGen would add a phantom FAILED row to the probe
+    # census. The flag restores the 6/8 StringBuilder shape.
+    JAVACARGS="--patch-module jdk.unsupported=$VMCOMPAT -XDstringConcat=inline"
+    if [ "$hjmaj" -eq 1 ] && [ "$hjmin" -lt 9 ]; then
+      JAVACARGS=""   # 6/8: no patch-module, no stringConcat flag
+    fi
+    export JVMARGS JAVACARGS
+    # re-export: the ant/junit fork env must see the 9+ values, not the
+    # empty defaults exported before this block ran
+    export VMCOMPAT_JVMARGS="$JVMARGS"
+  else
+    echo "regress: a JDK-$hjmaj.$hjmin host needs the sun/reflect shim in $VMCOMPAT; not found" >&2
+    exit 2
+  fi
+fi
 # ANCHOR-L2-250: the javac twin of HJ. The census/ref/probe-shape phases
 # compile shape sources and RUN them under $HJ, so the two must agree on
 # the JDK major: a v55 (Java-11) probe class cannot run under a JDK-6
@@ -130,7 +209,7 @@ HJ=${HJ:-/home/levente/ext/prg/java/bin/java}
 # constant-null-field lint unable to see a corpus that HAS the shape
 # (ANCHOR-L2-187's failure mode). Override both together:
 #   HJ=<jdk6>/java JAVAC=<jdk6>/javac regress.sh ...
-JAVAC=${JAVAC:-"$JAVAC"}
+JAVAC=${JAVAC:-/home/levente/ext/prg/java/bin/javac}
 : > "$ST"
 # ANCHOR-L2-206: $ST is per-run but $LOG used to be append-only, so a reused
 # label kept every earlier run's output and policy_union()'s
@@ -434,7 +513,7 @@ fi
 # (tail -3 hides exactly the message you need).
 junit_phase() {
   _out=$1; shift
-  "$HJ" -Djnode.root=. -cp "$CP" org.junit.runner.JUnitCore "$@" > "$_out" 2>&1
+  "$HJ" $JVMARGS -Djnode.root=. -cp "$CP" org.junit.runner.JUnitCore "$@" > "$_out" 2>&1
   _rc=$?
   grep -E "^(OK \(|Tests run:|There w|[0-9]+\) |java\.lang\.|junit\.)" "$_out" | tail -n 20
   return $_rc
@@ -447,7 +526,7 @@ if want census; then
   run census sh -c '
     # ANCHOR-L2-160: the jars go to the census LOADER (args), not just the
     # app classpath -- without them 169 methods fail on missing types.
-    '"$HJ"' -Djnode.root=. -cp '"$CP"' org.jnode.vm.compiler.ir.L2Census core/build/classes /tmp/census-'"$LABEL"'.txt \
+    '"$HJ"' $JVMARGS -Djnode.root=. -cp '"$CP"' org.jnode.vm.compiler.ir.L2Census core/build/classes /tmp/census-'"$LABEL"'.txt \
       core/lib/mmtk/mmtk.jar core/lib/log4j-1.2.8.jar core/lib/junit-4.5.jar core/lib/jmock-1.0.1.jar \
       > /tmp/census-'"$LABEL"'.stdout 2> /tmp/census-'"$LABEL"'.stderr
     echo "lints=$(grep -cE "^(ESPDEPTH|NOYIELDPOINT|WIDTHMISMATCH|FISTPMISMATCH|RANGEGAP|STALEWIDE|TERMTRAILING|REGSPANSCALL|EDIPOOL) " /tmp/census-'"$LABEL"'.stdout)"
@@ -612,11 +691,17 @@ if want census; then
     # The verdict is now a real class file, and the stub sources are created
     # here too (same two files hostref writes), so the census phase stands
     # alone on a machine whose /tmp was wiped.
-    if [ ! -f /tmp/mghost/classes/org/vmmagic/unboxed/Word.class ]; then
+    # ANCHOR-L2-251: rebuild also when the stubs were built by a DIFFERENT
+    # JDK major -- a v55 stub pair is rejected by a JDK-6 javac ("wrong
+    # version 55.0, should be 50.0"), and the mere-existence guard skipped
+    # the rebuild, so the probe-shape census then never compiled Probes.
+    if [ ! -f /tmp/mghost/classes/org/vmmagic/unboxed/Word.class ] \
+       || [ "$(cat /tmp/mghost/stamp 2>/dev/null)" != "${HJSTAMP:-?}" ]; then
+      rm -rf /tmp/mghost/classes /tmp/mghost/stamp
       mkdir -p /tmp/mghost/src/org/jnode/vm/classmgr /tmp/mghost/classes
       printf "package org.jnode.vm;\npublic class VmAddress {\n}\n" > /tmp/mghost/src/org/jnode/vm/VmAddress.java
       printf "package org.jnode.vm.classmgr;\npublic class VmType {\n}\n" > /tmp/mghost/src/org/jnode/vm/classmgr/VmType.java
-      "$JAVAC" -d /tmp/mghost/classes \
+      '"$JAVAC"' -d /tmp/mghost/classes \
         -sourcepath core/src/vmmagic:core/src/classlib:/tmp/mghost/src \
         core/src/vmmagic/org/vmmagic/unboxed/Word.java \
         core/src/vmmagic/org/vmmagic/unboxed/Address.java \
@@ -628,6 +713,7 @@ if want census; then
         core/src/classlib/org/jnode/annotation/Uninterruptible.java \
         core/src/vmmagic/org/vmmagic/pragma/Uninterruptible.java \
         > /dev/null 2>&1
+      printf '%s' "${HJSTAMP:-?}" > /tmp/mghost/stamp
     fi
     rm -rf /tmp/probeclasses && mkdir -p /tmp/probeclasses
     # The javac output is kept (not /dev/null): when it fails, the ONLY
@@ -635,7 +721,7 @@ if want census; then
     # Probes.class check below -- measured 2026-10-08, which said nothing
     # about what was missing (ANCHOR-L2-187: a silent compile failure read
     # as a lint verdict).
-    "$JAVAC" -nowarn -d /tmp/probeclasses \
+    '"$JAVAC"' -nowarn -d /tmp/probeclasses \
       -cp /tmp/mghost/classes \
       -sourcepath core/src/vmmagic:core/src/classlib:/tmp/mghost/src \
       tests/l2oracle/Probes.java core/src/classlib/org/jnode/annotation/*.java \
@@ -646,9 +732,9 @@ if want census; then
     # class is generated at run time instead of committed as a .class so the
     # guard always tracks what the real generator writes; if the generator
     # API disappears this must fail loudly, never shrink the corpus quietly.
-    if ! "$JAVAC" -nowarn -d /tmp/probeclasses \
+    if ! '"$JAVAC"' $JAVACARGS -nowarn -d /tmp/probeclasses \
         tests/l2oracle/ProxyFormGen.java > /dev/null 2>&1 ||
-       ! '"$HJ"' -cp /tmp/probeclasses ProxyFormGen /tmp/probeclasses \
+       ! '"$HJ"' $JVMARGS -cp /tmp/probeclasses ProxyFormGen /tmp/probeclasses \
         > /tmp/proxyformgen-'"$LABEL"'.txt 2>&1; then
       echo "PROBE SHAPE GENERATION FAILED; output:"
       cat /tmp/proxyformgen-'"$LABEL"'.txt
@@ -669,7 +755,7 @@ if want census; then
       # the same failure as the ant `error:` gotcha: a check that cannot fail
       # looks exactly like a check that found nothing. Both counts are now
       # taken from files that must exist, and a missing report is a failure.
-      '"$HJ"' -Djnode.root=. -cp '"$CP"' org.jnode.vm.compiler.ir.L2Census \
+      '"$HJ"' $JVMARGS -Djnode.root=. -cp '"$CP"' org.jnode.vm.compiler.ir.L2Census \
         /tmp/probeclasses /tmp/census-probes-'"$LABEL"'.txt \
         core/lib/mmtk/mmtk.jar core/lib/log4j-1.2.8.jar \
         core/lib/junit-4.5.jar core/lib/jmock-1.0.1.jar \
@@ -835,8 +921,8 @@ if { want oracle || want mauve || want aotoracle; } && { [ ! -f /tmp/l2oracle-re
     mkdir -p /tmp/mghost/src/org/jnode/vm/classmgr /tmp/mghost/classes /tmp/l2oracle-ref
     printf "package org.jnode.vm;\npublic class VmAddress {\n}\n" > /tmp/mghost/src/org/jnode/vm/VmAddress.java
     printf "package org.jnode.vm.classmgr;\npublic class VmType {\n}\n" > /tmp/mghost/src/org/jnode/vm/classmgr/VmType.java
-    "$JAVAC" -d /tmp/mghost/classes -sourcepath core/src/vmmagic:core/src/classlib:/tmp/mghost/src /tmp/mghost/src/org/jnode/vm/VmAddress.java /tmp/mghost/src/org/jnode/vm/classmgr/VmType.java core/src/vmmagic/org/vmmagic/unboxed/Word.java core/src/vmmagic/org/vmmagic/unboxed/Address.java core/src/vmmagic/org/vmmagic/unboxed/Offset.java core/src/vmmagic/org/vmmagic/unboxed/Extent.java core/src/vmmagic/org/vmmagic/unboxed/UnboxedObject.java core/src/vmmagic/org/vmmagic/unboxed/ObjectReference.java core/src/classlib/org/jnode/annotation/KernelSpace.java core/src/classlib/org/jnode/annotation/Uninterruptible.java core/src/vmmagic/org/vmmagic/pragma/Uninterruptible.java 2>&1 | tail -n 1
-    "$JAVAC" -cp /tmp/mghost/classes -d /tmp/l2oracle-ref tests/l2oracle/Probes.java tests/l2oracle/OracleDriver.java 2>&1 | tail -n 1
+    '"$JAVAC"' -d /tmp/mghost/classes -sourcepath core/src/vmmagic:core/src/classlib:/tmp/mghost/src /tmp/mghost/src/org/jnode/vm/VmAddress.java /tmp/mghost/src/org/jnode/vm/classmgr/VmType.java core/src/vmmagic/org/vmmagic/unboxed/Word.java core/src/vmmagic/org/vmmagic/unboxed/Address.java core/src/vmmagic/org/vmmagic/unboxed/Offset.java core/src/vmmagic/org/vmmagic/unboxed/Extent.java core/src/vmmagic/org/vmmagic/unboxed/UnboxedObject.java core/src/vmmagic/org/vmmagic/unboxed/ObjectReference.java core/src/classlib/org/jnode/annotation/KernelSpace.java core/src/classlib/org/jnode/annotation/Uninterruptible.java core/src/vmmagic/org/vmmagic/pragma/Uninterruptible.java 2>&1 | tail -n 1
+    '"$JAVAC"' -cp /tmp/mghost/classes -d /tmp/l2oracle-ref tests/l2oracle/Probes.java tests/l2oracle/OracleDriver.java 2>&1 | tail -n 1
     /home/levente/ext/prg/java/bin/java -cp /tmp/mghost/classes:/tmp/l2oracle-ref OracleDriver /tmp/l2oracle-ref/out-host.txt noforce | tail -n 1'
 fi
 if want oracle || want mauve; then

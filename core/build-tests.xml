@@ -40,12 +40,23 @@ help         Output these messages
 		<ant target="compile" dir="${basedir}" inheritall="on" inheritrefs="on"/>
 	</target>
 
+	<property environment="env"/>
+	<!-- ANCHOR-L2-251: extra JVM args for the forked JUnit run, e.g. the
+	     Java 9+ module patch that the VM-bootstrap suites need when the
+	     classlib sun/reflect shim cannot be loaded from the app classpath
+	     (value example: patch-module jdk.unsupported=<shim>). Read from the
+	     ENVIRONMENT (regress.sh exports VMCOMPAT_JVMARGS): build.sh forwards
+	     -D options to the JVM unquoted, so a multi-word value dies as an
+	     unrecognized option. Empty on 6/7/8; the jvmarg element below
+	     word-splits it. -->
+	<property name="jnode.vmcompat.jvmargs" value="${env.VMCOMPAT_JVMARGS}"/>
 	<target name="all-junit" depends="compile">
 		<delete dir="${basedir}/build/reports/junit"/>
 		<mkdir dir="${basedir}/build/reports/junit"/>
 		<junit showoutput="off" printsummary="on" fork="on" haltonfailure="on">
 			<classpath refid="cp-test"/>
 			<formatter type="xml"/>
+			<jvmarg line="${jnode.vmcompat.jvmargs}"/>
             <test name="org.jnode.test.CoreTestSuite" todir="${basedir}/build/reports/junit"/>
         </junit>
 	</target>
