@@ -207,7 +207,12 @@ public abstract class Fat {
             getBootSector().getFirstDataSector();
     }
 
-    public abstract long getClusterPosition(int index);
+    public long getClusterPosition(int index) {
+        if (index == 0) {
+            return bs.getFirstRootDirSector() * bs.getBytesPerSector();
+        }
+        return getClusterSector(index) * (long) bs.getBytesPerSector();
+    }
 
     public final int size() {
         return (int) (bs.getCountOfClusters() + firstCluster());

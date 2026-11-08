@@ -67,16 +67,6 @@ public class Fat12 extends Fat {
         return old;
     }
 
-    public long getClusterPosition(int index) {
-        BootSector bootSector = getBootSector();
-
-        if (index == 0) {
-            return bootSector.getFirstRootDirSector() * bootSector.getBytesPerSector();
-        }
-
-        return getClusterSector(index) * (long) bootSector.getBytesPerSector();
-    }
-
     public boolean isEofChain(int entry) {
         return (entry >= 0xFF8);
     }
