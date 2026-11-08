@@ -207,7 +207,8 @@ public class FatUtils {
     public static long getMilliSeconds(long time) {
 
         Calendar cal = Calendar.getInstance();
-        return cal.getTimeInMillis();
+        cal.setTimeInMillis(time);
+        return cal.get(Calendar.MILLISECOND);
     }
 
 }

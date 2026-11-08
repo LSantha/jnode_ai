@@ -42,6 +42,8 @@ import org.jnode.fs.jfat.FatEntry;
 import org.jnode.fs.jfat.FatFileSystem;
 import org.jnode.fs.jfat.FatFileSystemFormatter;
 import org.jnode.fs.jfat.FatFileSystemType;
+import org.jnode.fs.jfat.FatFormatter;
+import org.jnode.fs.jfat.FatUtils;
 
 /**
  * End-to-end proof for JFAT's on-disk writer: {@link FatFileSystemFormatter} had no test
@@ -280,6 +282,70 @@ public class FatFormatterRoundTripTest {
         } finally {
             raf.close();
         }
+    }
+
+    /**
+     * Ticket #878, finding A: the formatter's disk-size arithmetic wrapped in int.
+     * {@code FatFormatter.getDiskSize} multiplies the sector count by the sector
+     * size, which overflows int above 4 GiB - at Integer.MAX_VALUE sectors it
+     * evaluated to -512 and the log reported "Size(Bytes): -512". It is now long.
+     */
+    @org.junit.Test
+    public void testDiskSizeDoesNotWrapForHugeSectorCounts() throws Exception {
+        org.junit.Assert.assertEquals(1099511627264L,
+            FatFormatter.getDiskSize(Integer.MAX_VALUE, 512));
+        org.junit.Assert.assertEquals(0L, FatFormatter.getDiskSize(0, 512));
+        // A plain 68 MiB volume is unaffected by the widening.
+        org.junit.Assert.assertEquals(68L * 1024 * 1024,
+            FatFormatter.getDiskSize((int) ((68L * 1024 * 1024) / 512), 512));
+    }
+
+    /**
+     * Ticket #878, finding B: the volume serial was built from a truncated epoch.
+     * {@code FatFormatter.getDriveSerialNumber} passed {@code (int) date.getTime()}
+     * for month/day/hour/minute/second while FatUtils expects epoch MILLISECONDS,
+     * so Calendar received a garbage epoch and the serial was arbitrary. The test
+     * recomputes the published formula from the same long and requires a match -
+     * reintroducing the cast breaks it, whichever the local timezone is.
+     */
+    @org.junit.Test
+    public void testDriveSerialNumberUsesTheUntruncatedEpoch() throws Exception {
+        // A fixed instant: the caller's time and the recalculation must be the
+        // same instant, or a second boundary between two readings fails an
+        // otherwise-correct serial.
+        long time = 1762000000000L;
+        int year = FatUtils.getYear(time);
+        int month = FatUtils.getMonth(time);
+        int day = FatUtils.getDay(time);
+        int hour = FatUtils.getHours(time);
+        int minute = FatUtils.getMinutes(time);
+        int second = FatUtils.getSeconds(time);
+        int milliSecond = (int) FatUtils.getMilliSeconds(time);
+
+        int low = day + (month << 8);
+        low += (milliSecond / 10) + (second << 8);
+        int high = minute + (hour << 8);
+        high += year;
+
+        org.junit.Assert.assertEquals(low + (high << 16),
+            FatFormatter.getDriveSerialNumber(time));
+    }
+
+    /**
+     * Ticket #878, finding B's other half: FatUtils.getMilliSeconds ignored its
+     * argument and returned the CURRENT epoch millis, so the serial's low word
+     * was still arbitrary even after the callers stopped truncating. The oracle
+     * is an independently built Calendar set to the same instant, not a
+     * recalculation of the same broken call.
+     */
+    @org.junit.Test
+    public void testGetMilliSecondsHonoursItsArgument() throws Exception {
+        long time = 1762000000123L;
+        java.util.Calendar cal = java.util.Calendar.getInstance();
+        cal.setTimeInMillis(time);
+        org.junit.Assert.assertEquals(cal.get(java.util.Calendar.MILLISECOND),
+            FatUtils.getMilliSeconds(time));
+        org.junit.Assert.assertEquals(0L, FatUtils.getMilliSeconds(0L));
     }
 
     // ------------------------------------------------------------------ helpers
