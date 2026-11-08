@@ -476,17 +476,6 @@ public class FatFailurePathTest {
             } finally {
                 fs.close();
             }
-        } catch (FileSystemException e) {
-            String message = String.valueOf(e.getMessage());
-            Throwable cause = e.getCause();
-            while (cause != null) {
-                message = message + " " + cause;
-                cause = cause.getCause();
-            }
-            assertFalse("Integer.MAX_VALUE sectors must not be rejected as too big: " + message,
-                message.contains("too big"));
-            assertFalse("Integer.MAX_VALUE sectors must not be rejected as too small: " + message,
-                message.contains("too small"));
         } finally {
             partitioned.close();
         }
