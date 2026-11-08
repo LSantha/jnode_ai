@@ -274,6 +274,90 @@ module.exports = function createHelpers({ github, context, core }) {
            testFiles <= MAX_TEST_FILES;
   }
 
+  /**
+   * Is the PR's merge-base still the tip of its base branch?
+   *
+   * A branch cut before a later master merge, squash-merged as-is, DELETES
+   * whatever landed in the meantime: the squash applies the branch's whole tree,
+   * so the PR's own diff looks clean while master silently loses another agent's
+   * feature (JNodeOceanTheme, 270 lines, on #869 - ticket #872). The loss leaves
+   * no CI signal, because the reverted files still compile.
+   *
+   * Compares the merge-base of head and base with the base branch's current tip.
+   * Fail-closed: an unreadable PR or an API error reads as "not current", the
+   * same direction as isDiffSafe and isCIGreen, because a merge is unrecoverable
+   * while a refusal is not.
+   *
+   * @return {Promise<{current: boolean, base: string, lag: Array}>} where lag
+   *   lists the commits present on the base branch but not on the head - the
+   *   ones the squash would revert.
+   */
+  async function checkBaseCurrency(prNumber) {
+    var stale = { current: false, base: "", lag: [] };
+    var pr;
+    try {
+      pr = await github.rest.pulls.get({ owner, repo, pull_number: prNumber });
+    } catch (e) {
+      core.warning("checkBaseCurrency: pulls.get failed for PR #" + prNumber + ": " + e.message);
+      return stale;
+    }
+    var baseRef = pr.data && pr.data.base && pr.data.base.ref;
+    var headSha = pr.data && pr.data.head && pr.data.head.sha;
+    if (!baseRef || !headSha) return stale;
+    stale.base = baseRef;
+
+    var tip;
+    try {
+      var branch = await github.rest.repos.getBranch({ owner, repo, branch: baseRef });
+      tip = branch.data && branch.data.commit && branch.data.commit.sha;
+    } catch (e) {
+      core.warning("checkBaseCurrency: getBranch(" + baseRef + ") failed: " + e.message);
+      return stale;
+    }
+    if (!tip) return stale;
+
+    // compare head...base: the commits it returns are on the base branch but not
+    // on the head - exactly what the squash would revert.
+    try {
+      var compare = await github.rest.repos.compare({
+        owner, repo, base: headSha, head: baseRef
+      });
+      var mergeBase = compare.data && compare.data.merge_base_commit &&
+        compare.data.merge_base_commit.sha;
+      if (!mergeBase) return stale;
+      var lag = [];
+      var commits = compare.data.commits || [];
+      for (var i = 0; i < commits.length; i++) {
+        var c = commits[i] || {};
+        var message = (c.commit && c.commit.message) || "";
+        lag.push({ sha: (c.sha || "").slice(0, 8), subject: message.split("\n")[0] });
+      }
+      return { current: mergeBase === tip, base: baseRef, lag: lag };
+    } catch (e) {
+      core.warning("checkBaseCurrency: compare failed for PR #" + prNumber + ": " + e.message);
+      return stale;
+    }
+  }
+
+  /** Human-readable refusal naming the commits a squash would revert. */
+  function baseCurrencyComment(prNumber, info) {
+    var lines = [
+      "Not merging: PR #" + prNumber + "'s branch is behind " + (info.base || "master") +
+        ", so a squash would revert those commits."
+    ];
+    if (info.lag && info.lag.length) {
+      lines.push("");
+      for (var i = 0; i < info.lag.length && i < 10; i++) {
+        lines.push("- `" + info.lag[i].sha + "` " + info.lag[i].subject);
+      }
+      lines.push("");
+      lines.push("Merge " + (info.base || "master") + " into the branch and re-request the review - the diff must then contain only this PR's own changes.");
+    } else {
+      lines.push("The base branch state could not be read, so the merge is refused rather than guessed at.");
+    }
+    return lines.join("\n");
+  }
+
   /** True when CI check runs on the PR head SHA show success and no failure. */
   async function isCIGreen(prNumber) {
     var pr;
@@ -634,6 +718,8 @@ module.exports = function createHelpers({ github, context, core }) {
     getAgentReviewVerdict: getAgentReviewVerdict,
     isAutoMergeEligible: isAutoMergeEligible,
     isDiffSafe: isDiffSafe,
+    checkBaseCurrency: checkBaseCurrency,
+    baseCurrencyComment: baseCurrencyComment,
     touchesForbiddenPath: touchesForbiddenPath,
     parkForCI: parkForCI,
     DEFAULT_MAX_TURNS: DEFAULT_MAX_TURNS,

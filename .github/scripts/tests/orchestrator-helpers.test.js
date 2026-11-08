@@ -320,3 +320,81 @@ test("parkForCI appends to a separate history array for the orchestrator shape",
   assert.strictEqual(history[0].event, "review_pending_ci");
   assert.strictEqual(history[0].pr, 99);
 });
+
+// ---------------------------------------------------------------------------
+// #872: a PR branch cut before a later master merge must not be squash-merged,
+// because applying the branch's whole tree reverts what master gained.
+// ---------------------------------------------------------------------------
+
+function githubWithBase({ tip, mergeBase, lagCommits = [], failOn = null, head = "headsha" } = {}) {
+  const { github, calls } = createGithub({});
+  github.rest.pulls.get = async () => ({
+    data: { number: 99, head: { ref: "opencode/issue99-x", sha: head }, base: { ref: "master" } }
+  });
+  github.rest.repos = {
+    getBranch: async (args) => {
+      calls.getBranch = args;
+      if (failOn === "getBranch") throw new Error("getBranch unavailable");
+      return { data: { commit: { sha: tip || "tipsha" } } };
+    },
+    compare: async (args) => {
+      calls.compare = args;
+      if (failOn === "compare") throw new Error("compare unavailable");
+      return {
+        data: {
+          merge_base_commit: { sha: mergeBase || "tipsha" },
+          commits: lagCommits.map((c, i) => ({ sha: c.sha, commit: { message: c.subject } }))
+        }
+      };
+    }
+  };
+  const context = { repo: { owner: "LSantha", repo: "jnode_ai" } };
+  return { h: createHelpers({ github, context, core: createCore() }), calls };
+}
+
+test("checkBaseCurrency: a branch containing the base tip is current", async () => {
+  const { h, calls } = githubWithBase({ tip: "tipsha", mergeBase: "tipsha", lagCommits: [] });
+  const info = await h.checkBaseCurrency(99);
+  assert.strictEqual(info.current, true, "the branch contains the base tip");
+  assert.strictEqual(info.base, "master");
+  assert.strictEqual(info.lag.length, 0, "nothing would be reverted");
+  assert.ok(calls.compare, "the merge-base is read from the compare API");
+});
+
+test("checkBaseCurrency: a lagging branch is not current and names what it reverts", async () => {
+  const { h } = githubWithBase({
+    tip: "tipsha",
+    mergeBase: "oldsha",
+    lagCommits: [
+      { sha: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", subject: "Add JNodeOceanTheme" },
+      { sha: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", subject: "Fix FAT32 floor" }
+    ]
+  });
+  const info = await h.checkBaseCurrency(99);
+  assert.strictEqual(info.current, false, "the branch is behind master");
+  assert.strictEqual(info.lag.length, 2, "both commits would be reverted");
+  assert.strictEqual(info.lag[0].sha, "aaaaaaaa", "the sha is shortened for the comment");
+  assert.strictEqual(info.lag[0].subject, "Add JNodeOceanTheme", "the subject is the first line");
+  const comment = h.baseCurrencyComment(99, info);
+  assert.ok(comment.includes("tipsha") === false && comment.includes("Add JNodeOceanTheme"),
+    "the refusal names the commits that would be reverted");
+  assert.ok(comment.includes("Merge master into the branch"), "the refusal states the remedy");
+});
+
+test("checkBaseCurrency: fail-closed on an unreadable base", async () => {
+  const { h } = githubWithBase({ failOn: "getBranch" });
+  const info = await h.checkBaseCurrency(99);
+  assert.strictEqual(info.current, false, "an unreadable base must block the merge");
+  assert.ok(h.baseCurrencyComment(99, info).includes("could not be read"),
+    "the refusal says why rather than naming nothing");
+});
+
+test("checkBaseCurrency: fail-closed on an unreadable PR", async () => {
+  const { github } = createGithub({});
+  github.rest.pulls.get = async () => { throw new Error("no PR"); };
+  const context = { repo: { owner: "LSantha", repo: "jnode_ai" } };
+  const h = createHelpers({ github, context, core: createCore() });
+  const info = await h.checkBaseCurrency(99);
+  assert.strictEqual(info.current, false);
+  assert.strictEqual(info.lag.length, 0);
+});

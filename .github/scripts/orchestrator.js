@@ -601,6 +601,7 @@ module.exports = async ({ github, context, core }) => {
                     // in HUMAN_REVIEW does not.
                     const diffSafe = await h.isDiffSafe(task.pr);
                     const ciGreen = await h.isCIGreen(task.pr);
+                    const baseInfo = await h.checkBaseCurrency(task.pr);
                     const forbidden = diffSafe ? false : await h.touchesForbiddenPath(task.pr);
                     if (!ciGreen) {
                       h.parkForCI(task, task.pr, {
@@ -613,6 +614,17 @@ module.exports = async ({ github, context, core }) => {
                         owner: context.repo.owner, repo: context.repo.repo, issue_number: task.pr,
                         body: "Agent review passed but auto-merge deferred: Java CI is not green yet. Will re-check when CI completes."
                       });
+                    } else if (!baseInfo.current) {
+                      // A stale branch must never reach the squash: it would
+                      // revert the commits master gained since the branch was
+                      // cut, with no CI signal (ticket #872).
+                      task.phase = 'HUMAN_REVIEW';
+                      task.retries = 0;
+                      await github.rest.issues.createComment({
+                        owner: context.repo.owner, repo: context.repo.repo, issue_number: task.pr,
+                        body: h.baseCurrencyComment(task.pr, baseInfo)
+                      });
+                      core.error(`Task #${task.issue} PR #${task.pr} is behind its base; routing to HUMAN_REVIEW.`);
                     } else if (forbidden) {
                       task.phase = 'HUMAN_REVIEW';
                       task.retries = 0;
@@ -788,6 +800,21 @@ module.exports = async ({ github, context, core }) => {
             body: "Human approval recorded, but Java CI is not green yet. Not merging. Will re-check and merge when CI completes."
           });
           core.info(`Human approved PR #${task.pr} but CI is red; deferring merge.`);
+          return;
+        }
+        // The human-approval path must refuse a stale branch too: a squash
+        // applies the branch's whole tree, reverting the commits master gained
+        // since the branch was cut, with no CI signal (ticket #872).
+        const baseInfo = await h.checkBaseCurrency(task.pr);
+        if (!baseInfo.current) {
+          task.phase = 'REVIEW';
+          task.retries = 0;
+          await updateMasterIssue(masterIssueNumber, state);
+          await github.rest.issues.createComment({
+            owner: context.repo.owner, repo: context.repo.repo, issue_number: task.pr,
+            body: h.baseCurrencyComment(task.pr, baseInfo)
+          });
+          core.error(`Human approved PR #${task.pr} but its branch is behind its base; refusing to merge.`);
           return;
         }
         task.phase = 'MERGE';

@@ -21,7 +21,7 @@ function createMocks(eventName = 'issue_comment', commentBody = '/orchestrate') 
   const updateIssueDetails = [];
   let masterIssueBody = `- [ ] #2\n- [ ] #3`;
   let currentTaskData = { labels: [], state: 'open' };
-  let prData = { labels: [], state: 'open', merged: true, head: { ref: 'opencode/issue2-fix', sha: 'abc' } };
+  let prData = { labels: [], state: 'open', merged: true, head: { ref: 'opencode/issue2-fix', sha: 'abc' }, base: { ref: 'master' } };
 
   const github = {
     rest: {
@@ -50,6 +50,13 @@ function createMocks(eventName = 'issue_comment', commentBody = '/orchestrate') 
         listForRepo: async () => {
           return { data: [{ number: 1, labels: [{name: 'kind/orchestrator'}], state: 'open', body: masterIssueBody }] };
         }
+      },
+      repos: {
+        // #872's merge gate reads the base tip and the head..base merge-base;
+        // the default models an up-to-date branch so the merge-path tests still
+        // reach mergePR. Tests exercising the stale-base gate override these.
+        getBranch: async () => ({ data: { commit: { sha: 'tipsha' } } }),
+        compare: async () => ({ data: { merge_base_commit: { sha: 'tipsha' }, commits: [] } })
       },
       pulls: {
         list: async () => {
@@ -237,7 +244,7 @@ test('orchestrator.js test suite', async (t) => {
     setMasterBody(`<!-- ORCHESTRATOR_STATE:\n{ "status": "IN_PROGRESS", "current_task": { "issue": 2, "pr": 99, "phase": "REVIEW", "turn": 0, "max_turns": 3, "retries": 0 }, "queue": [3], "completed": [], "failed": [], "order": [2, 3] }\n-->`);
     setTaskData({ labels: [{name: 'auto-merge'}], state: 'open' });
     github.rest.issues.listComments = async () => ({ data: [{ body: 'Verdict: approve' }] });
-    github.rest.pulls.get = async () => ({ data: { head: { ref: 'opencode/issue2-fix', sha: 'abc' }, merged: true } });
+    github.rest.pulls.get = async () => ({ data: { head: { ref: 'opencode/issue2-fix', sha: 'abc' }, base: { ref: 'master' }, merged: true } });
     github.rest.pulls.listFiles = async () => ({ data: [{ filename: 'fs/a.java', additions: 5 }] });
     github.rest.checks = { listForRef: async () => ({ data: { check_runs: javaCiChecks('success') } }) };
 
@@ -256,7 +263,7 @@ test('orchestrator.js test suite', async (t) => {
     github.rest.issues.listComments = async () => ({ data: [{ body: 'Verdict: approve' }] });
     // The merge call resolves with an empty body; the verification read still
     // reports an unmerged PR.
-    github.rest.pulls.get = async () => ({ data: { head: { ref: 'opencode/issue2-fix', sha: 'abc' }, state: 'open', merged: false } });
+    github.rest.pulls.get = async () => ({ data: { head: { ref: 'opencode/issue2-fix', sha: 'abc' }, base: { ref: 'master' }, state: 'open', merged: false } });
     github.rest.pulls.listFiles = async () => ({ data: [{ filename: 'fs/a.java', additions: 5 }] });
     github.rest.checks = { listForRef: async () => ({ data: { check_runs: javaCiChecks('success') } }) };
 
@@ -283,7 +290,7 @@ test('orchestrator.js test suite', async (t) => {
     const { core, github, context, calls, setMasterBody } = createMocks('pull_request_review');
 
     setMasterBody(`<!-- ORCHESTRATOR_STATE:\n{ "status": "IN_PROGRESS", "current_task": { "issue": 2, "pr": 99, "phase": "HUMAN_REVIEW", "turn": 0, "max_turns": 3, "retries": 0 }, "queue": [3], "completed": [], "failed": [], "order": [2, 3] }\n-->`);
-    github.rest.pulls.get = async () => ({ data: { head: { ref: 'opencode/issue2-fix', sha: 'abc' }, state: 'open', merged: false } });
+    github.rest.pulls.get = async () => ({ data: { head: { ref: 'opencode/issue2-fix', sha: 'abc' }, base: { ref: 'master' }, state: 'open', merged: false } });
 
     await assert.rejects(
       runOrchestrator({ github, context, core }),
@@ -305,7 +312,7 @@ test('orchestrator.js test suite', async (t) => {
     setMasterBody(`<!-- ORCHESTRATOR_STATE:\n{ "status": "IN_PROGRESS", "current_task": { "issue": 2, "pr": 99, "phase": "REVIEW", "turn": 0, "max_turns": 3, "retries": 0 }, "queue": [3], "completed": [], "failed": [], "order": [2, 3] }\n-->`);
     setTaskData({ labels: [{name: 'auto-merge'}], state: 'open' });
     github.rest.issues.listComments = async () => ({ data: [{ body: 'Verdict: approve' }] });
-    github.rest.pulls.get = async () => ({ data: { head: { ref: 'opencode/issue2-fix', sha: 'abc' }, merged: true } });
+    github.rest.pulls.get = async () => ({ data: { head: { ref: 'opencode/issue2-fix', sha: 'abc' }, base: { ref: 'master' }, merged: true } });
     github.rest.pulls.listFiles = async () => ({ data: [{ filename: 'fs/a.java', additions: 5 }] });
     github.rest.checks = { listForRef: async () => ({ data: { check_runs: javaCiChecks('failure') } }) };
 
@@ -321,7 +328,7 @@ test('orchestrator.js test suite', async (t) => {
     setMasterBody(`<!-- ORCHESTRATOR_STATE:\n{ "status": "IN_PROGRESS", "current_task": { "issue": 2, "pr": 99, "phase": "REVIEW", "turn": 0, "max_turns": 3, "retries": 0 }, "queue": [3], "completed": [], "failed": [], "order": [2, 3] }\n-->`);
     setTaskData({ labels: [{name: 'auto-merge'}], state: 'open' });
     github.rest.issues.listComments = async () => ({ data: [{ body: 'Verdict: approve' }] });
-    github.rest.pulls.get = async () => ({ data: { head: { ref: 'opencode/issue2-fix', sha: 'abc' }, merged: true } });
+    github.rest.pulls.get = async () => ({ data: { head: { ref: 'opencode/issue2-fix', sha: 'abc' }, base: { ref: 'master' }, merged: true } });
     github.rest.pulls.listFiles = async () => ({ data: [{ filename: 'core/src/native/x86/kernel.asm', additions: 3 }] });
     // CI defaults to green, so this isolates the diff gate.
 
@@ -422,7 +429,7 @@ test('orchestrator.js test suite', async (t) => {
     setMasterBody(`<!-- ORCHESTRATOR_STATE:\n{ "status": "IN_PROGRESS", "current_task": { "issue": 2, "pr": 99, "phase": "REVIEW", "turn": 0, "max_turns": 3, "retries": 0, "review_in_progress": true }, "queue": [3], "completed": [], "failed": [], "order": [2, 3] }\n-->`);
     setTaskData({ labels: [{name: 'auto-merge'}], state: 'open' });
     github.rest.issues.listComments = async () => ({ data: [{ body: 'Verdict: approve' }] });
-    github.rest.pulls.get = async () => ({ data: { head: { ref: 'opencode/issue2-fix', sha: 'abc' }, merged: true } });
+    github.rest.pulls.get = async () => ({ data: { head: { ref: 'opencode/issue2-fix', sha: 'abc' }, base: { ref: 'master' }, merged: true } });
     github.rest.pulls.listFiles = async () => ({ data: [{ filename: 'fs/a.java', additions: 5 }] });
     github.rest.checks = { listForRef: async () => ({ data: { check_runs: javaCiChecks('failure') } }) };
 

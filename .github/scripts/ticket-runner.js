@@ -814,6 +814,24 @@ module.exports = async ({ github, context, core }) => {
       core.info("Ticket runner: approval on PR #" + prNumber + " but CI is red; deferring merge.");
       return;
     }
+    // A stale branch must not reach the squash: applying the branch's whole tree
+    // would revert the commits master gained since the branch was cut, with no
+    // CI signal (ticket #872). --force is the deliberate emergency override, so
+    // it skips this check exactly as it skips the CI re-check. Same
+    // honest-refusal shape as the CI check above.
+    var baseInfo = force ? { current: true, base: "", lag: [] } : await h.checkBaseCurrency(prNumber);
+    if (!baseInfo.current) {
+      state.phase = "REVIEW";
+      await updateIssueState(issueNumber, state);
+      await github.rest.issues.createComment({
+        owner, repo, issue_number: prNumber,
+        body: h.baseCurrencyComment(prNumber, baseInfo) +
+          "\n\nApproval is recorded; it is not lost. Re-request it once the branch is current."
+      });
+      core.info("Ticket runner: PR #" + prNumber + " is behind its base (" +
+        baseInfo.lag.length + " commits); refusing to merge.");
+      return;
+    }
     state.phase = "MERGE";
     state.history.push({
       event: force ? "human_approved_forced" : "human_approved",
