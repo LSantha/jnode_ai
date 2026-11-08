@@ -26,10 +26,16 @@ import java.util.Arrays;
 import java.util.List;
 
 import javax.swing.UIDefaults;
+import javax.swing.plaf.BorderUIResource;
 import javax.swing.plaf.ColorUIResource;
 import javax.swing.plaf.metal.OceanTheme;
-import sun.swing.SwingLazyValue;
 
+/**
+ * The JNode look and feel theme: the standard Ocean theme with the
+ * JNode autumn palette substituted for the ocean colors. All shading,
+ * icons, gradients and textures of Ocean are preserved unchanged; only
+ * the colors differ.
+ */
 public class JNodeOceanTheme extends OceanTheme {
     private static final ColorUIResource PRIMARY1 =
             new ColorUIResource(0xA65A3E);
@@ -57,6 +63,14 @@ public class JNodeOceanTheme extends OceanTheme {
             new ColorUIResource(0x212121);
     private static final ColorUIResource WHITE =
             new ColorUIResource(Color.white);
+    /**
+     * Ocean paints the title pane button chips of selected frames with
+     * the primary control color. A pale warm tint keeps them blending
+     * with the active title gradient the way they blend with the bar
+     * on inactive frames (which use the control color).
+     */
+    private static final ColorUIResource PRIMARY_CONTROL =
+            new ColorUIResource(0xDCC8BE);
 
     private static final ColorUIResource CONTROL_TEXT_COLOR =
             new ColorUIResource(0x3E2723);
@@ -139,21 +153,21 @@ public class JNodeOceanTheme extends OceanTheme {
         return DESKTOP_BG;
     }
 
+    /**
+     * Ocean derives the button chip background of selected frames and
+     * the inner highlight of active button borders from the primary
+     * control color. Tinting it pale warm makes the selected frame
+     * icons blend with the title bar like the inactive ones do.
+     */
     @Override
-    public ColorUIResource getPrimaryControlDarkShadow() {
-        return UNIFIED_HIGHLIGHT;
-    }
-
-    @Override
-    public ColorUIResource getPrimaryControlHighlight() {
-        return UNIFIED_HIGHLIGHT;
+    public ColorUIResource getPrimaryControl() {
+        return PRIMARY_CONTROL;
     }
 
     @Override
     public void addCustomEntriesToTable(UIDefaults table) {
-        Object focusBorder = new SwingLazyValue(
-                      "javax.swing.plaf.BorderUIResource$LineBorderUIResource",
-                      new Object[] {getPrimary1()});
+        Object focusBorder =
+            new BorderUIResource.LineBorderUIResource(getPrimary1());
         java.util.List buttonGradient = Arrays.asList(
                  new Object[] {new Float(.3f), new Float(0f),
                  SECONDARY3, WHITE, getSecondary2() });
@@ -167,7 +181,7 @@ public class JNodeOceanTheme extends OceanTheme {
         Object[] defaults = new Object[] {
             "Button.gradient", buttonGradient,
             "Button.rollover", Boolean.TRUE,
-            "Button.toolBarBorderBackground", INACTIVE_CONTROL_TEXT_COLOR, 
+            "Button.toolBarBorderBackground", INACTIVE_CONTROL_TEXT_COLOR,
             "Button.disabledToolBarBorderBackground", cccccc,
             "Button.rolloverIconType", "ocean",
 
@@ -177,15 +191,17 @@ public class JNodeOceanTheme extends OceanTheme {
             "CheckBoxMenuItem.gradient", buttonGradient,
 
             "Label.disabledForeground", getInactiveControlTextColor(),
-            
+
             "Menu.opaque", Boolean.FALSE,
 
             "MenuBar.gradient", Arrays.asList(new Object[] {
                      new Float(1f), new Float(0f),
-                     WHITE, dadada, 
-                     new ColorUIResource(dadada) }),
+                     DESKTOP_BG_PALER, WHITE,
+                     new ColorUIResource(WHITE) }),
+            "MenuBar.background", DESKTOP_BG_PALER,
             "MenuBar.borderColor", cccccc,
 
+            "InternalFrame.activeTitleBackground", UNIFIED_HIGHLIGHT,
             "InternalFrame.activeTitleGradient", Arrays.asList(new Object[] {
                      new Float(.3f), new Float(0f),
                      UNIFIED_HIGHLIGHT, WHITE, DESKTOP_BG_PALER }),
@@ -207,6 +223,12 @@ public class JNodeOceanTheme extends OceanTheme {
             "Text.selectionBackground", SELECTION_BG,
             "Text.selectionForeground", SELECTION_FG,
 
+            // Tooltips painted from the "info" system color, which metal
+            // derives from the primary control color; give tooltips the
+            // same background as selected menu items.
+            "ToolTip.background", SELECTION_BG,
+            "info", SELECTION_BG,
+
             "List.selectionBackground", SELECTION_BG,
             "List.selectionForeground", SELECTION_FG,
 
@@ -227,7 +249,9 @@ public class JNodeOceanTheme extends OceanTheme {
 
             "RadioButtonMenuItem.gradient", buttonGradient,
 
-            "ScrollBar.gradient", buttonGradient,
+            "ScrollBar.gradient", Arrays.asList(new Object[] {
+                     new Float(.3f), new Float(0f),
+                     DESKTOP_BG_PALER, WHITE, getSecondary2() }),
 
             "Slider.altTrackColor", SECONDARY3,
             "Slider.gradient", sliderGradient,
@@ -239,7 +263,7 @@ public class JNodeOceanTheme extends OceanTheme {
             "TabbedPane.borderHightlightColor", getPrimary1(),
             "TabbedPane.contentAreaColor", WHITE,
             "TabbedPane.contentBorderInsets", new Insets(4, 2, 3, 3),
-            "TabbedPane.selected", WHITE,
+            "TabbedPane.selected", UNIFIED_HIGHLIGHT,
             "TabbedPane.tabAreaBackground", dadada,
             "TabbedPane.tabAreaInsets", new Insets(2, 2, 0, 6),
             "TabbedPane.unselectedBackground", SECONDARY3,
@@ -259,7 +283,7 @@ public class JNodeOceanTheme extends OceanTheme {
             "Tree.dropLineColor", getPrimary1(),
             "Table.dropLineColor", getPrimary1(),
             "Table.dropLineShortColor", new ColorUIResource(Color.black),
-            
+
             "Table.dropCellBackground", WARM_DROP,
             "Tree.dropCellBackground", WARM_DROP,
             "List.dropCellBackground", WARM_DROP,
