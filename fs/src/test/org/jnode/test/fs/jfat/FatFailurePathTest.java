@@ -467,6 +467,11 @@ public class FatFailurePathTest {
             } finally {
                 smallDevice.close();
                 tmp.delete();
+            }
+        }
+    }
+
+    @Test
     public void testSectorCountAboveIntMaxIsRejectedAsTooBig() throws Exception {
         long[] tooBig = new long[] {Integer.MAX_VALUE + 1L, 0xFFFFFFFFL};
         for (int i = 0; i < tooBig.length; i++) {
@@ -537,6 +542,8 @@ public class FatFailurePathTest {
         }
         assertFalse(wrote[0]);
     }
+
+    @Test
     public void testSectorCountAtIntMaxIsNotRejectedAsTooBig() throws Exception {
         PartitionedFileDevice partitioned =
             new PartitionedFileDevice(diskFile, "rw", Integer.MAX_VALUE);
