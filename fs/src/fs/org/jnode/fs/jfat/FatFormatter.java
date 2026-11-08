@@ -183,7 +183,7 @@ public class FatFormatter {
         FatFsInfo fsInfo = new FatFsInfo(sectorSize);
         BootSector bs = new BootSector(sectorSize);
         api.flush();
-        int DiskSize = getDiskSize(nbTotalSectors, sectorSize);
+        long DiskSize = getDiskSize(nbTotalSectors, sectorSize);
         int SectorPerCluster = get_spc(ClusterSize, sectorSize);
         int UserAreaSize =
                 getUserAreaSize(nbTotalSectors, ReservedSectorCount, NumOfFATs, ClusterSize);
@@ -276,7 +276,7 @@ public class FatFormatter {
         /**
          * The mkjfat informations group
          */
-        int DiskSizeGB = DiskSize / (1000 * 1000 * 1000);
+        long DiskSizeGB = DiskSize / 1000000000L;
         log.info("Size(Bytes): " + DiskSize + "\tSize(GB): " + DiskSizeGB + "\tSectors :" +
                 nbTotalSectors);
         log.info("Volume ID is :" + toHexString(VolumeID >> 16) + ":" +
@@ -332,7 +332,7 @@ public class FatFormatter {
     private void setQuickSectorFree(int systemAreaSize, BlockDeviceAPI api) throws IOException {
         byte[] reserveArray = new byte[512];
         for (int i = 0; i < systemAreaSize; i++) {
-            api.write(i * 512, ByteBuffer.wrap(reserveArray));
+            api.write((long) i * 512, ByteBuffer.wrap(reserveArray));
         }
     }
 
@@ -360,14 +360,14 @@ public class FatFormatter {
     /**
      * The method for getting the Serial Number of the Drive.
      */
-    public int getDriveSerialNumber() {
+    public static int getDriveSerialNumber() {
         Date date = new Date();
         int year = FatUtils.getYear(date.getTime());
-        int month = FatUtils.getMonth((int) date.getTime());
-        int day = FatUtils.getDay((int) date.getTime());
-        int hour = FatUtils.getHours((int) date.getTime());
-        int minute = FatUtils.getMinutes((int) date.getTime());
-        int second = FatUtils.getSeconds((int) date.getTime());
+        int month = FatUtils.getMonth(date.getTime());
+        int day = FatUtils.getDay(date.getTime());
+        int hour = FatUtils.getHours(date.getTime());
+        int minute = FatUtils.getMinutes(date.getTime());
+        int second = FatUtils.getSeconds(date.getTime());
         int milliSecond = (int) FatUtils.getMilliSeconds(date.getTime());
 
         int low = day + (month << 8);
@@ -419,8 +419,8 @@ public class FatFormatter {
      * @param sectorSize
      * @return
      */
-    private int getDiskSize(int TotalSectors, int sectorSize) {
-        return (TotalSectors * sectorSize);
+    public static long getDiskSize(int TotalSectors, int sectorSize) {
+        return ((long) TotalSectors * sectorSize);
     }
 
 }
