@@ -373,8 +373,22 @@ public class FatFormatter {
      * serial an arbitrary value rather than the date. Ticket #878.
      */
     public static int getDriveSerialNumber() {
-        Date date = new Date();
-        long time = date.getTime();
+        return getDriveSerialNumber(new Date().getTime());
+    }
+
+    /**
+     * The serial number for a given instant, factored out of
+     * {@link #getDriveSerialNumber()} so it can be tested without racing the
+     * clock: the caller's "now" and the recalculation must not be two different
+     * instants, or a second boundary between them fails an otherwise-correct
+     * serial.
+     *
+     * FatUtils takes epoch MILLISECONDS, and the parameter is exactly that, so
+     * every field is derived from it. Passing (int) time truncated ~1.76e12 to
+     * its low 32 bits and fed Calendar a garbage epoch, which made the volume
+     * serial an arbitrary value rather than the date. Ticket #878.
+     */
+    public static int getDriveSerialNumber(long time) {
         int year = FatUtils.getYear(time);
         int month = FatUtils.getMonth(time);
         int day = FatUtils.getDay(time);
@@ -427,15 +441,13 @@ public class FatFormatter {
     }
 
     /**
-     * The Total Disk Size
-     * @param TotalSectors
-     * @param sectorSize
-     * @return
-     */
-    /**
      * The Total Disk Size in bytes. Computed in long: sector counts above 4 GiB
      * wrap in int arithmetic, which is how this reported "-512" for a
      * Integer.MAX_VALUE-sector device. Ticket #878.
+     *
+     * @param TotalSectors
+     * @param sectorSize
+     * @return the size in bytes
      */
     public static long getDiskSize(int TotalSectors, int sectorSize) {
         return ((long) TotalSectors) * sectorSize;

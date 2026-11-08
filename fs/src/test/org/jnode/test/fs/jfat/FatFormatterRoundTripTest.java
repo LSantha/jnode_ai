@@ -41,7 +41,9 @@ import org.jnode.fs.jfat.Fat;
 import org.jnode.fs.jfat.FatEntry;
 import org.jnode.fs.jfat.FatFileSystem;
 import org.jnode.fs.jfat.FatFileSystemFormatter;
+import org.jnode.fs.jfat.FatFileSystemType;
 import org.jnode.fs.jfat.FatFormatter;
+import org.jnode.fs.jfat.FatUtils;
 import org.jnode.fs.jfat.FatFileSystemType;
 
 /**
@@ -309,14 +311,17 @@ public class FatFormatterRoundTripTest {
      */
     @org.junit.Test
     public void testDriveSerialNumberUsesTheUntruncatedEpoch() throws Exception {
-        long now = new java.util.Date().getTime();
-        int year = org.jnode.fs.jfat.FatUtils.getYear(now);
-        int month = org.jnode.fs.jfat.FatUtils.getMonth(now);
-        int day = org.jnode.fs.jfat.FatUtils.getDay(now);
-        int hour = org.jnode.fs.jfat.FatUtils.getHours(now);
-        int minute = org.jnode.fs.jfat.FatUtils.getMinutes(now);
-        int second = org.jnode.fs.jfat.FatUtils.getSeconds(now);
-        int milliSecond = (int) org.jnode.fs.jfat.FatUtils.getMilliSeconds(now);
+        // A fixed instant: the caller's time and the recalculation must be the
+        // same instant, or a second boundary between two readings fails an
+        // otherwise-correct serial.
+        long time = 1762000000000L;
+        int year = FatUtils.getYear(time);
+        int month = FatUtils.getMonth(time);
+        int day = FatUtils.getDay(time);
+        int hour = FatUtils.getHours(time);
+        int minute = FatUtils.getMinutes(time);
+        int second = FatUtils.getSeconds(time);
+        int milliSecond = (int) FatUtils.getMilliSeconds(time);
 
         int low = day + (month << 8);
         low += (milliSecond / 10) + (second << 8);
@@ -324,7 +329,24 @@ public class FatFormatterRoundTripTest {
         high += year;
 
         org.junit.Assert.assertEquals(low + (high << 16),
-            FatFormatter.getDriveSerialNumber());
+            FatFormatter.getDriveSerialNumber(time));
+    }
+
+    /**
+     * Ticket #878, finding B's other half: FatUtils.getMilliSeconds ignored its
+     * argument and returned the CURRENT epoch millis, so the serial's low word
+     * was still arbitrary even after the callers stopped truncating. The oracle
+     * is an independently built Calendar set to the same instant, not a
+     * recalculation of the same broken call.
+     */
+    @org.junit.Test
+    public void testGetMilliSecondsHonoursItsArgument() throws Exception {
+        long time = 1762000000123L;
+        java.util.Calendar cal = java.util.Calendar.getInstance();
+        cal.setTimeInMillis(time);
+        org.junit.Assert.assertEquals(cal.get(java.util.Calendar.MILLISECOND),
+            FatUtils.getMilliSeconds(time));
+        org.junit.Assert.assertEquals(0L, FatUtils.getMilliSeconds(0L));
     }
 
     // ------------------------------------------------------------------ helpers
