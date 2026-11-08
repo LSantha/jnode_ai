@@ -177,6 +177,9 @@ public class FatFormatter {
             int sectorsPerTrack, int nbHeads, ClusterSize ClusterSize, int hiddenSectors,
             BlockDeviceAPI api) throws IOException {
 
+        if (nbTotalSectors < 65536) {
+            throw new IOException("This drive is too small for FAT32 - there must be at least 64K clusters");
+        }
         FatFsInfo fsInfo = new FatFsInfo(sectorSize);
         BootSector bs = new BootSector(sectorSize);
         api.flush();
@@ -239,11 +242,11 @@ public class FatFormatter {
         long FatNeeded = UserAreaSize / SectorPerCluster;
         /**
          * check for a cluster count of >2^28, since the upper 4 bits of the
-         * cluster values in the FAT are reserved
+         * cluster values in the FAT are reserved. Policy: enforced; format
+         * fails with IOException before any write (like the 64K-sector floor).
          */
         if (FatNeeded > Math.pow(2, 28)) {
-            log
-                    .error("This drive has more than 2^28 clusters, try to specify a larger cluster size\n");
+            throw new IOException("This drive has more than 2^28 clusters, try to specify a larger cluster size");
         }
 
         /**
