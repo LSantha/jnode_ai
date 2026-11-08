@@ -4,8 +4,8 @@
  * Copyright (C) 2003-2015 JNode.org
  *
  * This library is free software; you can redistribute it and/or modify it
- * under the terms of the GNU Lesser General Public License as published
- * by the Free Software Foundation; either version 2.1 of the License, or
+ * under the terms of the GNU Lesser General Public License as published by
+ * the Free Software Foundation; either version 2.1 of the License, or
  * (at your option) any later version.
  *
  * This library is distributed in the hope that it will be useful, but
@@ -35,6 +35,7 @@ public class FatFormatterOverflowTest {
         cal.setTimeInMillis(time);
         int year = cal.get(Calendar.YEAR) - 1980;
         int month = cal.get(Calendar.MONTH);
+        // Note: day mirrors FatUtils.getDay (day-of-week, not day-of-month).
         int day = cal.get(Calendar.DAY_OF_WEEK) - 1;
         int hour = cal.get(Calendar.HOUR_OF_DAY);
         int minute = cal.get(Calendar.MINUTE);
@@ -55,6 +56,13 @@ public class FatFormatterOverflowTest {
         Calendar cal = Calendar.getInstance();
         cal.setTimeInMillis(time);
         return cal.get(Calendar.MILLISECOND);
+    }
+
+    @Test
+    public void testGetDiskSizeDoesNotWrap() {
+        assertEquals(1099511627264L, FatFormatter.getDiskSize(Integer.MAX_VALUE, 512));
+        assertEquals(1048576L, FatFormatter.getDiskSize(2048, 512));
+        assertEquals(0L, FatFormatter.getDiskSize(0, 512));
     }
 
     @Test

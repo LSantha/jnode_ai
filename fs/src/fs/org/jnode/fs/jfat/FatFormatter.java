@@ -183,7 +183,7 @@ public class FatFormatter {
         FatFsInfo fsInfo = new FatFsInfo(sectorSize);
         BootSector bs = new BootSector(sectorSize);
         api.flush();
-        int DiskSize = getDiskSize(nbTotalSectors, sectorSize);
+        long DiskSize = getDiskSize(nbTotalSectors, sectorSize);
         int SectorPerCluster = get_spc(ClusterSize, sectorSize);
         int UserAreaSize =
                 getUserAreaSize(nbTotalSectors, ReservedSectorCount, NumOfFATs, ClusterSize);
@@ -276,7 +276,7 @@ public class FatFormatter {
         /**
          * The mkjfat informations group
          */
-        int DiskSizeGB = DiskSize / (1000 * 1000 * 1000);
+        long DiskSizeGB = DiskSize / 1000000000L;
         log.info("Size(Bytes): " + DiskSize + "\tSize(GB): " + DiskSizeGB + "\tSectors :" +
                 nbTotalSectors);
         log.info("Volume ID is :" + toHexString(VolumeID >> 16) + ":" +
@@ -332,7 +332,7 @@ public class FatFormatter {
     private void setQuickSectorFree(int systemAreaSize, BlockDeviceAPI api) throws IOException {
         byte[] reserveArray = new byte[512];
         for (int i = 0; i < systemAreaSize; i++) {
-            api.write(i * 512, ByteBuffer.wrap(reserveArray));
+            api.write((long) i * 512, ByteBuffer.wrap(reserveArray));
         }
     }
 
@@ -360,10 +360,16 @@ public class FatFormatter {
     /**
      * The method for getting the Serial Number of the Drive.
      */
-    public int getDriveSerialNumber() {
+    public static int getDriveSerialNumber() {
         return computeDriveSerialNumber(new Date().getTime());
     }
 
+    /**
+     * Computes the drive serial number for the given time.
+     *
+     * @param time epoch milliseconds
+     * @return packed serial number
+     */
     public static int computeDriveSerialNumber(long time) {
         int year = FatUtils.getYear(time);
         int month = FatUtils.getMonth(time);
@@ -422,8 +428,8 @@ public class FatFormatter {
      * @param sectorSize
      * @return
      */
-    private int getDiskSize(int TotalSectors, int sectorSize) {
-        return (TotalSectors * sectorSize);
+    public static long getDiskSize(int TotalSectors, int sectorSize) {
+        return ((long) TotalSectors * sectorSize);
     }
 
 }
