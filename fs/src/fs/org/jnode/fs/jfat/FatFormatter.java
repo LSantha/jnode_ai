@@ -361,14 +361,17 @@ public class FatFormatter {
      * The method for getting the Serial Number of the Drive.
      */
     public int getDriveSerialNumber() {
-        Date date = new Date();
-        int year = FatUtils.getYear(date.getTime());
-        int month = FatUtils.getMonth((int) date.getTime());
-        int day = FatUtils.getDay((int) date.getTime());
-        int hour = FatUtils.getHours((int) date.getTime());
-        int minute = FatUtils.getMinutes((int) date.getTime());
-        int second = FatUtils.getSeconds((int) date.getTime());
-        int milliSecond = (int) FatUtils.getMilliSeconds(date.getTime());
+        return computeDriveSerialNumber(new Date().getTime());
+    }
+
+    public static int computeDriveSerialNumber(long time) {
+        int year = FatUtils.getYear(time);
+        int month = FatUtils.getMonth(time);
+        int day = FatUtils.getDay(time);
+        int hour = FatUtils.getHours(time);
+        int minute = FatUtils.getMinutes(time);
+        int second = FatUtils.getSeconds(time);
+        int milliSecond = (int) FatUtils.getMilliSeconds(time);
 
         int low = day + (month << 8);
         int tmp = (milliSecond / 10) + (second << 8);
