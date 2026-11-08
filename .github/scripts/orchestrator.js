@@ -601,8 +601,11 @@ module.exports = async ({ github, context, core }) => {
                     // in HUMAN_REVIEW does not.
                     const diffSafe = await h.isDiffSafe(task.pr);
                     const ciGreen = await h.isCIGreen(task.pr);
-                    const baseInfo = await h.checkBaseCurrency(task.pr);
                     const forbidden = diffSafe ? false : await h.touchesForbiddenPath(task.pr);
+                    // Only once CI is green: the base check costs API calls and
+                    // a red-CI PR must be parked before anything else.
+                    const baseInfo = ciGreen ? await h.checkBaseCurrency(task.pr)
+                      : { current: true, base: "", lag: [] };
                     if (!ciGreen) {
                       h.parkForCI(task, task.pr, {
                         event: 'merge_deferred',
@@ -620,9 +623,11 @@ module.exports = async ({ github, context, core }) => {
                       // cut, with no CI signal (ticket #872).
                       task.phase = 'HUMAN_REVIEW';
                       task.retries = 0;
+                      state.history.push({ event: 'merge_refused_base_stale', task: task.issue,
+                        pr: task.pr, commits: baseInfo.lag.length, timestamp: new Date().toISOString() });
                       await github.rest.issues.createComment({
                         owner: context.repo.owner, repo: context.repo.repo, issue_number: task.pr,
-                        body: h.baseCurrencyComment(task.pr, baseInfo)
+                        body: h.baseCurrencyComment(task.pr, baseInfo, "human")
                       });
                       core.error(`Task #${task.issue} PR #${task.pr} is behind its base; routing to HUMAN_REVIEW.`);
                     } else if (forbidden) {
@@ -809,10 +814,12 @@ module.exports = async ({ github, context, core }) => {
         if (!baseInfo.current) {
           task.phase = 'REVIEW';
           task.retries = 0;
+          state.history.push({ event: 'merge_refused_base_stale', task: task.issue,
+            pr: task.pr, commits: baseInfo.lag.length, timestamp: new Date().toISOString() });
           await updateMasterIssue(masterIssueNumber, state);
           await github.rest.issues.createComment({
             owner: context.repo.owner, repo: context.repo.repo, issue_number: task.pr,
-            body: h.baseCurrencyComment(task.pr, baseInfo)
+            body: h.baseCurrencyComment(task.pr, baseInfo, "human")
           });
           core.error(`Human approved PR #${task.pr} but its branch is behind its base; refusing to merge.`);
           return;

@@ -332,6 +332,13 @@ module.exports = function createHelpers({ github, context, core }) {
         var message = (c.commit && c.commit.message) || "";
         lag.push({ sha: (c.sha || "").slice(0, 8), subject: message.split("\n")[0] });
       }
+      // compare paginates at 250 commits; total_commits is the exact count, so
+      // the caller's "N commits" is honest even on a very lagging branch.
+      if (typeof compare.data.total_commits === "number" &&
+          compare.data.total_commits !== lag.length) {
+        lag.push({ sha: "", subject: "... and " +
+          (compare.data.total_commits - (lag.length - 1)) + " more" });
+      }
       return { current: mergeBase === tip, base: baseRef, lag: lag };
     } catch (e) {
       core.warning("checkBaseCurrency: compare failed for PR #" + prNumber + ": " + e.message);
@@ -339,19 +346,34 @@ module.exports = function createHelpers({ github, context, core }) {
     }
   }
 
-  /** Human-readable refusal naming the commits a squash would revert. */
-  function baseCurrencyComment(prNumber, info) {
+  /**
+   * Human-readable refusal naming the commits a squash would revert.
+   *
+   * @param prNumber the PR
+   * @param info the checkBaseCurrency result
+   * @param entry how the merge was requested - "review" (an agent review the
+   *   ticket-runner re-posts) or "human" (a native GitHub approval). The remedy
+   *   line differs: re-requesting a review does nothing for a human approval,
+   *   which must be given again on the updated branch.
+   */
+  function baseCurrencyComment(prNumber, info, entry) {
+    var base = info.base || "master";
     var lines = [
-      "Not merging: PR #" + prNumber + "'s branch is behind " + (info.base || "master") +
+      "Not merging: PR #" + prNumber + "'s branch is behind " + base +
         ", so a squash would revert those commits."
     ];
     if (info.lag && info.lag.length) {
       lines.push("");
-      for (var i = 0; i < info.lag.length && i < 10; i++) {
-        lines.push("- `" + info.lag[i].sha + "` " + info.lag[i].subject);
+      for (var i = 0; i < info.lag.length && i < 11; i++) {
+        var item = info.lag[i];
+        lines.push(item.sha ? "- `" + item.sha + "` " + item.subject : "- " + item.subject);
       }
       lines.push("");
-      lines.push("Merge " + (info.base || "master") + " into the branch and re-request the review - the diff must then contain only this PR's own changes.");
+      lines.push("Merge " + base + " into the branch (or re-push it on a current base), then " +
+        (entry === "human"
+          ? "approve again on the GitHub PR Review UI - the approval above does not carry over."
+          : "re-request the review.") +
+        " The diff must then contain only this PR's own changes.");
     } else {
       lines.push("The base branch state could not be read, so the merge is refused rather than guessed at.");
     }

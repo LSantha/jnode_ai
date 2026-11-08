@@ -814,19 +814,27 @@ module.exports = async ({ github, context, core }) => {
       core.info("Ticket runner: approval on PR #" + prNumber + " but CI is red; deferring merge.");
       return;
     }
-    // A stale branch must not reach the squash: applying the branch's whole tree
-    // would revert the commits master gained since the branch was cut, with no
-    // CI signal (ticket #872). --force is the deliberate emergency override, so
-    // it skips this check exactly as it skips the CI re-check. Same
-    // honest-refusal shape as the CI check above.
-    var baseInfo = force ? { current: true, base: "", lag: [] } : await h.checkBaseCurrency(prNumber);
+    // A stale branch must not reach the squash, even under --force: the squash
+    // applies the branch's whole tree, so it would revert the commits master
+    // gained since the branch was cut - a master-side data loss, unlike the
+    // red-CI case --force exists for, where the risk is local to the PR. The
+    // ticket's acceptance criteria are "cannot be merged by either runner", so
+    // the escape hatch is GitHub's UI merge button (which bypasses every gate
+    // and is a human's explicit act), not this command.
+    var baseInfo = await h.checkBaseCurrency(prNumber);
     if (!baseInfo.current) {
       state.phase = "REVIEW";
+      state.retries = 0;
+      state.history.push({
+        event: "merge_refused_base_stale",
+        pr: prNumber,
+        commits: baseInfo.lag.length,
+        timestamp: new Date().toISOString()
+      });
       await updateIssueState(issueNumber, state);
       await github.rest.issues.createComment({
         owner, repo, issue_number: prNumber,
-        body: h.baseCurrencyComment(prNumber, baseInfo) +
-          "\n\nApproval is recorded; it is not lost. Re-request it once the branch is current."
+        body: h.baseCurrencyComment(prNumber, baseInfo, "human")
       });
       core.info("Ticket runner: PR #" + prNumber + " is behind its base (" +
         baseInfo.lag.length + " commits); refusing to merge.");

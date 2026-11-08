@@ -238,6 +238,62 @@ test('orchestrator.js test suite', async (t) => {
     assert.ok(calls.updateIssue.includes(1), 'Master issue was updated');
   });
 
+  await t.test('Review approve with auto-merge refuses a branch behind master (#872)', async () => {
+    const { core, github, context, calls, updateIssueDetails, setMasterBody, setTaskData } = createMocks('workflow_run');
+
+    setMasterBody(`<!-- ORCHESTRATOR_STATE:\n{ "status": "IN_PROGRESS", "current_task": { "issue": 2, "pr": 99, "phase": "REVIEW", "turn": 0, "max_turns": 3, "retries": 0 }, "queue": [3], "completed": [], "failed": [], "order": [2, 3] }\n-->`);
+    setTaskData({ labels: [{name: 'auto-merge'}], state: 'open' });
+    github.rest.issues.listComments = async () => ({ data: [{ body: 'Verdict: approve' }] });
+    github.rest.pulls.get = async () => ({ data: { head: { ref: 'opencode/issue2-fix', sha: 'abc' }, base: { ref: 'master' }, merged: true } });
+    github.rest.pulls.listFiles = async () => ({ data: [{ filename: 'fs/a.java', additions: 5 }] });
+    github.rest.checks = { listForRef: async () => ({ data: { check_runs: javaCiChecks('success') } }) };
+    // A branch that does not contain the base tip.
+    github.rest.repos.getBranch = async () => ({ data: { commit: { sha: 'tipsha' } } });
+    github.rest.repos.compare = async () => ({
+      data: {
+        merge_base_commit: { sha: 'oldsha' },
+        total_commits: 3,
+        commits: [{ sha: 'cafebabecafebabecafebabecafebabecafebabe', commit: { message: 'Add JNodeOceanTheme' } }]
+      }
+    });
+
+    await runOrchestrator({ github, context, core });
+
+    assert.strictEqual(calls.mergePR.length, 0, "a stale branch must not be squash-merged");
+    assert.ok(calls.createComment.some(c => c.issue_number === 99 &&
+      c.body.includes('Add JNodeOceanTheme') && c.body.includes('approve again')),
+      "the refusal names the would-be-reverted commits and the human-approval remedy");
+    assert.ok(updateIssueDetails.some(u => u.issue_number === 1 &&
+      u.body.includes('"phase": "HUMAN_REVIEW"')), "the task routes to HUMAN_REVIEW");
+    assert.ok(updateIssueDetails.some(u => u.issue_number === 1 &&
+      u.body.includes('merge_refused_base_stale')), "the refusal is in the master history");
+  });
+
+  await t.test('Human approval refuses a branch behind master (#872)', async () => {
+    const { core, github, context, calls, updateIssueDetails, setMasterBody, setTaskData } = createMocks('pull_request_review');
+
+    setMasterBody(`<!-- ORCHESTRATOR_STATE:\n{ "status": "IN_PROGRESS", "current_task": { "issue": 2, "pr": 99, "phase": "HUMAN_REVIEW", "turn": 0, "max_turns": 3, "retries": 0 }, "queue": [3], "completed": [], "failed": [], "order": [2, 3] }\n-->`);
+    setTaskData({ labels: [], state: 'open' });
+    github.rest.pulls.get = async () => ({ data: { head: { ref: 'opencode/issue2-fix', sha: 'abc' }, base: { ref: 'master' }, merged: true } });
+    github.rest.pulls.listFiles = async () => ({ data: [{ filename: 'fs/a.java', additions: 5 }] });
+    github.rest.checks = { listForRef: async () => ({ data: { check_runs: javaCiChecks('success') } }) };
+    github.rest.repos.getBranch = async () => ({ data: { commit: { sha: 'tipsha' } } });
+    github.rest.repos.compare = async () => ({
+      data: {
+        merge_base_commit: { sha: 'oldsha' },
+        commits: [{ sha: 'cafebabecafebabecafebabecafebabecafebabe', commit: { message: 'Add JNodeOceanTheme' } }]
+      }
+    });
+
+    await runOrchestrator({ github, context, core });
+
+    assert.strictEqual(calls.mergePR.length, 0, "a human approval must not merge a stale branch");
+    assert.ok(calls.createComment.some(c => c.issue_number === 99 &&
+      c.body.includes('approve again')), "the refusal says the approval does not carry over");
+    assert.ok(updateIssueDetails.some(u => u.issue_number === 1 &&
+      u.body.includes('"phase": "REVIEW"')), "the task falls back to REVIEW");
+  });
+
   await t.test('Review approve with auto-merge and green CI merges and advances', async () => {
     const { core, github, context, calls, updateIssueDetails, setMasterBody, setTaskData } = createMocks('workflow_run');
 

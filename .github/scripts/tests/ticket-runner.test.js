@@ -1467,9 +1467,15 @@ test("ticket-runner.js event handling suite", async (t) => {
       "the refusal names the commits that would be reverted and the remedy");
     assert.ok(mocks.getIssueBody().includes('"phase": "REVIEW"'),
       "the ticket falls back to REVIEW so a later approval can retry");
+    assert.ok(mocks.getIssueBody().includes("merge_refused_base_stale"),
+      "the refusal is recorded in the ticket history");
   });
 
-  await t.test("/oc approve --force bypasses the stale-base check (#872)", async () => {
+  await t.test("/oc approve --force still refuses a stale base (#872)", async () => {
+    // --force exists for a red-CI PR, where the risk is local to the PR. A
+    // stale base is a master-side data loss, so the ticket's acceptance
+    // criteria ("cannot be merged by either runner") win: the escape hatch is
+    // the GitHub UI merge button, a human's explicit act.
     const initialBody = _replaceOrAppendStatus("Task", {
       phase: "HUMAN_REVIEW",
       pr: 99,
@@ -1492,8 +1498,10 @@ test("ticket-runner.js event handling suite", async (t) => {
 
     await runTicketRunner(mocks);
 
-    assert.strictEqual(mocks.calls.mergePR.length, 1,
-      "--force is the deliberate emergency override, as it is for the CI check");
+    assert.strictEqual(mocks.calls.mergePR.length, 0,
+      "--force must not merge a branch that would revert master commits");
+    assert.ok(mocks.getIssueBody().includes('"phase": "REVIEW"'),
+      "the ticket falls back to REVIEW");
   });
 
   await t.test("/oc approve on a HUMAN_REVIEW PR merges and closes the issue", async () => {

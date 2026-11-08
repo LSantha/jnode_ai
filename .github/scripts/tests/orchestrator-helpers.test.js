@@ -375,17 +375,21 @@ test("checkBaseCurrency: a lagging branch is not current and names what it rever
   assert.strictEqual(info.lag.length, 2, "both commits would be reverted");
   assert.strictEqual(info.lag[0].sha, "aaaaaaaa", "the sha is shortened for the comment");
   assert.strictEqual(info.lag[0].subject, "Add JNodeOceanTheme", "the subject is the first line");
-  const comment = h.baseCurrencyComment(99, info);
-  assert.ok(comment.includes("tipsha") === false && comment.includes("Add JNodeOceanTheme"),
+  const comment = h.baseCurrencyComment(99, info, "review");
+  assert.ok(comment.includes("Add JNodeOceanTheme"),
     "the refusal names the commits that would be reverted");
-  assert.ok(comment.includes("Merge master into the branch"), "the refusal states the remedy");
+  assert.ok(comment.includes("Merge master into the branch") && comment.includes("re-request the review"),
+    "the review-entry remedy says to update and re-review");
+  const human = h.baseCurrencyComment(99, info, "human");
+  assert.ok(human.includes("approve again") && !human.includes("re-request the review"),
+    "the human-entry remedy says to approve again, not re-review");
 });
 
 test("checkBaseCurrency: fail-closed on an unreadable base", async () => {
   const { h } = githubWithBase({ failOn: "getBranch" });
   const info = await h.checkBaseCurrency(99);
   assert.strictEqual(info.current, false, "an unreadable base must block the merge");
-  assert.ok(h.baseCurrencyComment(99, info).includes("could not be read"),
+  assert.ok(h.baseCurrencyComment(99, info, "review").includes("could not be read"),
     "the refusal says why rather than naming nothing");
 });
 
