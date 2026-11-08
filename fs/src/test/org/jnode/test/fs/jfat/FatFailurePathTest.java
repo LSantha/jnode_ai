@@ -47,6 +47,8 @@ import org.jnode.fs.jfat.FatFormatter;
 import org.jnode.fs.service.FileSystemService;
 import org.jnode.fs.service.def.FileSystemPlugin;
 import org.jnode.naming.InitialNaming;
+import org.jnode.partitions.PartitionTableEntry;
+import org.jnode.partitions.ibm.IBMPartitionTableEntry;
 import org.junit.After;
 import org.junit.Before;
 import org.junit.Test;
@@ -91,6 +93,23 @@ public class FatFailurePathTest {
                 writesBeforeFail--;
             }
             super.write(devOffset, srcBuf);
+        }
+    }
+
+    private static class PartitionedFileDevice extends FileDevice {
+        private final PartitionTableEntry entry;
+
+        private PartitionedFileDevice(File file, String mode, long nrSectors) throws Exception {
+            super(file, mode);
+            IBMPartitionTableEntry partition = new IBMPartitionTableEntry(null, new byte[512], 0);
+            partition.setStartLba(0);
+            partition.setNrSectors(nrSectors);
+            entry = partition;
+        }
+
+        @Override
+        public PartitionTableEntry getPartitionTableEntry() {
+            return entry;
         }
     }
 
@@ -453,6 +472,28 @@ public class FatFailurePathTest {
     }
 
     @Test
+    public void testSectorCountAboveIntMaxIsRejectedAsTooBig() throws Exception {
+        long[] tooBig = new long[] {Integer.MAX_VALUE + 1L, 0xFFFFFFFFL};
+        for (int i = 0; i < tooBig.length; i++) {
+            PartitionedFileDevice partitioned = new PartitionedFileDevice(diskFile, "rw", tooBig[i]);
+            partitioned.setLength(1024L * 1024);
+            try {
+                new FatFileSystemFormatter(ClusterSize._1Kb).format(partitioned);
+                fail("expected FileSystemException for " + tooBig[i] + " sectors");
+            } catch (FileSystemException expected) {
+                assertTrue("expected too big message for " + tooBig[i] + " sectors: "
+                    + expected.getMessage(),
+                    expected.getMessage() != null && expected.getMessage().contains("too big"));
+                assertFalse("must not report too small for " + tooBig[i] + " sectors: "
+                    + expected.getMessage(),
+                    expected.getMessage().contains("too small"));
+            } finally {
+                partitioned.close();
+            }
+        }
+    }
+
+    @Test
     public void testAtFloorFormatIsAccepted() throws Exception {
         File tmp = File.createTempFile("jfat-atfloor", ".img");
         tmp.deleteOnExit();
@@ -500,5 +541,24 @@ public class FatFailurePathTest {
             assertTrue(expected.getMessage().contains("2^28"));
         }
         assertFalse(wrote[0]);
+    }
+
+    @Test
+    public void testSectorCountAtIntMaxIsNotRejectedAsTooBig() throws Exception {
+        PartitionedFileDevice partitioned =
+            new PartitionedFileDevice(diskFile, "rw", Integer.MAX_VALUE);
+        partitioned.setLength(80L * 1024 * 1024);
+        try {
+            FatFileSystem fs = new FatFileSystemFormatter(ClusterSize._64Kb).format(partitioned);
+            try {
+                assertTrue(fs.getBootSector().isFat32());
+                assertTrue(fs.getBootSector().getCountOfClusters() > 0);
+                assertEquals(65536, fs.getBootSector().getClusterSize());
+            } finally {
+                fs.close();
+            }
+        } finally {
+            partitioned.close();
+        }
     }
 }
