@@ -37,9 +37,19 @@ jobs:
       uses: actions/upload-artifact@v4
       with:
         name: jnode-build
+        # The pack files are uploaded alongside the derived jars because the build's
+        # classlib freshness gate keys on the PACK, not the jar: all/build.xml's
+        # <uptodate srcfile="all/lib/classlib.properties"
+        #           targetfile="all/lib/classlib.pack.gz"/> decides whether to
+        # re-download. Without them the test job's ./test.sh always deletes both packs
+        # and re-fetches 14 MB + 19 MB from the GitHub release, which the CDN
+        # intermittently answers with 502/504 (it took master's test job down on
+        # 2e5ce6c7, with three retries and no usable backoff in Ant's <get>).
         path: |
           */build/**
           all/lib/classlib.jar
+          all/lib/classlib.pack.gz
+          all/lib/classlib-src.jar.bz2
         retention-days: 1
         if-no-files-found: error
 
