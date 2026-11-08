@@ -44,7 +44,6 @@ import org.jnode.fs.jfat.FatFileSystemFormatter;
 import org.jnode.fs.jfat.FatFileSystemType;
 import org.jnode.fs.jfat.FatFormatter;
 import org.jnode.fs.jfat.FatUtils;
-import org.jnode.fs.jfat.FatFileSystemType;
 
 /**
  * End-to-end proof for JFAT's on-disk writer: {@link FatFileSystemFormatter} had no test
