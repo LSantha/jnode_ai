@@ -57,7 +57,7 @@ import org.jnode.fs.jfat.FatFileSystemType;
  */
 public class FatFormatterRoundTripTest {
 
-    /** 68 MiB: comfortably above the formatter's (unenforced) 64K-sector FAT32 floor. */
+    /** 68 MiB: comfortably above the formatter's enforced 64K-sector FAT32 floor. */
     private static final long IMAGE_LENGTH = 68L * 1024 * 1024;
 
     /** 1 KiB clusters, the size the existing write tests use. */
@@ -254,61 +254,32 @@ public class FatFormatterRoundTripTest {
     }
 
     /**
-     * Item 4, and it is a FINDING rather than a passing assertion.
-     * <p>
-     * {@code FatFileSystemFormatter.format} documents a 64K-sector FAT32 floor
-     * ("This drive is too small for FAT32 - there must be at least 64K clusters") but
-     * only {@code log.error}s and then formats anyway; {@code FatFormatter}'s own
-     * 2^28-cluster guard behaves the same way. Measured on master: 64 KiB (128 sectors)
-     * through 33 MiB all format without an exception, and every resulting volume mounts,
-     * accepts a write and reads it back - so there is no half-written image and no early
-     * failure to assert. What IS asserted here is the observable contract: a sub-floor
-     * device still yields an internally consistent volume (its free/used accounting adds
-     * up), which is what keeps this test honest if the floor is ever enforced later.
-     * <p>
-     * The unenforced floor - a sub-spec volume (fewer than 65525 clusters) silently
-     * formatted - is a real gap and is tracked as its own finding, not fixed here.
+     * Item 4. The 64K-sector FAT32 floor is enforced (see #874):
+     * {@code FatFileSystemFormatter.format} throws {@code FileSystemException} before
+     * {@code HDDFormatter} for a sub-floor device, and {@code FatFormatter} throws
+     * {@code IOException} before any write for sub-floor sector counts. This test
+     * asserts the enforced contract: a 4 MiB device is refused and the image is
+     * left untouched (no half-written boot sector).
      */
     @org.junit.Test
-    public void testSubFloorDeviceStillFormatsAUsableVolume() throws Exception {
+    public void testSubFloorDeviceIsRejected() throws Exception {
         fileDevice = new FileDevice(diskFile, "rw");
         // 4 MiB = 8192 sectors, an eighth of the documented floor.
         fileDevice.setLength(4L * 1024 * 1024);
-        FatFileSystem fs;
         try {
-            fs = new FatFileSystemFormatter(CLUSTER_SIZE).format(fileDevice);
+            new FatFileSystemFormatter(CLUSTER_SIZE).format(fileDevice);
+            org.junit.Assert.fail("expected FileSystemException for sub-floor 4 MiB device");
         } catch (FileSystemException e) {
-            // If the floor is ever enforced this becomes the expected outcome; until it
-            // is, master returns a filesystem here and the assertions below must hold.
-            // GNU Classpath (what JNode itself runs) has no AssertionError(String,
-            // Throwable), so the cause is attached the portable way.
-            AssertionError refusal = new AssertionError((Object) ("format() should not refuse a "
-                + "4 MiB device on master (the floor is only logged): " + e));
-            refusal.initCause(e);
-            throw refusal;
+            org.junit.Assert.assertTrue(e.getMessage(), e.getMessage().contains("too small"));
         }
-
-        BootSector bs = fs.getBootSector();
-        org.junit.Assert.assertTrue(bs.isFat32());
-        org.junit.Assert.assertTrue("countOfClusters", bs.getCountOfClusters() > 0);
-
-        // Not half-written: the FAT's accounting adds up and the volume is usable.
-        Fat fat = fs.getFat();
-        org.junit.Assert.assertEquals(bs.getCountOfClusters() - 1, fat.freeEntries());
-        FSDirectory root = fs.getRootEntry().getDirectory();
-        FSEntry probe = root.addFile("probe.bin");
-        probe.getFile().write(0, ByteBuffer.wrap("abc".getBytes("US-ASCII")));
-        probe.getFile().flush();
-        fs.flush();
-        fs.close();
         closeQuietly(fileDevice);
         fileDevice = null;
-
-        FatFileSystem remounted = openReadOnly();
-        FSEntry back = remounted.getRootEntry().getDirectory().getEntry("probe.bin");
-        org.junit.Assert.assertNotNull("file survived on a sub-floor volume", back);
-        org.junit.Assert.assertArrayEquals("abc".getBytes("US-ASCII"), readAll(back.getFile()));
-        remounted.close();
+        java.io.RandomAccessFile raf = new java.io.RandomAccessFile(diskFile, "r");
+        try {
+            org.junit.Assert.assertEquals("sub-floor rejection must not write to the device", 0, raf.read());
+        } finally {
+            raf.close();
+        }
     }
 
     // ------------------------------------------------------------------ helpers
