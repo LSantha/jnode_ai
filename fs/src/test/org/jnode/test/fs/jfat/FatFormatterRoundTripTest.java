@@ -285,6 +285,73 @@ public class FatFormatterRoundTripTest {
     }
 
     /**
+     * Ticket #885: the formatter subtracted ClusterSize.getSize() (bytes) from a
+     * sector count when computing the user area, so the on-disk FSInfo
+     * FSI_Free_Count was off by hundreds of clusters and the primary and backup
+     * sectors disagreed with the BPB geometry. This formats blank images and
+     * compares the raw FSInfo bytes at sectors 1 and 7 against an oracle derived
+     * from the BPB the formatter itself wrote, for 1 KiB and 4 KiB clusters.
+     */
+    @org.junit.Test
+    public void testFsiFreeCountMatchesBpbOracle() throws Exception {
+        checkFsiFreeCount(ClusterSize._1Kb);
+        checkFsiFreeCount(ClusterSize._4Kb);
+    }
+
+    private void checkFsiFreeCount(ClusterSize clusterSize) throws Exception {
+        fileDevice = new FileDevice(diskFile, "rw");
+        fileDevice.setLength(IMAGE_LENGTH);
+        new FatFileSystemFormatter(clusterSize).format(fileDevice);
+        closeQuietly(fileDevice);
+        fileDevice = null;
+
+        java.io.RandomAccessFile raf = new java.io.RandomAccessFile(diskFile, "r");
+        try {
+            int bytesPerSec = (int) readLe16(raf, 11);
+            raf.seek(13);
+            int secPerClus = raf.read() & 0xff;
+            int rsvdSecCnt = (int) readLe16(raf, 14);
+            raf.seek(16);
+            int numFATs = raf.read() & 0xff;
+            int rootEntCnt = (int) readLe16(raf, 17);
+            long totSec32 = readLe32(raf, 32);
+            long totSec16 = readLe16(raf, 19);
+            long fatSz32 = readLe32(raf, 36);
+            long fatSz16 = readLe16(raf, 22);
+
+            long totSec = (totSec32 != 0) ? totSec32 : totSec16;
+            long fatSz = (fatSz32 != 0) ? fatSz32 : fatSz16;
+
+            long rootDirSectors = ((long) rootEntCnt * 32 + bytesPerSec - 1) / bytesPerSec;
+            long dataSectors = totSec - ((long) rsvdSecCnt + (long) numFATs * fatSz + rootDirSectors);
+            long countOfClusters = dataSectors / secPerClus;
+            long expectedFree = countOfClusters - 1;
+
+            long primary = readLe32(raf, 1L * bytesPerSec + 488);
+            long backup = readLe32(raf, 7L * bytesPerSec + 488);
+
+            org.junit.Assert.assertEquals("FSI_Free_Count (primary, clusterSize=" + clusterSize
+                + ")", expectedFree, primary);
+            org.junit.Assert.assertEquals("FSI_Free_Count (backup, clusterSize=" + clusterSize
+                + ")", expectedFree, backup);
+            org.junit.Assert.assertEquals("primary and backup FSInfo agree", primary, backup);
+        } finally {
+            raf.close();
+        }
+    }
+
+    private static long readLe16(java.io.RandomAccessFile raf, long offset) throws Exception {
+        raf.seek(offset);
+        return (raf.read() & 0xff) | ((raf.read() & 0xff) << 8);
+    }
+
+    private static long readLe32(java.io.RandomAccessFile raf, long offset) throws Exception {
+        raf.seek(offset);
+        return (raf.read() & 0xffL) | ((raf.read() & 0xffL) << 8) | ((raf.read() & 0xffL) << 16)
+            | ((raf.read() & 0xffL) << 24);
+    }
+
+    /**
      * Ticket #878, finding A: the formatter's disk-size arithmetic wrapped in int.
      * {@code FatFormatter.getDiskSize} multiplies the sector count by the sector
      * size, which overflows int above 4 GiB - at Integer.MAX_VALUE sectors it
