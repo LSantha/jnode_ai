@@ -32,8 +32,11 @@ import org.jnode.emu.naming.BasicNameSpace;
 import org.jnode.fs.FileSystemException;
 import org.jnode.fs.jfat.ClusterSize;
 import org.jnode.fs.jfat.FatFileSystemFormatter;
+import org.jnode.fs.jfat.FatFileSystemType;
 import org.jnode.fs.jfat.FatFormatter;
+import org.jnode.fs.service.FileSystemService;
 import org.jnode.naming.InitialNaming;
+import org.jnode.test.fs.FileSystemTestUtils;
 import org.junit.After;
 import org.junit.Before;
 import org.junit.Test;
@@ -89,6 +92,7 @@ public class FatSectorSizeGuardTest {
         }
     }
 
+    private FileSystemService fss;
     private File diskFile;
     private FileDevice device;
 
@@ -97,6 +101,13 @@ public class FatSectorSizeGuardTest {
         try {
             InitialNaming.setNameSpace(new BasicNameSpace());
         } catch (SecurityException e) {
+        }
+        fss = FileSystemTestUtils.createFSService(FatFileSystemType.class.getName());
+        try {
+            InitialNaming.bind(FileSystemService.class, fss);
+        } catch (javax.naming.NameAlreadyBoundException e) {
+            InitialNaming.unbind(FileSystemService.class);
+            InitialNaming.bind(FileSystemService.class, fss);
         }
         diskFile = File.createTempFile("jfat-sector-size-guard", ".img");
         diskFile.deleteOnExit();
@@ -110,6 +121,13 @@ public class FatSectorSizeGuardTest {
             } catch (Exception e) {
             }
             device = null;
+        }
+        if (fss != null) {
+            try {
+                InitialNaming.unbind(FileSystemService.class);
+            } catch (Exception e) {
+            }
+            fss = null;
         }
         if (diskFile != null && diskFile.exists()) {
             diskFile.delete();
