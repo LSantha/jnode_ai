@@ -22,7 +22,6 @@ package org.jnode.fs.jfat;
 
 import java.io.IOException;
 
-import org.apache.log4j.Logger;
 import org.jnode.driver.ApiNotFoundException;
 import org.jnode.driver.Device;
 import org.jnode.driver.block.BlockDeviceAPI;
@@ -38,11 +37,17 @@ import javax.naming.NameNotFoundException;
 
 
 /**
+ * Formats a device as FAT32 using {@link FatFormatter}.
+ *
+ * <p>Scope: only {@link IDEConstants#SECTOR_SIZE}-byte sectors are supported.
+ * A device reporting any other sector size fails with a
+ * {@link FileSystemException} before a single write is issued to the device.
+ * </p>
+ *
  * @author gvt
  * @author Tango
  */
 public class FatFileSystemFormatter extends Formatter<FatFileSystem> {
-    private static final Logger log = Logger.getLogger(FatFileSystemFormatter.class);
 
     private ClusterSize clusterSize;
 
@@ -60,9 +65,15 @@ public class FatFileSystemFormatter extends Formatter<FatFileSystem> {
             FSBlockDeviceAPI api = (FSBlockDeviceAPI) device.getAPI(BlockDeviceAPI.class);
             int sectorSize = api.getSectorSize();
 
+            /*
+             * The supported geometry is enforced, not warned about: the volume
+             * structures the formatter writes used to be laid out at 512-byte
+             * offsets regardless of the reported sector size, silently producing
+             * a corrupt volume. Refuse before any write to the device.
+             */
             if (sectorSize != IDEConstants.SECTOR_SIZE) {
-                log.error("This mkjfat1.0 support only the Hard Disk.Sector Size must " +
-                        IDEConstants.SECTOR_SIZE + " bytes.\n");
+                throw new FileSystemException("Unsupported sector size " + sectorSize
+                        + " - JFAT only supports " + IDEConstants.SECTOR_SIZE + "-byte sectors");
             }
 
             PartitionTableEntry entry = api.getPartitionTableEntry();

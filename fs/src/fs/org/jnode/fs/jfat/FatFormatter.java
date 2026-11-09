@@ -48,6 +48,7 @@ import java.util.Date;
 
 import org.apache.log4j.Logger;
 import org.jnode.driver.block.BlockDeviceAPI;
+import org.jnode.driver.bus.ide.IDEConstants;
 import org.jnode.util.LittleEndian;
 
 /**
@@ -67,6 +68,12 @@ import org.jnode.util.LittleEndian;
  * <li>Reserved sectors up to the FAT at sector 32</li>
  * </ul>
  *
+ * <p>Scope: only {@link IDEConstants#SECTOR_SIZE}-byte sectors are supported. A
+ * device reporting any other sector size fails fast with an {@link IOException}
+ * from the constructor, before any write is issued. The mount path
+ * ({@code Fat}) is likewise fixed at that geometry, so a non-conforming volume
+ * would not be readable even if it were written.</p>
+ *
  * @author tango
  *
  */
@@ -84,6 +91,9 @@ public class FatFormatter {
 
     /** The Size of Fat. */
     private int FatSize;
+
+    /** The sector size this instance writes; only IDEConstants.SECTOR_SIZE is supported. */
+    private final int sectorSize;
 
     /** The Number of the Fat in system. */
     public final int NumOfFATs = 2;
@@ -177,6 +187,11 @@ public class FatFormatter {
             int sectorsPerTrack, int nbHeads, ClusterSize ClusterSize, int hiddenSectors,
             BlockDeviceAPI api) throws IOException {
 
+        if (sectorSize != IDEConstants.SECTOR_SIZE) {
+            throw new IOException("Unsupported sector size " + sectorSize
+                + " - JFAT only supports " + IDEConstants.SECTOR_SIZE + "-byte sectors");
+        }
+        this.sectorSize = sectorSize;
         if (nbTotalSectors < 65536) {
             throw new IOException("This drive is too small for FAT32 - there must be at least 64K clusters");
         }
@@ -184,8 +199,8 @@ public class FatFormatter {
         BootSector bs = new BootSector(sectorSize);
         api.flush();
         // long, not int: a device over 4 GiB wraps this in int arithmetic (at
-        // Integer.MAX_VALUE sectors it evaluated to -512 and the log reported
-        // "Size(Bytes): -512"). Ticket #878.
+        // Integer.MAX_VALUE sectors it evaluated to a negative size and the log
+        // reported it). Ticket #878.
         long DiskSize = getDiskSize(nbTotalSectors, sectorSize);
         int SectorPerCluster = get_spc(ClusterSize, sectorSize);
         this.FatSize =
@@ -309,15 +324,15 @@ public class FatFormatter {
          * once at the backup boot sect position
          */
         for (int i = 0; i < 2; i++) {
-            int SectorStart = (i == 0) ? 0 : (BackupBootSector * 512);
+            int SectorStart = (i == 0) ? 0 : (BackupBootSector * sectorSize);
             bs.write(api, (long) SectorStart); // Write the BootSector
-            fsInfo.write(api, (long) SectorStart + 512);
+            fsInfo.write(api, (long) SectorStart + sectorSize);
         }
         /** Write the first fat sector in the right places */
         for (int i = 0; i < NumOfFATs; i++) {
-            // long: (ReservedSectorCount + (i * FatSize)) * 512 wraps in int past
-            // 4,194,304 sectors. Ticket #878.
-            long SectorStart = ((long) (ReservedSectorCount + (i * FatSize))) * 512;
+            // long: (ReservedSectorCount + (i * FatSize)) * sectorSize would wrap
+            // in int arithmetic on huge devices. Ticket #878.
+            long SectorStart = ((long) (ReservedSectorCount + (i * FatSize))) * sectorSize;
             this.reservedSector = new byte[12];
             LittleEndian.setInt32(this.reservedSector, 0, ReservedSector_0);
             LittleEndian.setInt32(this.reservedSector, 4, ReservedSector_1);
@@ -336,11 +351,10 @@ public class FatFormatter {
      * @throws IOException
      */
     private void setQuickSectorFree(int systemAreaSize, BlockDeviceAPI api) throws IOException {
-        byte[] reserveArray = new byte[512];
+        byte[] reserveArray = new byte[sectorSize];
         for (int i = 0; i < systemAreaSize; i++) {
-            // long offset: i * 512 in int arithmetic wraps past 4,194,304 sectors.
-            // Ticket #878.
-            api.write(((long) i) * 512, ByteBuffer.wrap(reserveArray));
+            // long offset: i * sectorSize in int arithmetic wraps on huge devices. Ticket #878.
+            api.write(((long) i) * sectorSize, ByteBuffer.wrap(reserveArray));
         }
     }
 
@@ -430,7 +444,7 @@ public class FatFormatter {
 
     /**
      * The Total Disk Size in bytes. Computed in long: sector counts above 4 GiB
-     * wrap in int arithmetic, which is how this reported "-512" for a
+     * wrap in int arithmetic, which is how this reported a negative size for an
      * Integer.MAX_VALUE-sector device. Ticket #878.
      *
      * @param TotalSectors
