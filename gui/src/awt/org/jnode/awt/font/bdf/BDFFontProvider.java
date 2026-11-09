@@ -52,28 +52,47 @@ public class BDFFontProvider extends AbstractFontProvider<BDFFont, BDFFontContai
     private static final Logger log = Logger.getLogger(BDFFontProvider.class);
 
     /**
-     * All system fonts
+     * All system fonts (anti-aliased DejaVu bitmaps).
+     */
+    /**
+     * All system fonts. The DejaVu faces come first so they win the pixel
+     * sizes they cover; the older bitmap fonts stay registered as fallback
+     * and for the sizes they alone provide (VGAMedium-19 at large screen
+     * sizes).
      */
     private static final String SYSTEM_FONTS[] = {
-        "Vera-10.bdf", "Vera-12.bdf", "Vera-14.bdf", "VeraMono-12-8.bdf", "6x12_FixedMedium-12.bdf",
-        "VGAMedium-19.bdf"
+        "DejaVuSans-10.bdf", "DejaVuSans-12.bdf", "DejaVuSans-14.bdf",
+        "DejaVuSans-Bold-10.bdf", "DejaVuSans-Bold-12.bdf",
+        "DejaVuSans-Bold-14.bdf",
+        "DejaVuSansMono-10.bdf", "DejaVuSansMono-12.bdf",
+        "DejaVuSansMono-14.bdf", "DejaVuSansMono-Bold-10.bdf",
+        "DejaVuSansMono-Bold-12.bdf", "DejaVuSansMono-Bold-14.bdf",
+        "Vera-10.bdf", "Vera-12.bdf", "Vera-14.bdf", "VeraMono-12-8.bdf",
+        "6x12_FixedMedium-12.bdf", "VGAMedium-19.bdf"
     };
 
     private List<BDFFontContainer> containers;
+    private List<BDFFont> fonts;
     
     public BDFFontProvider() {
         super(BDFFont.class, "bdf");        
     }
 
     protected TextRenderer createTextRenderer(RenderCache renderCache, Font font) {
-        final BDFFont bdfFont = getCompatibleFont(font);
+        final BDFFont bdfFont = bestFont(font);
+        if (bdfFont == null) {
+            throw new IllegalStateException("no BDF font for " + font);
+        }
         final TextRenderer renderer = new BDFTextRenderer(bdfFont.getContainer());
         return renderer;
     }
 
 
     protected FontMetrics createFontMetrics(Font font) throws IOException {
-        final BDFFont bdfFont = getCompatibleFont(font);
+        final BDFFont bdfFont = bestFont(font);
+        if (bdfFont == null) {
+            throw new IOException("no BDF font for " + font);
+        }
         return bdfFont.getFontMetrics();
     }
     
@@ -137,9 +156,91 @@ public class BDFFontProvider extends AbstractFontProvider<BDFFont, BDFFontContai
      */
     @Override
     protected final void loadFontsImpl() {
+        fonts = new ArrayList<BDFFont>();
         for (BDFFontContainer container : getContainers()) {
-            addFont(new BDFFont(container));
+            final BDFFont font = new BDFFont(container);
+            addFont(font);
+            fonts.add(font);
         }
+    }
+
+    /**
+     * Selects the installed bitmap font best matching the requested font.
+     *
+     * The fonts registered by the abstract provider are keyed by family
+     * name only, which cannot express the available pixel sizes and styles.
+     * Selection therefore happens here: the requested style (bold) is
+     * matched first, then the nearest available pixel size, and a mono
+     * family is preferred for mono requests. Falls back to a relaxed
+     * scoring if no exact match exists.
+     *
+     * @param font the requested font (family, style, point size)
+     * @return the best matching installed BDF font, or {@code null}
+     */
+    public BDFFont bestFont(Font font) {
+        if (font == null) {
+            return null;
+        }
+        // make sure the system fonts are loaded
+        provides(font);
+        if (fonts == null || fonts.isEmpty()) {
+            return null;
+        }
+        final boolean wantBold =
+            (font.getStyle() & Font.BOLD) == Font.BOLD;
+        final boolean wantItalic =
+            (font.getStyle() & Font.ITALIC) == Font.ITALIC;
+        final boolean wantMono = wantsMono(font);
+        final int wantSize = font.getSize();
+
+        BDFFont exact = null;
+        long exactScore = 0;
+        BDFFont best = null;
+        long bestScore = Long.MAX_VALUE;
+
+        for (BDFFont candidate : fonts) {
+            final BDFFontContainer container = candidate.getContainer();
+            final boolean isBold =
+                (candidate.getStyle() & Font.BOLD) == Font.BOLD;
+            final boolean isItalic =
+                (candidate.getStyle() & Font.ITALIC) == Font.ITALIC;
+            final boolean isMono =
+                container.getFamily().toLowerCase().contains("mono");
+
+            long score = Math.abs(container.getSize() - wantSize);
+            if (isBold != wantBold) {
+                score += 1L << 20;
+            }
+            if (isItalic != wantItalic) {
+                score += 1L << 20;
+            }
+            if (isMono != wantMono) {
+                score += 1L << 20;
+            }
+            if (score < bestScore) {
+                bestScore = score;
+                best = candidate;
+            }
+            if (score == 0) {
+                exact = candidate;
+                break;
+            }
+        }
+        return exact != null ? exact : best;
+    }
+
+    /**
+     * Is a monospaced font requested? Covers the logical families
+     * (Monospaced, DialogInput) as well as classic XLFD "Fixed" names.
+     */
+    private boolean wantsMono(Font font) {
+        final String family = font.getFamily();
+        if (family == null) {
+            return false;
+        }
+        final String lower = family.toLowerCase();
+        return lower.contains("mono") || lower.contains("fixed")
+            || lower.contains("dialoginput");
     }
         
     private List<BDFFontContainer> getContainers() {

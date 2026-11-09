@@ -95,6 +95,12 @@ public class BDFTextRenderer implements TextRenderer {
                 glyph_box = glyph.getBbx(glyph_box);
 
                 final int fHeight = glyph_box.height;
+                if (fHeight <= 0) {
+                    // skip degenerate (blank) glyphs but keep the advance,
+                    // so the rest of the string still renders
+                    offset += glyph.getDWidth().width;
+                    continue;
+                }
                 final int[] fData = glyph.getData();
                 final int scan = fData.length / fHeight;
 

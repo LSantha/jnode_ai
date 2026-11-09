@@ -107,8 +107,8 @@ public class SwingPcTextScreen extends AbstractPcTextScreen {
             Dimension screen_size = Toolkit.getDefaultToolkit().getScreenSize();
 
             Font font = screen_size.width > 800 ?
-                new Font("-dosemu-VGA-Medium-R-Normal--19-190-75-75-C-100-IBM-", Font.PLAIN, 18) :
-                new Font("-Misc-Fixed-Medium-R-SemiCondensed--12-110-75-75-C-60-437-", Font.PLAIN, 12);
+                new Font("Liberation Sans Mono", Font.PLAIN, 19) :
+                new Font("Liberation Sans Mono", Font.PLAIN, 14);
 
 //            Font font = new Font("-Misc-Fixed-Medium-R-SemiCondensed--12-110-75-75-C-60-437-", Font.PLAIN, 12);
             //Font font = new Font(

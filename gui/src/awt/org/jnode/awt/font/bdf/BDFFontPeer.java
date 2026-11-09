@@ -41,7 +41,7 @@ public class BDFFontPeer extends JNodeFontPeer<BDFFontProvider, BDFFont> {
      */
     @Override
     public boolean canDisplay(Font font, char c) {        
-        BDFFont bdfFont = getCompatibleFont(font);
+        BDFFont bdfFont = provider.bestFont(font);
         
         //TODO this is a temporary workaround : we should add a method to BDFFont
         BDFGlyph spaceGlyph = bdfFont.getContainer().getGlyph(MISSING_GLYPH_CODE);
@@ -67,7 +67,7 @@ public class BDFFontPeer extends JNodeFontPeer<BDFFontProvider, BDFFont> {
      */
     @Override
     public FontMetrics getFontMetrics(Font font) {
-        return getCompatibleFont(font).getFontMetrics();
+        return provider.bestFont(font).getFontMetrics();
     }
 
     /**
@@ -75,7 +75,7 @@ public class BDFFontPeer extends JNodeFontPeer<BDFFontProvider, BDFFont> {
      */
     @Override
     public String getGlyphName(Font font, int glyphIndex) {
-        return getCompatibleFont(font).getContainer().getGlyphs()[glyphIndex].getName();
+        return provider.bestFont(font).getContainer().getGlyphs()[glyphIndex].getName();
     }
 
     /**
@@ -86,7 +86,7 @@ public class BDFFontPeer extends JNodeFontPeer<BDFFontProvider, BDFFont> {
     @Override
     public LineMetrics getLineMetrics(Font font, CharacterIterator ci,
                                       int begin, int limit, FontRenderContext rc) {
-        BDFFont bdfFont = getCompatibleFont(font);
+        BDFFont bdfFont = provider.bestFont(font);
         BDFMetrics fm = bdfFont.getContainer().getFontMetrics();
         
         float ascent = fm.getAscent();
@@ -118,7 +118,7 @@ public class BDFFontPeer extends JNodeFontPeer<BDFFontProvider, BDFFont> {
      */
     @Override
     public Rectangle2D getMaxCharBounds(Font font, FontRenderContext rc) {
-        BDFFont bdfFont = getCompatibleFont(font);
+        BDFFont bdfFont = provider.bestFont(font);
                         
         final Rectangle2D bounds = provider.getMaxCharBounds(bdfFont.getContainer());
         transform(bounds, rc);
@@ -140,7 +140,7 @@ public class BDFFontPeer extends JNodeFontPeer<BDFFontProvider, BDFFont> {
      */
     @Override
     public int getNumGlyphs(Font font) {
-        return getCompatibleFont(font).getContainer().getGlyphs().length;
+        return provider.bestFont(font).getContainer().getGlyphs().length;
     }
 
     /**
@@ -148,7 +148,7 @@ public class BDFFontPeer extends JNodeFontPeer<BDFFontProvider, BDFFont> {
      */
     @Override
     public String getPostScriptName(Font font) {
-        return getCompatibleFont(font).getContainer().getName();
+        return provider.bestFont(font).getContainer().getName();
     }
 
     /**
@@ -159,7 +159,7 @@ public class BDFFontPeer extends JNodeFontPeer<BDFFontProvider, BDFFont> {
     @Override
     public Rectangle2D getStringBounds(Font font, CharacterIterator ci,
                                        int begin, int limit, FontRenderContext frc) {
-        BDFFont bdfFont = getCompatibleFont(font);
+        BDFFont bdfFont = provider.bestFont(font);
         BDFFontContainer container = bdfFont.getContainer();
 
         double width = 0;
