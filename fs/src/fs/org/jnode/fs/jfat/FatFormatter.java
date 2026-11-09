@@ -188,11 +188,22 @@ public class FatFormatter {
         // "Size(Bytes): -512"). Ticket #878.
         long DiskSize = getDiskSize(nbTotalSectors, sectorSize);
         int SectorPerCluster = get_spc(ClusterSize, sectorSize);
-        int UserAreaSize =
-                getUserAreaSize(nbTotalSectors, ReservedSectorCount, NumOfFATs, ClusterSize);
         this.FatSize =
                 getFATSizeSectors(nbTotalSectors, ReservedSectorCount, SectorPerCluster, NumOfFATs,
                         sectorSize);
+        // FAT32: BPB_RootEntCnt is 0, so the root directory occupies no fixed
+        // sectors. Kept in the formula so the total stays correct if a fixed
+        // root ever returns.
+        int rootEntCnt = 0;
+        long rootDirSectors = ((long) rootEntCnt * 32 + sectorSize - 1) / sectorSize;
+        long dataSectors = (long) nbTotalSectors
+                - ((long) ReservedSectorCount + (long) NumOfFATs * FatSize + rootDirSectors);
+        long countOfClusters = dataSectors / SectorPerCluster;
+        // >2^28 clusters cannot be represented in a FAT32 entry; refuse before
+        // any write and leave FSI_FreeCount at its 0xffffffff (unknown) default.
+        if (countOfClusters > (1L << 28)) {
+            throw new IOException("This drive has more than 2^28 clusters, try to specify a larger cluster size");
+        }
 
         // fill out the boot sector and fs info
         bs.setBS_JmpBoot(this.BS_jmpBoot);
@@ -201,7 +212,7 @@ public class FatFormatter {
         bs.setBPB_SecPerCluster(SectorPerCluster); // look FATformat source
         bs.setBPB_RsvSecCount(ReservedSectorCount);
         bs.setBPB_NoFATs(NumOfFATs);
-        bs.setBPB_RootEntCnt(0);
+        bs.setBPB_RootEntCnt(rootEntCnt);
         bs.setBPB_TotSec16(0);
         bs.setBPB_MediumDescriptor(mediumDescriptor);
         bs.setBPB_FATSz16(0);
@@ -232,7 +243,7 @@ public class FatFormatter {
         fsInfo.setFsInfo_LeadSig(FSI_LeadSig);
         fsInfo.setFsInfo_Reserved1();
         fsInfo.setFsInfo_StrucSig(FSI_StrucSig);
-        FSI_FreeCount = (UserAreaSize / SectorPerCluster) - 1;
+        FSI_FreeCount = (int) (countOfClusters - 1);
         fsInfo.setFsInfo_FreeCount(FSI_FreeCount);
         fsInfo.setFsInfo_NextFree(FSI_Nxt_Free);
         fsInfo.setReserve2();
@@ -242,16 +253,6 @@ public class FatFormatter {
          * TODO:This portion need modofication for the Disk Size Handlings Not
          * So mandatory now .WIll look into it. Work out the Cluster Count
          */
-        long FatNeeded = UserAreaSize / SectorPerCluster;
-        /**
-         * check for a cluster count of >2^28, since the upper 4 bits of the
-         * cluster values in the FAT are reserved. Policy: enforced; format
-         * fails with IOException before any write (like the 64K-sector floor).
-         */
-        if (FatNeeded > Math.pow(2, 28)) {
-            throw new IOException("This drive has more than 2^28 clusters, try to specify a larger cluster size");
-        }
-
         /**
          * Once zero_sectors has run, any data on the drive is basically
          * lost.... First zero out ReservedSect + FatSize * NumFats +
@@ -287,7 +288,7 @@ public class FatFormatter {
         log.info(sectorSize + " Bytes Per Sector , Cluster Size  " + ClusterSize + " bytes.");
         log.info(ReservedSectorCount + " Reserved Sectors ," + (FatSize) + " Sectors Per FAT ," +
                 NumOfFATs + " FATs.");
-        log.info("Total Clusters :" + (UserAreaSize / SectorPerCluster));
+        log.info("Total Clusters :" + countOfClusters);
         log.info("Free Clusters: " + FSI_FreeCount);
 
         // Flushing the DeviceAPI
@@ -425,19 +426,6 @@ public class FatFormatter {
         FATsz += 1;
 
         return ((int) FATsz);
-    }
-
-    /**
-     * @param TotalSectors
-     * @param ReservedSectorCount
-     * @param NumFATs
-     * @param FATSize
-     * @return
-     */
-    private int getUserAreaSize(int TotalSectors, int ReservedSectorCount, int NumFATs,
-            ClusterSize FATSize) {
-        int UserAreaSize = TotalSectors - ReservedSectorCount - (NumFATs * FATSize.getSize());
-        return (UserAreaSize);
     }
 
     /**
