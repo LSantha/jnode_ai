@@ -107,7 +107,7 @@ public class FatFileSystemFormatter extends Formatter<FatFileSystem> {
             FatFileSystemType type = fSS.getFileSystemType(FatFileSystemType.ID);
             return type.create(device, false); // not readOnly !
         } catch (IOException ioe) {
-            throw new FileSystemException("Formating problem", ioe);
+            throw new FileSystemException("Formating problem: " + ioe.getMessage(), ioe);
         } catch (ApiNotFoundException e) {
             throw new FileSystemException("Formating problem", e);
         } catch (NameNotFoundException e) {

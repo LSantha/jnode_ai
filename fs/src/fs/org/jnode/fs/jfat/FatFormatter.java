@@ -266,14 +266,14 @@ public class FatFormatter {
         try {
             setQuickSectorFree(SystemAreaSize, api);
         } catch (IOException e1) {
-            log.info("Error ocured during Disk Free.");
+            throw new IOException("format failed: zeroing system area", e1);
         }
         /** calling the Format method */
         try {
             log.info("Initialising reserved sectors and FATs....");
             format(api, bs, fsInfo, SectorPerCluster, nbTotalSectors);
         } catch (IOException e) {
-            log.error("Problems in Disk Formatting.");
+            throw new IOException("format failed: writing reserved sectors and FATs", e);
         }
 
         /**
