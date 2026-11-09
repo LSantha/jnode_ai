@@ -54,6 +54,11 @@ public class FatTable {
         return table.remove(lookupKey);
     }
 
+    public FatEntry removeIfPresent(FatEntry entry) {
+        lookupKey.setKey(entry.getName());
+        return table.remove(lookupKey);
+    }
+
     public FatEntry put(String name, FatEntry entry) {
         FatKey key = new FatKey(name);
 
