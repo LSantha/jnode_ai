@@ -249,6 +249,11 @@ public class FatDirectory extends FatEntry implements FSDirectory, FSDirectoryId
         return children;
     }
 
+    void replaceInIdMap(FatEntry entry, String oldId) {
+        idMap.remove(oldId);
+        idMap.put(entry.getId(), entry);
+    }
+
     public Iterator<FSEntry> iterator() {
         return new FatEntriesIterator(children, this, false);
     }

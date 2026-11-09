@@ -114,7 +114,76 @@ public class FatEntry extends FatObject implements FSEntry, FSEntryCreated, FSEn
     }
 
     public void setName(String name) throws IOException {
-        this.name = name;
+        FatDirectory dir = getParent();
+
+        if (dir == null)
+            throw new UnsupportedOperationException("rename is not supported on this entry");
+
+        synchronized (dir) {
+            String newLongName = FatUtils.longName(name);
+
+            if (newLongName.length() == 0)
+                throw new IllegalArgumentException("name must not be empty");
+
+            FatName fatName = new FatName(dir, name);
+
+            FatEntry cached = dir.getVisitedChildren().get(newLongName);
+
+            if (cached != null && cached.getIndex() != getIndex())
+                throw new IOException("File [" + newLongName + "] already exists");
+
+            FatEntry existing = dir.getEntryByName(newLongName);
+
+            if (existing != null && existing.getIndex() != getIndex())
+                throw new IOException("File [" + newLongName + "] already exists");
+
+            FatEntry shortExisting = dir.getEntryByShortName(fatName.getName());
+
+            if (shortExisting != null && shortExisting.getIndex() != getIndex())
+                throw new IOException("File [" + newLongName + "] already exists");
+
+            String oldId = getId();
+
+            FatRecord newRecord = new FatRecord(dir, fatName);
+            FatShortDirEntry shortEntry = newRecord.getShortEntry();
+            FatShortDirEntry oldEntry = getEntry();
+
+            shortEntry.setCreated(oldEntry.getCreated());
+            shortEntry.setLastModified(oldEntry.getLastModified());
+            shortEntry.setLastAccessed(oldEntry.getLastAccessed());
+            shortEntry.setStartCluster(oldEntry.getStartCluster());
+            shortEntry.setLength(oldEntry.getLength());
+            shortEntry.setAttr(new FatAttr(oldEntry.getAttr().getAttr()));
+            dir.setFatDirEntry(shortEntry);
+            shortEntry.flush();
+
+            oldEntry.delete();
+            dir.setFatDirEntry(oldEntry);
+            oldEntry.flush();
+
+            Vector<FatLongDirEntry> oldLongEntries = record.getLongEntries();
+
+            for (int i = 0; i < oldLongEntries.size(); i++) {
+                FatLongDirEntry l = oldLongEntries.get(i);
+                l.delete();
+                dir.setFatDirEntry(l);
+                l.flush();
+            }
+
+            dir.getVisitedChildren().removeIfPresent(this);
+
+            this.name = newRecord.getLongName();
+            this.record = newRecord;
+            this.entry = shortEntry;
+
+            try {
+                dir.getVisitedChildren().put(this);
+            } catch (IllegalArgumentException ex) {
+                log.debug("entry for " + newLongName + " left out of the visited cache", ex);
+            }
+
+            dir.replaceInIdMap(this, oldId);
+        }
     }
 
     public String getShortName() {
