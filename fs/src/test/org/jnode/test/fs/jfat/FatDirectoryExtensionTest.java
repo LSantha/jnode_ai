@@ -33,6 +33,10 @@ import org.jnode.fs.FSDirectory;
 import org.jnode.fs.FSEntry;
 import org.jnode.fs.FSFile;
 import org.jnode.fs.FileSystem;
+import org.jnode.fs.jfat.ChainCorruptException;
+import org.jnode.fs.jfat.Fat;
+import org.jnode.fs.jfat.FatDirectory;
+import org.jnode.fs.jfat.FatEntry;
 import org.jnode.fs.jfat.FatFileSystem;
 import org.jnode.fs.jfat.FatFileSystemType;
 import org.jnode.fs.service.FileSystemService;
@@ -164,6 +168,85 @@ public class FatDirectoryExtensionTest {
             FILE_COUNT, verified);
 
         fsHolder[0].close();
+    }
+
+    @Test
+    public void testLegitimateChainEndStillReportsEndOfDirectory() throws Exception {
+        FileDevice dev = new FileDevice(testImage, "rw");
+        FatFileSystemType type = fss.getFileSystemType(FatFileSystemType.ID);
+        FatFileSystem fs = (FatFileSystem) type.create(dev, false);
+        try {
+            FSDirectory root = fs.getRootEntry().getDirectory();
+            FSDirectory subdir = root.addDirectory("legitend").getDirectory();
+            for (int i = 0; i < 40; i++) {
+                subdir.addFile("ok" + i + ".txt");
+            }
+            FatDirectory fd = (FatDirectory) subdir;
+            Assert.assertNull("a healthy extended directory must report a missing name, not throw",
+                fd.getEntryByName("missing.txt"));
+            int count = 0;
+            Iterator<? extends FSEntry> entries = subdir.iterator();
+            while (entries.hasNext()) {
+                FSEntry e = entries.next();
+                if (e.getName().startsWith("ok") && e.getName().endsWith(".txt")) {
+                    count++;
+                }
+            }
+            Assert.assertEquals("expected all files to be listed", 40, count);
+            Assert.assertNotNull("chain end must not be reported as corruption",
+                fd.getFatFreeEntries(1));
+        } finally {
+            fs.close();
+            dev.close();
+        }
+    }
+
+    @Test
+    public void testCorruptDirectoryChainSurfacesTypedError() throws Exception {
+        FileDevice dev = new FileDevice(testImage, "rw");
+        FatFileSystemType type = fss.getFileSystemType(FatFileSystemType.ID);
+        FatFileSystem fs = (FatFileSystem) type.create(dev, false);
+        FSDirectory root = fs.getRootEntry().getDirectory();
+        FSDirectory subdir = root.addDirectory("corruptchain").getDirectory();
+        for (int i = 0; i < 40; i++) {
+            subdir.addFile("f" + i + ".txt");
+        }
+        fs.flush();
+        FSEntry dirEntry = root.getEntry("corruptchain");
+        int probeCluster = ((FatEntry) dirEntry).getStartCluster();
+        Fat fat = fs.getFat();
+        fat.set(probeCluster, 0);
+        fat.flush();
+        fs.flush();
+        fs.close();
+        dev.close();
+
+        FileDevice dev2 = new FileDevice(testImage, "rw");
+        FatFileSystem fs2 = (FatFileSystem) type.create(dev2, false);
+        try {
+            FSDirectory root2 = fs2.getRootEntry().getDirectory();
+            FSDirectory corruptDir = (FSDirectory) root2.getEntry("corruptchain").getDirectory();
+
+            try {
+                ((FatDirectory) corruptDir).getEntryByName("f39.txt");
+                Assert.fail("expected ChainCorruptException when scanning a corrupt directory chain");
+            } catch (ChainCorruptException expected) {
+            }
+
+            Iterator<? extends FSEntry> entries = corruptDir.iterator();
+            try {
+                while (entries.hasNext()) {
+                    entries.next();
+                }
+                Assert.fail("expected RuntimeException wrapping ChainCorruptException from iterator()");
+            } catch (RuntimeException e) {
+                Assert.assertTrue("expected ChainCorruptException in cause chain, got: " + e,
+                    e.getCause() instanceof ChainCorruptException);
+            }
+        } finally {
+            fs2.close();
+            dev2.close();
+        }
     }
 
     private File createWritableCopy(String testFile) throws IOException {

@@ -22,7 +22,6 @@ package org.jnode.fs.jfat;
 
 import java.io.IOException;
 import java.nio.ByteBuffer;
-import java.util.NoSuchElementException;
 import org.apache.log4j.Logger;
 import org.jnode.fs.FSFile;
 import org.jnode.fs.FSFileSlackSpace;
@@ -91,7 +90,7 @@ public class FatFile extends FatEntry implements FSFile, FSFileSlackSpace {
             if (rem < dst.remaining()) dst.limit(dst.position() + (int) rem);
 
             getChain().read(offset, dst);
-        } catch (NoSuchElementException ex) {
+        } catch (ChainBeyondEndException ex) {
             log.debug("End Of Chain reached: shouldn't happen");
         } finally {
             dst.limit(limit);
