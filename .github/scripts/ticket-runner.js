@@ -814,6 +814,32 @@ module.exports = async ({ github, context, core }) => {
       core.info("Ticket runner: approval on PR #" + prNumber + " but CI is red; deferring merge.");
       return;
     }
+    // A stale branch must not reach the squash, even under --force: the squash
+    // applies the branch's whole tree, so it would revert the commits master
+    // gained since the branch was cut - a master-side data loss, unlike the
+    // red-CI case --force exists for, where the risk is local to the PR. The
+    // ticket's acceptance criteria are "cannot be merged by either runner", so
+    // the escape hatch is GitHub's UI merge button (which bypasses every gate
+    // and is a human's explicit act), not this command.
+    var baseInfo = await h.checkBaseCurrency(prNumber);
+    if (!baseInfo.current) {
+      state.phase = "REVIEW";
+      state.retries = 0;
+      state.history.push({
+        event: "merge_refused_base_stale",
+        pr: prNumber,
+        commits: baseInfo.total,
+        timestamp: new Date().toISOString()
+      });
+      await updateIssueState(issueNumber, state);
+      await github.rest.issues.createComment({
+        owner, repo, issue_number: prNumber,
+        body: h.baseCurrencyComment(prNumber, baseInfo, "human")
+      });
+      core.info("Ticket runner: PR #" + prNumber + " is behind its base (" +
+        baseInfo.lag.length + " commits); refusing to merge.");
+      return;
+    }
     state.phase = "MERGE";
     state.history.push({
       event: force ? "human_approved_forced" : "human_approved",

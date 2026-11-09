@@ -160,6 +160,15 @@ function createMocks(eventName, {
           };
         }
       },
+      repos: {
+        // #872's merge gate reads the base branch tip and the head..base
+        // merge-base; the default here models an up-to-date branch so existing
+        // merge-path tests still reach mergePR.
+        getBranch: async () => ({ data: { commit: { sha: 'tipsha' } } }),
+        compare: async () => ({
+          data: { merge_base_commit: { sha: 'tipsha' }, commits: [] }
+        })
+      },
       pulls: {
         listReviews: async () => ({ data: [] }),
         list: async () => {
@@ -180,6 +189,7 @@ function createMocks(eventName, {
             data: {
               number: pull_number,
               head: currentPRHead,
+              base: { ref: "master" },
               body: currentPRBody,
               state: currentPRMerged ? "closed" : "open",
               merged: currentPRMerged
@@ -1422,6 +1432,76 @@ test("ticket-runner.js event handling suite", async (t) => {
     assert.strictEqual(state.phase, "FEEDBACK");
     assert.strictEqual(state.turn, 2);
     assert.ok(mocks.calls.createComment.some(c => c.issue_number === 99 && c.body.includes("/oc fix Address human review feedback.")));
+  });
+
+  await t.test("/oc approve is refused when the PR branch is behind master (#872)", async () => {
+    const initialBody = _replaceOrAppendStatus("Task", {
+      phase: "HUMAN_REVIEW",
+      pr: 99,
+      turn: 1,
+      max_turns: 3,
+      retries: 0,
+      started: new Date().toISOString(),
+      history: []
+    }, 42);
+
+    const mocks = createMocks("issue_comment", {
+      commentBody: "/oc approve",
+      commentOnPR: true,
+      issueBody: initialBody
+    });
+    // A branch that does not contain master's tip: the squash would revert it.
+    mocks.github.rest.repos.getBranch = async () => ({ data: { commit: { sha: "tipsha" } } });
+    mocks.github.rest.repos.compare = async () => ({
+      data: {
+        merge_base_commit: { sha: "oldsha" },
+        commits: [{ sha: "cafebabecafebabecafebabecafebabecafebabe", commit: { message: "Add JNodeOceanTheme" } }]
+      }
+    });
+
+    await runTicketRunner(mocks);
+
+    assert.strictEqual(mocks.calls.mergePR.length, 0, "a stale branch must not be merged");
+    assert.ok(mocks.calls.createComment.some(c => c.issue_number === 99 &&
+      (c.body || "").includes("Add JNodeOceanTheme") && (c.body || "").includes("Merge master into the branch")),
+      "the refusal names the commits that would be reverted and the remedy");
+    assert.ok(mocks.getIssueBody().includes('"phase": "REVIEW"'),
+      "the ticket falls back to REVIEW so a later approval can retry");
+    assert.ok(mocks.getIssueBody().includes("merge_refused_base_stale"),
+      "the refusal is recorded in the ticket history");
+  });
+
+  await t.test("/oc approve --force still refuses a stale base (#872)", async () => {
+    // --force exists for a red-CI PR, where the risk is local to the PR. A
+    // stale base is a master-side data loss, so the ticket's acceptance
+    // criteria ("cannot be merged by either runner") win: the escape hatch is
+    // the GitHub UI merge button, a human's explicit act.
+    const initialBody = _replaceOrAppendStatus("Task", {
+      phase: "HUMAN_REVIEW",
+      pr: 99,
+      turn: 1,
+      max_turns: 3,
+      retries: 0,
+      started: new Date().toISOString(),
+      history: []
+    }, 42);
+
+    const mocks = createMocks("issue_comment", {
+      commentBody: "/oc approve --force",
+      commentOnPR: true,
+      issueBody: initialBody
+    });
+    mocks.github.rest.repos.getBranch = async () => ({ data: { commit: { sha: "tipsha" } } });
+    mocks.github.rest.repos.compare = async () => ({
+      data: { merge_base_commit: { sha: "oldsha" }, commits: [] }
+    });
+
+    await runTicketRunner(mocks);
+
+    assert.strictEqual(mocks.calls.mergePR.length, 0,
+      "--force must not merge a branch that would revert master commits");
+    assert.ok(mocks.getIssueBody().includes('"phase": "REVIEW"'),
+      "the ticket falls back to REVIEW");
   });
 
   await t.test("/oc approve on a HUMAN_REVIEW PR merges and closes the issue", async () => {

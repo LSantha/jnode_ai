@@ -274,6 +274,118 @@ module.exports = function createHelpers({ github, context, core }) {
            testFiles <= MAX_TEST_FILES;
   }
 
+  /**
+   * Is the PR's merge-base still the tip of its base branch?
+   *
+   * A branch cut before a later master merge, squash-merged as-is, DELETES
+   * whatever landed in the meantime: the squash applies the branch's whole tree,
+   * so the PR's own diff looks clean while master silently loses another agent's
+   * feature (JNodeOceanTheme, 270 lines, on #869 - ticket #872). The loss leaves
+   * no CI signal, because the reverted files still compile.
+   *
+   * Compares the merge-base of head and base with the base branch's current tip.
+   * Fail-closed: an unreadable PR or an API error reads as "not current", the
+   * same direction as isDiffSafe and isCIGreen, because a merge is unrecoverable
+   * while a refusal is not.
+   *
+   * @return {Promise<{current: boolean, base: string, lag: Array}>} where lag
+   *   lists the commits present on the base branch but not on the head - the
+   *   ones the squash would revert.
+   */
+  async function checkBaseCurrency(prNumber) {
+    var stale = { current: false, base: "", lag: [] };
+    var pr;
+    try {
+      pr = await github.rest.pulls.get({ owner, repo, pull_number: prNumber });
+    } catch (e) {
+      core.warning("checkBaseCurrency: pulls.get failed for PR #" + prNumber + ": " + e.message);
+      return stale;
+    }
+    var baseRef = pr.data && pr.data.base && pr.data.base.ref;
+    var headSha = pr.data && pr.data.head && pr.data.head.sha;
+    if (!baseRef || !headSha) return stale;
+    stale.base = baseRef;
+
+    var tip;
+    try {
+      var branch = await github.rest.repos.getBranch({ owner, repo, branch: baseRef });
+      tip = branch.data && branch.data.commit && branch.data.commit.sha;
+    } catch (e) {
+      core.warning("checkBaseCurrency: getBranch(" + baseRef + ") failed: " + e.message);
+      return stale;
+    }
+    if (!tip) return stale;
+
+    // compare head...base: the commits it returns are on the base branch but not
+    // on the head - exactly what the squash would revert.
+    try {
+      var compare = await github.rest.repos.compare({
+        owner, repo, base: headSha, head: baseRef
+      });
+      var mergeBase = compare.data && compare.data.merge_base_commit &&
+        compare.data.merge_base_commit.sha;
+      if (!mergeBase) return stale;
+      var lag = [];
+      var commits = compare.data.commits || [];
+      for (var i = 0; i < commits.length; i++) {
+        var c = commits[i] || {};
+        var message = (c.commit && c.commit.message) || "";
+        lag.push({ sha: (c.sha || "").slice(0, 8), subject: message.split("\n")[0] });
+      }
+      // compare paginates at 250 commits; total_commits is the exact count, so
+      // the caller's "N commits" is honest even on a very lagging branch. total
+      // is carried separately from lag because lag may hold a synthetic
+      // truncation entry, and the history counter must not count it.
+      var total = typeof compare.data.total_commits === "number"
+        ? compare.data.total_commits : lag.length;
+      if (total > lag.length) {
+        lag.push({ sha: "", subject: "... and " + (total - lag.length) + " more" });
+      }
+      return { current: mergeBase === tip, base: baseRef, lag: lag, total: total };
+    } catch (e) {
+      core.warning("checkBaseCurrency: compare failed for PR #" + prNumber + ": " + e.message);
+      return stale;
+    }
+  }
+
+  /**
+   * Human-readable refusal naming the commits a squash would revert.
+   *
+   * @param prNumber the PR
+   * @param info the checkBaseCurrency result
+   * @param entry how the merge was requested - "review" (an agent review the
+   *   ticket-runner re-posts), "human" (a native GitHub approval), or "auto"
+   *   (an agent approval that would have auto-merged). The remedy line differs:
+   *   re-requesting a review does nothing for a human approval, which must be
+   *   given again on the updated branch, and an auto-merge refusal has no
+   *   approval to repeat at all.
+   */
+  function baseCurrencyComment(prNumber, info, entry) {
+    var base = info.base || "master";
+    var lines = [
+      "Not merging: PR #" + prNumber + "'s branch is behind " + base +
+        ", so a squash would revert those commits."
+    ];
+    if (info.lag && info.lag.length) {
+      lines.push("");
+      for (var i = 0; i < info.lag.length && i < 11; i++) {
+        var item = info.lag[i];
+        lines.push(item.sha ? "- `" + item.sha + "` " + item.subject : "- " + item.subject);
+      }
+      lines.push("");
+      lines.push("Merge " + base + " into the branch (or re-push it on a current base), then " +
+        (entry === "human"
+          ? "approve again on the GitHub PR Review UI - the approval above does not carry over."
+          : entry === "auto"
+          ? "approve it on the GitHub PR Review UI; the agent verdict above does not merge it."
+          : "re-request the review.") +
+        " The diff must then contain only this PR's own changes.");
+    } else {
+      lines.push("The base branch state could not be read, so the merge is refused rather than guessed at.");
+    }
+    return lines.join("\n");
+  }
+
   /** True when CI check runs on the PR head SHA show success and no failure. */
   async function isCIGreen(prNumber) {
     var pr;
@@ -634,6 +746,8 @@ module.exports = function createHelpers({ github, context, core }) {
     getAgentReviewVerdict: getAgentReviewVerdict,
     isAutoMergeEligible: isAutoMergeEligible,
     isDiffSafe: isDiffSafe,
+    checkBaseCurrency: checkBaseCurrency,
+    baseCurrencyComment: baseCurrencyComment,
     touchesForbiddenPath: touchesForbiddenPath,
     parkForCI: parkForCI,
     DEFAULT_MAX_TURNS: DEFAULT_MAX_TURNS,
