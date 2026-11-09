@@ -292,6 +292,40 @@ module.exports = function createHelpers({ github, context, core }) {
    *   lists the commits present on the base branch but not on the head - the
    *   ones the squash would revert.
    */
+  /**
+   * The compare API, however the running Octokit generation spells it.
+   *
+   * repos.compare and repos.compareCommits are the same endpoint
+   * GET /repos/{owner}/{repo}/compare/{base}...{head} under two names, because
+   * the SDK renamed it. Which one a job gets depends on the actions/github-script
+   * version on the runner image, which changes under us without any edit here -
+   * the runner image is not pinned. So the name is resolved by capability at
+   * call time, and a runtime that names neither falls through to a plain
+   * request against the documented URL, so this gate cannot be disabled by an
+   * SDK rename.
+   *
+   * @param headSha the PR head commit
+   * @param baseRef the base branch name
+   * @return the compare response, in every shape github returns it
+   */
+  async function compareHeadToBase(headSha, baseRef) {
+    var args = { owner: owner, repo: repo, base: headSha, head: baseRef };
+    var names = ["compare", "compareCommits"];
+    for (var i = 0; i < names.length; i++) {
+      if (typeof github.rest.repos[names[i]] === "function") {
+        core.info("checkBaseCurrency: using repos." + names[i]);
+        return github.rest.repos[names[i]](args);
+      }
+    }
+    // Neither name exists: build the documented URL by hand. A github.request
+    // that does not understand the shape will throw, and the caller already
+    // treats an unreadable compare as "not current".
+    return github.request({
+      method: "GET",
+      url: "/repos/" + owner + "/" + repo + "/compare/" + headSha + "..." + baseRef
+    });
+  }
+
   async function checkBaseCurrency(prNumber) {
     var stale = { current: false, base: "", lag: [] };
     var pr;
@@ -318,10 +352,18 @@ module.exports = function createHelpers({ github, context, core }) {
 
     // compare head...base: the commits it returns are on the base branch but not
     // on the head - exactly what the squash would revert.
+    //
+    // The route's JS name moved between Octokit generations: older ones expose
+    // repos.compare, the generation actions/github-script now ships exposes
+    // repos.compareCommits for the same GET /compare/{base}...{head} endpoint.
+    // This gate learned it the hard way on ticket #884: the runner's runtime
+    // answered "github.rest.repos.compare is not a function", so the check fell
+    // into its fail-closed branch and refused to merge a branch that was in fact
+    // current with master. Resolve by capability, never by assuming which
+    // generation a runner image happens to carry, and keep the plain request as
+    // a last resort for a runtime that names neither.
     try {
-      var compare = await github.rest.repos.compare({
-        owner, repo, base: headSha, head: baseRef
-      });
+      var compare = await compareHeadToBase(headSha, baseRef);
       var mergeBase = compare.data && compare.data.merge_base_commit &&
         compare.data.merge_base_commit.sha;
       if (!mergeBase) return stale;

@@ -60,10 +60,19 @@ public class FatFailurePathTest {
     private static class FailingFileDevice extends FileDevice {
         private boolean armed;
         private boolean runtimeArmed;
+        private boolean failAll;
         private int writesBeforeFail;
 
         private FailingFileDevice(File file, String mode) throws Exception {
             super(file, mode);
+        }
+
+        private void armFailAll() {
+            failAll = true;
+        }
+
+        private void disarmFailAll() {
+            failAll = false;
         }
 
         private void armFailAfterWrites(int n) {
@@ -78,6 +87,9 @@ public class FatFailurePathTest {
 
         @Override
         public void write(long devOffset, ByteBuffer srcBuf) throws IOException {
+            if (failAll) {
+                throw new IOException("simulated device failure");
+            }
             if (runtimeArmed) {
                 if (writesBeforeFail == 0) {
                     runtimeArmed = false;
@@ -544,10 +556,99 @@ public class FatFailurePathTest {
     }
 
     @Test
+    public void testFormatOnBlankImageWithFailingWritesThrowsPhaseNamedException() throws Exception {
+        device = new FailingFileDevice(diskFile, "rw");
+        device.setLength(68L * 1024 * 1024);
+        device.armFailAll();
+        FatFileSystemFormatter formatter = new FatFileSystemFormatter(ClusterSize._1Kb);
+        try {
+            formatter.format(device);
+            fail("expected FileSystemException from failing device");
+        } catch (FileSystemException expected) {
+            assertNotNull("expected a cause", expected.getCause());
+            assertTrue("expected failing phase in message: " + expected.getMessage(),
+                expected.getMessage().contains("zeroing system area"));
+            Throwable cause = expected.getCause();
+            assertTrue("expected IOException cause, got " + cause, cause instanceof IOException);
+            assertTrue("expected failing phase in cause message: " + cause.getMessage(),
+                cause.getMessage().contains("zeroing system area"));
+            assertEquals("simulated device failure", cause.getCause().getMessage());
+        }
+    }
+
+    @Test
+    public void testLowLevelFormatterThrowsWithOriginalCause() throws Exception {
+        device = new FailingFileDevice(diskFile, "rw");
+        device.setLength(68L * 1024 * 1024);
+        device.armFailAll();
+        try {
+            FatFormatter.HDDFormatter(512, 68 * 1024 * 1024 / 512, ClusterSize._1Kb, 0, device);
+            fail("expected IOException from failing device");
+        } catch (IOException expected) {
+            assertTrue(expected.getMessage().contains("zeroing system area"));
+            assertNotNull("expected the original IOException as cause", expected.getCause());
+            assertEquals("simulated device failure", expected.getCause().getMessage());
+        }
+    }
+
+    @Test
+    public void testLowLevelFormatterNamesStructureWritePhase() throws Exception {
+        int totalSectors = 68 * 1024 * 1024 / 512;
+        long fatSize = (4L * (totalSectors - 32)) / ((2 * 512) + (4L * 2)) + 1;
+        int systemArea = 32 + (int) (2 * fatSize) + 2;
+        device = new FailingFileDevice(diskFile, "rw");
+        device.setLength(68L * 1024 * 1024);
+        device.armFailAfterWrites(systemArea);
+        try {
+            FatFormatter.HDDFormatter(512, totalSectors, ClusterSize._1Kb, 0, device);
+            fail("expected IOException from failing device");
+        } catch (IOException expected) {
+            assertTrue("expected structure-write phase in message: " + expected.getMessage(),
+                expected.getMessage().contains("writing reserved sectors and FATs"));
+            assertEquals("simulated device failure", expected.getCause().getMessage());
+        }
+    }
+
+    @Test
+    public void testReformatWithFailingWritesDoesNotMountOldVolume() throws Exception {
+        FatFileSystem fs = formatAndOpenRW();
+        FSFile file = fs.getRootEntry().getDirectory().addFile("old-data.bin").getFile();
+        byte[] data = new byte[fs.getClusterSize()];
+        for (int i = 0; i < data.length; i++) {
+            data[i] = (byte) (i & 0xFF);
+        }
+        file.write(0, ByteBuffer.wrap(data));
+        file.flush();
+        fs.flush();
+        fs.close();
+        device.armFailAll();
+        FatFileSystemFormatter formatter = new FatFileSystemFormatter(ClusterSize._1Kb);
+        try {
+            FatFileSystem reformatted = formatter.format(device);
+            reformatted.close();
+            fail("expected FileSystemException when re-formatting with failing writes");
+        } catch (FileSystemException expected) {
+            assertTrue("expected failing phase in message: " + expected.getMessage(),
+                expected.getMessage().contains("zeroing system area"));
+        }
+        device.disarmFailAll();
+        java.io.RandomAccessFile raf = new java.io.RandomAccessFile(diskFile, "r");
+        try {
+            assertTrue("old volume boot signature must survive a failed re-format",
+                raf.length() > 512);
+            raf.seek(510);
+            assertEquals((byte) 0x55, raf.readByte());
+            assertEquals((byte) 0xAA, raf.readByte());
+        } finally {
+            raf.close();
+        }
+    }
+
+    @Test
     public void testSectorCountAtIntMaxIsNotRejectedAsTooBig() throws Exception {
         PartitionedFileDevice partitioned =
             new PartitionedFileDevice(diskFile, "rw", Integer.MAX_VALUE);
-        partitioned.setLength(80L * 1024 * 1024);
+        partitioned.setLength(256L * 1024 * 1024);
         try {
             FatFileSystem fs = new FatFileSystemFormatter(ClusterSize._64Kb).format(partitioned);
             try {
