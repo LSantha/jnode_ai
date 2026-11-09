@@ -244,9 +244,9 @@ public class DefaultFontManager implements FontManager, ExtensionPointListener {
      * @return
      */
     private synchronized List<FontProvider<?>> getProviders() {
-// TODO fix true type font
-//        final String firstProviderName = (String)AccessController.
-// doPrivileged(new GetPropertyAction("jnode.font.renderer", "ttf"));
+        // the ttf provider renders scalable text correctly, but the bdf
+        // bitmap fonts are the hand tuned default; ttf stays selectable
+        // with -Djnode.font.renderer=ttf
         final String firstProviderName =
             (String) AccessController.doPrivileged(new GetPropertyAction("jnode.font.renderer", "bdf"));
         if ((providers.size() > 1) && !firstProviderName.equals(providers.get(0).getName())) {

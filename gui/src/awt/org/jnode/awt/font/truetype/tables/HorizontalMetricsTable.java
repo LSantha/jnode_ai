@@ -41,7 +41,7 @@ public final class HorizontalMetricsTable extends TTFTable {
      * @param font
      * @param input
      */
-    HorizontalMetricsTable(TTFFontData font, TTFInput input) {
+    public HorizontalMetricsTable(TTFFontData font, TTFInput input) {
         super(font, input);
     }
 
@@ -88,6 +88,11 @@ public final class HorizontalMetricsTable extends TTFTable {
      * @return The advance width for a given index
      */
     public int getAdvanceWidth(int index) {
+        // as specified in the OpenType spec, glyph indices beyond the
+        // number of horizontal metrics reuse the last advance width
+        if (index >= this.advanceWidth.length) {
+            return this.advanceWidth[this.advanceWidth.length - 1];
+        }
         return this.advanceWidth[index];
     }
 
@@ -96,6 +101,9 @@ public final class HorizontalMetricsTable extends TTFTable {
      * @return The left side bearing for a given index
      */
     public int getLeftSideBearing(int index) {
+        if (index >= this.leftSideBearing.length) {
+            return this.leftSideBearing2[index - this.leftSideBearing.length];
+        }
         return this.leftSideBearing[index];
     }
 

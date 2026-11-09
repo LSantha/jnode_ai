@@ -53,8 +53,7 @@ public class TTFFontMetrics extends FontMetrics {
         }
         this.fontData = fontData;
         this.fontSize = font.getSize();
-        final double ascent = fontData.getHorizontalHeaderTable().getAscent();
-        this.scale = fontSize / ascent;
+        this.scale = fontSize / (double) fontData.getHeaderTable().unitsPerEm;
         //System.out.println("Font=" + font.getName() + ", size=" + fontSize + ",
         // scale=" + scale + ", ascent=" + ascent);
     }
@@ -69,8 +68,9 @@ public class TTFFontMetrics extends FontMetrics {
             final CMapTable cmapTable = fontData.getCMapTable();
             final CMapTable.EncodingTable encTable = cmapTable.getEncodingTable(0);
             final HorizontalMetricsTable hmTable = fontData.getHorizontalMetricsTable();
-            final int index = encTable.getTableFormat().getGlyphIndex(ch);
-            return (int) (hmTable.getAdvanceWidth(index) * scale);
+            final int index = encTable.getTableFormat().getGlyphIndex(
+                    BoxGlyphMapping.remap(ch));
+            return (int) (hmTable.getAdvanceWidth(index) * scale + 0.5);
         } catch (IOException ex) {
             return 0;
         }
@@ -100,7 +100,7 @@ public class TTFFontMetrics extends FontMetrics {
      */
     public int getAscent() {
         try {
-            final int ascent = (int) (fontData.getHorizontalHeaderTable().getAscent() * scale);
+            final int ascent = (int) (fontData.getHorizontalHeaderTable().getAscent() * scale + 0.5);
             return ascent;
         } catch (IOException ex) {
             return 0;
@@ -113,11 +113,32 @@ public class TTFFontMetrics extends FontMetrics {
      */
     public int getDescent() {
         try {
-            final int descent = Math.abs((int) (fontData.getHorizontalHeaderTable().getDescent() * scale));
-            return descent;
+            // the hhea descender is negative, so take the absolute value
+            // before scaling and rounding
+            final double d = Math.abs((double) fontData
+                .getHorizontalHeaderTable().getDescent()) * scale;
+            return (int) (d + 0.5);
         } catch (IOException ex) {
             return 0;
         }
+    }
+
+    /**
+     * The line height: the hhea ascent/descent pair understates the real ink
+     * span (accented capitals, descenders), so add a pixel of leading: a too
+     * small height makes console rows overlap each other.
+     *
+     * @return The height of a text line
+     * @see java.awt.FontMetrics#getHeight()
+     */
+    @Override
+    public int getHeight() {
+        return getAscent() + getDescent() + getLeading();
+    }
+
+    @Override
+    public int getLeading() {
+        return 1;
     }
 
     /**
@@ -126,7 +147,8 @@ public class TTFFontMetrics extends FontMetrics {
      */
     public int getMaxAdvance() {
         try {
-            return (int) (fontData.getHorizontalHeaderTable().getMaxAdvance() * scale);
+            return (int) (fontData.getHorizontalHeaderTable().getMaxAdvance()
+                * scale + 0.5);
         } catch (IOException ex) {
             return 0;
         }

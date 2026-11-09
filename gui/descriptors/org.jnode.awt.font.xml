@@ -49,4 +49,9 @@
   </runtime>
 
   <extension-point id="providers" name="JNode Font Providers"/>
+
+  <extension point="org.jnode.security.permissions">
+    <permission class="java.lang.reflect.ReflectPermission" name="suppressAccessChecks"/>
+    <permission class="java.lang.RuntimePermission" name="accessDeclaredMembers"/>
+  </extension>
 </plugin>

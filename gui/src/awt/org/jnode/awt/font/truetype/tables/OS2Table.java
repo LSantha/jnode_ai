@@ -53,7 +53,7 @@ public final class OS2Table extends VersionTable {
      * @param font
      * @param input
      */
-    OS2Table(TTFFontData font, TTFInput input) {
+    public OS2Table(TTFFontData font, TTFInput input) {
         super(font, input);
     }
 

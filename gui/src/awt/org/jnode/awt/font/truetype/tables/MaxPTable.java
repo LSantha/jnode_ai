@@ -60,7 +60,7 @@ public final class MaxPTable extends VersionTable {
      * @param font
      * @param input
      */
-    MaxPTable(TTFFontData font, TTFInput input) {
+    public MaxPTable(TTFFontData font, TTFInput input) {
         super(font, input);
     }
 

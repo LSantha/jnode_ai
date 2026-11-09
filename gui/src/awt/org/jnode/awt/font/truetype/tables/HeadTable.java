@@ -60,7 +60,7 @@ public final class HeadTable extends VersionTable {
      * @param font
      * @param input
      */
-    HeadTable(TTFFontData font, TTFInput input) {
+    public HeadTable(TTFFontData font, TTFInput input) {
         super(font, input);
     }
 

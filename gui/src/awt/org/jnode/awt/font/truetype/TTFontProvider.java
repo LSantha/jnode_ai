@@ -26,12 +26,17 @@ import java.awt.FontMetrics;
 import java.io.IOException;
 import java.io.InputStream;
 import java.net.URL;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Map;
 
 import org.apache.log4j.Logger;
 import org.jnode.awt.font.TextRenderer;
 import org.jnode.awt.font.renderer.RenderCache;
 import org.jnode.awt.font.spi.AbstractFontProvider;
+import org.jnode.awt.font.truetype.tables.HeadTable;
+import org.jnode.awt.font.truetype.tables.HorizontalHeaderTable;
+import org.jnode.awt.font.truetype.tables.HorizontalMetricsTable;
 
 /**
  * @author epr
@@ -47,8 +52,11 @@ public class TTFontProvider extends AbstractFontProvider<TTFFont, TTFFontData> {
      * All system fonts
      */
     private static final String SYSTEM_FONTS[] = {
-        "bhm.ttf", "bhmbd.ttf", "bhmbi.ttf", "bhmi.ttf", "luxisr.ttf", "roman.ttf", "times.ttf", "velehrad.ttf"
+        "DejaVuSans.ttf", "DejaVuSans-Bold.ttf",
+        "DejaVuSansMono.ttf", "DejaVuSansMono-Bold.ttf"
     };
+
+    private List<TTFFont> fonts;
 
     public TTFontProvider() {
         super(TTFFont.class, "ttf");
@@ -56,18 +64,74 @@ public class TTFontProvider extends AbstractFontProvider<TTFFont, TTFFontData> {
     }
 
     protected TextRenderer createTextRenderer(RenderCache renderCache, Font font) {
-        TextRenderer r;
-//        if (false || renderer.equals("new")) {
-        r = new TTFTextRenderer(renderCache, getFontMetrics(font), getFontData(font));
-//        } else {
-//            r = new TTFSimpleTextRenderer(getFontData(font), font.getSize());                
-//        }
+        final TTFFont selected = bestFont(font);
+        if (selected == null) {
+            throw new IllegalStateException("no TTF font for " + font);
+        }
+        TextRenderer r = new TTFTextRenderer(renderCache,
+            getFontMetrics(font), selected.getFontData());
         log.debug("created TextRenderer for TTF");
         return r;
     }
 
     protected FontMetrics createFontMetrics(Font font) throws IOException {
-        return new TTFFontMetrics(font, getFontData(font));
+        final TTFFont selected = bestFont(font);
+        if (selected == null) {
+            throw new IOException("no TTF font for " + font);
+        }
+        return new TTFFontMetrics(font, selected.getFontData());
+    }
+
+    /**
+     * Selects the installed true type font best matching the requested
+     * font: the requested style (bold) first, a mono family for mono
+     * requests, then the nearest loaded family. True type faces are
+     * scalable, so size is not part of the selection.
+     *
+     * @param font the requested font
+     * @return the best matching installed font, or {@code null}
+     */
+    public TTFFont bestFont(Font font) {
+        if (font == null) {
+            return null;
+        }
+        provides(font);                    // make sure the fonts are loaded
+        if (fonts == null || fonts.isEmpty()) {
+            return null;
+        }
+        final boolean wantBold =
+            (font.getStyle() & Font.BOLD) == Font.BOLD;
+        final String family = font.getFamily();
+        final boolean wantMono = family != null
+            && (family.toLowerCase().contains("mono")
+                || family.toLowerCase().contains("fixed")
+                || family.toLowerCase().contains("dialoginput"));
+
+        TTFFont best = null;
+        long bestScore = Long.MAX_VALUE;
+        for (TTFFont candidate : fonts) {
+            final boolean isBold =
+                (candidate.getStyle() & Font.BOLD) == Font.BOLD;
+            final String candFamily = candidate.getFamily();
+            final boolean isMono = candFamily != null
+                && candFamily.toLowerCase().contains("mono");
+            long score = 0;
+            if (isBold != wantBold) {
+                score += 1L << 20;
+            }
+            if (isMono != wantMono) {
+                score += 1L << 20;
+            }
+            if (family != null && candFamily != null
+                && !candFamily.equalsIgnoreCase(family)) {
+                score += 1;                // prefer the requested family
+            }
+            if (score < bestScore) {
+                bestScore = score;
+                best = candidate;
+            }
+        }
+        return best;
     }
 
     
@@ -137,7 +201,7 @@ public class TTFontProvider extends AbstractFontProvider<TTFFont, TTFFontData> {
         if (font instanceof TTFFont) {
             return ((TTFFont) font).getFontData();
         } else {
-            final TTFFont ttf = getCompatibleFont(font);
+            final TTFFont ttf = bestFont(font);
             if (ttf != null) {
                 return ttf.getFontData();
             } else {
@@ -149,13 +213,16 @@ public class TTFontProvider extends AbstractFontProvider<TTFFont, TTFFontData> {
 
     @Override
     protected void loadFontsImpl() {
+        fonts = new ArrayList<TTFFont>();
         for (String fontResource : SYSTEM_FONTS) {
             try {
                 final ClassLoader cl = Thread.currentThread().getContextClassLoader();
                 final URL url = cl.getResource(fontResource);
                 if (url != null) {
                     final TTFFontData fontData = new TTFFontDataFile(url);
-                    addFont(new TTFFont(fontData, 10));
+                    final TTFFont font = new TTFFont(fontData, 10);
+                    addFont(font);
+                    fonts.add(font);
                 } else {
                     log.error("Cannot find font resource " + fontResource);
                 }
@@ -170,19 +237,24 @@ public class TTFontProvider extends AbstractFontProvider<TTFFont, TTFFontData> {
     @Override
     protected Size getMaxCharSize(TTFFontData fontData) {
         Size size = new Size();
-        
-        //TODO implement it
-//        for (TTFGlyph g : fontData.getGlyph(c)) {
-//            if (g != null) {
-//                size.maxCharWidth += g.getDWidth().width;
-//                size.maxCharHeight = Math.max(g.getDWidth().height, size.maxCharHeight);
-//            }
-//        }
-        // temporary workaround
-        size.maxCharWidth = 15;
-        size.maxCharHeight = 15;
-        
-        
+        try {
+            final HorizontalHeaderTable hhead = fontData
+                .getHorizontalHeaderTable();
+            final HorizontalMetricsTable hmtx = fontData
+                .getHorizontalMetricsTable();
+            final org.jnode.awt.font.truetype.tables.HeadTable head = fontData
+                .getHeaderTable();
+            final int nrAdv = hhead.getNumberOfHMetrics();
+            int maxAdvance = 0;
+            for (int i = 0; i < nrAdv; i++) {
+                maxAdvance = Math.max(maxAdvance, hmtx.getAdvanceWidth(i));
+            }
+            size.maxCharWidth = maxAdvance;
+            size.maxCharHeight = head.yMax - head.yMin;
+        } catch (IOException ex) {
+            size.maxCharWidth = 2048;
+            size.maxCharHeight = 2048;
+        }
         return size;
     }
 }

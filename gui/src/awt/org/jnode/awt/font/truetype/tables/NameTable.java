@@ -49,7 +49,7 @@ public final class NameTable extends TTFTable {
      * @param font
      * @param input
      */
-    NameTable(TTFFontData font, TTFInput input) {
+    public NameTable(TTFFontData font, TTFInput input) {
         super(font, input);
     }
 

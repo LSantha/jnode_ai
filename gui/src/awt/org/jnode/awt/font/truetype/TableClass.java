@@ -22,7 +22,6 @@ package org.jnode.awt.font.truetype;
 
 import gnu.java.security.action.SetAccessibleAction;
 import java.lang.reflect.Constructor;
-import java.security.AccessController;
 import java.security.PrivilegedAction;
 
 import org.jnode.awt.font.truetype.tables.CMapTable;
@@ -91,36 +90,39 @@ enum TableClass {
     /**
      * Create a new table of this class.
      *
+     * <p>Instantiated directly instead of by reflection: the per-plugin
+     * permission plumbing does not reach classes that are loaded from jars
+     * shared by several plugins, so getDeclaredConstructor would be denied
+     * by the security manager (the old "TODO fix a Security bug").</p>
+     *
      * @param font
      * @param in
      * @return
      */
     final TTFTable create(final TTFFontData font, final TTFInput in) {
-/* 
- * that code should be equivalent but it is not : there a SecurityException that is thrown
- * even if the permissions is actually given to the plugin
- * TODO fix a Security bug ?
-        return (TTFTable) AccessController.doPrivileged(new PrivilegedAction() {
-            public Object run() {
-                try {
-                    final Constructor c = clazz
-                            .getDeclaredConstructor(CONS_TYPES);
-                    c.setAccessible(true);
-                    return (TTFTable) c.newInstance(new Object[] { font, in });
-                } catch (Exception e) {
-                    e.printStackTrace();
-                    return null;
-                }
-            }
-        });
-*/
-        try {
-            final Constructor<?> c = clazz.getDeclaredConstructor(CONS_TYPES);
-            AccessController.doPrivileged((PrivilegedAction<?>) new SetAccessibleAction(c));
-            return (TTFTable) c.newInstance(new Object[]{font, in});
-        } catch (Exception e1) {
-            e1.printStackTrace();
-            return null;
+        switch (this) {
+            case CMAP:
+                return new CMapTable(font, in);
+            case GLYF:
+                return new GlyphTable(font, in);
+            case HEAD:
+                return new HeadTable(font, in);
+            case HHEA:
+                return new HorizontalHeaderTable(font, in);
+            case HMTX:
+                return new HorizontalMetricsTable(font, in);
+            case LOCA:
+                return new LocationsTable(font, in);
+            case MAXP:
+                return new MaxPTable(font, in);
+            case NAME:
+                return new NameTable(font, in);
+            case OS2:
+                return new OS2Table(font, in);
+            case POST:
+                return new PostTable(font, in);
+            default:
+                return null;
         }
     }
 }

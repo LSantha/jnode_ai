@@ -48,7 +48,7 @@ public final class PostTable extends TTFTable {
      * @param font
      * @param input
      */
-    PostTable(TTFFontData font, TTFInput input) {
+    public PostTable(TTFFontData font, TTFInput input) {
         super(font, input);
     }
 

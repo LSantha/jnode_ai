@@ -38,7 +38,7 @@ public final class LocationsTable extends TTFTable {
      * @param font
      * @param input
      */
-    LocationsTable(TTFFontData font, TTFInput input) {
+    public LocationsTable(TTFFontData font, TTFInput input) {
         super(font, input);
     }
 

@@ -93,13 +93,12 @@ final class BitmapGraphics32bpp extends AbstractBitmapGraphics {
      */
     protected void doDrawAlphaRaster(Raster raster, int srcX, int srcY,
                                      int dstX, int dstY, int width, int height, int color) {
+        color &= 0x00FFFFFF;
+
         final byte[] buf = getAlphaBuffer(width);
         final int[] pixels = getPixelBuffer(width);
         int dstOfs = getOffset(dstX, dstY);
         int y = srcY;
-
-        color &= 0x00FFFFFF;
-
         for (int row = height - 1; row >= 0; row--) {
             raster.getDataElements(srcX, y, width, 1, buf);
 

@@ -49,7 +49,7 @@ public final class HorizontalHeaderTable extends VersionTable {
      * @param font
      * @param input
      */
-    HorizontalHeaderTable(TTFFontData font, TTFInput input) {
+    public HorizontalHeaderTable(TTFFontData font, TTFInput input) {
         super(font, input);
     }
 

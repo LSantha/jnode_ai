@@ -80,7 +80,9 @@ public abstract class AbstractTextRenderer implements TextRenderer {
     protected final WritableRaster createAlphaRaster() {
         final RenderContext ctx = renderCache.getContext();
         WritableRaster r = (WritableRaster) ctx.getObject(ALPHA_RASTER);
-        final int fontSizeUp = (int) (fontMetrics.getFont().getSize() + 0.5);
+        // tall glyphs (accented capitals, brackets) can be larger than the
+        // font size, so give the raster some headroom
+        final int fontSizeUp = (int) (fontMetrics.getFont().getSize() * 2);
         if ((r == null) || (r.getWidth() < fontSizeUp) || (r.getHeight() < fontSizeUp)) {
             r = GlyphRenderer.createRaster(fontSizeUp, fontSizeUp);
             ctx.setObject(ALPHA_RASTER, r);

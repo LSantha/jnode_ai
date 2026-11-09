@@ -46,7 +46,7 @@ public class TTFFontPeer extends JNodeFontPeer<TTFontProvider, TTFFont> {
     @Override
     public boolean canDisplay(Font font, char c) {
         //TODO implement me 
-        //TTFFont ttfFont = getCompatibleFont(font);
+        //TTFFont ttfFont = provider.bestFont(font);
         //ttfFont.getFontData().getGlyph(c);
         return true;
     }
@@ -63,7 +63,7 @@ public class TTFFontPeer extends JNodeFontPeer<TTFontProvider, TTFFont> {
     public TTFFontMetrics getFontMetrics(Font font) {        
         try {
             //TODO we shouldn't create a new instance each time : use the cache in AbstractFontProvider ?
-            return new TTFFontMetrics(font, getCompatibleFont(font).getFontData());
+            return new TTFFontMetrics(font, provider.bestFont(font).getFontData());
         } catch (IOException e) {
             // TODO Auto-generated catch block
             e.printStackTrace();
@@ -112,7 +112,7 @@ public class TTFFontPeer extends JNodeFontPeer<TTFontProvider, TTFFont> {
 
     @Override
     public Rectangle2D getMaxCharBounds(Font font, FontRenderContext rc) {
-        TTFFont ttfFont = getCompatibleFont(font);
+        TTFFont ttfFont = provider.bestFont(font);
         
         final Rectangle2D bounds = provider.getMaxCharBounds(ttfFont.getFontData());
         transform(bounds, rc);
@@ -134,29 +134,25 @@ public class TTFFontPeer extends JNodeFontPeer<TTFontProvider, TTFFont> {
 
     @Override
     public String getPostScriptName(Font font) {
-        return getCompatibleFont(font).getPSName();
+        return provider.bestFont(font).getPSName();
     }
 
     @Override
     public Rectangle2D getStringBounds(Font font, CharacterIterator ci, int begin, int limit,
             FontRenderContext frc) {
-        TTFFont ttfFont = getCompatibleFont(font);
+        TTFFont ttfFont = provider.bestFont(font);
         TTFFontData container = ttfFont.getFontData();
 
+        // swing uses the string bounds for layout, so the width must be
+        // the sum of the pen advances (not of the ink widths)
+        final TTFFontMetrics fm = getFontMetrics(font);
         double width = 0;
-        double height = 0;
-        for (char c = ci.setIndex(begin); ci.getIndex() <= limit; c = ci.next()) {
-            try {
-                Glyph g = container.getGlyph(c);
-                if (g != null) {
-                    width += g.getBBox().getWidth();
-                    height = Math.max(g.getBBox().getHeight(), height);
-                }
-            } catch (IOException e) {
-                e.printStackTrace();
-            }                
+        for (char c = ci.setIndex(begin); ci.getIndex() <= limit;
+             c = ci.next()) {
+            width += fm.charWidth(c);
         }
-        final Rectangle2D bounds = new Rectangle2D.Double(0, 0, width, height);
+        final Rectangle2D bounds = new Rectangle2D.Double(0, -fm.getAscent(),
+            width, fm.getHeight());
                 
         transform(bounds, frc);
         return bounds;
@@ -180,7 +176,10 @@ public class TTFFontPeer extends JNodeFontPeer<TTFontProvider, TTFFont> {
             int limit, int flags) {
         //TODO work only for latin fonts but not for hindi, arabic ... fonts
         // see GNU Classpath javadoc
-        return new StandardGlyphVector(font, chars, start, limit, frc);
+        // note: the surface graphics routes TGlyphVector through the font
+        // provider TextRenderer, a plain StandardGlyphVector would end up
+        // in the java2d glyph outline path which has no font2D for TTF
+        return new org.jnode.awt.font.TGlyphVector(font, chars, start, limit, frc);
     }
 
 }

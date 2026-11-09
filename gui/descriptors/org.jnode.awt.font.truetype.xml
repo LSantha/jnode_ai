@@ -45,6 +45,7 @@
         
   <extension point="org.jnode.security.permissions">
     <permission class="java.lang.reflect.ReflectPermission" name="suppressAccessChecks"/>
+    <permission class="java.lang.RuntimePermission" name="accessDeclaredMembers"/>
     <permission class="java.util.PropertyPermission" name="jnode.font.renderer" actions="read"/>
   </extension>
 </fragment>

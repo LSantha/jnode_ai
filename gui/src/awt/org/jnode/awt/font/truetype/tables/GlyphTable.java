@@ -49,7 +49,7 @@ public final class GlyphTable extends VersionTable {
      * @param font
      * @param input
      */
-    GlyphTable(TTFFontData font, TTFInput input) {
+    public GlyphTable(TTFFontData font, TTFInput input) {
         super(font, input);
     }
 

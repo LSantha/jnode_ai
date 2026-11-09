@@ -39,7 +39,7 @@ public final class CMapTable extends TTFTable {
      * @param font
      * @param input
      */
-    CMapTable(TTFFontData font, TTFInput input) {
+    public CMapTable(TTFFontData font, TTFInput input) {
         super(font, input);
     }
 
@@ -76,7 +76,7 @@ public final class CMapTable extends TTFTable {
                     tableFormat = new TableFormat0();
                     break;
                 case 4:
-                    tableFormat = new TableFormat4();
+                    tableFormat = new TableFormat4(length);
                     break;
                 case 6:
                     tableFormat = new TableFormat6();
@@ -151,8 +151,16 @@ public final class CMapTable extends TTFTable {
     public class TableFormat4 extends TableFormat {
 
         public int segCount;
-        public int[] endCount, startCount, idRangeOffset;
+        public int[] endCount, startCount, idRangeOffset, glyphIdArray;
         public short[] idDelta; // could be int (ushort) as well
+        private int tableLength;
+
+        public TableFormat4() {
+        }
+
+        public TableFormat4(int tableLength) {
+            this.tableLength = tableLength;
+        }
 
         public void read(TTFInput ttf) throws IOException {
             segCount = ttf.readUShort() / 2;
@@ -173,6 +181,14 @@ public final class CMapTable extends TTFTable {
             // modulo arithmetic it makes no difference
             idDelta = ttf.readShortArray(endCount.length);
             idRangeOffset = ttf.readUShortArray(endCount.length);
+
+            // the rest of the subtable is the glyph id array
+            if (tableLength > 16 + (8 * segCount)) {
+                final int nrGlyphs = (tableLength - 16 - (8 * segCount)) / 2;
+                glyphIdArray = ttf.readUShortArray(nrGlyphs);
+            } else {
+                glyphIdArray = new int[0];
+            }
         }
 
         public String toString() {
@@ -184,6 +200,19 @@ public final class CMapTable extends TTFTable {
         }
 
         public int getGlyphIndex(int character) {
+            for (int i = 0; i < segCount; i++) {
+                if ((character >= startCount[i]) && (character <= endCount[i])) {
+                    if ((idRangeOffset[i] == 0) || (glyphIdArray.length == 0)) {
+                        return (character + idDelta[i]) & 0xFFFF;
+                    }
+                    final int k = i + (idRangeOffset[i] / 2)
+                        + (character - startCount[i]);
+                    if ((k < 0) || (k >= glyphIdArray.length)) {
+                        return 0;
+                    }
+                    return (glyphIdArray[k] + idDelta[i]) & 0xFFFF;
+                }
+            }
             return 0;
         }
     }
