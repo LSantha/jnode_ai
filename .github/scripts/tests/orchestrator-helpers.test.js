@@ -326,7 +326,7 @@ test("parkForCI appends to a separate history array for the orchestrator shape",
 // because applying the branch's whole tree reverts what master gained.
 // ---------------------------------------------------------------------------
 
-function githubWithBase({ tip, mergeBase, lagCommits = [], failOn = null, head = "headsha" } = {}) {
+function githubWithBase({ tip, mergeBase, lagCommits = [], failOn = null, head = "headsha", total } = {}) {
   const { github, calls } = createGithub({});
   github.rest.pulls.get = async () => ({
     data: { number: 99, head: { ref: "opencode/issue99-x", sha: head }, base: { ref: "master" } }
@@ -343,6 +343,7 @@ function githubWithBase({ tip, mergeBase, lagCommits = [], failOn = null, head =
       return {
         data: {
           merge_base_commit: { sha: mergeBase || "tipsha" },
+          total_commits: typeof total === "number" ? total : lagCommits.length,
           commits: lagCommits.map((c, i) => ({ sha: c.sha, commit: { message: c.subject } }))
         }
       };
@@ -373,6 +374,7 @@ test("checkBaseCurrency: a lagging branch is not current and names what it rever
   const info = await h.checkBaseCurrency(99);
   assert.strictEqual(info.current, false, "the branch is behind master");
   assert.strictEqual(info.lag.length, 2, "both commits would be reverted");
+  assert.strictEqual(info.total, 2, "total is the exact commit count");
   assert.strictEqual(info.lag[0].sha, "aaaaaaaa", "the sha is shortened for the comment");
   assert.strictEqual(info.lag[0].subject, "Add JNodeOceanTheme", "the subject is the first line");
   const comment = h.baseCurrencyComment(99, info, "review");

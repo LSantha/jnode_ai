@@ -261,8 +261,8 @@ test('orchestrator.js test suite', async (t) => {
 
     assert.strictEqual(calls.mergePR.length, 0, "a stale branch must not be squash-merged");
     assert.ok(calls.createComment.some(c => c.issue_number === 99 &&
-      c.body.includes('Add JNodeOceanTheme') && c.body.includes('approve again')),
-      "the refusal names the would-be-reverted commits and the human-approval remedy");
+      c.body.includes('Add JNodeOceanTheme') && c.body.includes('approve it on the GitHub PR Review UI')),
+      "the refusal names the would-be-reverted commits and the UI-approval remedy");
     assert.ok(updateIssueDetails.some(u => u.issue_number === 1 &&
       u.body.includes('"phase": "HUMAN_REVIEW"')), "the task routes to HUMAN_REVIEW");
     assert.ok(updateIssueDetails.some(u => u.issue_number === 1 &&

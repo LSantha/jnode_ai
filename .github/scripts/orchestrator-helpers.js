@@ -333,13 +333,15 @@ module.exports = function createHelpers({ github, context, core }) {
         lag.push({ sha: (c.sha || "").slice(0, 8), subject: message.split("\n")[0] });
       }
       // compare paginates at 250 commits; total_commits is the exact count, so
-      // the caller's "N commits" is honest even on a very lagging branch.
-      if (typeof compare.data.total_commits === "number" &&
-          compare.data.total_commits !== lag.length) {
-        lag.push({ sha: "", subject: "... and " +
-          (compare.data.total_commits - (lag.length - 1)) + " more" });
+      // the caller's "N commits" is honest even on a very lagging branch. total
+      // is carried separately from lag because lag may hold a synthetic
+      // truncation entry, and the history counter must not count it.
+      var total = typeof compare.data.total_commits === "number"
+        ? compare.data.total_commits : lag.length;
+      if (total > lag.length) {
+        lag.push({ sha: "", subject: "... and " + (total - lag.length) + " more" });
       }
-      return { current: mergeBase === tip, base: baseRef, lag: lag };
+      return { current: mergeBase === tip, base: baseRef, lag: lag, total: total };
     } catch (e) {
       core.warning("checkBaseCurrency: compare failed for PR #" + prNumber + ": " + e.message);
       return stale;
@@ -352,9 +354,11 @@ module.exports = function createHelpers({ github, context, core }) {
    * @param prNumber the PR
    * @param info the checkBaseCurrency result
    * @param entry how the merge was requested - "review" (an agent review the
-   *   ticket-runner re-posts) or "human" (a native GitHub approval). The remedy
-   *   line differs: re-requesting a review does nothing for a human approval,
-   *   which must be given again on the updated branch.
+   *   ticket-runner re-posts), "human" (a native GitHub approval), or "auto"
+   *   (an agent approval that would have auto-merged). The remedy line differs:
+   *   re-requesting a review does nothing for a human approval, which must be
+   *   given again on the updated branch, and an auto-merge refusal has no
+   *   approval to repeat at all.
    */
   function baseCurrencyComment(prNumber, info, entry) {
     var base = info.base || "master";
@@ -372,6 +376,8 @@ module.exports = function createHelpers({ github, context, core }) {
       lines.push("Merge " + base + " into the branch (or re-push it on a current base), then " +
         (entry === "human"
           ? "approve again on the GitHub PR Review UI - the approval above does not carry over."
+          : entry === "auto"
+          ? "approve it on the GitHub PR Review UI; the agent verdict above does not merge it."
           : "re-request the review.") +
         " The diff must then contain only this PR's own changes.");
     } else {

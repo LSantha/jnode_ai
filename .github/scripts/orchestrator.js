@@ -624,10 +624,10 @@ module.exports = async ({ github, context, core }) => {
                       task.phase = 'HUMAN_REVIEW';
                       task.retries = 0;
                       state.history.push({ event: 'merge_refused_base_stale', task: task.issue,
-                        pr: task.pr, commits: baseInfo.lag.length, timestamp: new Date().toISOString() });
+                        pr: task.pr, commits: baseInfo.total, timestamp: new Date().toISOString() });
                       await github.rest.issues.createComment({
                         owner: context.repo.owner, repo: context.repo.repo, issue_number: task.pr,
-                        body: h.baseCurrencyComment(task.pr, baseInfo, "human")
+                        body: h.baseCurrencyComment(task.pr, baseInfo, "auto")
                       });
                       core.error(`Task #${task.issue} PR #${task.pr} is behind its base; routing to HUMAN_REVIEW.`);
                     } else if (forbidden) {
@@ -815,7 +815,7 @@ module.exports = async ({ github, context, core }) => {
           task.phase = 'REVIEW';
           task.retries = 0;
           state.history.push({ event: 'merge_refused_base_stale', task: task.issue,
-            pr: task.pr, commits: baseInfo.lag.length, timestamp: new Date().toISOString() });
+            pr: task.pr, commits: baseInfo.total, timestamp: new Date().toISOString() });
           await updateMasterIssue(masterIssueNumber, state);
           await github.rest.issues.createComment({
             owner: context.repo.owner, repo: context.repo.repo, issue_number: task.pr,

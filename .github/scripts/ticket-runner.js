@@ -828,7 +828,7 @@ module.exports = async ({ github, context, core }) => {
       state.history.push({
         event: "merge_refused_base_stale",
         pr: prNumber,
-        commits: baseInfo.lag.length,
+        commits: baseInfo.total,
         timestamp: new Date().toISOString()
       });
       await updateIssueState(issueNumber, state);
