@@ -126,10 +126,29 @@ public class FatFile extends FatEntry implements FSFile, FSFileSlackSpace {
         // routes through flushFiles() + fat.flush().
     }
 
+    /**
+     * Gets the slack space at the end of this file's last cluster.
+     * <p>
+     * Slack space is only defined for live entries: it is read through the cluster
+     * chain, starting at the file's length offset within its last cluster. For a
+     * deleted or freed entry the chain is no longer valid (the clusters have been
+     * freed and the stored start cluster is typically zero), so this method always
+     * throws an {@link IOException} instead of reading bytes that may belong to
+     * another file, or throwing a bare unchecked exception.
+     * </p>
+     *
+     * @return the slack space, or an empty array if the file length is an exact
+     *         multiple of the cluster size
+     * @throws IOException if this entry is deleted or freed, or if an error occurs
+     *                     reading the file
+     */
     @Override
     public byte[] getSlackSpace() throws IOException {
         int clusterSize = ((FatFileSystem) getFileSystem()).getClusterSize();
-        Fat fat = ((FatFileSystem) getFileSystem()).getFat();
+
+        if (getEntry().isFreeDirEntry()) {
+            throw new IOException("slack space is not available for deleted entries");
+        }
 
         int offset = (int) (getLength() % clusterSize);
         int slackSpaceSize = clusterSize - offset;
@@ -140,12 +159,7 @@ public class FatFile extends FatEntry implements FSFile, FSFileSlackSpace {
 
         byte[] slackSpace = new byte[slackSpaceSize];
 
-        if (getEntry().isFreeDirEntry()) {
-            int cluster = getStartCluster() + (int) (getLength() / clusterSize);
-            fat.readCluster(cluster, offset, ByteBuffer.wrap(slackSpace));
-        } else {
-            getChain().read(getLength(), ByteBuffer.wrap(slackSpace));
-        }
+        getChain().read(getLength(), ByteBuffer.wrap(slackSpace));
 
         return slackSpace;
     }
