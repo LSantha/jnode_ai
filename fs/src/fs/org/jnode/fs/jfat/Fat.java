@@ -145,6 +145,10 @@ public abstract class Fat {
     }
 
     public void readCluster(int cluster, int offset, ByteBuffer dst) throws IOException {
+        if (cluster < firstCluster()) {
+            throw new IOException("illegal cluster # : " + cluster);
+        }
+
         if (offset < 0) {
             throw new IllegalArgumentException("offset<0");
         }
