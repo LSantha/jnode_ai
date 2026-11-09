@@ -395,6 +395,87 @@ test("checkBaseCurrency: fail-closed on an unreadable base", async () => {
     "the refusal says why rather than naming nothing");
 });
 
+// ---------------------------------------------------------------------------
+// #884 follow-up: the Octokit generation on the runner image spells the compare
+// endpoint either repos.compare or repos.compareCommits, and the original gate
+// only knew the first name - so a perfectly current branch was refused to merge
+// in the runner ("github.rest.repos.compare is not a function") while every
+// unit test passed, because the mock here defined the name the code assumed.
+// These tests pin the resolution against the runtime shapes.
+// ---------------------------------------------------------------------------
+
+function githubWithCompareSpelling(spelling) {
+  // A github mount carrying ONLY one spelling of the compare endpoint.
+  const { github, calls } = createGithub({});
+  github.rest.pulls.get = async () => ({
+    data: { number: 99, head: { ref: "opencode/issue99-x", sha: "headsha" },
+            base: { ref: "master" } }
+  });
+  github.rest.repos = {
+    getBranch: async () => ({ data: { commit: { sha: "tipsha" } } })
+  };
+  if (spelling === "compare") {
+    github.rest.repos.compare = async () => ({
+      data: { merge_base_commit: { sha: "tipsha" }, total_commits: 0, commits: [] }
+    });
+  } else if (spelling === "compareCommits") {
+    github.rest.repos.compareCommits = async () => ({
+      data: { merge_base_commit: { sha: "tipsha" }, total_commits: 0, commits: [] }
+    });
+  }
+  const context = { repo: { owner: "LSantha", repo: "jnode_ai" } };
+  return { h: createHelpers({ github, context, core: createCore() }), calls };
+}
+
+test("checkBaseCurrency: works when the runtime only spells the endpoint repos.compareCommits", async () => {
+  const { h } = githubWithCompareSpelling("compareCommits");
+  const info = await h.checkBaseCurrency(99);
+  assert.strictEqual(info.current, true,
+    "a current branch must read as current on the compareCommits spelling too");
+});
+
+test("checkBaseCurrency: works when the runtime only spells the endpoint repos.compare", async () => {
+  const { h } = githubWithCompareSpelling("compare");
+  const info = await h.checkBaseCurrency(99);
+  assert.strictEqual(info.current, true,
+    "the legacy spelling still works, so a downgrade of the runner image cannot break the gate");
+});
+
+test("checkBaseCurrency: falls back to a plain request when neither spelling exists", async () => {
+  const { github } = createGithub({});
+  github.rest.pulls.get = async () => ({
+    data: { number: 99, head: { sha: "headsha" }, base: { ref: "master" } }
+  });
+  github.rest.repos = { getBranch: async () => ({ data: { commit: { sha: "tipsha" } } }) };
+  let requested = null;
+  github.request = async (req) => {
+    requested = req;
+    return { data: { merge_base_commit: { sha: "tipsha" }, total_commits: 0, commits: [] } };
+  };
+  const context = { repo: { owner: "LSantha", repo: "jnode_ai" } };
+  const h = createHelpers({ github, context, core: createCore() });
+
+  const info = await h.checkBaseCurrency(99);
+  assert.strictEqual(info.current, true, "the URL fallback reads the merge-base");
+  assert.ok(requested && String(requested.url).indexOf("/repos/LSantha/jnode_ai/compare/headsha...master") !== -1,
+    "the fallback builds the documented compare URL, not an SDK-specific call");
+});
+
+test("checkBaseCurrency: fail-closed when the fallback request also fails", async () => {
+  const { github } = createGithub({});
+  github.rest.pulls.get = async () => ({
+    data: { number: 99, head: { sha: "headsha" }, base: { ref: "master" } }
+  });
+  github.rest.repos = { getBranch: async () => ({ data: { commit: { sha: "tipsha" } } }) };
+  github.request = async () => { throw new Error("no request either"); };
+  const context = { repo: { owner: "LSantha", repo: "jnode_ai" } };
+  const h = createHelpers({ github, context, core: createCore() });
+
+  const info = await h.checkBaseCurrency(99);
+  assert.strictEqual(info.current, false, "an unreadable compare still refuses, not passes");
+});
+
+
 test("checkBaseCurrency: fail-closed on an unreadable PR", async () => {
   const { github } = createGithub({});
   github.rest.pulls.get = async () => { throw new Error("no PR"); };
