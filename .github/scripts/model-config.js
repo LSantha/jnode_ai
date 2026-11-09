@@ -41,10 +41,17 @@ const DEFAULT_VARIANT = "high";
 // coding is the workhorse: every ticket's DEV turn and every /oc fix, and the
 // review role is deliberately a different model, so the work is checked by
 // something other than what wrote it. History of this slot, newest first:
+//   - inkling-2-small-free at max (from 2026-11-09, the second JFAT round):
+//     promoted out of the review slot at the maintainer's request. It earned
+//     coding on the review slot's own terms - five rounds on the #851
+//     robustness ticket, and it caught what the coder missed (#847's boundary
+//     regression at clidx == chainSize, #849's read-only HFS+ break, and a
+//     half-done formatter fix on #873 whose serial was still arbitrary). The
+//     same reads the disk and checks the claim, which is what a JFAT fix needs.
 //   - crouton-alpha-free at max (from 2026-11-06 21:45): free, six-level effort
-//     ladder (minimal..max). Trialled after pulse-alpha's provider went down
-//     mid-evening; pulse is no longer offered, so its entry is removed rather
-//     than left to fail at dispatch.
+//     ladder (minimal..max). Carried every DEV turn of the first JFAT batch
+//     (#841, #845, #847, #849, #853, #861, #865, #869, #873) and lost the slot
+//     by comparison, not by failure.
 //   - pulse-alpha-free at max (19:28-21:40 same day): one strong outing - the
 //     #834 MBR test, plus the #837 JFAT deep review that survived an
 //     independent validity round - then the provider returned "Upstream request
@@ -52,15 +59,19 @@ const DEFAULT_VARIANT = "high";
 //   - deepseek-v4.1-flash-free: carried the role all session before that, and
 //     is the known-good fallback.
 //
-// review runs inkling-2-small-free at max (from 2026-11-07): Thinking Machines'
-// second-generation model, 594B/17B active, pitched for agentic coding and
-// controllable reasoning effort - a third independent family from both writer
-// and triage, free, and the answer to deepseek's quota being the single point
-// of failure for every review round. deepseek stays on triage and is the
-// review fallback if inkling's rounds come back shallow.
+// review runs deepseek-v4.1-flash-free at max (from 2026-11-09), back in the
+// slot it held before inkling, at the maintainer's request for the second JFAT
+// round. The independence the slot exists for is preserved: inkling writes,
+// deepseek checks. Two consequences worth knowing, both benign:
+//   - review and triage are now the same model, so the reviewer is no longer a
+//     third family independent of the triager - only of the writer.
+//   - deepseek's quota was the single point of failure for every review round
+//     before inkling. If it 402s again, the per-run <!-- MODEL: --> override
+//     below posts an inkling review on the same PR without editing this file,
+//     so a quota wall now costs a session, not the pipeline.
 const ROLE_MODELS = {
-  coding: "opencode/crouton-alpha-free",
-  review: "opencode/inkling-2-small-free",
+  coding: "opencode/inkling-2-small-free",
+  review: "opencode/deepseek-v4.1-flash-free",
   triage: "opencode/deepseek-v4.1-flash-free"
 };
 
