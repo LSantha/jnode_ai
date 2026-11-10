@@ -71,6 +71,11 @@ public class FatWriteBench {
     private static final int SMALL_FILE_SIZE = 512;
     /** Total bytes for the sequential large-write scenario. */
     private static final int LARGE_WRITE_BYTES = 4 * 1024 * 1024; // 4 MiB
+    /** Size of the file used by the sequential small-chunk read scenarios. */
+    private static final int SEQ_READ_BYTES = 8 * 1024 * 1024;    // 8 MiB
+    /** Chunk sizes for the sequential read scenarios. */
+    private static final int SEQ_READ_CHUNK_4K = 4 * 1024;         // 4 KiB
+    private static final int SEQ_READ_CHUNK_64K = 64 * 1024;       // 64 KiB
     /** Chunk size for the large-write scenario (single FatFile.write call). */
     private static final int LARGE_WRITE_CHUNK = 64 * 1024;      // 64 KiB
     /** Number of small appends for the append-heavy scenario. */
@@ -398,6 +403,69 @@ public class FatWriteBench {
     }
 
     /**
+     * Sequential read of a multi-MiB file in small chunks: the worst case
+     * for chain traversal cost. Every FSFile.read call resolves the chain
+     * position for the requested offset; if the traversal cannot advance
+     * incrementally this is O(n^2) in the chain length.
+     */
+    @Test
+    public void benchSequentialRead4k() throws Exception {
+        benchSequentialRead(SEQ_READ_CHUNK_4K, "4 KiB");
+    }
+
+    /**
+     * Same as benchSequentialRead4k but with 64 KiB chunks: halves the
+     * per-call chain walk count relative to 4 KiB chunks.
+     */
+    @Test
+    public void benchSequentialRead64k() throws Exception {
+        benchSequentialRead(SEQ_READ_CHUNK_64K, "64 KiB");
+    }
+
+    private void benchSequentialRead(int chunkSize, String chunkLabel) throws Exception {
+        System.out.println("=== SequentialRead " + chunkLabel + " ===");
+        FatFileSystem fs = freshFS();
+        try {
+            FSDirectory root = fs.getRootEntry().getDirectory();
+            FSFile file = root.addFile("big-read.bin").getFile();
+
+            byte[] writeChunk = new byte[64 * 1024];
+            Arrays.fill(writeChunk, (byte) 0x5A);
+            long written = 0;
+            while (written < SEQ_READ_BYTES) {
+                int len = (int) Math.min(writeChunk.length, SEQ_READ_BYTES - written);
+                file.write(written, ByteBuffer.wrap(writeChunk, 0, len));
+                written += len;
+            }
+            file.flush();
+            fs.flush();
+
+            long start = System.nanoTime();
+            long off = 0;
+            ByteBuffer buf = ByteBuffer.allocate(chunkSize);
+            while (off < SEQ_READ_BYTES) {
+                buf.clear();
+                int len = (int) Math.min(chunkSize, SEQ_READ_BYTES - off);
+                file.read(off, buf);
+                buf.flip();
+                for (int i = 0; i < len; i++) {
+                    if (buf.get() != 0x5A) {
+                        fail("sequential-read content mismatch at offset " + (off + i));
+                    }
+                }
+                off += len;
+            }
+            long elapsed = System.nanoTime() - start;
+
+            report("sequential-read-" + (chunkSize / 1024) + "k",
+                SEQ_READ_BYTES, elapsed,
+                SEQ_READ_BYTES / chunkSize + " read() calls of " + chunkLabel);
+        } finally {
+            fs.close();
+        }
+    }
+
+    /**
      * Remount-bound scenario: write a moderate file, close, reopen the
      * filesystem, read it back. Captures the full round-trip cost
      * including BootSector parse + FAT cache cold warmup.
@@ -473,6 +541,8 @@ public class FatWriteBench {
         try {
             bench.setUp();
             run(bench, "benchSequentialLargeWrite");
+            run(bench, "benchSequentialRead4k");
+            run(bench, "benchSequentialRead64k");
             run(bench, "benchManySmallFiles");
             run(bench, "benchAppend");
             run(bench, "benchAppendWithFlush");

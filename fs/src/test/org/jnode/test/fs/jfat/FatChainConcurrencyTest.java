@@ -59,6 +59,10 @@ public class FatChainConcurrencyTest {
     private static final int WRITER_REGION_SIZE = 32 * 1024;
     private static final long DURATION_MILLIS = 5000L;
 
+    private static final int GROW_INITIAL_LENGTH = 8192;
+    private static final int GROW_CHUNK_BYTES = 1024;
+    private static final int GROW_MAX_APPEND_BYTES = 192 * 1024;
+
     private File diskFile;
     private FileDevice fileDevice;
     private FileSystemService fss;
@@ -177,6 +181,99 @@ public class FatChainConcurrencyTest {
         byte[] actual = new byte[READER_REGION_SIZE];
         verify.get(actual);
         assertTrue("reader region changed", Arrays.equals(expected, actual));
+
+        fs.close();
+    }
+
+    @Test
+    public void testWriterAppendsWhileReaderLoops() throws Exception {
+        fileDevice = new SynchronizedFileDevice(diskFile, "rw");
+        fileDevice.setLength(68L * 1024 * 1024);
+        FatFileSystemFormatter formatter = new FatFileSystemFormatter(ClusterSize._1Kb);
+        FatFileSystem fs = formatter.format(fileDevice);
+
+        FSDirectory root = fs.getRootEntry().getDirectory();
+        FSFile file = root.addFile("grow.bin").getFile();
+
+        byte[] initial = new byte[GROW_INITIAL_LENGTH];
+        for (int i = 0; i < initial.length; i++) {
+            initial[i] = readerByte(i);
+        }
+        file.write(0, ByteBuffer.wrap(initial));
+        file.flush();
+
+        final FSFile shared = file;
+        final AtomicBoolean stop = new AtomicBoolean(false);
+        final AtomicReference<Throwable> failure = new AtomicReference<Throwable>();
+        final AtomicLong reads = new AtomicLong();
+        final AtomicLong appends = new AtomicLong();
+        final AtomicLong shortReads = new AtomicLong();
+        final AtomicLong corruptedReads = new AtomicLong();
+
+        Thread reader = new Thread(new Runnable() {
+            public void run() {
+                while (!stop.get()) {
+                    try {
+                        long len = shared.getLength();
+                        if (len < GROW_INITIAL_LENGTH) {
+                            continue;
+                        }
+                        ByteBuffer buf = ByteBuffer.allocate((int) len);
+                        shared.read(0, buf);
+                        if (buf.position() != len) {
+                            shortReads.incrementAndGet();
+                            return;
+                        }
+                        buf.flip();
+                        for (int i = 0; i < GROW_INITIAL_LENGTH; i++) {
+                            if (buf.get() != readerByte(i)) {
+                                corruptedReads.incrementAndGet();
+                                return;
+                            }
+                        }
+                        reads.incrementAndGet();
+                    } catch (Throwable t) {
+                        failure.compareAndSet(null, t);
+                        return;
+                    }
+                }
+            }
+        }, "fat-chain-grow-reader");
+
+        Thread writer = new Thread(new Runnable() {
+            public void run() {
+                long offset = GROW_INITIAL_LENGTH;
+                while (!stop.get() && offset < GROW_INITIAL_LENGTH + GROW_MAX_APPEND_BYTES) {
+                    try {
+                        byte[] payload = new byte[GROW_CHUNK_BYTES];
+                        for (int j = 0; j < payload.length; j++) {
+                            payload[j] = writerByte((int) (offset + j));
+                        }
+                        shared.write(offset, ByteBuffer.wrap(payload));
+                        offset += GROW_CHUNK_BYTES;
+                        appends.incrementAndGet();
+                    } catch (Throwable t) {
+                        failure.compareAndSet(null, t);
+                        return;
+                    }
+                }
+                stop.set(true);
+            }
+        }, "fat-chain-append-writer");
+
+        reader.start();
+        writer.start();
+        writer.join(60000L);
+        stop.set(true);
+        reader.join(60000L);
+
+        assertNull("reader/writer threw: " + failure.get(), failure.get());
+        assertEquals("short reads", 0, shortReads.get());
+        assertEquals("corrupted reads", 0, corruptedReads.get());
+        assertTrue("writer made no progress", appends.get() > 0);
+        assertTrue("reader made no progress", reads.get() > 0);
+        assertEquals("chain must contain the appended data",
+            GROW_INITIAL_LENGTH + (long) appends.get() * GROW_CHUNK_BYTES, file.getLength());
 
         fs.close();
     }
