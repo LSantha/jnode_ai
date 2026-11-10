@@ -45,25 +45,25 @@ import org.jnode.util.LittleEndian;
  * invoke any public method from any thread without external synchronisation.</p>
  *
  * <p>Device I/O is issued while holding this monitor, and JFAT does not
- * support re-entrant device callbacks, on any thread. A {@code BlockDeviceAPI}
- * implementation used with JFAT must not call back into the filesystem from
- * its read/write path at all - not from a different thread, and not from the
- * calling thread either. The deadlock is two-sided: a thread inside
+ * support re-entrant device callbacks on any thread, including the calling
+ * thread. A {@code BlockDeviceAPI} used with JFAT must not call back into
+ * the filesystem from its read/write path at all. Doing so can deadlock
+ * with an ABBA cycle against the {@code Fat} monitor: a thread inside
  * {@code Fat.set}/{@code Fat.flush} holds the {@code Fat} monitor and waits
- * for this monitor, while the callback thread holds this monitor (entered via
+ * for this monitor, while a callback thread holds this monitor (entered via
  * {@code api.read}/{@code api.write} from inside this class) and waits for
  * the {@code Fat} monitor. Reentrant monitors only protect a thread that
  * already holds the outer monitor; a thread that entered via this class holds
  * only this monitor, so reentrancy does not save it. Re-entering this class
- * during a flush may also structurally modify the map being iterated
- * (access-order LRU updates) and throw {@code ConcurrentModificationException}.
- * The same inversion applies to the directory layer (a directory monitor is
- * held on the normal path, while the callback path can acquire it from
- * inside this monitor). This is a hard requirement on device implementations
- * used with JFAT, not a proven property of this class, and JFAT provides no
- * facility for device callbacks to re-enter the filesystem: it must not
- * happen. Callers must not hold a lock that the device layer needs in order
- * to complete I/O.</p>
+ * during a {@code flush()} may also corrupt the flush in progress: the
+ * access-order LRU update structurally modifies the map being iterated and
+ * can throw {@code ConcurrentModificationException}. The same inversion
+ * applies to the directory layer (a directory monitor is held on the normal
+ * path, while the callback path can acquire it from inside this monitor).
+ * This is a hard requirement on device implementations used with JFAT, not
+ * a proven property of this class, and JFAT provides no facility for device
+ * callbacks to re-enter the filesystem: it must not happen. Callers must not
+ * hold a lock that the device layer needs in order to complete I/O.</p>
  *
  * @author gvt
  */
