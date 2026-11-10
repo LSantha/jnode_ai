@@ -143,151 +143,151 @@ public class FatChain {
      */
     private int allocateTail(int n, int m, int offset, boolean zero) throws IOException {
         synchronized (fat) {
-        if (n <= 0)
-            throw new IllegalArgumentException("n<=0");
+            if (n <= 0)
+                throw new IllegalArgumentException("n<=0");
 
-        if (m < 0)
-            throw new IllegalArgumentException("m<0");
+            if (m < 0)
+                throw new IllegalArgumentException("m<0");
 
-        if (offset < 0)
-            throw new IllegalArgumentException("offset<0");
+            if (offset < 0)
+                throw new IllegalArgumentException("offset<0");
 
-        if (dolog)
-            mylog("n[" + n + "] m[" + m + "] offset[" + offset + "]");
+            if (dolog)
+                mylog("n[" + n + "] m[" + m + "] offset[" + offset + "]");
 
-        final int last;
-        int i, found = 0, l = 0;
-        int suffixFound = 0;
-        int k = (offset > 0) ? 2 : 1;
+            final int last;
+            int i, found = 0, l = 0;
+            int suffixFound = 0;
+            int k = (offset > 0) ? 2 : 1;
 
-        for (i = fat.getLastFree(); i < fat.size(); i++) {
-            if (fat.isFreeEntry(i)) {
-                l = i;
-                suffixFound++;
-                found++;
-            }
-            if (found == n)
-                break;
-        }
-
-        if (found < n) {
-            for (i = fat.firstCluster(); i < fat.getLastFree(); i++) {
+            for (i = fat.getLastFree(); i < fat.size(); i++) {
                 if (fat.isFreeEntry(i)) {
-                    if (suffixFound == 0)
-                        l = i;
+                    l = i;
+                    suffixFound++;
                     found++;
                 }
                 if (found == n)
                     break;
             }
-        }
 
-        if (found < n || l < fat.firstCluster())
-            throw new FileSystemFullException("no free clusters");
-
-        last = l;
-
-        if (dolog)
-            mylog("found[" + found + "] last[" + last + "]");
-
-        List<Integer> allocated = new ArrayList<Integer>();
-        allocated.add(last);
-        try {
-        fat.set(last, fat.eofChain());
-        if (dolog)
-            mylog(n + "\t|allo|\t" + last + " " + fat.eofChain());
-
-        if (zero) {
-            if (dolog)
-                mylog(n + "\t|ZERO|\t" + last + " " + fat.eofChain());
-            fat.clearCluster(last);
-        }
-
-        //
-        found = 0;
-        l = last;
-        i = last;
-        //
-        for (; found < (n - m - k) && i >= fat.firstCluster(); i--) {
-            if (fat.isFreeEntry(i)) {
-                if (zero)
-                    fat.clearCluster(i);
-                fat.set(i, l);
-                allocated.add(i);
-                if (dolog)
-                    mylog((n - found - 1) + "\t|allo|\t" + i + " " + l);
-                l = i;
-                found++;
+            if (found < n) {
+                for (i = fat.firstCluster(); i < fat.getLastFree(); i++) {
+                    if (fat.isFreeEntry(i)) {
+                        if (suffixFound == 0)
+                            l = i;
+                        found++;
+                    }
+                    if (found == n)
+                        break;
+                }
             }
-        }
-        //
-        if (offset > 0) {
-            for (; i >= fat.firstCluster(); i--) {
+
+            if (found < n || l < fat.firstCluster())
+                throw new FileSystemFullException("no free clusters");
+
+            last = l;
+
+            if (dolog)
+                mylog("found[" + found + "] last[" + last + "]");
+
+            List<Integer> allocated = new ArrayList<Integer>();
+            allocated.add(last);
+            try {
+            fat.set(last, fat.eofChain());
+            if (dolog)
+                mylog(n + "\t|allo|\t" + last + " " + fat.eofChain());
+
+            if (zero) {
+                if (dolog)
+                    mylog(n + "\t|ZERO|\t" + last + " " + fat.eofChain());
+                fat.clearCluster(last);
+            }
+
+            //
+            found = 0;
+            l = last;
+            i = last;
+            //
+            for (; found < (n - m - k) && i >= fat.firstCluster(); i--) {
                 if (fat.isFreeEntry(i)) {
                     if (zero)
                         fat.clearCluster(i);
-                    else
-                        fat.clearCluster(i, 0, offset);
                     fat.set(i, l);
                     allocated.add(i);
                     if (dolog)
-                        mylog((n - found - 1) + "\t|part|\t" + i + " " + l);
+                        mylog((n - found - 1) + "\t|allo|\t" + i + " " + l);
                     l = i;
                     found++;
-                    break;
                 }
-
             }
-        }
-        //
-        for (; found < (n - 1) && i >= fat.firstCluster(); i--) {
-            if (fat.isFreeEntry(i)) {
-                fat.clearCluster(i);
-                fat.set(i, l);
-                allocated.add(i);
-                if (dolog)
-                    mylog((n - found - 1) + "\t|zero|\t" + i + " " + l);
-                l = i;
-                found++;
-            }
-        }
+            //
+            if (offset > 0) {
+                for (; i >= fat.firstCluster(); i--) {
+                    if (fat.isFreeEntry(i)) {
+                        if (zero)
+                            fat.clearCluster(i);
+                        else
+                            fat.clearCluster(i, 0, offset);
+                        fat.set(i, l);
+                        allocated.add(i);
+                        if (dolog)
+                            mylog((n - found - 1) + "\t|part|\t" + i + " " + l);
+                        l = i;
+                        found++;
+                        break;
+                    }
 
-        if (found < n - 1)
-            throw new FileSystemFullException("no free clusters");
-
-        //
-        // Set the free-cluster hint to one past the last allocated cluster
-        // so the next allocation scan starts in the right area.
-        //
-        boolean foundNext = false;
-        for (i = last + 1; i < fat.size(); i++) {
-            if (fat.isFreeEntry(i)) {
-                fat.setLastFree(i);
-                foundNext = true;
-                break;
+                }
             }
-        }
-        if (!foundNext) {
-            for (i = fat.firstCluster(); i <= last; i++) {
+            //
+            for (; found < (n - 1) && i >= fat.firstCluster(); i--) {
+                if (fat.isFreeEntry(i)) {
+                    fat.clearCluster(i);
+                    fat.set(i, l);
+                    allocated.add(i);
+                    if (dolog)
+                        mylog((n - found - 1) + "\t|zero|\t" + i + " " + l);
+                    l = i;
+                    found++;
+                }
+            }
+
+            if (found < n - 1)
+                throw new FileSystemFullException("no free clusters");
+
+            //
+            // Set the free-cluster hint to one past the last allocated cluster
+            // so the next allocation scan starts in the right area.
+            //
+            boolean foundNext = false;
+            for (i = last + 1; i < fat.size(); i++) {
                 if (fat.isFreeEntry(i)) {
                     fat.setLastFree(i);
                     foundNext = true;
                     break;
                 }
             }
-        }
+            if (!foundNext) {
+                for (i = fat.firstCluster(); i <= last; i++) {
+                    if (fat.isFreeEntry(i)) {
+                        fat.setLastFree(i);
+                        foundNext = true;
+                        break;
+                    }
+                }
+            }
 
-        if (dolog)
-            mylog("LastFree: " + fat.getLastFree());
+            if (dolog)
+                mylog("LastFree: " + fat.getLastFree());
 
-        return l;
-        } catch (IOException ex) {
-            rollbackAllocated(allocated);
-            throw ex;
-        } catch (RuntimeException ex) {
-            rollbackAllocated(allocated);
-            throw ex;
-        }
+            return l;
+            } catch (IOException ex) {
+                rollbackAllocated(allocated);
+                throw ex;
+            } catch (RuntimeException ex) {
+                rollbackAllocated(allocated);
+                throw ex;
+            }
         }
     }
 

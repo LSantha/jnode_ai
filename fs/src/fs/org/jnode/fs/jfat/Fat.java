@@ -334,12 +334,15 @@ public abstract class Fat {
     public synchronized void flush() throws IOException {
         try {
             cache.flush();
-        } catch (IOException ex) {
+        } catch (Exception ex) {
             recomputeFreeClusterCountQuietly();
-            throw ex;
-        } catch (RuntimeException ex) {
-            recomputeFreeClusterCountQuietly();
-            throw ex;
+            if (ex instanceof IOException) {
+                throw (IOException) ex;
+            }
+            if (ex instanceof RuntimeException) {
+                throw (RuntimeException) ex;
+            }
+            throw new RuntimeException(ex);
         }
     }
 
@@ -405,15 +408,15 @@ public abstract class Fat {
         return isFree(get(entry));
     }
 
-    public final int getLastFree() {
+    public final synchronized int getLastFree() {
         return lastfree;
     }
 
-    public final void setLastFree(int value) {
+    public final synchronized void setLastFree(int value) {
         lastfree = value;
     }
 
-    public final void rewindFree() {
+    public final synchronized void rewindFree() {
         lastfree = firstCluster();
     }
 
@@ -427,7 +430,7 @@ public abstract class Fat {
         return count;
     }
 
-    public final int getFreeClusterCount() {
+    public final synchronized int getFreeClusterCount() {
         return freeClusterCount;
     }
 

@@ -44,13 +44,18 @@ import org.jnode.util.LittleEndian;
  * for the device, so a write can never be observed partially. Callers may
  * invoke any public method from any thread without external synchronisation.</p>
  *
- * <p>The monitor is reentrant and is the innermost lock in the filesystem, so a
- * {@code BlockDeviceAPI} that re-enters the filesystem from its own I/O path on
- * the calling thread simply re-acquires it. A cross-thread re-entry cannot
- * starve the I/O path either: JNode device I/O completes on the issuing thread
- * or on its interrupt path, and never waits on filesystem worker threads that
- * would block on this monitor. Callers must not hold a lock the device layer
- * needs in order to complete I/O (none exists in JNode today).</p>
+ * <p>Device I/O is issued while holding this monitor, so a
+ * {@code BlockDeviceAPI} implementation used with JFAT must obey this
+ * constraint: its read/write methods must not call back into the filesystem
+ * from a different thread, and must not block waiting for filesystem work on
+ * another thread to finish (that work may need this monitor or the
+ * {@code Fat} monitor). A device that re-enters JFAT on the calling thread
+ * re-acquires these monitors (they are reentrant) and is safe; a device whose
+ * callback blocks on other filesystem threads can deadlock (the callback
+ * thread holds the cache monitor and waits for a thread that waits for the
+ * cache monitor). This is a documented requirement on device implementations
+ * used with JFAT, not a proven property of this class. Callers must not hold
+ * a lock that the device layer needs in order to complete I/O.</p>
  *
  * @author gvt
  */
