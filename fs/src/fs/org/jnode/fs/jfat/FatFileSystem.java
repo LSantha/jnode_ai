@@ -21,6 +21,7 @@
 package org.jnode.fs.jfat;
 
 import java.io.IOException;
+import java.util.concurrent.atomic.AtomicBoolean;
 import org.apache.log4j.Logger;
 import org.jnode.driver.Device;
 import org.jnode.fs.FSDirectory;
@@ -37,7 +38,7 @@ public class FatFileSystem extends AbstractFileSystem<FatRootDirectory> {
 
     private Fat fat;
     private final CodePage cp;
-    private boolean clusterHighIgnoredWarned;
+    private final AtomicBoolean clusterHighIgnoredWarned = new AtomicBoolean(false);
 
     public FatFileSystem(Device device, String codePageName, boolean readOnly, FatFileSystemType type)
         throws FileSystemException {
@@ -66,11 +67,8 @@ public class FatFileSystem extends AbstractFileSystem<FatRootDirectory> {
         return fat;
     }
 
-    public boolean markClusterHighIgnoredWarned() {
-        if (clusterHighIgnoredWarned)
-            return false;
-        clusterHighIgnoredWarned = true;
-        return true;
+    boolean shouldWarnClusterHighIgnored() {
+        return clusterHighIgnoredWarned.compareAndSet(false, true);
     }
 
     public BootSector getBootSector() {
