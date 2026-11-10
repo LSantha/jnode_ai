@@ -27,7 +27,6 @@ import java.nio.ByteBuffer;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.NoSuchElementException;
-import java.util.concurrent.atomic.AtomicLong;
 
 import org.apache.log4j.Logger;
 import org.jnode.fs.FileSystemFullException;
@@ -47,7 +46,19 @@ public class FatChain {
 
     private boolean dolog = false;
 
-    private final AtomicLong modificationStamp = new AtomicLong(0);
+    /**
+     * Incremented whenever the chain is structurally modified, and read by
+     * {@link #read} to decide whether a cached read-hint is still valid.
+     *
+     * <p>{@code volatile} supplies visibility; the atomicity of the increment
+     * comes from {@link #noteChainModified} being {@code synchronized}, so every
+     * update is serialised on this chain's monitor and a reader can only ever
+     * observe the pre- or post-increment value. Volatile alone would not give
+     * that - a read-modify-write under no lock can lose an update, and a lost
+     * update would leave the stamp unchanged, which is precisely the state that
+     * lets a stale read-hint survive.</p>
+     */
+    private volatile long modificationStamp;
     private volatile ReadHint readHint;
 
     public FatChain(FatFileSystem fs, int startEntry) {
@@ -59,8 +70,8 @@ public class FatChain {
         this.dirty = false;
     }
 
-    private void noteChainModified() {
-        modificationStamp.incrementAndGet();
+    private synchronized void noteChainModified() {
+        modificationStamp++;
         readHint = null;
     }
 
@@ -455,7 +466,7 @@ public class FatChain {
             return;
 
         ChainPosition p = new ChainPosition(offset);
-        long stampAtStart = modificationStamp.get();
+        long stampAtStart = modificationStamp;
         ChainIterator i = listIterator();
         int targetIndex = p.getIndex();
         ReadHint hint = readHint;
@@ -499,7 +510,7 @@ public class FatChain {
             }
         }
 
-        if (modificationStamp.get() == stampAtStart)
+        if (modificationStamp == stampAtStart)
             readHint = new ReadHint(stampAtStart, i.nextIndex(), i.cursor);
     }
 

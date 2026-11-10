@@ -21,7 +21,6 @@
 package org.jnode.fs.jfat;
 
 import java.io.IOException;
-import java.util.concurrent.atomic.AtomicBoolean;
 import org.apache.log4j.Logger;
 import org.jnode.driver.Device;
 import org.jnode.fs.FSDirectory;
@@ -38,7 +37,16 @@ public class FatFileSystem extends AbstractFileSystem<FatRootDirectory> {
 
     private Fat fat;
     private final CodePage cp;
-    private final AtomicBoolean clusterHighIgnoredWarned = new AtomicBoolean(false);
+
+    /**
+     * True once the FAT12/FAT16 FstClusHi warning has been emitted on this
+     * mount. Guarded by this filesystem's monitor, never by an atomic wrapper
+     * class: java.util.concurrent.atomic cannot be used from a JNode plugin
+     * without a security permission the jfat descriptor does not carry, and a
+     * plain synchronized check-and-set is exactly equivalent for a warn-once
+     * flag. See JfatDescriptorPermissionTest.
+     */
+    private boolean clusterHighIgnoredWarned;
 
     public FatFileSystem(Device device, String codePageName, boolean readOnly, FatFileSystemType type)
         throws FileSystemException {
@@ -72,9 +80,19 @@ public class FatFileSystem extends AbstractFileSystem<FatRootDirectory> {
     /**
      * Returns {@code true} the first time this is called for this mount, {@code false} afterwards,
      * so the FAT12/FAT16 FstClusHi warning is rate-limited to once per mount.
+     *
+     * <p>Synchronized rather than a {@code compareAndSet} on an
+     * {@code AtomicBoolean}: the whole check-and-set happens under this
+     * filesystem's monitor, which is the same guarantee, and it keeps the
+     * plugin free of a dependency that cannot initialise inside the VM without a
+     * security permission.</p>
      */
-    boolean shouldWarnClusterHighIgnored() {
-        return clusterHighIgnoredWarned.compareAndSet(false, true);
+    synchronized boolean shouldWarnClusterHighIgnored() {
+        if (clusterHighIgnoredWarned) {
+            return false;
+        }
+        clusterHighIgnoredWarned = true;
+        return true;
     }
 
     public BootSector getBootSector() {

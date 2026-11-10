@@ -42,8 +42,4 @@
   </extension>
         
 
-  <extension point="org.jnode.security.permissions">
-    <permission class="java.lang.RuntimePermission" name="accessDeclaredMembers"/>
-  </extension>
-
 </plugin>

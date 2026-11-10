@@ -24,7 +24,6 @@ import java.io.File;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.nio.ByteBuffer;
-import java.util.concurrent.atomic.AtomicLong;
 
 import org.jnode.driver.block.FileDevice;
 import org.jnode.emu.naming.BasicNameSpace;
@@ -223,7 +222,9 @@ public class FatChainReadHintTest {
     private static long stamp(FatChain chain) throws Exception {
         Field f = FatChain.class.getDeclaredField("modificationStamp");
         f.setAccessible(true);
-        return ((AtomicLong) f.get(chain)).get();
+        // A volatile long: reads are plain, the atomicity of the increment lives
+        // in noteChainModified()'s monitor.
+        return f.getLong(chain);
     }
 
     private static byte readerByte(int i) {
