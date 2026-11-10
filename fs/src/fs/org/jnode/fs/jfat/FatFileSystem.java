@@ -37,6 +37,7 @@ public class FatFileSystem extends AbstractFileSystem<FatRootDirectory> {
 
     private Fat fat;
     private final CodePage cp;
+    private boolean clusterHighIgnoredWarned;
 
     public FatFileSystem(Device device, String codePageName, boolean readOnly, FatFileSystemType type)
         throws FileSystemException {
@@ -63,6 +64,13 @@ public class FatFileSystem extends AbstractFileSystem<FatRootDirectory> {
 
     public Fat getFat() {
         return fat;
+    }
+
+    public boolean markClusterHighIgnoredWarned() {
+        if (clusterHighIgnoredWarned)
+            return false;
+        clusterHighIgnoredWarned = true;
+        return true;
     }
 
     public BootSector getBootSector() {
