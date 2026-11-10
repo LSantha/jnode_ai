@@ -45,7 +45,7 @@ public class Fat32 extends Fat {
         return (int) (getUInt32(index) & 0x0FFFFFFF);
     }
 
-    public int set(int index, int element) throws IOException {
+    public synchronized int set(int index, int element) throws IOException {
         long old = getUInt32(index);
 
         int masked = element & 0x0FFFFFFF;

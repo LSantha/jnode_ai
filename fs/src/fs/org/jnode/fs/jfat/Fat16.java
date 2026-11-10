@@ -41,7 +41,7 @@ public class Fat16 extends Fat {
         return (int) getUInt16(index);
     }
 
-    public int set(int index, int element) throws IOException {
+    public synchronized int set(int index, int element) throws IOException {
         long old = getUInt16(index);
 
         int masked = element & 0xFFFF;
