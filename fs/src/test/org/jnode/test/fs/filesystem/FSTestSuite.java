@@ -30,6 +30,7 @@ import org.jnode.test.fs.filesystem.tests.TreeFSTest;
 import org.jnode.test.fs.jfat.BootSectorValidationTest;
 import org.jnode.test.fs.jfat.Fat12ChainTest;
 import org.jnode.test.fs.jfat.FatChainConcurrencyTest;
+import org.jnode.test.fs.jfat.FatChainReadHintTest;
 import org.jnode.test.fs.jfat.FatDirectoryExtensionTest;
 import org.jnode.test.fs.jfat.FatCopyComparisonTest;
 import org.jnode.test.fs.jfat.FatFileSystemTest;
@@ -89,6 +90,7 @@ import org.junit.runners.Suite.SuiteClasses;
     MkfsFatFileSystemTest.class,
     Fat12ChainTest.class,
     FatChainConcurrencyTest.class,
+    FatChainReadHintTest.class,
     FatRootDirectoryWriteTest.class,
     FatSlackSpaceTest.class,
     FatWriteBench.class,
