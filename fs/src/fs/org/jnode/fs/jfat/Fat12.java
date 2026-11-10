@@ -50,7 +50,7 @@ public class Fat12 extends Fat {
         return value;
     }
 
-    public int set(int index, int element) throws IOException {
+    public synchronized int set(int index, int element) throws IOException {
         int value = element & 0xFFF;
         int raw = (int) getUInt16(index);
         int old;

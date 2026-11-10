@@ -331,8 +331,31 @@ public abstract class Fat {
 
     public abstract int set(int index, int element) throws IOException;
 
-    public void flush() throws IOException {
-        cache.flush();
+    public synchronized void flush() throws IOException {
+        try {
+            cache.flush();
+        } catch (IOException ex) {
+            recomputeFreeClusterCountQuietly();
+            throw ex;
+        } catch (RuntimeException ex) {
+            recomputeFreeClusterCountQuietly();
+            throw ex;
+        }
+    }
+
+    /*
+     * Heal the incremental free-cluster counter from the FAT after a failed
+     * flush. The counter is maintained only by noteFreeTransition(); any path
+     * that unwinds with an exception may have left it stale, so rescan once
+     * instead of trusting it. Best effort: if the FAT cannot be read either,
+     * keep the old value.
+     */
+    private void recomputeFreeClusterCountQuietly() {
+        try {
+            freeClusterCount = freeEntries();
+        } catch (Exception e) {
+            log.warn("unable to recompute the free cluster count after a flush failure", e);
+        }
     }
 
     public final List<Long> compareFatCopies() {

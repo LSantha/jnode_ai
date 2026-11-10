@@ -134,7 +134,15 @@ public class FatChain {
         return count;
     }
 
+    /*
+     * The scan-and-claim sequence must be atomic with respect to every other
+     * chain on the same FAT, otherwise two allocations can both decide that
+     * the same clusters are free and both claim them. The Fat monitor is the
+     * shared lock: it also serialises Fat.set/Fat.flush, so a cluster that is
+     * freed or re-linked here can never be observed in an intermediate state.
+     */
     private int allocateTail(int n, int m, int offset, boolean zero) throws IOException {
+        synchronized (fat) {
         if (n <= 0)
             throw new IllegalArgumentException("n<=0");
 
@@ -280,6 +288,7 @@ public class FatChain {
             rollbackAllocated(allocated);
             throw ex;
         }
+        }
     }
 
     private void rollbackAllocated(List<Integer> allocated) {
@@ -362,40 +371,45 @@ public class FatChain {
         if (n < 0)
             throw new IOException("n<0");
 
-        int count = size();
+        // Hold the Fat monitor for the whole walk so no concurrent allocation
+        // can claim a cluster that this chain is in the middle of releasing
+        // (see allocateTail).
+        synchronized (fat) {
+            int count = size();
 
-        if (count < n)
-            throw new IOException("not enough cluster: count[" + count + "] n[" + n + "]");
+            if (count < n)
+                throw new IOException("not enough cluster: count[" + count + "] n[" + n + "]");
 
-        if (dolog)
-            mylog("count[" + count + "] n[" + n + "]");
-
-        ChainIterator i;
-
-        try {
-            if (count > n) {
-                i = listIterator(count - n - 1);
-                int l = i.next();
-                fat.set(l, fat.eofChain());
-                if (dolog)
-                    mylog(l + ":" + fat.eofChain());
-            } else
-                i = listIterator(0);
-
-            while (i.hasNext()) {
-                int l = i.next();
-                fat.set(l, fat.freeEntry());
-                if (dolog)
-                    mylog(l + ":" + fat.freeEntry());
-            }
-        } finally {
-            fat.flush();
-        }
-
-        if (count == n) {
-            setStartCluster(0);
             if (dolog)
-                mylog("zero");
+                mylog("count[" + count + "] n[" + n + "]");
+
+            ChainIterator i;
+
+            try {
+                if (count > n) {
+                    i = listIterator(count - n - 1);
+                    int l = i.next();
+                    fat.set(l, fat.eofChain());
+                    if (dolog)
+                        mylog(l + ":" + fat.eofChain());
+                } else
+                    i = listIterator(0);
+
+                while (i.hasNext()) {
+                    int l = i.next();
+                    fat.set(l, fat.freeEntry());
+                    if (dolog)
+                        mylog(l + ":" + fat.freeEntry());
+                }
+            } finally {
+                fat.flush();
+            }
+
+            if (count == n) {
+                setStartCluster(0);
+                if (dolog)
+                    mylog("zero");
+            }
         }
     }
 
@@ -403,19 +417,23 @@ public class FatChain {
      * implemented separately for efficiency
      */
     public void freeAllClusters() throws IOException {
+        // Hold the Fat monitor for the whole walk so no concurrent allocation
+        // can claim a cluster that this chain is in the middle of releasing
+        // (see allocateTail).
+        synchronized (fat) {
+            ChainIterator i = listIterator(0);
 
-        ChainIterator i = listIterator(0);
-
-        try {
-            while (i.hasNext()) {
-                int l = i.next();
-                fat.set(l, fat.freeEntry());
+            try {
+                while (i.hasNext()) {
+                    int l = i.next();
+                    fat.set(l, fat.freeEntry());
+                }
+            } finally {
+                fat.flush();
             }
-        } finally {
-            fat.flush();
-        }
 
-        setStartCluster(0);
+            setStartCluster(0);
+        }
     }
 
     public void read(long offset, ByteBuffer dst) throws IOException {

@@ -56,6 +56,11 @@ public class FSConfigurations implements Iterable<FSTestConfig> {
         FileSystemTestConfigurationListBuilder fatBuilder =
             new FileSystemTestConfigurationListBuilder().osType(OsType.OTHER_OS).accessMode(FSAccessMode.BOTH)
                 .filename(DISK_FILE_NAME).fileSize("33M");
+        /* JFAT is added readWrite-only: JFAT does not enforce readOnly mounts yet,
+         * so the readOnly parameterisations fail for reasons unrelated to this test. */
+        FileSystemTestConfigurationListBuilder jfatBuilder =
+            new FileSystemTestConfigurationListBuilder().osType(OsType.OTHER_OS).accessMode(FSAccessMode.READ_WRITE)
+                .filename(DISK_FILE_NAME).fileSize("33M");
 
         configs
             .addAll(defaultBuilder.fsType(FSType.EXT2).formatter(new Ext2FileSystemFormatter(BlockSize._1Kb)).build());
@@ -76,9 +81,9 @@ public class FSConfigurations implements Iterable<FSTestConfig> {
         configs.addAll(
             fatBuilder.fsType(FSType.FAT).formatter(new org.jnode.fs.fat.FatFileSystemFormatter(FatType.FAT32))
                 .build());
-        /* TODO Implement FAT12 writing
-        configs.addAll(fatBuilder.fsType(FSType.JFAT).formatter(new FatFileSystemFormatter(ClusterSize._64Kb)).build());
-        */
+        configs.addAll(jfatBuilder.fsType(FSType.JFAT)
+            .formatter(new org.jnode.fs.jfat.FatFileSystemFormatter(org.jnode.fs.jfat.ClusterSize._64Kb))
+            .build());
     }
 
     class FileSystemTestConfigurationListBuilder {
