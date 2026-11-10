@@ -46,15 +46,9 @@ public class FatChain {
 
     private boolean dolog = false;
 
-    private ChainPosition position;
-    private ChainIterator iterator;
-
     public FatChain(FatFileSystem fs, int startEntry) {
         this.fs = fs;
         this.fat = fs.getFat();
-
-        this.position = new ChainPosition();
-        this.iterator = listIterator();
 
         setStartCluster(startEntry);
 
@@ -78,9 +72,6 @@ public class FatChain {
             throw new IllegalArgumentException("illegal head: " + value);
 
         head = value;
-
-        iterator.reset();
-        position.setPosition(0);
 
         dirty = true;
     }
@@ -356,9 +347,6 @@ public class FatChain {
                     mylog("allocate chain");
                 setStartCluster(last);
             }
-            // Always reset iterator and position so subsequent reads start fresh
-            iterator.reset();
-            position.setPosition(0);
         } finally {
             fat.flush();
         }
@@ -443,45 +431,38 @@ public class FatChain {
         if (dst.remaining() == 0)
             return;
 
-        ChainPosition p = position;
-        ChainIterator i = iterator;
-
-        p.setPosition(offset);
+        ChainPosition p = new ChainPosition(offset);
+        ChainIterator i = listIterator();
 
         try {
+            i.setPosition(p.getIndex());
+        } catch (NoSuchElementException ex) {
+            throw new ChainBeyondEndException("attempt to seek after End Of Chain " + offset, ex);
+        }
+
+        for (int l = dst.remaining(), sz = p.getPartial(), ofs = p.getOffset(), size; l > 0; l -=
+                size, sz = p.getSize(), ofs = 0) {
+
+            int cluster;
             try {
-                i.setPosition(p.getIndex());
+                cluster = i.next();
             } catch (NoSuchElementException ex) {
-                throw new ChainBeyondEndException("attempt to seek after End Of Chain " + offset, ex);
+                throw new ChainBeyondEndException("read past end of chain at offset " + offset, ex);
             }
 
-            for (int l = dst.remaining(), sz = p.getPartial(), ofs = p.getOffset(), size; l > 0; l -=
-                    size, sz = p.getSize(), ofs = 0) {
+            size = Math.min(sz, l);
 
-                int cluster;
-                try {
-                    cluster = i.next();
-                } catch (NoSuchElementException ex) {
-                    throw new ChainBeyondEndException("read past end of chain at offset " + offset, ex);
-                }
+            if (dolog)
+                mylog("read " + size + " bytes from cluster " + cluster + " at offset " + ofs);
 
-                size = Math.min(sz, l);
+            int limit = dst.limit();
 
-                if (dolog)
-                    mylog("read " + size + " bytes from cluster " + cluster + " at offset " + ofs);
-
-                int limit = dst.limit();
-
-                try {
-                    dst.limit(dst.position() + size);
-                    fat.readCluster(cluster, ofs, dst);
-                } finally {
-                    dst.limit(limit);
-                }
+            try {
+                dst.limit(dst.position() + size);
+                fat.readCluster(cluster, ofs, dst);
+            } finally {
+                dst.limit(limit);
             }
-        } catch (IOException ex) {
-            i.reset();
-            throw ex;
         }
     }
 
@@ -533,17 +514,11 @@ public class FatChain {
         try {
         boolean empty = src.remaining() == 0;
 
-        // ChainPosition p = new ChainPosition ( offset );
-        ChainPosition p = position;
-        p.setPosition(offset);
+        ChainPosition p = new ChainPosition(offset);
         int clsize = p.getSize();
         int clidx = p.getIndex();
 
-        // int last;
-        // int cluster = 0;
-
-        // ChainIterator i = listIterator ( 0 );
-        ChainIterator i = iterator;
+        ChainIterator i = listIterator();
         int cluster = i.getCluster(clidx);
         int last = i.nextIndex();
 
@@ -587,10 +562,10 @@ public class FatChain {
             }
             if (cluster != 0) {
                 fat.set(cluster, last);
-                ((ChainIterator) i).appendChain(last);
+                i.appendChain(last);
             } else {
                 setStartCluster(last);
-                p.setPosition(offset);
+                i.reset();
             }
 
             if (src.remaining() > 0) {
@@ -642,10 +617,10 @@ public class FatChain {
                 }
                 if (cluster != 0) {
                     fat.set(cluster, last);
-                    ((ChainIterator) i).appendChain(last);
+                    i.appendChain(last);
                 } else {
                     setStartCluster(last);
-                    p.setPosition(offset);
+                    i.reset();
                 }
             }
 
@@ -669,18 +644,15 @@ public class FatChain {
         if (empty && !allocated && offset > length)
             zeroRange(length, offset);
         } catch (IOException ex) {
-            rollbackWrite(allocatedClusters, savedHead, savedEnd, offset);
+            rollbackWrite(allocatedClusters, savedHead, savedEnd);
             throw ex;
         } catch (RuntimeException ex) {
-            rollbackWrite(allocatedClusters, savedHead, savedEnd, offset);
+            rollbackWrite(allocatedClusters, savedHead, savedEnd);
             throw ex;
         }
     }
 
-    private void rollbackWrite(List<Integer> allocatedClusters, int savedHead, int savedEnd,
-            long offset) {
-        iterator.reset();
-        position.setPosition(offset);
+    private void rollbackWrite(List<Integer> allocatedClusters, int savedHead, int savedEnd) {
         if (allocatedClusters == null || allocatedClusters.isEmpty()) {
             return;
         }
@@ -695,8 +667,6 @@ public class FatChain {
         } catch (Exception ex) {
             log.warn("rollback link restore failed", ex);
         }
-        iterator.reset();
-        position.setPosition(offset);
     }
 
     /*
