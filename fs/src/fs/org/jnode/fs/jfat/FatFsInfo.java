@@ -27,6 +27,29 @@ import org.jnode.driver.block.BlockDeviceAPI;
 import org.jnode.util.LittleEndian;
 
 /**
+ * FAT32 FSInfo sector (sectors 1 and 7 of the layout written by the
+ * formatter).
+ *
+ * <p>Policy, ticket #898: JFAT never maintains the on-disk FSInfo sector
+ * after format time. {@code FatFormatter} writes {@code FSI_Free_Count} and
+ * {@code FSI_Nxt_Free} as {@code 0xFFFFFFFF} ("unknown"), and nothing in
+ * {@code org.jnode.fs.jfat} ever reads them. The authoritative free-cluster
+ * count is {@code Fat.getFreeClusterCount()} (seeded by a full FAT scan and
+ * maintained incrementally), and the FAT itself; FSInfo is written only for
+ * foreign readers, and it is written as unknown.</p>
+ *
+ * <p>Because JFAT never reads FSInfo, no signature or range validation is
+ * applied on mount and no fallback is needed: an invalid or out-of-range
+ * stored value is simply irrelevant to JNode. A foreign reader that honors
+ * FSInfo must treat signature mismatches and a {@code FSI_Free_Count} above
+ * the cluster count as "unknown" ({@code 0xFFFFFFFF} semantics) and compute
+ * the count from the FAT.</p>
+ *
+ * <p>{@code FSI_Free_Count} is {@code 0xFFFFFFFF} in every FSInfo sector
+ * written by JFAT, so a reader trusting the stored value would trust
+ * "unknown", not a stale number. Any runtime maintenance of FSInfo is a
+ * separate, future ticket and must be atomic with the FAT update.</p>
+ *
  * @author tango
  */
 public class FatFsInfo {
@@ -127,16 +150,26 @@ public class FatFsInfo {
     }
 
     /**
-     * Contains the last known Free cluster count on the volume. If the value is 0xFFFFFFF,
-     * then the Free count is unknown and must be Computed.Any other value can be used, but 
-     * is not necessarily correct.It Should be range checked atleast make sure it is >=Volume Cluseter Count.
-     * 
+     * Contains the last known Free cluster count on the volume, as written by
+     * the formatter. JFAT always writes {@code 0xFFFFFFFF} here ("unknown,
+     * must be computed") and never updates it after format; see the class
+     * javadoc for the policy. A foreign reader must range-check the stored
+     * value against the cluster count and fall back to {@code 0xFFFFFFFF}
+     * semantics (compute from the FAT) when it is invalid or out of range.
+     *
      * @param FSI_FreeCount
      */
     public void setFsInfo_FreeCount(int FSI_FreeCount) {
         set32(488, FSI_FreeCount);
     }
 
+    /**
+     * Hint for the next cluster to probe for allocation. JFAT always writes
+     * {@code 0xFFFFFFFF} here ("unknown") and never updates it after format;
+     * see the class javadoc for the policy.
+     *
+     * @param FSI_Nxt_Free
+     */
     public void setFsInfo_NextFree(int FSI_Nxt_Free) {
         set32(492, FSI_Nxt_Free);
     }
