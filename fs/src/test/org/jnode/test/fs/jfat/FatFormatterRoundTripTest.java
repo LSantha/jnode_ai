@@ -285,20 +285,20 @@ public class FatFormatterRoundTripTest {
     }
 
     /**
-     * Ticket #885: the formatter subtracted ClusterSize.getSize() (bytes) from a
-     * sector count when computing the user area, so the on-disk FSInfo
-     * FSI_Free_Count was off by hundreds of clusters and the primary and backup
-     * sectors disagreed with the BPB geometry. This formats blank images and
-     * compares the raw FSInfo bytes at sectors 1 and 7 against an oracle derived
-     * from the BPB the formatter itself wrote, for 1 KiB and 4 KiB clusters.
+     * Ticket #898: JFAT never maintains the on-disk FSInfo sector, so the
+     * formatter writes FSI_Free_Count and FSI_Nxt_Free as 0xFFFFFFFF
+     * ("unknown, must be computed") rather than a computed value that is
+     * stale from the first second of the volume's life. This formats blank
+     * images and checks the raw FSInfo bytes at sectors 1 and 7 (primary and
+     * backup), for 1 KiB and 4 KiB clusters.
      */
     @org.junit.Test
-    public void testFsiFreeCountMatchesBpbOracle() throws Exception {
-        checkFsiFreeCount(ClusterSize._1Kb);
-        checkFsiFreeCount(ClusterSize._4Kb);
+    public void testFsiFieldsAreWrittenAsUnknown() throws Exception {
+        checkFsiUnknown(ClusterSize._1Kb);
+        checkFsiUnknown(ClusterSize._4Kb);
     }
 
-    private void checkFsiFreeCount(ClusterSize clusterSize) throws Exception {
+    private void checkFsiUnknown(ClusterSize clusterSize) throws Exception {
         fileDevice = new FileDevice(diskFile, "rw");
         fileDevice.setLength(IMAGE_LENGTH);
         new FatFileSystemFormatter(clusterSize).format(fileDevice);
@@ -308,33 +308,23 @@ public class FatFormatterRoundTripTest {
         java.io.RandomAccessFile raf = new java.io.RandomAccessFile(diskFile, "r");
         try {
             int bytesPerSec = (int) readLe16(raf, 11);
-            raf.seek(13);
-            int secPerClus = raf.read() & 0xff;
-            int rsvdSecCnt = (int) readLe16(raf, 14);
-            raf.seek(16);
-            int numFATs = raf.read() & 0xff;
-            int rootEntCnt = (int) readLe16(raf, 17);
-            long totSec32 = readLe32(raf, 32);
-            long totSec16 = readLe16(raf, 19);
-            long fatSz32 = readLe32(raf, 36);
-            long fatSz16 = readLe16(raf, 22);
-
-            long totSec = (totSec32 != 0) ? totSec32 : totSec16;
-            long fatSz = (fatSz32 != 0) ? fatSz32 : fatSz16;
-
-            long rootDirSectors = ((long) rootEntCnt * 32 + bytesPerSec - 1) / bytesPerSec;
-            long dataSectors = totSec - ((long) rsvdSecCnt + (long) numFATs * fatSz + rootDirSectors);
-            long countOfClusters = dataSectors / secPerClus;
-            long expectedFree = countOfClusters - 1;
-
-            long primary = readLe32(raf, 1L * bytesPerSec + 488);
-            long backup = readLe32(raf, 7L * bytesPerSec + 488);
-
-            org.junit.Assert.assertEquals("FSI_Free_Count (primary, clusterSize=" + clusterSize
-                + ")", expectedFree, primary);
-            org.junit.Assert.assertEquals("FSI_Free_Count (backup, clusterSize=" + clusterSize
-                + ")", expectedFree, backup);
-            org.junit.Assert.assertEquals("primary and backup FSInfo agree", primary, backup);
+            for (long sector : new long[] {1L, 7L}) {
+                long leadSig = readLe32(raf, sector * bytesPerSec);
+                long strucSig = readLe32(raf, sector * bytesPerSec + 484);
+                long freeCount = readLe32(raf, sector * bytesPerSec + 488);
+                long nextFree = readLe32(raf, sector * bytesPerSec + 492);
+                long trailSig = readLe32(raf, sector * bytesPerSec + 508);
+                org.junit.Assert.assertEquals("FSI_LeadSig (sector " + sector + ", clusterSize="
+                    + clusterSize + ")", 0x41615252L, leadSig);
+                org.junit.Assert.assertEquals("FSI_StrucSig (sector " + sector + ", clusterSize="
+                    + clusterSize + ")", 0x61417272L, strucSig);
+                org.junit.Assert.assertEquals("FSI_Free_Count (sector " + sector + ", clusterSize="
+                    + clusterSize + ")", 0xffffffffL, freeCount);
+                org.junit.Assert.assertEquals("FSI_Nxt_Free (sector " + sector + ", clusterSize="
+                    + clusterSize + ")", 0xffffffffL, nextFree);
+                org.junit.Assert.assertEquals("FSI_TrailSig (sector " + sector + ", clusterSize="
+                    + clusterSize + ")", 0xaa550000L, trailSig);
+            }
         } finally {
             raf.close();
         }

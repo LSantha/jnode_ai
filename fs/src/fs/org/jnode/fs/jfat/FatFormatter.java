@@ -74,6 +74,13 @@ import org.jnode.util.LittleEndian;
  * ({@code Fat}) is likewise fixed at that geometry, so a non-conforming volume
  * would not be readable even if it were written.</p>
  *
+ * <p>FSInfo policy, ticket #898: JFAT never maintains the on-disk FSInfo
+ * sector after format time. This formatter writes {@code FSI_Free_Count} and
+ * {@code FSI_Nxt_Free} as {@code 0xFFFFFFFF} ("unknown") so a foreign driver
+ * ignores them rather than trusting a stale number; the authoritative
+ * free-cluster count is {@code Fat.getFreeClusterCount()} and a scan of the
+ * FAT. See {@link FatFsInfo} and {@link Fat}.</p>
+ *
  * @author tango
  *
  */
@@ -135,17 +142,20 @@ public class FatFormatter {
     private final int FSI_StrucSig = 0x61417272;
 
     /**
-     * Contains the last known free cluster count on the volume. If the value is
-     * 0xFFFFFFFF, then the free count is unknown and must be computed.
+     * Written to the FSInfo sector as the free-cluster count. Always
+     * 0xFFFFFFFF ("unknown, must be computed"); JFAT never updates FSInfo
+     * after format, so a computed value here would be stale from the first
+     * second of the volume's life. See the class javadoc for the policy.
      */
-    private int FSI_FreeCount = 0xffffffff;
+    private final int FSI_FreeCount = 0xffffffff;
 
     /**
-     * This is a hint for the FAT driver. It indicates the cluster number at
-     * which the driver should start looking for free clusters.
+     * Written to the FSInfo sector as the next-free hint. Always
+     * 0xFFFFFFFF ("unknown"); like FSI_FreeCount, never updated after format.
+     * See the class javadoc for the policy.
      */
-    private final int FSI_Nxt_Free = 3; // A confusion here but OK now for
-                                        // setting the Info at 3rd sec
+    private final int FSI_Nxt_Free = 0xffffffff;
+
     /**
      * This trail signature is used to validate that this is in fact an FSInfo
      * sector
@@ -215,7 +225,7 @@ public class FatFormatter {
                 - ((long) ReservedSectorCount + (long) NumOfFATs * FatSize + rootDirSectors);
         long countOfClusters = dataSectors / SectorPerCluster;
         // >2^28 clusters cannot be represented in a FAT32 entry; refuse before
-        // any write and leave FSI_FreeCount at its 0xffffffff (unknown) default.
+        // any write and leave the FSInfo "unknown" sentinel untouched.
         if (countOfClusters > (1L << 28)) {
             throw new IOException("This drive has more than 2^28 clusters, try to specify a larger cluster size");
         }
@@ -254,11 +264,12 @@ public class FatFormatter {
         bs.setBS_FilSysType(FAT_LABEL);
         bs.setBS_Identifier(BS_Identifier);
 
-        // Keeping the FSInfos
+        // Keeping the FSInfos. Both count and hint are written as
+        // 0xFFFFFFFF ("unknown"): JFAT never updates FSInfo after format,
+        // so a computed value would be a stale, plausible-looking lie.
         fsInfo.setFsInfo_LeadSig(FSI_LeadSig);
         fsInfo.setFsInfo_Reserved1();
         fsInfo.setFsInfo_StrucSig(FSI_StrucSig);
-        FSI_FreeCount = (int) (countOfClusters - 1);
         fsInfo.setFsInfo_FreeCount(FSI_FreeCount);
         fsInfo.setFsInfo_NextFree(FSI_Nxt_Free);
         fsInfo.setReserve2();
@@ -304,7 +315,7 @@ public class FatFormatter {
         log.info(ReservedSectorCount + " Reserved Sectors ," + (FatSize) + " Sectors Per FAT ," +
                 NumOfFATs + " FATs.");
         log.info("Total Clusters :" + countOfClusters);
-        log.info("Free Clusters: " + FSI_FreeCount);
+        log.info("Free Clusters: unknown (FSInfo written as 0xFFFFFFFF, not maintained)");
 
         // Flushing the DeviceAPI
         api.flush();

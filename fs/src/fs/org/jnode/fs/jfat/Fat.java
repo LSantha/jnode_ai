@@ -32,6 +32,22 @@ import org.jnode.fs.FileSystemException;
 
 
 /**
+ * FAT metadata and entries.
+ *
+ * <p>FSInfo policy, ticket #898: JFAT never reads or updates the on-disk
+ * FSInfo sector after format time. The authoritative free-cluster count is
+ * {@link #getFreeClusterCount()} (seeded by a full scan in the constructor and
+ * maintained incrementally by {@code noteFreeTransition}), and the FAT itself;
+ * {@code FatFileSystem.getFreeSpace()} is built on it and must not regress to
+ * an O(n) scan. The FSInfo sector is written by {@code FatFormatter} only for
+ * foreign readers, and only with {@code FSI_Free_Count} and
+ * {@code FSI_Nxt_Free} set to {@code 0xFFFFFFFF} ("unknown"). Because JFAT
+ * never reads FSInfo, no signature or range validation is applied on mount;
+ * a stored value that is invalid or out of range is simply ignored, and a
+ * foreign reader must treat it as "unknown" and compute the count from the
+ * FAT. Runtime maintenance of FSInfo is a separate ticket and must be atomic
+ * with the FAT update.</p>
+ *
  * @author gvt
  */
 public abstract class Fat {
