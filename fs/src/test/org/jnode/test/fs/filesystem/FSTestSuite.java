@@ -41,6 +41,7 @@ import org.jnode.test.fs.jfat.FatSetLengthTest;
 import org.jnode.test.fs.jfat.FatReadWriteTest;
 import org.jnode.test.fs.jfat.FatRootDirectoryWriteTest;
 import org.jnode.test.fs.jfat.FatSetNameTest;
+import org.jnode.test.fs.jfat.FatSizeBoundaryTest;
 import org.jnode.test.fs.jfat.FatSlackSpaceTest;
 import org.jnode.test.fs.jfat.FatWriteBench;
 import org.jnode.test.fs.jfat.FatWriteTest;
@@ -75,6 +76,7 @@ import org.junit.runners.Suite.SuiteClasses;
     FatFlushOrderTest.class,
     FatBeyondEofWriteTest.class,
     FatSetLengthTest.class,
+    FatSizeBoundaryTest.class,
     FatDirectoryExtensionTest.class,
     FatFileSystemTest.class,
     FatCopyComparisonTest.class,
