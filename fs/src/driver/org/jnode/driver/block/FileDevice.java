@@ -67,7 +67,7 @@ public class FileDevice extends Device implements FSBlockDeviceAPI {
      *
      * @see org.jnode.driver.block.BlockDeviceAPI#read(long, java.nio.ByteBuffer)
      */
-    public void read(long devOffset, ByteBuffer destBuf) throws IOException {
+    public synchronized void read(long devOffset, ByteBuffer destBuf) throws IOException {
         BlockDeviceAPIHelper.checkBounds(this, devOffset, destBuf.remaining());
         raf.seek(devOffset);
 
@@ -83,7 +83,7 @@ public class FileDevice extends Device implements FSBlockDeviceAPI {
      *
      * @see org.jnode.driver.block.BlockDeviceAPI#write(long, java.nio.ByteBuffer)
      */
-    public void write(long devOffset, ByteBuffer srcBuf) throws IOException {
+    public synchronized void write(long devOffset, ByteBuffer srcBuf) throws IOException {
         //log.debug("fd.write devOffset=" + devOffset + ", length=" + length);
         BlockDeviceAPIHelper.checkBounds(this, devOffset, srcBuf.remaining());
         raf.seek(devOffset);

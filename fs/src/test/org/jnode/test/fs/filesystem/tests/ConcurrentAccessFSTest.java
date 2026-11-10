@@ -59,6 +59,7 @@ public class ConcurrentAccessFSTest extends AbstractFSTest {
         createReaders(monitor, file);
 
         monitor.waitAll();
+        assertTrue("file data mismatch", isGoodResultFile(file));
     }
 
     @Test @Ignore("Fix concurrency issues")
@@ -118,6 +119,7 @@ public class ConcurrentAccessFSTest extends AbstractFSTest {
         FSEntry entry = rootEntry.getDirectory().addFile(fileName);
         FSFile file = entry.getFile();
         file.setLength(FILE_SIZE_IN_WORDS * 2);
+        file.write(0, ByteBuffer.wrap(TestUtils.getTestData(FILE_SIZE_IN_WORDS)));
         file.flush();
         assertSize("Bad file size", FILE_SIZE_IN_WORDS * 2, file.getLength());
 
