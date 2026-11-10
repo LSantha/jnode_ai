@@ -67,6 +67,10 @@ public class FatFileSystem extends AbstractFileSystem<FatRootDirectory> {
         return fat;
     }
 
+    /**
+     * Returns {@code true} the first time this is called for this mount, {@code false} afterwards,
+     * so the FAT12/FAT16 FstClusHi warning is rate-limited to once per mount.
+     */
     boolean shouldWarnClusterHighIgnored() {
         return clusterHighIgnoredWarned.compareAndSet(false, true);
     }
