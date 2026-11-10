@@ -242,9 +242,11 @@ public class FatShortDirEntry extends FatDirEntry {
 
             cluster = (lFstClusHi << 16) + lFstClusLo;
         } else {
-            if (lFstClusHi != 0) {
-                log.debug("FstClusHi must be zero for FAT12/FAT16, ignoring: " +
-                    NumberUtils.hex(lFstClusHi, 4));
+            if (lFstClusHi != 0 && getFatFileSystem().shouldWarnClusterHighIgnored()) {
+                log.warn("FAT12/FAT16 FstClusHi is non-zero (" + NumberUtils.hex(lFstClusHi, 4)
+                    + "); ignoring it and keeping the volume mounted. This is not the FAT32 path,"
+                    + " where an FstClusHi above 0xFFF is rejected. Further occurrences on this mount"
+                    + " will not be logged.");
             }
 
             cluster = lFstClusLo;

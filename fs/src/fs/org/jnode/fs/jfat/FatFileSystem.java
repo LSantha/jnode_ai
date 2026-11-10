@@ -21,6 +21,7 @@
 package org.jnode.fs.jfat;
 
 import java.io.IOException;
+import java.util.concurrent.atomic.AtomicBoolean;
 import org.apache.log4j.Logger;
 import org.jnode.driver.Device;
 import org.jnode.fs.FSDirectory;
@@ -37,6 +38,7 @@ public class FatFileSystem extends AbstractFileSystem<FatRootDirectory> {
 
     private Fat fat;
     private final CodePage cp;
+    private final AtomicBoolean clusterHighIgnoredWarned = new AtomicBoolean(false);
 
     public FatFileSystem(Device device, String codePageName, boolean readOnly, FatFileSystemType type)
         throws FileSystemException {
@@ -63,6 +65,14 @@ public class FatFileSystem extends AbstractFileSystem<FatRootDirectory> {
 
     public Fat getFat() {
         return fat;
+    }
+
+    /**
+     * Returns {@code true} the first time this is called for this mount, {@code false} afterwards,
+     * so the FAT12/FAT16 FstClusHi warning is rate-limited to once per mount.
+     */
+    boolean shouldWarnClusterHighIgnored() {
+        return clusterHighIgnoredWarned.compareAndSet(false, true);
     }
 
     public BootSector getBootSector() {
