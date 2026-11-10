@@ -27,6 +27,7 @@ import org.jnode.test.fs.filesystem.tests.BasicFSTest;
 import org.jnode.test.fs.filesystem.tests.ConcurrentAccessFSTest;
 import org.jnode.test.fs.filesystem.tests.FileFSTest;
 import org.jnode.test.fs.filesystem.tests.TreeFSTest;
+import org.jnode.test.fs.jfat.BootSectorValidationTest;
 import org.jnode.test.fs.jfat.Fat12ChainTest;
 import org.jnode.test.fs.jfat.FatDirectoryExtensionTest;
 import org.jnode.test.fs.jfat.FatCopyComparisonTest;
@@ -63,6 +64,7 @@ import org.junit.runners.Suite.SuiteClasses;
  */
 @RunWith(Suite.class)
 @SuiteClasses({
+    BootSectorValidationTest.class,
     BasicFSTest.class,
     ConcurrentAccessFSTest.class,
     FileFSTest.class,

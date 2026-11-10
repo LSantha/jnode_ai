@@ -25,6 +25,7 @@ import java.nio.ByteBuffer;
 
 import org.apache.log4j.Logger;
 import org.jnode.driver.block.BlockDeviceAPI;
+import org.jnode.fs.FileSystemException;
 import org.jnode.partitions.ibm.IBMPartitionTable;
 import org.jnode.util.LittleEndian;
 import org.jnode.util.NumberUtils;
@@ -106,7 +107,7 @@ public class BootSector {
         dirty = false;
     }
 
-    public BootSector(byte[] sector) {
+    public BootSector(byte[] sector) throws FileSystemException {
         this.sector = new byte[sector.length];
         System.arraycopy(sector, 0, this.sector, 0, sector.length);
         decode();
@@ -117,7 +118,7 @@ public class BootSector {
         return IBMPartitionTable.containsPartitionTable(sector);
     }
 
-    public synchronized void read(BlockDeviceAPI device) throws IOException {
+    public synchronized void read(BlockDeviceAPI device) throws IOException, FileSystemException {
         device.read(0, ByteBuffer.wrap(sector));
         decode();
         dirty = false;
@@ -128,6 +129,50 @@ public class BootSector {
         device.write(offset, ByteBuffer.wrap(sector));
 
         dirty = false;
+    }
+
+    private void validateBpb() throws FileSystemException {
+        if (BPB_BytsPerSec != 512 && BPB_BytsPerSec != 1024 && BPB_BytsPerSec != 2048
+            && BPB_BytsPerSec != 4096) {
+            throw new FileSystemException("Invalid BPB_BytsPerSec: " + BPB_BytsPerSec
+                + " (expected one of 512, 1024, 2048, 4096)");
+        }
+        if (BPB_SecPerClus == 0 || (BPB_SecPerClus & (BPB_SecPerClus - 1)) != 0) {
+            throw new FileSystemException("Invalid BPB_SecPerClus: " + BPB_SecPerClus
+                + " (expected a non-zero power of two)");
+        }
+        if (BPB_NumFATs < 1) {
+            throw new FileSystemException("Invalid BPB_NumFATs: " + BPB_NumFATs
+                + " (expected >= 1)");
+        }
+        boolean isFat32 = (BPB_RootEntCnt == 0 && BPB_FATSz16 == 0);
+        if (isFat32) {
+            if (BPB_FATSz32 == 0) {
+                throw new FileSystemException("Invalid BPB_FATSz32: 0 (expected non-zero for FAT32)");
+            }
+        } else {
+            if (BPB_FATSz16 == 0) {
+                throw new FileSystemException("Invalid BPB_FATSz16: 0 (expected non-zero for FAT12/FAT16)");
+            }
+        }
+        if ((BPB_RootEntCnt == 0) != isFat32) {
+            throw new FileSystemException("Invalid BPB_RootEntCnt: " + BPB_RootEntCnt
+                + " (expected 0 iff FAT32, where FAT32 is RootEntCnt==0 and BPB_FATSz16==0)");
+        }
+    }
+
+    private void validateGeometry() throws FileSystemException {
+        if (TotSec < FirstDataSector) {
+            throw new FileSystemException("Invalid TotSec: " + TotSec
+                + " (expected >= FirstDataSector " + FirstDataSector + ")");
+        }
+        // Not a hard failure: legitimate FAT12 volumes have fewer than SZFAT12 (4085)
+        // clusters (test.mkfsfat12.gz mounts with 2847), so rejecting here would break
+        // every small FAT12 fixture. Kept as a warning only.
+        if (CountOfClusters < SZFAT12) {
+            log.warn("CountOfClusters " + CountOfClusters + " is below SZFAT12 (" + SZFAT12
+                + ") - mounting anyway (FAT12 volume)");
+        }
     }
 
     private void compute() {
@@ -170,7 +215,7 @@ public class BootSector {
         }
     }
 
-    private void decode() {
+    private void decode() throws FileSystemException {
         BS_jmpBoot = getBytes(0, 3);
         BS_OEMName = getString(3, 8);
         BPB_BytsPerSec = get16(11);
@@ -189,7 +234,9 @@ public class BootSector {
         if (BPB_FATSz16 == 0)
             BPB_FATSz32 = get32(36);
 
+        validateBpb();
         compute();
+        validateGeometry();
 
         if (!isFat32()) {
             BS_DrvNum = get8(36);

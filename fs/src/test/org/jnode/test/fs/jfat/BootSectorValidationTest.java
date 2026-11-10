@@ -1,0 +1,207 @@
+/*
+ * $Id$
+ *
+ * Copyright (C) 2003-2026 JNode.org
+ *
+ * This library is free software; you can redistribute it and/or modify it
+ * under the terms of the GNU Lesser General Public License as published
+ * by the Free Software Foundation; either version 2.1 of the License, or
+ * (at your option) any later version.
+ *
+ * This library is distributed in the hope that it will be useful, but
+ * WITHOUT ANY WARRANTY; without even the implied warranty of MERCHANTABILITY
+ * or FITNESS FOR A PARTICULAR PURPOSE. See the GNU Lesser General Public
+ * License for more details.
+ *
+ * You should have received a copy of the GNU Lesser General Public License
+ * along with this library; If not, write to the Free Software Foundation, Inc.,
+ * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+ */
+
+package org.jnode.test.fs.jfat;
+
+import java.io.File;
+import java.io.FileOutputStream;
+
+import org.jnode.driver.block.FileDevice;
+import org.jnode.fs.FileSystemException;
+import org.jnode.fs.jfat.BootSector;
+import org.jnode.fs.jfat.Fat;
+import org.jnode.util.LittleEndian;
+import org.junit.Test;
+
+import static org.junit.Assert.assertTrue;
+import static org.junit.Assert.fail;
+
+/**
+ * Mount-time validation of impossible BPB shapes. Every rejection must be a
+ * {@link FileSystemException} naming the offending field and value, never a
+ * bare {@code ArithmeticException}.
+ */
+public class BootSectorValidationTest {
+
+    private static byte[] validFat12Sector() {
+        byte[] sector = new byte[512];
+        sector[0] = (byte) 0xEB;
+        sector[1] = 0x3C;
+        sector[2] = (byte) 0x90;
+        LittleEndian.setInt16(sector, 11, 512);
+        LittleEndian.setInt8(sector, 13, 2);
+        LittleEndian.setInt16(sector, 14, 1);
+        sector[16] = 2;
+        LittleEndian.setInt16(sector, 17, 224);
+        LittleEndian.setInt16(sector, 19, 720);
+        sector[21] = (byte) 0xF0;
+        LittleEndian.setInt16(sector, 22, 2);
+        LittleEndian.setInt16(sector, 24, 9);
+        LittleEndian.setInt16(sector, 26, 2);
+        LittleEndian.setInt32(sector, 28, 0);
+        LittleEndian.setInt32(sector, 32, 0);
+        sector[510] = 0x55;
+        sector[511] = (byte) 0xAA;
+        return sector;
+    }
+
+    private static byte[] validFat32Sector() {
+        byte[] sector = new byte[512];
+        sector[0] = (byte) 0xEB;
+        sector[1] = 0x3C;
+        sector[2] = (byte) 0x90;
+        LittleEndian.setInt16(sector, 11, 512);
+        LittleEndian.setInt8(sector, 13, 2);
+        LittleEndian.setInt16(sector, 14, 36);
+        sector[16] = 2;
+        LittleEndian.setInt16(sector, 17, 0);
+        LittleEndian.setInt16(sector, 19, 0);
+        sector[21] = (byte) 0xF8;
+        LittleEndian.setInt16(sector, 22, 0);
+        LittleEndian.setInt16(sector, 24, 63);
+        LittleEndian.setInt16(sector, 26, 255);
+        LittleEndian.setInt32(sector, 28, 0);
+        LittleEndian.setInt32(sector, 32, 204800);
+        LittleEndian.setInt32(sector, 36, 794);
+        sector[510] = 0x55;
+        sector[511] = (byte) 0xAA;
+        return sector;
+    }
+
+    private static FileSystemException expectFailure(byte[] sector, String field, String value) {
+        try {
+            new BootSector(sector);
+            fail("expected FileSystemException naming " + field);
+            return null;
+        } catch (FileSystemException e) {
+            String message = e.getMessage();
+            assertTrue("message should name " + field + ": " + message,
+                message != null && message.contains(field));
+            assertTrue("message should name the value " + value + ": " + message,
+                message != null && message.contains(value));
+            return e;
+        }
+    }
+
+    @Test
+    public void testZeroedBootSectorFails() {
+        expectFailure(new byte[512], "BPB_BytsPerSec", "0");
+    }
+
+    @Test
+    public void testInvalidBytesPerSector() {
+        int[] rejected = { 0, 256, 300, 1000, 8192 };
+        for (int bps : rejected) {
+            byte[] sector = validFat12Sector();
+            LittleEndian.setInt16(sector, 11, bps);
+            expectFailure(sector, "BPB_BytsPerSec", String.valueOf(bps));
+        }
+    }
+
+    @Test
+    public void testSecPerClusterZero() {
+        byte[] sector = validFat12Sector();
+        LittleEndian.setInt8(sector, 13, 0);
+        expectFailure(sector, "BPB_SecPerClus", "0");
+    }
+
+    @Test
+    public void testSecPerClusterNotPowerOfTwo() {
+        int[] rejected = { 3, 5, 6, 7, 17, 24 };
+        for (int spc : rejected) {
+            byte[] sector = validFat12Sector();
+            LittleEndian.setInt8(sector, 13, spc);
+            expectFailure(sector, "BPB_SecPerClus", String.valueOf(spc));
+        }
+    }
+
+    @Test
+    public void testNumFatsZero() {
+        byte[] sector = validFat12Sector();
+        sector[16] = 0;
+        expectFailure(sector, "BPB_NumFATs", "0");
+    }
+
+    @Test
+    public void testFat16WithZeroFatSz16() {
+        byte[] sector = validFat12Sector();
+        LittleEndian.setInt16(sector, 22, 0);
+        LittleEndian.setInt32(sector, 36, 7);
+        expectFailure(sector, "BPB_FATSz16", "0");
+    }
+
+    @Test
+    public void testFat32WithZeroFatSz32() {
+        byte[] sector = validFat32Sector();
+        LittleEndian.setInt32(sector, 36, 0);
+        expectFailure(sector, "BPB_FATSz32", "0");
+    }
+
+    @Test
+    public void testRootEntCntZeroOnNonFat32() {
+        byte[] sector = validFat12Sector();
+        LittleEndian.setInt16(sector, 17, 0);
+        expectFailure(sector, "BPB_RootEntCnt", "0");
+    }
+
+    @Test
+    public void testTotSecSmallerThanFirstDataSector() {
+        byte[] sector = validFat12Sector();
+        LittleEndian.setInt16(sector, 19, 10);
+        expectFailure(sector, "TotSec", "10");
+    }
+
+    @Test
+    public void testValidFat12GeometryStillMounts() throws Exception {
+        BootSector bs = new BootSector(validFat12Sector());
+        assertTrue("Should be FAT12", bs.isFat12());
+        assertTrue("Should not be FAT32", !bs.isFat32());
+    }
+
+    @Test
+    public void testValidFat32GeometryStillMounts() throws Exception {
+        BootSector bs = new BootSector(validFat32Sector());
+        assertTrue("Should be FAT32", bs.isFat32());
+        assertTrue("Should not be FAT12", !bs.isFat12());
+    }
+
+    @Test
+    public void testZeroedBootSectorFailsMountAsFileSystemException() throws Exception {
+        File file = File.createTempFile("jfat-zero", ".img");
+        file.deleteOnExit();
+        FileOutputStream out = new FileOutputStream(file);
+        try {
+            out.write(new byte[512]);
+        } finally {
+            out.close();
+        }
+        FileDevice device = new FileDevice(file, "r");
+        try {
+            Fat.create(device);
+            fail("expected FileSystemException");
+        } catch (FileSystemException e) {
+            String message = e.getMessage();
+            assertTrue("message should name BPB_BytsPerSec: " + message,
+                message != null && message.contains("BPB_BytsPerSec"));
+        } finally {
+            device.close();
+        }
+    }
+}
