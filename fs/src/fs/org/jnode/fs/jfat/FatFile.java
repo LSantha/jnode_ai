@@ -65,6 +65,9 @@ public class FatFile extends FatEntry implements FSFile, FSFileSlackSpace {
     public void setLength(long length) throws IOException {
         if (length < 0)
             throw new IOException("length<0");
+        if (length > 0xFFFFFFFFL)
+            throw new IOException("length " + length
+                + " exceeds the FAT32 limit of 4294967295 (0xFFFFFFFF, 4 GiB)");
 
         long l = getLength();
 
@@ -104,6 +107,9 @@ public class FatFile extends FatEntry implements FSFile, FSFileSlackSpace {
 
     public void write(long offset, ByteBuffer src) throws IOException {
         if (offset < 0) throw new IllegalArgumentException("offset<0");
+        if (offset > 0xFFFFFFFFL)
+            throw new IOException("offset " + offset
+                + " exceeds the FAT32 limit of 4294967295 (0xFFFFFFFF, 4 GiB)");
 
         long lst = offset + src.remaining();
         long length = getLength();

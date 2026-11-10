@@ -472,11 +472,19 @@ public class FatChain {
             return;
         int clsize = fat.getClusterSize();
         long pos = from;
-        ChainIterator it = listIterator((int) (from / clsize));
+        long fromIndex = from / clsize;
+        if (fromIndex > Integer.MAX_VALUE)
+            throw new IllegalArgumentException("zeroRange start index " + fromIndex
+                + " exceeds the maximum chain index");
+        // from <= 0xFFFFFFFFL (callers pass the file length from the 32-bit BPB
+        // field or an already-validated offset) and clsize >= 512, so fromIndex
+        // fits in int; the check above is belt and braces
+        ChainIterator it = listIterator((int) fromIndex);
         while (pos < to) {
             if (!it.hasNext())
                 break;
             int cluster = it.next();
+            // pos % clsize < clsize and clsize <= 130560, so both casts fit in int
             int start = (int) (pos % clsize);
             int end = (int) Math.min(clsize, start + (to - pos));
             if (end > start)
@@ -538,9 +546,16 @@ public class FatChain {
 
             long lst = offset + src.remaining() - last * clsize;
 
-            int n = (int) (lst / clsize);
+            // lst <= offset + Integer.MAX_VALUE <= 0xFFFFFFFFL + Integer.MAX_VALUE
+            // (offset is validated <= 0xFFFFFFFFL by setPosition), and clsize >= 512,
+            // so lst / clsize <= 12582910; guard anyway so no (int) cast truncates
+            long clustersNeeded = lst / clsize;
             if ((lst % clsize) != 0)
-                n++;
+                clustersNeeded++;
+            if (clustersNeeded > Integer.MAX_VALUE)
+                throw new IllegalArgumentException("cluster count " + clustersNeeded
+                    + " exceeds the maximum chain index");
+            int n = (int) clustersNeeded;
 
             if (empty)
                 last = allocateTail(n, n - 1, 0, true);
@@ -578,6 +593,7 @@ public class FatChain {
              * here length is used to decide if we have to zero the data
              * inside the last cluster tail
              */
+            // length % clsize < clsize <= 130560, fits in int
             int ofs = (int) (length % clsize);
 
             if (ofs != 0 && cluster != 0)
@@ -816,8 +832,11 @@ public class FatChain {
 
         private final void setPosition(long value) {
             if (value < 0L || value > 0xFFFFFFFFL)
-                throw new IllegalArgumentException();
+                throw new IllegalArgumentException("position " + value
+                    + " is out of range: FAT32 limits file offsets and lengths to 4294967295 (0xFFFFFFFF, 4 GiB)");
             this.position = value;
+            // value <= 0xFFFFFFFFL and size (cluster size) >= 512, so value / size
+            // <= 8388607 fits in int; value % size < size fits in int
             this.index = (int) (value / size);
             this.offset = (int) (value % size);
         }
