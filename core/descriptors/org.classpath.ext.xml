@@ -103,5 +103,8 @@
   
   <extension point="org.jnode.security.permissions">
 	  <permission class="java.util.PropertyPermission" name="gnu.javax.swing.DebugGraphics" actions="read"/>
+	  <!-- swing's repaint manager schedules its processing runnable on
+	       the system event queue, guarded by this permission -->
+	  <permission class="java.awt.AWTPermission" name="accessEventQueue"/>
   </extension>       
 </fragment>

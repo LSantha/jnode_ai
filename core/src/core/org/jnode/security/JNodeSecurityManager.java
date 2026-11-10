@@ -38,6 +38,18 @@ public final class JNodeSecurityManager extends SecurityManager {
         JNodeSecurityManagerSettings.checkPermission(perm, this);
     }
 
+    /**
+     * The system AWT event queue is needed by the graphical subsystem itself:
+     * swing's repaint manager schedules its processing runnable on it, so any
+     * repaint checks this permission. Every JNode GUI component (desktop,
+     * consoles, text screens) needs it, while no sandboxed code reaches the
+     * queue through it, so it is granted unconditionally.
+     */
+    @Override
+    public void checkAwtEventQueueAccess() {
+        // see above: every JNode GUI component needs the event queue
+    }
+
     void defaultCheckPermission(Permission perm) {
         if (perm.implies(SET_SECURITY_MANAGER)) {
             throw new SecurityException("Cannot override security manager");
