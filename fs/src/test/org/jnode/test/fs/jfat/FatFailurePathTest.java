@@ -24,6 +24,7 @@ import java.io.File;
 import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.util.Arrays;
+import java.util.Iterator;
 
 import org.jnode.driver.block.BlockDeviceAPI;
 import org.jnode.driver.block.FileDevice;
@@ -34,11 +35,14 @@ import org.jnode.emu.plugin.model.DummyExtensionPoint;
 import org.jnode.emu.plugin.model.DummyPluginDescriptor;
 import org.jnode.fs.FSEntry;
 import org.jnode.fs.FSFile;
+import org.jnode.fs.FSDirectory;
 import org.jnode.fs.FileSystemException;
+import org.jnode.fs.jfat.ChainCorruptException;
 import org.jnode.fs.jfat.ClusterSize;
 import org.jnode.fs.jfat.Fat;
 import org.jnode.fs.jfat.FatCache;
 import org.jnode.fs.jfat.FatChain;
+import org.jnode.fs.jfat.FatDirectory;
 import org.jnode.fs.jfat.FatEntry;
 import org.jnode.fs.jfat.FatFileSystem;
 import org.jnode.fs.jfat.FatFileSystemFormatter;
@@ -340,16 +344,89 @@ public class FatFailurePathTest {
         fat.set(head, 0x0FFFFFF7);
         try {
             new FatChain(fs, head).size();
-            fail("expected IOException for bad cluster marker");
-        } catch (IOException expected) {
+            fail("expected ChainCorruptException for bad cluster marker");
+        } catch (ChainCorruptException expected) {
         }
         fat.set(head, fat.size() + 10);
         try {
             new FatChain(fs, head).size();
-            fail("expected IOException for out of bounds entry");
-        } catch (IOException expected) {
+            fail("expected ChainCorruptException for out of bounds entry");
+        } catch (ChainCorruptException expected) {
         }
         fs.close();
+    }
+
+    @Test
+    public void testCorruptDirectoryChainSurfacesTypedError() throws Exception {
+        FatFileSystem fs = formatAndOpenRW();
+        FSDirectory root = fs.getRootEntry().getDirectory();
+        FSEntry created = root.addDirectory("fatprobe");
+        FSDirectory subdir = created.getDirectory();
+        for (int i = 0; i < 40; i++) {
+            subdir.addFile("probe" + i + ".txt");
+        }
+        fs.flush();
+        int probeCluster = ((FatEntry) created).getStartCluster();
+        Fat fat = fs.getFat();
+        fat.set(probeCluster, 0);
+        fat.flush();
+        fs.flush();
+        fs.close();
+        device.close();
+
+        device = new FailingFileDevice(diskFile, "rw");
+        FatFileSystemType type = fss.getFileSystemType(FatFileSystemType.ID);
+        FatFileSystem fs2 = type.create(device, false);
+        try {
+            FSDirectory root2 = fs2.getRootEntry().getDirectory();
+            FSEntry probeEntry = root2.getEntry("fatprobe");
+            assertNotNull("directory must still be found by the root scan", probeEntry);
+            FSDirectory probeDir = probeEntry.getDirectory();
+
+            try {
+                ((FatDirectory) probeDir).getEntryByName("probe39.txt");
+                fail("expected ChainCorruptException when scanning a corrupt directory chain");
+            } catch (ChainCorruptException expected) {
+            }
+
+            Iterator<? extends FSEntry> entries = probeDir.iterator();
+            try {
+                while (entries.hasNext()) {
+                    entries.next();
+                }
+                fail("expected RuntimeException wrapping ChainCorruptException from iterator()");
+            } catch (RuntimeException e) {
+                assertTrue("expected ChainCorruptException in cause chain, got: " + e,
+                    e.getCause() instanceof ChainCorruptException);
+            }
+
+            Iterator<FSEntry> createdEntries = ((FatDirectory) probeDir).createIterator(false);
+            try {
+                while (createdEntries.hasNext()) {
+                    createdEntries.next();
+                }
+                fail("expected RuntimeException wrapping ChainCorruptException from createIterator(false)");
+            } catch (RuntimeException e) {
+                assertTrue("expected ChainCorruptException in cause chain, got: " + e,
+                    e.getCause() instanceof ChainCorruptException);
+            }
+
+            try {
+                ((FatDirectory) probeDir).getFatFreeEntries(1);
+                fail("expected ChainCorruptException from getFatFreeEntries on a corrupt chain");
+            } catch (ChainCorruptException expected) {
+            }
+
+            try {
+                probeDir.addFile("nope.txt");
+                fail("expected ChainCorruptException when creating in a corrupt directory");
+            } catch (IOException e) {
+                assertTrue("expected ChainCorruptException, got: " + e,
+                    e instanceof ChainCorruptException);
+            }
+        } finally {
+            fs2.close();
+        }
     }
 
     @Test

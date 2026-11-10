@@ -24,7 +24,7 @@ public class FatEntriesFactory {
         this.directory = directory;
     }
 
-    protected boolean hasNextEntry() {
+    protected boolean hasNextEntry() throws IOException {
         int i;
         FatDirEntry e;
         FatRecord v = new FatRecord();
@@ -43,12 +43,11 @@ public class FatEntriesFactory {
                 entry = null;
                 return false;
             } catch (IOException ex) {
-                // Check if this is a chain termination error (free/invalid cluster)
-                // or end-of-chain (NoSuchElementException wrapped by FatChain.read)
-                if (ex.getCause() instanceof NoSuchElementException ||
-                    (ex.getMessage() != null && (ex.getMessage().contains("free entry") ||
-                     ex.getMessage().contains("circular") ||
-                     ex.getMessage().contains("End Of Chain")))) {
+                if (ex instanceof ChainCorruptException) {
+                    entry = null;
+                    throw ex;
+                }
+                if (isChainEnd(ex)) {
                     entry = null;
                     return false;
                 }
@@ -115,7 +114,14 @@ public class FatEntriesFactory {
         return true;
     }
 
-    protected FatEntry createNextEntry() {
+    private static boolean isChainEnd(IOException ex) {
+        if (ex instanceof ChainBeyondEndException)
+            return true;
+        Throwable cause = ex.getCause();
+        return cause instanceof NoSuchElementException || cause instanceof ChainBeyondEndException;
+    }
+
+    protected FatEntry createNextEntry() throws IOException {
         if (index == next)
             hasNextEntry();
         if (entry == null)

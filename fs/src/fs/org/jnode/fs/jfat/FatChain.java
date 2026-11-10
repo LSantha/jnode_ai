@@ -431,31 +431,39 @@ public class FatChain {
         p.setPosition(offset);
 
         try {
-            i.setPosition(p.getIndex());
-        } catch (NoSuchElementException ex) {
-            final IOException ioe = new IOException("attempt to seek after End Of Chain " + offset);
-            ioe.initCause(ex);
-            throw ioe;
-        }
-
-        for (int l = dst.remaining(), sz = p.getPartial(), ofs = p.getOffset(), size; l > 0; l -=
-                size, sz = p.getSize(), ofs = 0) {
-
-            int cluster = i.next();
-
-            size = Math.min(sz, l);
-
-            if (dolog)
-                mylog("read " + size + " bytes from cluster " + cluster + " at offset " + ofs);
-
-            int limit = dst.limit();
-
             try {
-                dst.limit(dst.position() + size);
-                fat.readCluster(cluster, ofs, dst);
-            } finally {
-                dst.limit(limit);
+                i.setPosition(p.getIndex());
+            } catch (NoSuchElementException ex) {
+                throw new ChainBeyondEndException("attempt to seek after End Of Chain " + offset, ex);
             }
+
+            for (int l = dst.remaining(), sz = p.getPartial(), ofs = p.getOffset(), size; l > 0; l -=
+                    size, sz = p.getSize(), ofs = 0) {
+
+                int cluster;
+                try {
+                    cluster = i.next();
+                } catch (NoSuchElementException ex) {
+                    throw new ChainBeyondEndException("read past end of chain at offset " + offset, ex);
+                }
+
+                size = Math.min(sz, l);
+
+                if (dolog)
+                    mylog("read " + size + " bytes from cluster " + cluster + " at offset " + ofs);
+
+                int limit = dst.limit();
+
+                try {
+                    dst.limit(dst.position() + size);
+                    fat.readCluster(cluster, ofs, dst);
+                } finally {
+                    dst.limit(limit);
+                }
+            }
+        } catch (IOException ex) {
+            i.reset();
+            throw ex;
         }
     }
 
@@ -579,10 +587,7 @@ public class FatChain {
                 try {
                     i.setPosition(clidx);
                 } catch (NoSuchElementException ex) {
-                    final IOException ioe = new IOException(
-                        "attempt to seek after End Of Chain " + offset);
-                    ioe.initCause(ex);
-                    throw ioe;
+                    throw new ChainBeyondEndException("attempt to seek after End Of Chain " + offset, ex);
                 }
         }
 
@@ -893,21 +898,21 @@ public class FatChain {
                 throw new NoSuchElementException();
 
             if (index >= fat.size())
-                throw new IOException("circular chain at: " + cursor);
+                throw new ChainCorruptException("circular chain at: " + cursor);
 
             address = cursor;
 
             cursor = fat.get(address);
 
             if (cursor == address)
-                throw new IOException("circular chain at: " + cursor);
+                throw new ChainCorruptException("circular chain at: " + cursor);
 
             if (fat.isFree(cursor))
-                throw new IOException("free entry in chain at: " + address);
+                throw new ChainCorruptException("free entry in chain at: " + address);
 
             if (fat.isCorruptChainEntry(cursor)) {
                 log.warn("corrupt chain entry " + cursor + " at cluster " + address);
-                throw new IOException("corrupt chain entry " + cursor + " at cluster " + address);
+                throw new ChainCorruptException("corrupt chain entry " + cursor + " at cluster " + address);
             }
 
             index++;

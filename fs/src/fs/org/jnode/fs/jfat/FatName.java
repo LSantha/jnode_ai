@@ -175,7 +175,7 @@ public class FatName {
     /*
      * internal utility routine
      */
-    boolean collide(byte[] name) {
+    boolean collide(byte[] name) throws IOException {
         return parent.collide(name);
     }
 

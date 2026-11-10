@@ -193,25 +193,13 @@ public class FatDirectory extends FatEntry implements FSDirectory, FSDirectoryId
                 entry = getFatDirEntry(index, false);
                 index++;
             } catch (NoSuchElementException ex) {
-                if (index > MAXENTRIES)
-                    throw new IOException("Directory is full");
-
-                if (isRoot() && !getFatFileSystem().getFat().isFat32())
-                    throw new IOException("Directory is full");
-
-                getChain().allocateAndClear(1);
+                extendDirectoryChain(index);
                 i = 0;
                 index = 0;
                 continue;
             } catch (IOException ex) {
-                if (ex.getCause() instanceof NoSuchElementException) {
-                    if (index > MAXENTRIES)
-                        throw new IOException("Directory is full");
-
-                    if (isRoot() && !getFatFileSystem().getFat().isFat32())
-                        throw new IOException("Directory is full");
-
-                    getChain().allocateAndClear(1);
+                if (isChainEnd(ex)) {
+                    extendDirectoryChain(index);
                     i = 0;
                     index = 0;
                     continue;
@@ -230,6 +218,23 @@ public class FatDirectory extends FatEntry implements FSDirectory, FSDirectoryId
         }
 
         return entries;
+    }
+
+    private void extendDirectoryChain(int index) throws IOException {
+        if (index > MAXENTRIES)
+            throw new IOException("Directory is full");
+
+        if (isRoot() && !getFatFileSystem().getFat().isFat32())
+            throw new IOException("Directory is full");
+
+        getChain().allocateAndClear(1);
+    }
+
+    private static boolean isChainEnd(IOException ex) {
+        if (ex instanceof ChainBeyondEndException)
+            return true;
+        Throwable cause = ex.getCause();
+        return cause instanceof NoSuchElementException || cause instanceof ChainBeyondEndException;
     }
 
     @Override
@@ -272,14 +277,14 @@ public class FatDirectory extends FatEntry implements FSDirectory, FSDirectoryId
     /*
      * used from a FatRootDirectory looking for its label
      */
-    protected void scanDirectory() {
+    protected void scanDirectory() throws IOException {
         FatEntriesFactory f = new FatEntriesFactory(this, false);
 
         while (f.hasNextEntry())
             f.createNextEntry();
     }
 
-    public synchronized FSEntry getEntry(String name) {
+    public synchronized FSEntry getEntry(String name) throws IOException {
         FatEntry child = children.get(name);
 
         if (child == null) {
@@ -315,7 +320,7 @@ public class FatDirectory extends FatEntry implements FSDirectory, FSDirectoryId
         return child;
     }
 
-    public FatEntry getEntryByShortName(byte[] shortName) {
+    public FatEntry getEntryByShortName(byte[] shortName) throws IOException {
         FatEntry child = null;
         FatEntriesFactory f = new FatEntriesFactory(this, false);
 
@@ -330,7 +335,7 @@ public class FatDirectory extends FatEntry implements FSDirectory, FSDirectoryId
         return child;
     }
 
-    public FatEntry getEntryByName(String name) {
+    public FatEntry getEntryByName(String name) throws IOException {
         FatEntry child = null;
         FatEntriesFactory f = new FatEntriesFactory(this, false);
 
@@ -345,11 +350,11 @@ public class FatDirectory extends FatEntry implements FSDirectory, FSDirectoryId
         return child;
     }
 
-    public boolean collide(byte[] shortName) {
+    public boolean collide(byte[] shortName) throws IOException {
         return !(getEntryByShortName(shortName) == null);
     }
 
-    public boolean collide(String name) {
+    public boolean collide(String name) throws IOException {
         if (children.get(name) != null) {
             return true;
         }
