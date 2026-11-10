@@ -46,6 +46,8 @@ public class FatFileSystem extends AbstractFileSystem<FatRootDirectory> {
 
         try {
             fat = Fat.create(getApi());
+        } catch (FileSystemException ex) {
+            throw ex;
         } catch (IOException ex) {
             throw new FileSystemException(ex);
         } catch (Exception e) {

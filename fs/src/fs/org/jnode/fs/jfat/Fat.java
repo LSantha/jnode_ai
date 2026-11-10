@@ -28,6 +28,8 @@ import java.util.Collections;
 import java.util.List;
 import org.apache.log4j.Logger;
 import org.jnode.driver.block.BlockDeviceAPI;
+import org.jnode.driver.block.FSBlockDeviceAPI;
+import org.jnode.driver.bus.ide.IDEConstants;
 import org.jnode.fs.FileSystemException;
 
 
@@ -97,8 +99,27 @@ public abstract class Fat {
         clearbuf = ByteBuffer.wrap(cleardata).asReadOnlyBuffer();
     }
 
+    /**
+     * Create the {@link Fat} for the given device by reading the boot sector.
+     *
+     * <p>Scope: only {@link IDEConstants#SECTOR_SIZE}-byte (512-byte) sectors are
+     * supported. The BPB is read from the first sector into a fixed 512-byte
+     * buffer and {@code BPB_BytsPerSec} is taken from the bytes read, not from
+     * {@code api.getSectorSize()}. If the device implements {@link FSBlockDeviceAPI}
+     * and reports any sector size other than 512, a {@link FileSystemException}
+     * is thrown before any read is issued, so a non-conforming volume formatted
+     * by something else is rejected rather than mounted with a truncated buffer.
+     * Devices that do not implement {@link FSBlockDeviceAPI} cannot report a
+     * sector size and are assumed to be 512-byte.</p>
+     *
+     * <p>Cross-reference: {@code FatFormatter} and {@code FatFileSystemFormatter}
+     * enforce the same geometry at format time (ticket #888); the format-side
+     * decision is tracked as {@code 00-bugs/r02}. The two decisions must stay in
+     * sync.</p>
+     */
     public static Fat create(BlockDeviceAPI api) throws IOException, FileSystemException {
-        BootSector bs = new BootSector(512);
+        checkSectorSize(api);
+        BootSector bs = new BootSector(IDEConstants.SECTOR_SIZE);
 
         bs.read(api);
 
@@ -111,6 +132,16 @@ public abstract class Fat {
         }
 
         throw new FileSystemException("FAT not recognized");
+    }
+
+    private static void checkSectorSize(BlockDeviceAPI api) throws IOException, FileSystemException {
+        if (api instanceof FSBlockDeviceAPI) {
+            int sectorSize = ((FSBlockDeviceAPI) api).getSectorSize();
+            if (sectorSize != IDEConstants.SECTOR_SIZE) {
+                throw new FileSystemException("Unsupported sector size " + sectorSize
+                    + " - JFAT only supports " + IDEConstants.SECTOR_SIZE + "-byte sectors");
+            }
+        }
     }
 
     public final BootSector getBootSector() {
