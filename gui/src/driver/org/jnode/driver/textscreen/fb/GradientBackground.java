@@ -34,24 +34,41 @@ public class GradientBackground implements Background {
         this.height = height;        
         this.colors = new Color[height];
         
+        // the shaded hue is the JNode LNF desktop brown, 30% darker again
+        // (0x8D6E63 -> 0x634D45 -> this, from
+        // org.jnode.awt.swingpeers.JNodeOceanTheme.getDesktopColor)
+        final Color base = new Color(0x45, 0x36, 0x30);
         final float step = (float) 1.0 / (float) height;        
-        float blue = 0f;
+        float shade = 0f;
         Color color = null;
         Color prevColor = null;
         for (int y = 0; y < height; y++) {
-            if ((y > 0) && (prevColor.getBlue() == (int) (blue * 255))) {
+            if ((y > 0) && (prevColor.getRGB() == colorRGB(base, shade - step).getRGB())) {
                 color = prevColor;
             } else {
-                color = new Color(0f, 0f, blue);
+                color = colorRGB(base, shade);
             }
             colors[y] = color;
             
-            blue += step;
+            shade += step;
             prevColor = color;
         }
     }
     
     
+    /**
+     * Scales the base color by the given shade (0 = the darkest end of the
+     * ramp), matching the original black-to-hue ramp shape.
+     */
+    private static Color colorRGB(Color base, float shade) {
+        if (shade <= 0f) {
+            return new Color(0f, 0f, 0f);
+        }
+        return new Color((int) (base.getRed() * shade),
+            (int) (base.getGreen() * shade),
+            (int) (base.getBlue() * shade));
+    }
+
     public void paint(Graphics ig) {
         for (int y = 0; y < height; y++) {
             ig.setColor(colors[y]);        

@@ -51,8 +51,10 @@ public class JNodeOceanTheme extends OceanTheme {
             new ColorUIResource(0xEFEBE9);
     private static final ColorUIResource WARM_DROP =
             new ColorUIResource(0xD7CCC8);
+    // the framebuffer text screen gradient base
+    // (GradientBackground) uses the same brown
     public static final ColorUIResource DESKTOP_BG =
-            new ColorUIResource(0x8D6E63);
+            new ColorUIResource(0x453630);
     private static final ColorUIResource UNIFIED_HIGHLIGHT =
             new ColorUIResource(0xC8B0A0);
     private static final ColorUIResource DESKTOP_BG_PALER =
