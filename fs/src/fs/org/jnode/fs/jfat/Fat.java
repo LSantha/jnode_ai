@@ -331,8 +331,34 @@ public abstract class Fat {
 
     public abstract int set(int index, int element) throws IOException;
 
-    public void flush() throws IOException {
-        cache.flush();
+    public synchronized void flush() throws IOException {
+        try {
+            cache.flush();
+        } catch (Exception ex) {
+            recomputeFreeClusterCountQuietly();
+            if (ex instanceof IOException) {
+                throw (IOException) ex;
+            }
+            if (ex instanceof RuntimeException) {
+                throw (RuntimeException) ex;
+            }
+            throw new RuntimeException(ex);
+        }
+    }
+
+    /*
+     * Heal the incremental free-cluster counter from the FAT after a failed
+     * flush. The counter is maintained only by noteFreeTransition(); any path
+     * that unwinds with an exception may have left it stale, so rescan once
+     * instead of trusting it. Best effort: if the FAT cannot be read either,
+     * keep the old value.
+     */
+    private void recomputeFreeClusterCountQuietly() {
+        try {
+            freeClusterCount = freeEntries();
+        } catch (Exception e) {
+            log.warn("unable to recompute the free cluster count after a flush failure", e);
+        }
     }
 
     public final List<Long> compareFatCopies() {
@@ -382,15 +408,15 @@ public abstract class Fat {
         return isFree(get(entry));
     }
 
-    public final int getLastFree() {
+    public final synchronized int getLastFree() {
         return lastfree;
     }
 
-    public final void setLastFree(int value) {
+    public final synchronized void setLastFree(int value) {
         lastfree = value;
     }
 
-    public final void rewindFree() {
+    public final synchronized void rewindFree() {
         lastfree = firstCluster();
     }
 
@@ -404,7 +430,7 @@ public abstract class Fat {
         return count;
     }
 
-    public final int getFreeClusterCount() {
+    public final synchronized int getFreeClusterCount() {
         return freeClusterCount;
     }
 

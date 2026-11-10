@@ -31,6 +31,42 @@ import org.jnode.driver.block.BlockDeviceAPI;
 import org.jnode.util.LittleEndian;
 
 
+/**
+ * A cache for FAT sectors ("elements") shared by every thread that uses a
+ * {@link Fat}.
+ *
+ * <p>Thread-safety contract: one cache per filesystem, serialised internally;
+ * callers need not lock. All public methods, including the read-modify-write
+ * sequences and every internal mutation of the map, the free list, the counters
+ * and the cache elements, are executed under this instance's monitor. Device
+ * I/O (misses, evictions and flushes) is performed while holding that monitor,
+ * and a {@link CacheElement} snapshot is taken locally before the bytes leave
+ * for the device, so a write can never be observed partially. Callers may
+ * invoke any public method from any thread without external synchronisation.</p>
+ *
+ * <p>Device I/O is issued while holding this monitor, and JFAT does not
+ * support re-entrant device callbacks on any thread, including the calling
+ * thread. A {@code BlockDeviceAPI} used with JFAT must not call back into
+ * the filesystem from its read/write path at all. Doing so can deadlock
+ * with an ABBA cycle against the {@code Fat} monitor: a thread inside
+ * {@code Fat.set}/{@code Fat.flush} holds the {@code Fat} monitor and waits
+ * for this monitor, while a callback thread holds this monitor (entered via
+ * {@code api.read}/{@code api.write} from inside this class) and waits for
+ * the {@code Fat} monitor. Reentrant monitors only protect a thread that
+ * already holds the outer monitor; a thread that entered via this class holds
+ * only this monitor, so reentrancy does not save it. Re-entering this class
+ * during a {@code flush()} may also corrupt the flush in progress: the
+ * access-order LRU update structurally modifies the map being iterated and
+ * can throw {@code ConcurrentModificationException}. The same inversion
+ * applies to the directory layer (a directory monitor is held on the normal
+ * path, while the callback path can acquire it from inside this monitor).
+ * This is a hard requirement on device implementations used with JFAT, not
+ * a proven property of this class, and JFAT provides no facility for device
+ * callbacks to re-enter the filesystem: it must not happen. Callers must not
+ * hold a lock that the device layer needs in order to complete I/O.</p>
+ *
+ * @author gvt
+ */
 public class FatCache {
 
     private static final Logger log = Logger.getLogger(FatCache.class);
@@ -62,15 +98,15 @@ public class FatCache {
         this.map = new CacheMap(cacheSize);
     }
 
-    public int getCacheSize() {
+    public synchronized int getCacheSize() {
         return map.getCacheSize();
     }
 
-    public int usedEntries() {
+    public synchronized int usedEntries() {
         return map.usedEntries();
     }
 
-    public int freeEntries() {
+    public synchronized int freeEntries() {
         return map.freeEntries();
     }
 
@@ -218,48 +254,48 @@ public class FatCache {
         c.setDirty();
     }
 
-    public long getUInt16(int index) throws IOException {
+    public synchronized long getUInt16(int index) throws IOException {
         return getUInt16(fat.position(0, index));
     }
 
-    public long getUInt32(int index) throws IOException {
+    public synchronized long getUInt32(int index) throws IOException {
         return getUInt32(fat.position(0, index));
     }
 
-    public void setInt16(int index, int element) throws IOException {
+    public synchronized void setInt16(int index, int element) throws IOException {
         setInt16(fat.position(0, index), element);
     }
 
-    public void setInt32(int index, int element) throws IOException {
+    public synchronized void setInt32(int index, int element) throws IOException {
         setInt32(fat.position(0, index), element);
     }
 
-    public void flush() throws IOException {
+    public synchronized void flush() throws IOException {
         for (CacheElement c : map.values()) {
             c.flush();
         }
     }
 
-    public long getHit() {
+    public synchronized long getHit() {
         return hit;
     }
 
-    public long getAccess() {
+    public synchronized long getAccess() {
         return access;
     }
 
-    public double getRatio() {
+    public synchronized double getRatio() {
         if (access > 0)
             return ((double) hit / (double) access);
         else
             return 0.0f;
     }
 
-    public String flushOrder() {
+    public synchronized String flushOrder() {
         return map.flushOrder();
     }
 
-    public String toString() {
+    public synchronized String toString() {
         StrWriter out = new StrWriter();
 
         out.print(map);
@@ -479,22 +515,22 @@ public class FatCache {
             if (isFree())
                 throw new IllegalArgumentException("cannot write a free element");
 
-            elem.clear();
             // The backing byte[] is elementSize + 1 byte to allow FAT-12's two-byte
             // getUInt16 read to straddle the last byte of the element. Writes MUST NOT
             // emit that extra byte: doing so corrupts the first byte of the next FAT
             // sector on disk (the LSB of the first FAT entry in the next cache element),
             // causing the next sector's first entry -- entry 128 on FAT-32 with a
             // 512-byte cache element -- to be silently clobbered with zero.
-            elem.limit(elementSize);
+            byte[] snapshot = new byte[elementSize];
+            System.arraycopy(elem.array(), 0, snapshot, 0, elementSize);
+            ByteBuffer src = ByteBuffer.wrap(snapshot);
 
             long addr = address.get() * elementSize;
 
             for (int i = 0; i < nrfats; i++) {
-                api.write(addr, elem);
+                src.clear();
+                api.write(addr, src);
                 addr += fatsize;
-                elem.clear();
-                elem.limit(elementSize);
             }
         }
 

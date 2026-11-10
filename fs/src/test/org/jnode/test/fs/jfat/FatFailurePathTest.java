@@ -739,4 +739,67 @@ public class FatFailurePathTest {
             partitioned.close();
         }
     }
+
+    private int firstFreeEntry(Fat fat) throws IOException {
+        for (int i = fat.firstCluster(); i < fat.size(); i++) {
+            if (fat.get(i) == 0) {
+                return i;
+            }
+        }
+        throw new IllegalStateException("no free cluster on a freshly formatted volume");
+    }
+
+    /*
+     * A flush that fails with the device permanently dead must throw and must
+     * not clobber the in-memory free-cluster counter; once the device works
+     * again, a clean flush must leave the counter equal to a fresh FAT scan.
+     * The recompute inside Fat.flush()'s failure path is made observable here
+     * by injecting a stale freeClusterCount (reflection) before an armed
+     * flush: if the recompute is removed, the stale value survives and the
+     * assertion fails. The scan itself reads from the cache (the FAT is
+     * cache-resident on this image), so the "keeps the old value when the
+     * rescan itself fails" branch is not reachable in-process; the armed
+     * device fails the write phase, not the rescan. The concurrent counter
+     * race is covered by ConcurrentAccessFSTest.testCreateWriteRemovePerThreadDirectories.
+     */
+    @Test
+    public void testFlushFailureReconcilesFreeClusterCount() throws Exception {
+        FatFileSystem fs = formatAndOpenRW();
+        Fat fat = fs.getFat();
+        int mountCount = fat.getFreeClusterCount();
+        int free = firstFreeEntry(fat);
+        fat.set(free, fat.eofChain());
+        assertEquals(mountCount - 1, fat.getFreeClusterCount());
+        device.armFailAll();
+        for (int i = 0; i < 2; i++) {
+            try {
+                fat.flush();
+                fail("expected IOException from failing device");
+            } catch (IOException expected) {
+            }
+            assertEquals("a permanently failing device must keep the free-cluster counter",
+                mountCount - 1, fat.getFreeClusterCount());
+        }
+        device.disarmFailAll();
+        setFreeClusterCount(fat, mountCount + 500);
+        device.armFailAll();
+        try {
+            fat.flush();
+            fail("expected IOException from failing device");
+        } catch (IOException expected) {
+        }
+        device.disarmFailAll();
+        assertEquals("a failed flush must recompute the free-cluster counter from the FAT",
+            mountCount - 1, fat.getFreeClusterCount());
+        fat.flush();
+        assertEquals("counter must match a fresh FAT scan after a failed flush",
+            fat.freeEntries(), fat.getFreeClusterCount());
+        fs.close();
+    }
+
+    private void setFreeClusterCount(Fat fat, int value) throws Exception {
+        java.lang.reflect.Field f = Fat.class.getDeclaredField("freeClusterCount");
+        f.setAccessible(true);
+        f.setInt(fat, value);
+    }
 }
