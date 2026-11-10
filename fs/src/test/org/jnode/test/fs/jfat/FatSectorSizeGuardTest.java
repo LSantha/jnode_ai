@@ -27,15 +27,18 @@ import java.nio.ByteBuffer;
 import java.util.Arrays;
 
 import org.jnode.driver.block.BlockDeviceAPI;
+import org.jnode.driver.block.FSBlockDeviceAPI;
 import org.jnode.driver.block.FileDevice;
 import org.jnode.emu.naming.BasicNameSpace;
 import org.jnode.fs.FileSystemException;
 import org.jnode.fs.jfat.ClusterSize;
+import org.jnode.fs.jfat.Fat;
 import org.jnode.fs.jfat.FatFileSystemFormatter;
 import org.jnode.fs.jfat.FatFileSystemType;
 import org.jnode.fs.jfat.FatFormatter;
 import org.jnode.fs.service.FileSystemService;
 import org.jnode.naming.InitialNaming;
+import org.jnode.partitions.PartitionTableEntry;
 import org.jnode.test.fs.FileSystemTestUtils;
 import org.junit.After;
 import org.junit.Before;
@@ -48,9 +51,11 @@ import static org.junit.Assert.*;
  * used to be hardcoded to 512-byte offsets while a non-512 sector size was only
  * logged, producing a volume the mount path could not read. The contract is now
  * enforced end-to-end with a fail-fast exception before any write reaches the
- * device.
+ * device. The mount path ({@code Fat.create}) enforces the same constraint and
+ * fails with a {@code FileSystemException} before any read is issued.
  *
  * @see <a href="https://github.com/LSantha/jnode_ai/issues/888">ticket #888</a>
+ * @see <a href="https://github.com/LSantha/jnode_ai/issues/902">ticket #902</a>
  */
 public class FatSectorSizeGuardTest {
 
@@ -89,6 +94,41 @@ public class FatSectorSizeGuardTest {
 
         boolean wrote() {
             return wrote;
+        }
+    }
+
+    private static class TrackingFSBlockDeviceAPI implements FSBlockDeviceAPI {
+        private final int sectorSize;
+        private boolean read;
+
+        TrackingFSBlockDeviceAPI(int sectorSize) {
+            this.sectorSize = sectorSize;
+        }
+
+        public long getLength() {
+            return 512L * 65536L;
+        }
+
+        public void read(long devOffset, ByteBuffer dest) {
+            read = true;
+        }
+
+        public void write(long devOffset, ByteBuffer src) {
+        }
+
+        public void flush() {
+        }
+
+        public int getSectorSize() throws IOException {
+            return sectorSize;
+        }
+
+        public PartitionTableEntry getPartitionTableEntry() {
+            return null;
+        }
+
+        boolean readCalled() {
+            return read;
         }
     }
 
@@ -232,6 +272,66 @@ public class FatSectorSizeGuardTest {
                     expected.getMessage().contains("sector size"));
         }
         assertFalse("no write may reach the device before the geometry guard", tracking.wrote());
+    }
+
+    @Test
+    public void testFatCreateRejectsNon512SectorSizeBeforeAnyRead() throws Exception {
+        TrackingFSBlockDeviceAPI tracking = new TrackingFSBlockDeviceAPI(1024);
+        try {
+            Fat.create(tracking);
+            fail("expected FileSystemException for a 1024-byte-sector device");
+        } catch (FileSystemException expected) {
+            assertNotNull(expected.getMessage());
+            assertTrue("expected sector size in message: " + expected.getMessage(),
+                    expected.getMessage().contains("sector size"));
+        }
+        assertFalse("no read may reach the device before the sector-size guard", tracking.readCalled());
+        TrackingFSBlockDeviceAPI tracking2048 = new TrackingFSBlockDeviceAPI(2048);
+        try {
+            Fat.create(tracking2048);
+            fail("expected FileSystemException for a 2048-byte-sector device");
+        } catch (FileSystemException expected) {
+            assertTrue("expected sector size in message: " + expected.getMessage(),
+                    expected.getMessage().contains("sector size"));
+        }
+        assertFalse("no read may reach the device before the sector-size guard", tracking2048.readCalled());
+    }
+
+    @Test
+    public void testMountRejectsNon512SectorSizeDevice() throws Exception {
+        device = new SectorSizeFileDevice(diskFile, "rw", 512);
+        device.setLength(65536L * 512L);
+        FatFileSystemFormatter formatter = new FatFileSystemFormatter(ClusterSize._1Kb);
+        org.jnode.fs.jfat.FatFileSystem fs = formatter.format(device);
+        fs.close();
+        device.close();
+
+        device = new SectorSizeFileDevice(diskFile, "r", 1024);
+        FatFileSystemType type = fss.getFileSystemType(FatFileSystemType.ID);
+        try {
+            type.create(device, true);
+            fail("expected FileSystemException for a 1024-byte-sector device");
+        } catch (FileSystemException expected) {
+            assertNotNull(expected.getMessage());
+            assertTrue("expected sector size in message: " + expected.getMessage(),
+                    expected.getMessage().contains("sector size"));
+        }
+    }
+
+    @Test
+    public void testMountAccepts512SectorSizeDevice() throws Exception {
+        device = new SectorSizeFileDevice(diskFile, "rw", 512);
+        device.setLength(65536L * 512L);
+        FatFileSystemFormatter formatter = new FatFileSystemFormatter(ClusterSize._1Kb);
+        org.jnode.fs.jfat.FatFileSystem fs = formatter.format(device);
+        fs.close();
+        device.close();
+
+        device = new SectorSizeFileDevice(diskFile, "r", 512);
+        FatFileSystemType type = fss.getFileSystemType(FatFileSystemType.ID);
+        org.jnode.fs.jfat.FatFileSystem mounted = type.create(device, true);
+        assertNotNull(mounted.getBootSector());
+        mounted.close();
     }
 
     @Test

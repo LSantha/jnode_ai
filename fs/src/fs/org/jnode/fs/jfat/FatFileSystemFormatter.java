@@ -42,6 +42,8 @@ import javax.naming.NameNotFoundException;
  * <p>Scope: only {@link IDEConstants#SECTOR_SIZE}-byte sectors are supported.
  * A device reporting any other sector size fails with a
  * {@link FileSystemException} before a single write is issued to the device.
+ * The mount path ({@link Fat#create(BlockDeviceAPI)})
+ * enforces the same constraint; see {@code 00-bugs/r02} and ticket #902.
  * </p>
  *
  * @author gvt

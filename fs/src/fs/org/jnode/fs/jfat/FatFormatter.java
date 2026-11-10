@@ -71,8 +71,11 @@ import org.jnode.util.LittleEndian;
  * <p>Scope: only {@link IDEConstants#SECTOR_SIZE}-byte sectors are supported. A
  * device reporting any other sector size fails fast with an {@link IOException}
  * from the constructor, before any write is issued. The mount path
- * ({@code Fat}) is likewise fixed at that geometry, so a non-conforming volume
- * would not be readable even if it were written.</p>
+ * ({@link Fat#create(BlockDeviceAPI)}) enforces the same constraint and throws a
+ * {@link org.jnode.fs.FileSystemException} for a non-512 sector size, so a
+ * non-conforming volume is rejected on both sides. The format-side decision is
+ * tracked as {@code 00-bugs/r02}; the mount-side decision is ticket #902. The
+ * two must stay in sync.</p>
  *
  * <p>FSInfo policy, ticket #898: JFAT never maintains the on-disk FSInfo
  * sector after format time. This formatter writes {@code FSI_Free_Count} and
