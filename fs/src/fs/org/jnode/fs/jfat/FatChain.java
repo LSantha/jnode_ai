@@ -193,94 +193,94 @@ public class FatChain {
             List<Integer> allocated = new ArrayList<Integer>();
             allocated.add(last);
             try {
-            fat.set(last, fat.eofChain());
-            if (dolog)
-                mylog(n + "\t|allo|\t" + last + " " + fat.eofChain());
-
-            if (zero) {
+                fat.set(last, fat.eofChain());
                 if (dolog)
-                    mylog(n + "\t|ZERO|\t" + last + " " + fat.eofChain());
-                fat.clearCluster(last);
-            }
+                    mylog(n + "\t|allo|\t" + last + " " + fat.eofChain());
 
-            //
-            found = 0;
-            l = last;
-            i = last;
-            //
-            for (; found < (n - m - k) && i >= fat.firstCluster(); i--) {
-                if (fat.isFreeEntry(i)) {
-                    if (zero)
-                        fat.clearCluster(i);
-                    fat.set(i, l);
-                    allocated.add(i);
+                if (zero) {
                     if (dolog)
-                        mylog((n - found - 1) + "\t|allo|\t" + i + " " + l);
-                    l = i;
-                    found++;
+                        mylog(n + "\t|ZERO|\t" + last + " " + fat.eofChain());
+                    fat.clearCluster(last);
                 }
-            }
-            //
-            if (offset > 0) {
-                for (; i >= fat.firstCluster(); i--) {
+
+                //
+                found = 0;
+                l = last;
+                i = last;
+                //
+                for (; found < (n - m - k) && i >= fat.firstCluster(); i--) {
                     if (fat.isFreeEntry(i)) {
                         if (zero)
                             fat.clearCluster(i);
-                        else
-                            fat.clearCluster(i, 0, offset);
                         fat.set(i, l);
                         allocated.add(i);
                         if (dolog)
-                            mylog((n - found - 1) + "\t|part|\t" + i + " " + l);
+                            mylog((n - found - 1) + "\t|allo|\t" + i + " " + l);
                         l = i;
                         found++;
-                        break;
                     }
-
                 }
-            }
-            //
-            for (; found < (n - 1) && i >= fat.firstCluster(); i--) {
-                if (fat.isFreeEntry(i)) {
-                    fat.clearCluster(i);
-                    fat.set(i, l);
-                    allocated.add(i);
-                    if (dolog)
-                        mylog((n - found - 1) + "\t|zero|\t" + i + " " + l);
-                    l = i;
-                    found++;
-                }
-            }
+                //
+                if (offset > 0) {
+                    for (; i >= fat.firstCluster(); i--) {
+                        if (fat.isFreeEntry(i)) {
+                            if (zero)
+                                fat.clearCluster(i);
+                            else
+                                fat.clearCluster(i, 0, offset);
+                            fat.set(i, l);
+                            allocated.add(i);
+                            if (dolog)
+                                mylog((n - found - 1) + "\t|part|\t" + i + " " + l);
+                            l = i;
+                            found++;
+                            break;
+                        }
 
-            if (found < n - 1)
-                throw new FileSystemFullException("no free clusters");
-
-            //
-            // Set the free-cluster hint to one past the last allocated cluster
-            // so the next allocation scan starts in the right area.
-            //
-            boolean foundNext = false;
-            for (i = last + 1; i < fat.size(); i++) {
-                if (fat.isFreeEntry(i)) {
-                    fat.setLastFree(i);
-                    foundNext = true;
-                    break;
+                    }
                 }
-            }
-            if (!foundNext) {
-                for (i = fat.firstCluster(); i <= last; i++) {
+                //
+                for (; found < (n - 1) && i >= fat.firstCluster(); i--) {
+                    if (fat.isFreeEntry(i)) {
+                        fat.clearCluster(i);
+                        fat.set(i, l);
+                        allocated.add(i);
+                        if (dolog)
+                            mylog((n - found - 1) + "\t|zero|\t" + i + " " + l);
+                        l = i;
+                        found++;
+                    }
+                }
+
+                if (found < n - 1)
+                    throw new FileSystemFullException("no free clusters");
+
+                //
+                // Set the free-cluster hint to one past the last allocated cluster
+                // so the next allocation scan starts in the right area.
+                //
+                boolean foundNext = false;
+                for (i = last + 1; i < fat.size(); i++) {
                     if (fat.isFreeEntry(i)) {
                         fat.setLastFree(i);
                         foundNext = true;
                         break;
                     }
                 }
-            }
+                if (!foundNext) {
+                    for (i = fat.firstCluster(); i <= last; i++) {
+                        if (fat.isFreeEntry(i)) {
+                            fat.setLastFree(i);
+                            foundNext = true;
+                            break;
+                        }
+                    }
+                }
 
-            if (dolog)
-                mylog("LastFree: " + fat.getLastFree());
+                if (dolog)
+                    mylog("LastFree: " + fat.getLastFree());
 
-            return l;
+                return l;
             } catch (IOException ex) {
                 rollbackAllocated(allocated);
                 throw ex;
