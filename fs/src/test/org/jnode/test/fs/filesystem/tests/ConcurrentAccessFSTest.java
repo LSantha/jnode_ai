@@ -149,12 +149,7 @@ public class ConcurrentAccessFSTest extends AbstractFSTest {
         createReaders(monitor, files);
 
         monitor.waitAll();
-        if (config.getFileSystem().getType() == FSType.JFAT) {
-            // non-JFAT filesystems are out of scope: their concurrent read path
-            // can tear file contents (observed EXT2 RW mismatch), so they only
-            // get the readers' no-exception check, as on master
-            assertFilesEqual(files, TestUtils.getTestData(FILE_SIZE_IN_WORDS));
-        }
+        assertFilesEqual(files, TestUtils.getTestData(FILE_SIZE_IN_WORDS));
     }
 
     @Test
@@ -186,9 +181,7 @@ public class ConcurrentAccessFSTest extends AbstractFSTest {
             createWriters(monitor, writerFiles);
         }
         monitor.waitAll();
-        if (config.getFileSystem().getType() == FSType.JFAT) {
-            assertFilesEqual(readerFiles, TestUtils.getTestData(FILE_SIZE_IN_WORDS));
-        }
+        assertFilesEqual(readerFiles, TestUtils.getTestData(FILE_SIZE_IN_WORDS));
         if (writerFiles != null) {
             assertWriterFilesAreGood(writerFiles);
         }
