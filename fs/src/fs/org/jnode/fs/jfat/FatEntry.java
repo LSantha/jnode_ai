@@ -178,7 +178,7 @@ public class FatEntry extends FatObject implements FSEntry, FSEntryCreated, FSEn
 
             try {
                 dir.getVisitedChildren().put(this);
-            } catch (IllegalArgumentException ex) {
+            } catch (IOException ex) {
                 log.debug("entry for " + newLongName + " left out of the visited cache", ex);
             }
 

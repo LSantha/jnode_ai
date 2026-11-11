@@ -20,57 +20,55 @@
  
 package org.jnode.fs.jfat;
 
+import java.io.IOException;
 import java.util.Iterator;
 import java.util.HashMap;
 import java.util.Map;
 
 public class FatTable {
     private final Map<FatKey, FatEntry> table = new HashMap<FatKey, FatEntry>();
-    private final FatKey lookupKey = new FatKey();
 
     public FatTable() {
     }
 
     public FatEntry get(String name) {
-        lookupKey.setKey(name);
-        return table.get(lookupKey);
+        return table.get(new FatKey(name));
     }
 
-    public FatEntry put(FatEntry entry) {
+    public FatEntry put(FatEntry entry) throws IOException {
         FatKey key = new FatKey(entry.getName());
         if (table.containsKey(key)) {
-            throw new IllegalArgumentException("shouldn't happen");
+            throw new IOException("Entry [" + entry.getName() + "] already exists");
         }
         table.put(key, entry);
         return entry;
     }
 
-    public FatEntry remove(FatEntry entry) {
-        lookupKey.setKey(entry.getName());
+    public FatEntry remove(FatEntry entry) throws IOException {
+        FatKey key = new FatKey(entry.getName());
 
-        if (!table.containsKey(lookupKey))
-            throw new IllegalArgumentException("shouldn't happen");
+        if (!table.containsKey(key))
+            throw new IOException("Entry [" + entry.getName() + "] is not present");
 
-        return table.remove(lookupKey);
+        return table.remove(key);
     }
 
     public FatEntry removeIfPresent(FatEntry entry) {
-        lookupKey.setKey(entry.getName());
-        return table.remove(lookupKey);
+        return table.remove(new FatKey(entry.getName()));
     }
 
-    public FatEntry put(String name, FatEntry entry) {
+    public FatEntry put(String name, FatEntry entry) throws IOException {
         FatKey key = new FatKey(name);
 
         if (table.containsKey(key))
-            throw new IllegalArgumentException("shouldn't happen");
+            throw new IOException("Entry [" + name + "] already exists");
 
         table.put(key, entry);
 
         return entry;
     }
 
-    public FatEntry look(FatEntry entry) {
+    public FatEntry look(FatEntry entry) throws IOException {
         FatEntry e = get(entry.getName());
 
         if (e != null)
@@ -109,16 +107,6 @@ public class FatTable {
         private int hash;
 
         private FatKey(String value) {
-            this.key = value;
-            this.hash = computeHash(value);
-        }
-
-        private FatKey() {
-            this.key = "";
-            this.hash = 0;
-        }
-
-        private void setKey(String value) {
             this.key = value;
             this.hash = computeHash(value);
         }
