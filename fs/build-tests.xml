@@ -51,6 +51,7 @@ help         Output these messages
             <test name="org.jnode.fs.iso9660.EntryRecordTest" todir="${basedir}/build/reports/junit"/>
             <test name="org.jnode.test.partitions.ibm.IBMPartitionTableEntryTest" todir="${basedir}/build/reports/junit"/>
             <test name="org.jnode.test.fs.ramfs.RAMFileReadTest" todir="${basedir}/build/reports/junit"/>
+            <test name="org.jnode.test.fs.ramfs.RAMFileWriteTest" todir="${basedir}/build/reports/junit"/>
         </junit>
 	</target>
 

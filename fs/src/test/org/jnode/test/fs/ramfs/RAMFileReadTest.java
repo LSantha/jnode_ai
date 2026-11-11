@@ -81,6 +81,25 @@ public class RAMFileReadTest {
     }
 
     @Test
+    public void readFromSliceBufferHonorsArrayOffsetAndPosition() throws IOException {
+        byte[] backing = new byte[64];
+        java.util.Arrays.fill(backing, (byte) 0x7f);
+        ByteBuffer buf = ByteBuffer.wrap(backing, 3, 20).slice();
+        buf.position(5);
+        file.read(20, buf);
+        Assert.assertEquals(20, buf.position());
+        for (int i = 0; i < 8; i++) {
+            Assert.assertEquals((byte) 0x7f, backing[i]);
+        }
+        for (int i = 8; i < 23; i++) {
+            Assert.assertEquals((byte) ((11 + (20 + i - 8) * 37) & 0xff), backing[i]);
+        }
+        for (int i = 23; i < backing.length; i++) {
+            Assert.assertEquals((byte) 0x7f, backing[i]);
+        }
+    }
+
+    @Test
     public void readAtEndOfFile() throws IOException {
         byte[] dst = new byte[16];
         ByteBuffer buf = ByteBuffer.wrap(dst, 4, 12);
