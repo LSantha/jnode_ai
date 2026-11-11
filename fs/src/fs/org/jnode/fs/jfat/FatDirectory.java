@@ -49,6 +49,8 @@ public class FatDirectory extends FatEntry implements FSDirectory, FSDirectoryId
 
     private boolean indexBuilt;
 
+    private int freeSlotHint;
+
     /**
      * Cluster-level read buffer for directory entries. Avoids reading 32 bytes at a time.
      * A 4KB cluster holds 128 entries, so we read 128 entries per disk I/O instead of 1.
@@ -199,6 +201,8 @@ public class FatDirectory extends FatEntry implements FSDirectory, FSDirectoryId
         if (entry.getByteBuffer().get(0) != (byte) FatDirEntry.FREE)
             return;
 
+        freeSlotHint = 0;
+
         String id = Integer.toString(entry.getIndex());
         FatEntry cached = idMap.get(id);
         if (cached != null) {
@@ -208,9 +212,27 @@ public class FatDirectory extends FatEntry implements FSDirectory, FSDirectoryId
     }
 
     public synchronized FatDirEntry[] getFatFreeEntries(int n) throws IOException {
+        int start = freeSlotHint;
+
+        for (;;) {
+            try {
+                FatDirEntry[] entries = scanForFreeEntries(n, start);
+                freeSlotHint = entries[entries.length - 1].getIndex() + 1;
+                return entries;
+            } catch (ChainEndException ex) {
+                if (start != 0) {
+                    start = 0;
+                    continue;
+                }
+                extendDirectoryChain(ex.getEndIndex());
+            }
+        }
+    }
+
+    private FatDirEntry[] scanForFreeEntries(int n, int startIndex) throws IOException, ChainEndException {
         int i = 0;
-        int index = 0;
-        FatDirEntry entry = null;
+        int index = startIndex;
+        FatDirEntry entry;
         FatDirEntry[] entries = new FatDirEntry[n];
 
         while (i < n) {
@@ -218,16 +240,10 @@ public class FatDirectory extends FatEntry implements FSDirectory, FSDirectoryId
                 entry = getFatDirEntry(index, false);
                 index++;
             } catch (NoSuchElementException ex) {
-                extendDirectoryChain(index);
-                i = 0;
-                index = 0;
-                continue;
+                throw new ChainEndException(index);
             } catch (IOException ex) {
                 if (isChainEnd(ex)) {
-                    extendDirectoryChain(index);
-                    i = 0;
-                    index = 0;
-                    continue;
+                    throw new ChainEndException(index);
                 }
                 throw ex;
             }
@@ -245,9 +261,23 @@ public class FatDirectory extends FatEntry implements FSDirectory, FSDirectoryId
         return entries;
     }
 
+    private static final class ChainEndException extends Exception {
+        private final int endIndex;
+
+        private ChainEndException(int endIndex) {
+            this.endIndex = endIndex;
+        }
+
+        private int getEndIndex() {
+            return endIndex;
+        }
+    }
+
     private void extendDirectoryChain(int index) throws IOException {
         if (index > MAXENTRIES)
             throw new IOException("Directory is full");
+
+        freeSlotHint = 0;
 
         if (isRoot() && !getFatFileSystem().getFat().isFat32())
             throw new IOException("Directory is full");
