@@ -7,30 +7,36 @@ import org.jnode.fs.FSEntry;
 public class FatEntriesIterator extends FatEntriesFactory implements Iterator<FSEntry> {
 
     private final FatTable fatTable;
+    private final FatDirectory directory;
 
     public FatEntriesIterator(FatTable fatTable, FatDirectory directory, boolean includeDeleted) {
         super(directory, includeDeleted);
 
         this.fatTable = fatTable;
+        this.directory = directory;
     }
 
     public boolean hasNext() {
-        try {
-            return hasNextEntry();
-        } catch (IOException ex) {
-            throw new RuntimeException(ex);
+        synchronized (directory) {
+            try {
+                return hasNextEntry();
+            } catch (IOException ex) {
+                throw new RuntimeException(ex);
+            }
         }
     }
 
     public FSEntry next() {
-        try {
-            if (includeDeleted) {
-                return createNextEntry();
-            } else {
-                return fatTable.look(createNextEntry());
+        synchronized (directory) {
+            try {
+                if (includeDeleted) {
+                    return createNextEntry();
+                } else {
+                    return fatTable.look(createNextEntry());
+                }
+            } catch (IOException ex) {
+                throw new RuntimeException(ex);
             }
-        } catch (IOException ex) {
-            throw new RuntimeException(ex);
         }
     }
 

@@ -86,7 +86,7 @@ public class FatDirectory extends FatEntry implements FSDirectory, FSDirectoryId
      * this is actually a FatDirEntry factory and not a standard read method ...
      * but how would you call it?
      */
-    public FatDirEntry getFatDirEntry(int index, boolean allowDeleted) throws IOException {
+    public synchronized FatDirEntry getFatDirEntry(int index, boolean allowDeleted) throws IOException {
         final int entrySize = FatDirEntry.LENGTH;
         final int clusterSize = getFatFileSystem().getClusterSize();
         final int entriesPerCluster = clusterSize / entrySize;
@@ -176,13 +176,13 @@ public class FatDirectory extends FatEntry implements FSDirectory, FSDirectoryId
     /*
      * this instead is a "write" method: it needs a "created" entry
      */
-    public void setFatDirEntry(FatDirEntry entry) throws IOException {
+    public synchronized void setFatDirEntry(FatDirEntry entry) throws IOException {
         getChain().write(entry.getIndex() * entry.length(), entry.getByteBuffer());
         entryClusterBuffer = null;
         entryClusterIndex = -1;
     }
 
-    public FatDirEntry[] getFatFreeEntries(int n) throws IOException {
+    public synchronized FatDirEntry[] getFatFreeEntries(int n) throws IOException {
         int i = 0;
         int index = 0;
         FatDirEntry entry = null;
@@ -254,12 +254,12 @@ public class FatDirectory extends FatEntry implements FSDirectory, FSDirectoryId
         return children;
     }
 
-    void replaceInIdMap(FatEntry entry, String oldId) {
+    synchronized void replaceInIdMap(FatEntry entry, String oldId) {
         idMap.remove(oldId);
         idMap.put(entry.getId(), entry);
     }
 
-    public Iterator<FSEntry> iterator() {
+    public synchronized Iterator<FSEntry> iterator() {
         return new FatEntriesIterator(children, this, false);
     }
 
@@ -270,14 +270,14 @@ public class FatDirectory extends FatEntry implements FSDirectory, FSDirectoryId
      *                       otherwise.
      * @return the iterator.
      */
-    public Iterator<FSEntry> createIterator(boolean includeDeleted) {
+    public synchronized Iterator<FSEntry> createIterator(boolean includeDeleted) {
         return new FatEntriesIterator(new FatTable(), this, includeDeleted);
     }
 
     /*
      * used from a FatRootDirectory looking for its label
      */
-    protected void scanDirectory() throws IOException {
+    protected synchronized void scanDirectory() throws IOException {
         FatEntriesFactory f = new FatEntriesFactory(this, false);
 
         while (f.hasNextEntry())
@@ -303,7 +303,7 @@ public class FatDirectory extends FatEntry implements FSDirectory, FSDirectoryId
     }
 
     @Override
-    public FSEntry getEntryById(String id) throws IOException {
+    public synchronized FSEntry getEntryById(String id) throws IOException {
         FatEntry child = idMap.get(id);
 
         if (child == null) {
@@ -320,7 +320,7 @@ public class FatDirectory extends FatEntry implements FSDirectory, FSDirectoryId
         return child;
     }
 
-    public FatEntry getEntryByShortName(byte[] shortName) throws IOException {
+    public synchronized FatEntry getEntryByShortName(byte[] shortName) throws IOException {
         FatEntry child = null;
         FatEntriesFactory f = new FatEntriesFactory(this, false);
 
@@ -335,7 +335,7 @@ public class FatDirectory extends FatEntry implements FSDirectory, FSDirectoryId
         return child;
     }
 
-    public FatEntry getEntryByName(String name) throws IOException {
+    public synchronized FatEntry getEntryByName(String name) throws IOException {
         FatEntry child = null;
         FatEntriesFactory f = new FatEntriesFactory(this, false);
 
@@ -350,11 +350,11 @@ public class FatDirectory extends FatEntry implements FSDirectory, FSDirectoryId
         return child;
     }
 
-    public boolean collide(byte[] shortName) throws IOException {
+    public synchronized boolean collide(byte[] shortName) throws IOException {
         return !(getEntryByShortName(shortName) == null);
     }
 
-    public boolean collide(String name) throws IOException {
+    public synchronized boolean collide(String name) throws IOException {
         if (children.get(name) != null) {
             return true;
         }
@@ -362,7 +362,7 @@ public class FatDirectory extends FatEntry implements FSDirectory, FSDirectoryId
         return result;
     }
 
-    public boolean isEmpty() {
+    public synchronized boolean isEmpty() {
         if (isRoot())
             return false;
         Iterator<FSEntry> i = iterator();
