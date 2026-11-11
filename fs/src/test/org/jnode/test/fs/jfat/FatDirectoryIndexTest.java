@@ -321,6 +321,53 @@ public class FatDirectoryIndexTest {
     }
 
     @Test
+    public void testDeletedSlotIsReusedOnRecreate() throws Exception {
+        FatFileSystem fs = formatAndOpenRW();
+        try {
+            FSDirectory rootDir = fs.getRootEntry().getDirectory();
+            for (int i = 0; i < 12; i++) {
+                rootDir.addFile("slot" + i + ".txt");
+            }
+            FSEntry victim = rootDir.getEntry("slot3.txt");
+            String victimIndex = victim.getId();
+            fs.flush();
+
+            rootDir.remove("slot3.txt");
+            FSEntry recreated = rootDir.addFile("slot3.txt");
+            fs.flush();
+
+            assertEquals("a recreated file must reuse the freed slot instead of extending the directory",
+                victimIndex, recreated.getId());
+        } finally {
+            fs.close();
+        }
+    }
+
+    @Test
+    public void testDeletedSlotIsReusedOnRecreateInGrowingDirectory() throws Exception {
+        FatFileSystem fs = formatAndOpenRW();
+        try {
+            FSDirectory rootDir = fs.getRootEntry().getDirectory();
+            FSDirectory subdir = rootDir.addDirectory("growth").getDirectory();
+            for (int i = 0; i < 40; i++) {
+                subdir.addFile("grow" + i + ".txt");
+            }
+            FSEntry victim = subdir.getEntry("grow5.txt");
+            String victimIndex = victim.getId();
+            fs.flush();
+
+            subdir.remove("grow5.txt");
+            FSEntry recreated = subdir.addFile("grow5.txt");
+            fs.flush();
+
+            assertEquals("a freed slot must stay reusable after the directory grew past one cluster",
+                victimIndex, recreated.getId());
+        } finally {
+            fs.close();
+        }
+    }
+
+    @Test
     public void testRenameSiblingPreservesUnflushedFileInstance() throws Exception {
         FatFileSystem fs = formatAndOpenRW();
         try {
