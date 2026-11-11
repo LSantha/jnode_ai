@@ -320,6 +320,28 @@ public class FatDirectoryIndexTest {
         }
     }
 
+    @Test
+    public void testRenameSiblingPreservesUnflushedFileInstance() throws Exception {
+        FatFileSystem fs = formatAndOpenRW();
+        try {
+            FSDirectory rootDir = fs.getRootEntry().getDirectory();
+            FatEntry original = (FatEntry) rootDir.addFile("writer-longname.txt");
+            byte[] payload = new byte[] {1, 2, 3, 4, 5, 6, 7, 8, 9, 10};
+            original.getFile().write(0, ByteBuffer.wrap(payload));
+            int startCluster = original.getStartCluster();
+
+            FSEntry sibling = rootDir.addFile("other.txt");
+            sibling.setName("other2.txt");
+
+            FSEntry lookedUp = rootDir.getEntry("writer-longname.txt");
+            assertSame("renaming a sibling must not replace a live entry with unflushed writes", original, lookedUp);
+            assertEquals(payload.length, lookedUp.getFile().getLength());
+            assertEquals(startCluster, ((FatEntry) lookedUp).getStartCluster());
+        } finally {
+            fs.close();
+        }
+    }
+
     private void renameEntry(FSDirectory rootDir, String from, String to) throws IOException {
         FatEntry entry = (FatEntry) rootDir.getEntry(from);
         assertNotNull(entry);

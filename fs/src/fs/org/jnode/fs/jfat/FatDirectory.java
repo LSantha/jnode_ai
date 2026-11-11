@@ -323,11 +323,12 @@ public class FatDirectory extends FatEntry implements FSDirectory, FSDirectoryId
             FatEntry entry = f.createNextEntry();
             if (entry.getEntry().isFreeDirEntry()) {
                 FatEntry existing = idMap.get(entry.getId());
-                if (existing != null && sameShortEntry(existing, entry))
+                if (existing != null && (existing.isDirty() || sameShortEntry(existing, entry)))
                     entry = existing;
             } else {
                 FatEntry existing = children.get(entry.getName());
-                if (existing != null && existing.getIndex() == entry.getIndex() && sameShortEntry(existing, entry))
+                if (existing != null && existing.getIndex() == entry.getIndex()
+                    && (existing.isDirty() || sameShortEntry(existing, entry)))
                     entry = existing;
             }
             ordered.add(entry);
