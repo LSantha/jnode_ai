@@ -183,6 +183,7 @@ public class FatEntry extends FatObject implements FSEntry, FSEntryCreated, FSEn
             }
 
             dir.replaceInIdMap(this, oldId);
+            dir.invalidateIndex();
         }
     }
 

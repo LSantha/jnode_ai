@@ -79,6 +79,7 @@ public class FatRootDirectory extends FatDirectory {
 
         long rootDirectoryOffset = bootSector.getFirstRootDirSector() * bootSector.getBytesPerSector();
         getFatFileSystem().getApi().write(rootDirectoryOffset + 32L * entry.getIndex(), entry.getByteBuffer());
+        onShortEntryWritten(entry);
     }
 
     public String getShortName() {

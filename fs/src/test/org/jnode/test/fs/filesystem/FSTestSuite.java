@@ -34,6 +34,7 @@ import org.jnode.test.fs.jfat.FatChainConcurrencyTest;
 import org.jnode.test.fs.jfat.FatChainReadHintTest;
 import org.jnode.test.fs.jfat.FatDirectoryConcurrencyTest;
 import org.jnode.test.fs.jfat.FatDirectoryExtensionTest;
+import org.jnode.test.fs.jfat.FatDirectoryIndexTest;
 import org.jnode.test.fs.jfat.FatCopyComparisonTest;
 import org.jnode.test.fs.jfat.FatFileSystemTest;
 import org.jnode.test.fs.jfat.FatFormatterRoundTripTest;
@@ -84,6 +85,7 @@ import org.junit.runners.Suite.SuiteClasses;
     FatSetLengthTest.class,
     FatSizeBoundaryTest.class,
     FatDirectoryExtensionTest.class,
+    FatDirectoryIndexTest.class,
     FatFileSystemTest.class,
     FatCopyComparisonTest.class,
     FatFormatterRoundTripTest.class,

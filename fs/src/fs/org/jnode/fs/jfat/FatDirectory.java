@@ -22,8 +22,11 @@ package org.jnode.fs.jfat;
 
 import java.io.FileNotFoundException;
 import java.io.IOException;
+import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.HashMap;
 import java.util.Iterator;
+import java.util.List;
 import java.util.Map;
 import java.util.NoSuchElementException;
 import org.jnode.fs.FSDirectory;
@@ -39,6 +42,10 @@ public class FatDirectory extends FatEntry implements FSDirectory, FSDirectoryId
      * The map of ID -> entry.
      */
     private final Map<String, FatEntry> idMap = new HashMap<String, FatEntry>();
+
+    private final Map<ShortNameKey, FatEntry> shortNames = new HashMap<ShortNameKey, FatEntry>();
+
+    private boolean indexBuilt;
 
     /**
      * Cluster-level read buffer for directory entries. Avoids reading 32 bytes at a time.
@@ -180,6 +187,22 @@ public class FatDirectory extends FatEntry implements FSDirectory, FSDirectoryId
         getChain().write(entry.getIndex() * entry.length(), entry.getByteBuffer());
         entryClusterBuffer = null;
         entryClusterIndex = -1;
+        onShortEntryWritten(entry);
+    }
+
+    synchronized void onShortEntryWritten(FatDirEntry entry) {
+        if (!entry.isShortDirEntry())
+            return;
+
+        if (entry.getByteBuffer().get(0) != (byte) FatDirEntry.FREE)
+            return;
+
+        String id = Integer.toString(entry.getIndex());
+        FatEntry cached = idMap.get(id);
+        if (cached != null) {
+            children.removeIfPresent(cached);
+            shortNames.remove(new ShortNameKey(cached.getEntry().getName()));
+        }
     }
 
     public synchronized FatDirEntry[] getFatFreeEntries(int n) throws IOException {
@@ -284,70 +307,72 @@ public class FatDirectory extends FatEntry implements FSDirectory, FSDirectoryId
             f.createNextEntry();
     }
 
-    public synchronized FSEntry getEntry(String name) throws IOException {
-        FatEntry child = children.get(name);
+    synchronized void invalidateIndex() {
+        indexBuilt = false;
+    }
 
-        if (child == null) {
-            FatEntriesFactory f = new FatEntriesFactory(this, false);
+    private void ensureIndex() throws IOException {
+        if (indexBuilt)
+            return;
 
-            while (f.hasNextEntry()) {
-                FatEntry entry = f.createNextEntry();
-                if (FatUtils.compareIgnoreCase(entry.getName(), name)) {
-                    child = children.put(entry);
-                    break;
-                }
+        List<FatEntry> ordered = new ArrayList<FatEntry>();
+
+        FatEntriesFactory f = new FatEntriesFactory(this, true);
+
+        while (f.hasNextEntry()) {
+            FatEntry entry = f.createNextEntry();
+            if (entry.getEntry().isFreeDirEntry()) {
+                FatEntry existing = idMap.get(entry.getId());
+                if (existing != null && sameShortEntry(existing, entry))
+                    entry = existing;
+            } else {
+                FatEntry existing = children.get(entry.getName());
+                if (existing != null && existing.getIndex() == entry.getIndex() && sameShortEntry(existing, entry))
+                    entry = existing;
+            }
+            ordered.add(entry);
+        }
+
+        children.clear();
+        idMap.clear();
+        shortNames.clear();
+        for (int i = 0; i < ordered.size(); i++) {
+            FatEntry entry = ordered.get(i);
+            idMap.put(entry.getId(), entry);
+            if (!entry.getEntry().isFreeDirEntry()) {
+                children.look(entry);
+                shortNames.put(new ShortNameKey(entry.getEntry().getName()), entry);
             }
         }
 
-        return child;
+        indexBuilt = true;
+    }
+
+    private static boolean sameShortEntry(FatEntry a, FatEntry b) {
+        return Arrays.equals(a.getEntry().getByteBuffer().array(), b.getEntry().getByteBuffer().array());
+    }
+
+    public synchronized FSEntry getEntry(String name) throws IOException {
+        ensureIndex();
+        return children.get(name);
     }
 
     @Override
     public synchronized FSEntry getEntryById(String id) throws IOException {
-        FatEntry child = idMap.get(id);
-
-        if (child == null) {
-            FatEntriesFactory f = new FatEntriesFactory(this, true);
-
-            while (f.hasNextEntry()) {
-                FatEntry entry = f.createNextEntry();
-                idMap.put(entry.getId(), entry);
-            }
-
-            return idMap.get(id);
-        }
-
-        return child;
+        ensureIndex();
+        return idMap.get(id);
     }
 
     public synchronized FatEntry getEntryByShortName(byte[] shortName) throws IOException {
-        FatEntry child = null;
-        FatEntriesFactory f = new FatEntriesFactory(this, false);
-
-        while (f.hasNextEntry()) {
-            FatEntry entry = f.createNextEntry();
-            if (entry.isShortName(shortName)) {
-                child = entry;
-                break;
-            }
-        }
-
-        return child;
+        if (shortName.length != 11)
+            throw new IllegalArgumentException("illegal shortname length: " + shortName.length);
+        ensureIndex();
+        return shortNames.get(new ShortNameKey(shortName));
     }
 
     public synchronized FatEntry getEntryByName(String name) throws IOException {
-        FatEntry child = null;
-        FatEntriesFactory f = new FatEntriesFactory(this, false);
-
-        while (f.hasNextEntry()) {
-            FatEntry entry = f.createNextEntry();
-            if (FatUtils.compareIgnoreCase(entry.getName(), name)) {
-                child = entry;
-                break;
-            }
-        }
-
-        return child;
+        ensureIndex();
+        return children.get(name);
     }
 
     public synchronized boolean collide(byte[] shortName) throws IOException {
@@ -355,11 +380,8 @@ public class FatDirectory extends FatEntry implements FSDirectory, FSDirectoryId
     }
 
     public synchronized boolean collide(String name) throws IOException {
-        if (children.get(name) != null) {
-            return true;
-        }
-        boolean result = !(getEntryByName(name) == null);
-        return result;
+        ensureIndex();
+        return children.get(name) != null;
     }
 
     public synchronized boolean isEmpty() {
@@ -385,6 +407,8 @@ public class FatDirectory extends FatEntry implements FSDirectory, FSDirectoryId
 
         FatEntry entry = children.put(file);
         idMap.put(entry.getId(), entry);
+        if (indexBuilt)
+            shortNames.put(new ShortNameKey(entry.getEntry().getName()), entry);
         return entry;
     }
 
@@ -401,6 +425,8 @@ public class FatDirectory extends FatEntry implements FSDirectory, FSDirectoryId
 
         FatEntry entry = children.put(dir);
         idMap.put(entry.getId(), entry);
+        if (indexBuilt)
+            shortNames.put(new ShortNameKey(entry.getEntry().getName()), entry);
         return entry;
     }
 
@@ -410,7 +436,6 @@ public class FatDirectory extends FatEntry implements FSDirectory, FSDirectoryId
             throw new FileNotFoundException(name);
         if (entry.isFile()) {
             FatFile file = (FatFile) entry.getFile();
-            children.remove(entry);
             file.delete();
             file.freeAllClusters();
             file.flush();
@@ -418,13 +443,13 @@ public class FatDirectory extends FatEntry implements FSDirectory, FSDirectoryId
             FatDirectory dir = (FatDirectory) entry;
             if (!dir.isEmpty())
                 throw new UnsupportedOperationException("Directory is not empty: " + name);
-            children.remove(entry);
             dir.delete();
             dir.freeAllClusters();
             dir.flush();
         }
 
-        idMap.remove(entry.getId());
+        children.removeIfPresent(entry);
+        shortNames.remove(new ShortNameKey(entry.getEntry().getName()));
     }
 
     @Override
@@ -442,5 +467,33 @@ public class FatDirectory extends FatEntry implements FSDirectory, FSDirectoryId
         out.println("Visited\t\t" + getVisitedChildren());
         out.print("*******************************************");
         return out.toString();
+    }
+
+    private static final class ShortNameKey {
+        private final byte[] key;
+        private final int hash;
+
+        private ShortNameKey(byte[] shortName) {
+            this.key = shortName.clone();
+            int h = 0;
+            for (int i = 0; i < this.key.length; i++) {
+                h = 31 * h + this.key[i];
+            }
+            this.hash = h;
+        }
+
+        @Override
+        public int hashCode() {
+            return hash;
+        }
+
+        @Override
+        public boolean equals(Object obj) {
+            if (this == obj)
+                return true;
+            if (!(obj instanceof ShortNameKey))
+                return false;
+            return Arrays.equals(key, ((ShortNameKey) obj).key);
+        }
     }
 }

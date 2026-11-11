@@ -81,6 +81,10 @@ public class FatTable {
         return table.size();
     }
 
+    public void clear() {
+        table.clear();
+    }
+
     /**
      * Print FAT table content.
      */
