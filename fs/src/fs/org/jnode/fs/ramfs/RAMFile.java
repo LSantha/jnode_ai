@@ -270,13 +270,14 @@ public class RAMFile implements FSEntry, FSFile {
     public void read(long fileOffset, ByteBuffer dest) throws IOException {
 
         long currentSize = bufferList.limit();
-        long toRead = dest.limit();
+        int toRead = dest.remaining();
 
         if (fileOffset + toRead > currentSize)
             throw new IOException("FileOffest outside file");
 
         bufferList.position((int) fileOffset);
-        bufferList.get(dest.array(), 0, dest.limit());
+        bufferList.get(dest.array(), dest.arrayOffset() + dest.position(), toRead);
+        dest.position(dest.position() + toRead);
     }
 
     /**
@@ -287,7 +288,7 @@ public class RAMFile implements FSEntry, FSFile {
     public void write(long fileOffset, ByteBuffer src) throws IOException {
 
         long currentSize = bufferList.limit();
-        long toWrite = src.limit();
+        long toWrite = src.remaining();
 
         if (fileOffset + toWrite >= currentSize)
             setLength(fileOffset + toWrite);
