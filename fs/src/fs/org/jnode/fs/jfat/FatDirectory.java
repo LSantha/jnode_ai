@@ -45,6 +45,8 @@ public class FatDirectory extends FatEntry implements FSDirectory, FSDirectoryId
 
     private final Map<ShortNameKey, FatEntry> shortNames = new HashMap<ShortNameKey, FatEntry>();
 
+    private final ShortNameKey probeKey = new ShortNameKey();
+
     private boolean indexBuilt;
 
     /**
@@ -371,6 +373,14 @@ public class FatDirectory extends FatEntry implements FSDirectory, FSDirectoryId
         return shortNames.get(new ShortNameKey(shortName));
     }
 
+    synchronized boolean shortNameInUse(byte[] shortName) throws IOException {
+        if (shortName.length != 11)
+            throw new IllegalArgumentException("illegal shortname length: " + shortName.length);
+        ensureIndex();
+        probeKey.reset(shortName);
+        return shortNames.get(probeKey) != null;
+    }
+
     public synchronized FatEntry getEntryByName(String name) throws IOException {
         ensureIndex();
         return children.get(name);
@@ -471,16 +481,30 @@ public class FatDirectory extends FatEntry implements FSDirectory, FSDirectoryId
     }
 
     private static final class ShortNameKey {
-        private final byte[] key;
-        private final int hash;
+        private byte[] key;
+        private int hash;
 
         private ShortNameKey(byte[] shortName) {
             this.key = shortName.clone();
+            this.hash = hash(this.key);
+        }
+
+        private ShortNameKey() {
+            this.key = new byte[0];
+            this.hash = 0;
+        }
+
+        private void reset(byte[] shortName) {
+            this.key = shortName;
+            this.hash = hash(shortName);
+        }
+
+        private static int hash(byte[] key) {
             int h = 0;
-            for (int i = 0; i < this.key.length; i++) {
-                h = 31 * h + this.key[i];
+            for (int i = 0; i < key.length; i++) {
+                h = 31 * h + key[i];
             }
-            this.hash = h;
+            return h;
         }
 
         @Override
