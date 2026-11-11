@@ -173,13 +173,6 @@ public class FatName {
     }
 
     /*
-     * internal utility routine
-     */
-    boolean collide(byte[] name) throws IOException {
-        return parent.collide(name);
-    }
-
-    /*
      * Basis-Name Phase1: Step1 and Step2
      */
     private byte[] encode() throws CharacterCodingException {
@@ -257,9 +250,8 @@ public class FatName {
     }
 
     private void numericTail() throws IOException {
-        int i, j, l, p;
+        int i, l, p;
         byte[] nbasis = new byte[11];
-        StringBuilder btail = new StringBuilder(7);
 
         for (p = 7; p >= 0; p--)
             if (basis[p] != space)
@@ -268,25 +260,24 @@ public class FatName {
         for (i = 1; i <= 999999; i++) {
             System.arraycopy(basis, 0, nbasis, 0, 11);
 
-            btail.setLength(0);
-            btail.append(i);
+            int tailLength = 0;
+            for (int v = i; v != 0; v /= 10)
+                tailLength++;
 
-            byte[] tail = encoder.encode(btail.toString());
+            if (tailLength > 6)
+                throw new IOException("tail too long: " + tailLength);
 
-            if (tail.length > 6)
-                throw new IOException("tail too long: " + tail.length);
-
-            if ((p + tail.length) < 8)
+            if ((p + tailLength) < 8)
                 l = p + 1;
             else
-                l = 7 - tail.length;
+                l = 7 - tailLength;
 
             nbasis[l] = tilde;
 
-            for (j = l; j < (l + tail.length); j++)
-                nbasis[j + 1] = tail[j - l];
+            for (int d = l + tailLength, v = i; d > l; d--, v /= 10)
+                nbasis[d] = (byte) ('0' + (v % 10));
 
-            if (!collide(nbasis)) {
+            if (!parent.shortNameInUse(nbasis)) {
                 basis = nbasis;
                 return;
             }
