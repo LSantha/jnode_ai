@@ -53,6 +53,8 @@ public class FatDirectory extends FatEntry implements FSDirectory, FSDirectoryId
 
     private final Map<TailFamilyKey, TailFamilyState> tailFamilies = new HashMap<TailFamilyKey, TailFamilyState>();
 
+    private final Map<ShortNameKey, List<BlockRef>> blockedByName = new HashMap<ShortNameKey, List<BlockRef>>();
+
     private boolean indexBuilt;
 
     private int freeSlotHint;
@@ -393,6 +395,7 @@ public class FatDirectory extends FatEntry implements FSDirectory, FSDirectoryId
 
     private void rebuildTailFamilies(List<FatEntry> ordered) {
         tailFamilies.clear();
+        blockedByName.clear();
 
         Map<TailFamilyKey, TreeSet<Integer>> used = new HashMap<TailFamilyKey, TreeSet<Integer>>();
 
@@ -459,8 +462,44 @@ public class FatDirectory extends FatEntry implements FSDirectory, FSDirectoryId
             tailFamilies.put(key, state);
         }
         state.released.remove(Integer.valueOf(tail));
+        state.blocked.remove(Integer.valueOf(tail));
         if (tail >= state.nextFresh)
             state.nextFresh = tail + 1;
+    }
+
+    synchronized void noteTailBlocked(byte[] preTailBasis, int tail, byte[] blockerShortName) {
+        TailFamilyKey key = new TailFamilyKey(preTailBasis);
+        TailFamilyState state = tailFamilies.get(key);
+        if (state == null) {
+            state = new TailFamilyState();
+            tailFamilies.put(key, state);
+        }
+        if (state.blocked.add(Integer.valueOf(tail))) {
+            state.released.remove(Integer.valueOf(tail));
+            if (tail >= state.nextFresh)
+                state.nextFresh = tail + 1;
+        }
+        ShortNameKey nameKey = new ShortNameKey(blockerShortName);
+        List<BlockRef> refs = blockedByName.get(nameKey);
+        if (refs == null) {
+            refs = new ArrayList<BlockRef>();
+            blockedByName.put(nameKey, refs);
+        }
+        refs.add(new BlockRef(key, tail));
+    }
+
+    private void unblockTailBlockedBy(byte[] shortName) {
+        List<BlockRef> refs = blockedByName.remove(new ShortNameKey(shortName));
+        if (refs == null)
+            return;
+        for (int i = 0; i < refs.size(); i++) {
+            BlockRef ref = refs.get(i);
+            TailFamilyState state = tailFamilies.get(ref.family);
+            if (state == null)
+                continue;
+            if (state.blocked.remove(Integer.valueOf(ref.tail)) && ref.tail < state.nextFresh)
+                state.released.add(Integer.valueOf(ref.tail));
+        }
     }
 
     synchronized void noteTailReleased(byte[] preTailBasis, int tail) {
@@ -472,6 +511,8 @@ public class FatDirectory extends FatEntry implements FSDirectory, FSDirectoryId
         }
         if (tail >= state.nextFresh)
             return;
+        if (state.blocked.contains(Integer.valueOf(tail)))
+            return;
         state.released.add(Integer.valueOf(tail));
     }
 
@@ -479,19 +520,18 @@ public class FatDirectory extends FatEntry implements FSDirectory, FSDirectoryId
         if (entry == null)
             return;
 
-        int tail = FatName.parseNumericTail(entry.getEntry().getName());
-        if (tail <= 0)
-            return;
-
         try {
-            FatName.PreTail pt = FatName.computePreTail(entry.getName(),
-                getFatFileSystem().getCodePage());
-            if (!pt.isMangled())
-                return;
-            noteTailReleased(pt.basis(), tail);
+            int tail = FatName.parseNumericTail(entry.getEntry().getName());
+            if (tail > 0) {
+                FatName.PreTail pt = FatName.computePreTail(entry.getName(),
+                    getFatFileSystem().getCodePage());
+                if (pt.isMangled())
+                    noteTailReleased(pt.basis(), tail);
+            }
         } catch (IOException ex) {
             log.debug("unable to release short name tail", ex);
         }
+        unblockTailBlockedBy(entry.getEntry().getName());
     }
 
     private static boolean sameShortEntry(FatEntry a, FatEntry b) {
@@ -693,5 +733,16 @@ public class FatDirectory extends FatEntry implements FSDirectory, FSDirectoryId
     private static final class TailFamilyState {
         private int nextFresh = 1;
         private final TreeSet<Integer> released = new TreeSet<Integer>();
+        private final TreeSet<Integer> blocked = new TreeSet<Integer>();
+    }
+
+    private static final class BlockRef {
+        private final TailFamilyKey family;
+        private final int tail;
+
+        private BlockRef(TailFamilyKey family, int tail) {
+            this.family = family;
+            this.tail = tail;
+        }
     }
 }

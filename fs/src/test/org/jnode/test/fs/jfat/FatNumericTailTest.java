@@ -217,6 +217,22 @@ public class FatNumericTailTest {
     }
 
     @Test
+    public void testCrossFamilyCollisionDoesNotConsumeTail() throws Exception {
+        FatFileSystem fs = formatAndOpenRW();
+        try {
+            FSDirectory rootDir = fs.getRootEntry().getDirectory();
+            assertEquals("AAAAAA~1.TX_", addAndGetShortName(rootDir, stemName("AAAAAAA", 1)));
+            assertEquals("AAAAAA~2.TX_", addAndGetShortName(rootDir, stemName("AAAAAA", 1)));
+
+            rootDir.remove(stemName("AAAAAAA", 1));
+
+            assertEquals("AAAAAA~1.TX_", addAndGetShortName(rootDir, stemName("AAAAAA", 2)));
+        } finally {
+            fs.close();
+        }
+    }
+
+    @Test
     public void testNextFreshKeepsLowestFreeTailAfterManyDeletes() throws Exception {
         FatFileSystem fs = formatAndOpenRW();
         try {

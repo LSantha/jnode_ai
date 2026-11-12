@@ -320,12 +320,13 @@ public class FatName {
                 nbasis[d] = (byte) ('0' + (v % 10));
 
             boolean free = !parent.shortNameInUse(nbasis);
-            parent.noteTailTaken(basis, i);
             if (free) {
+                parent.noteTailTaken(basis, i);
                 basis = nbasis;
                 return;
             }
 
+            parent.noteTailBlocked(basis, i, nbasis);
             i = parent.suggestTail(basis);
         }
     }
