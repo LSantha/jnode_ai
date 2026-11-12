@@ -29,12 +29,16 @@ import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 import java.util.NoSuchElementException;
+import java.util.TreeSet;
+import org.apache.log4j.Logger;
 import org.jnode.fs.FSDirectory;
 import org.jnode.fs.FSDirectoryId;
 import org.jnode.fs.FSEntry;
 
 public class FatDirectory extends FatEntry implements FSDirectory, FSDirectoryId {
     public static final int MAXENTRIES = 65535; // 2^16-1; fatgen 1.03, page 33
+
+    private static final Logger log = Logger.getLogger(FatDirectory.class);
 
     private final FatTable children = new FatTable();
 
@@ -46,6 +50,10 @@ public class FatDirectory extends FatEntry implements FSDirectory, FSDirectoryId
     private final Map<ShortNameKey, FatEntry> shortNames = new HashMap<ShortNameKey, FatEntry>();
 
     private final ShortNameKey probeKey = new ShortNameKey();
+
+    private final Map<TailFamilyKey, TailFamilyState> tailFamilies = new HashMap<TailFamilyKey, TailFamilyState>();
+
+    private final Map<ShortNameKey, List<BlockRef>> blockedByName = new HashMap<ShortNameKey, List<BlockRef>>();
 
     private boolean indexBuilt;
 
@@ -208,6 +216,8 @@ public class FatDirectory extends FatEntry implements FSDirectory, FSDirectoryId
         if (cached != null) {
             children.removeIfPresent(cached);
             shortNames.remove(new ShortNameKey(cached.getEntry().getName()));
+            if (cached.getEntry() == entry)
+                releaseShortTail(cached);
         }
     }
 
@@ -379,6 +389,149 @@ public class FatDirectory extends FatEntry implements FSDirectory, FSDirectoryId
         }
 
         indexBuilt = true;
+
+        rebuildTailFamilies(ordered);
+    }
+
+    private void rebuildTailFamilies(List<FatEntry> ordered) {
+        tailFamilies.clear();
+        blockedByName.clear();
+
+        Map<TailFamilyKey, TreeSet<Integer>> used = new HashMap<TailFamilyKey, TreeSet<Integer>>();
+
+        CodePage cp = getFatFileSystem().getCodePage();
+
+        for (int i = 0; i < ordered.size(); i++) {
+            FatEntry entry = ordered.get(i);
+            if (entry.getEntry().isFreeDirEntry())
+                continue;
+
+            int tail = FatName.parseNumericTail(entry.getEntry().getName());
+            if (tail <= 0)
+                continue;
+
+            FatName.PreTail pt;
+            try {
+                pt = FatName.computePreTail(entry.getName(), cp);
+            } catch (java.io.IOException ex) {
+                continue;
+            }
+            if (!pt.isMangled())
+                continue;
+
+            TailFamilyKey key = new TailFamilyKey(pt.basis());
+            TreeSet<Integer> tails = used.get(key);
+            if (tails == null) {
+                tails = new TreeSet<Integer>();
+                used.put(key, tails);
+            }
+            tails.add(Integer.valueOf(tail));
+        }
+
+        for (Map.Entry<TailFamilyKey, TreeSet<Integer>> e : used.entrySet()) {
+            TreeSet<Integer> tails = e.getValue();
+            int max = tails.last().intValue();
+            TailFamilyState state = new TailFamilyState();
+            state.nextFresh = max + 1;
+            boolean[] live = new boolean[max + 1];
+            for (Integer tail : tails)
+                live[tail.intValue()] = true;
+            for (int t = 1; t < state.nextFresh; t++)
+                if (!live[t])
+                    state.released.add(Integer.valueOf(t));
+            tailFamilies.put(e.getKey(), state);
+        }
+    }
+
+    synchronized int suggestTail(byte[] preTailBasis) throws IOException {
+        ensureIndex();
+
+        TailFamilyState state = tailFamilies.get(new TailFamilyKey(preTailBasis));
+        if (state == null)
+            return 1;
+        if (!state.released.isEmpty())
+            return state.released.first().intValue();
+        return state.nextFresh;
+    }
+
+    synchronized void noteTailTaken(byte[] preTailBasis, int tail) {
+        TailFamilyKey key = new TailFamilyKey(preTailBasis);
+        TailFamilyState state = tailFamilies.get(key);
+        if (state == null) {
+            state = new TailFamilyState();
+            tailFamilies.put(key, state);
+        }
+        state.released.remove(Integer.valueOf(tail));
+        state.blocked.remove(Integer.valueOf(tail));
+        if (tail >= state.nextFresh)
+            state.nextFresh = tail + 1;
+    }
+
+    synchronized void noteTailBlocked(byte[] preTailBasis, int tail, byte[] blockerShortName) {
+        TailFamilyKey key = new TailFamilyKey(preTailBasis);
+        TailFamilyState state = tailFamilies.get(key);
+        if (state == null) {
+            state = new TailFamilyState();
+            tailFamilies.put(key, state);
+        }
+        if (state.blocked.add(Integer.valueOf(tail))) {
+            state.released.remove(Integer.valueOf(tail));
+            if (tail >= state.nextFresh)
+                state.nextFresh = tail + 1;
+        }
+        ShortNameKey nameKey = new ShortNameKey(blockerShortName);
+        List<BlockRef> refs = blockedByName.get(nameKey);
+        if (refs == null) {
+            refs = new ArrayList<BlockRef>();
+            blockedByName.put(nameKey, refs);
+        }
+        refs.add(new BlockRef(key, tail));
+    }
+
+    private void unblockTailBlockedBy(byte[] shortName) {
+        List<BlockRef> refs = blockedByName.remove(new ShortNameKey(shortName));
+        if (refs == null)
+            return;
+        for (int i = 0; i < refs.size(); i++) {
+            BlockRef ref = refs.get(i);
+            TailFamilyState state = tailFamilies.get(ref.family);
+            if (state == null)
+                continue;
+            if (state.blocked.remove(Integer.valueOf(ref.tail)) && ref.tail < state.nextFresh)
+                state.released.add(Integer.valueOf(ref.tail));
+        }
+    }
+
+    synchronized void noteTailReleased(byte[] preTailBasis, int tail) {
+        TailFamilyKey key = new TailFamilyKey(preTailBasis);
+        TailFamilyState state = tailFamilies.get(key);
+        if (state == null) {
+            state = new TailFamilyState();
+            tailFamilies.put(key, state);
+        }
+        if (tail >= state.nextFresh)
+            return;
+        if (state.blocked.contains(Integer.valueOf(tail)))
+            return;
+        state.released.add(Integer.valueOf(tail));
+    }
+
+    synchronized void releaseShortTail(FatEntry entry) {
+        if (entry == null)
+            return;
+
+        try {
+            int tail = FatName.parseNumericTail(entry.getEntry().getName());
+            if (tail > 0) {
+                FatName.PreTail pt = FatName.computePreTail(entry.getName(),
+                    getFatFileSystem().getCodePage());
+                if (pt.isMangled())
+                    noteTailReleased(pt.basis(), tail);
+            }
+        } catch (IOException ex) {
+            log.debug("unable to release short name tail", ex);
+        }
+        unblockTailBlockedBy(entry.getEntry().getName());
     }
 
     private static boolean sameShortEntry(FatEntry a, FatEntry b) {
@@ -491,6 +644,7 @@ public class FatDirectory extends FatEntry implements FSDirectory, FSDirectoryId
 
         children.removeIfPresent(entry);
         shortNames.remove(new ShortNameKey(entry.getEntry().getName()));
+        releaseShortTail(entry);
     }
 
     @Override
@@ -549,6 +703,46 @@ public class FatDirectory extends FatEntry implements FSDirectory, FSDirectoryId
             if (!(obj instanceof ShortNameKey))
                 return false;
             return Arrays.equals(key, ((ShortNameKey) obj).key);
+        }
+    }
+
+    private static final class TailFamilyKey {
+        private final byte[] key;
+        private final int hash;
+
+        private TailFamilyKey(byte[] preTailBasis) {
+            this.key = preTailBasis.clone();
+            this.hash = Arrays.hashCode(this.key);
+        }
+
+        @Override
+        public int hashCode() {
+            return hash;
+        }
+
+        @Override
+        public boolean equals(Object obj) {
+            if (this == obj)
+                return true;
+            if (!(obj instanceof TailFamilyKey))
+                return false;
+            return Arrays.equals(key, ((TailFamilyKey) obj).key);
+        }
+    }
+
+    private static final class TailFamilyState {
+        private int nextFresh = 1;
+        private final TreeSet<Integer> released = new TreeSet<Integer>();
+        private final TreeSet<Integer> blocked = new TreeSet<Integer>();
+    }
+
+    private static final class BlockRef {
+        private final TailFamilyKey family;
+        private final int tail;
+
+        private BlockRef(TailFamilyKey family, int tail) {
+            this.family = family;
+            this.tail = tail;
         }
     }
 }
