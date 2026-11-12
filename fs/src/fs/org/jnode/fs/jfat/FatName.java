@@ -49,7 +49,6 @@ public class FatName {
     private final FatDirectory parent;
     @SuppressWarnings("unused")
     private final String name;
-    private final CodePageEncoder encoder;
     private final CodePageDecoder decoder;
 
     private final int numberOfComponents;
@@ -73,7 +72,6 @@ public class FatName {
 
         this.parent = parent;
         this.name = name;
-        this.encoder = cp.newEncoder();
         this.decoder = cp.newDecoder();
 
         this.longName = FatUtils.longName(name);
@@ -86,7 +84,11 @@ public class FatName {
 
         Arrays.fill(this.basis, 0, this.basis.length, space);
 
-        basisName();
+        PreTail preTail = computePreTail(this.longName, cp);
+        this.basis = preTail.basis;
+        this.lossy = preTail.lossy;
+        this.stripped = preTail.stripped;
+        this.fit = preTail.fit;
 
         /*
          * log.debug ( "lossy\t[" + lossy + "]" ); log.debug ( "stripped\t[" +
@@ -146,7 +148,7 @@ public class FatName {
     /*
      * internal utility routine
      */
-    private byte[] stripChar(byte[] name, byte ch, boolean strip) {
+    private static byte[] stripChar(byte[] name, byte ch, boolean strip, boolean[] strippedRef) {
         boolean flag = !strip;
         ByteBuffer b = ByteBuffer.allocate(name.length);
 
@@ -158,7 +160,7 @@ public class FatName {
                 if (name[i] != ch)
                     b.put(name[i]);
                 else
-                    stripped = true;
+                    strippedRef[0] = true;
             } else
                 b.put(name[i]);
         }
@@ -172,13 +174,10 @@ public class FatName {
         return n;
     }
 
-    /*
-     * Basis-Name Phase1: Step1 and Step2
-     */
-    private byte[] encode() throws CharacterCodingException {
-        byte[] n = encoder.encode(FatUtils.toUpperCase(longName), underscore);
-
-        lossy = encoder.isLossy();
+    static PreTail computePreTail(String longName, CodePage cp) throws CharacterCodingException {
+        CodePageEncoder enc = cp.newEncoder();
+        byte[] n = enc.encode(FatUtils.toUpperCase(longName), underscore);
+        boolean lossy = enc.isLossy();
 
         for (int i = 0; i < n.length; i++) {
             if (n[i] < 0x20) {
@@ -196,27 +195,73 @@ public class FatName {
             }
         }
 
-        return n;
+        boolean[] strippedRef = {false};
+        byte[] stripped = stripChar(stripChar(n, space, false, strippedRef), period, true, strippedRef);
+
+        byte[] basis = new byte[11];
+
+        Arrays.fill(basis, 0, basis.length, space);
+
+        boolean[] fitRef = {true};
+
+        primary(stripped, basis, fitRef);
+
+        return new PreTail(basis, lossy, strippedRef[0], fitRef[0]);
     }
 
-    /*
-     * Basis-Name Phase2: Step3 and Step4
-     */
-    private byte[] strip(byte[] name) {
-        return stripChar(stripChar(name, space, false), period, true);
+    static int parseNumericTail(byte[] shortName) {
+        if (shortName == null || shortName.length != 11)
+            return -1;
+
+        int tpos = -1;
+
+        for (int i = 0; i < 8; i++) {
+            if (shortName[i] == tilde) {
+                tpos = i;
+                break;
+            }
+        }
+
+        if (tpos < 0 || tpos == 7)
+            return -1;
+
+        int tail = 0;
+        int len = 0;
+        int i = tpos + 1;
+
+        while (i < 8) {
+            byte b = shortName[i];
+            if (b >= '0' && b <= '9') {
+                tail = tail * 10 + (b - '0');
+                len++;
+                if (len > 6 || tail > 999999)
+                    return -1;
+                i++;
+            } else
+                break;
+        }
+
+        if (len == 0)
+            return -1;
+
+        for (int j = tpos + 1 + len; j < 8; j++)
+            if (shortName[j] != space)
+                return -1;
+
+        return tail;
     }
 
     /*
      * Basis-Name Phase3: Step5, Step6(omitted) and Step7
      */
-    private void primary(byte[] name) {
+    private static void primary(byte[] name, byte[] basis, boolean[] fitRef) {
         int i;
 
         for (i = 0; i < name.length; i++) {
             if (name[i] == period)
                 break;
             if (i >= 8) {
-                fit = false;
+                fitRef[0] = false;
                 break;
             }
             basis[i] = name[i];
@@ -228,7 +273,7 @@ public class FatName {
 
         if (i != -1) {
             if (i > 8)
-                fit = false;
+                fitRef[0] = false;
 
             int j;
             int l = i + 1;
@@ -240,50 +285,49 @@ public class FatName {
             }
 
             if (j != name.length)
-                fit = false;
+                fitRef[0] = false;
         }
     }
 
-    private void basisName() throws CharacterCodingException {
-        primary(strip(encode()));
-
+    static int tailStart(int p, int tailLength) {
+        return Math.min(p + 1, 7 - tailLength);
     }
 
     private void numericTail() throws IOException {
-        int i, l, p;
+        int p, i;
         byte[] nbasis = new byte[11];
 
         for (p = 7; p >= 0; p--)
             if (basis[p] != space)
                 break;
 
-        for (i = 1; i <= 999999; i++) {
+        i = parent.suggestTail(basis);
+        for (;;) {
+            if (i > 999999)
+                throw new IOException("tail too large");
+
             System.arraycopy(basis, 0, nbasis, 0, 11);
 
             int tailLength = 0;
             for (int v = i; v != 0; v /= 10)
                 tailLength++;
 
-            if (tailLength > 6)
-                throw new IOException("tail too long: " + tailLength);
-
-            if ((p + tailLength) < 8)
-                l = p + 1;
-            else
-                l = 7 - tailLength;
+            int l = tailStart(p, tailLength);
 
             nbasis[l] = tilde;
 
             for (int d = l + tailLength, v = i; d > l; d--, v /= 10)
                 nbasis[d] = (byte) ('0' + (v % 10));
 
-            if (!parent.shortNameInUse(nbasis)) {
+            boolean free = !parent.shortNameInUse(nbasis);
+            parent.noteTailTaken(basis, i);
+            if (free) {
                 basis = nbasis;
                 return;
             }
-        }
 
-        throw new IOException("tail too large");
+            i = parent.suggestTail(basis);
+        }
     }
 
     public byte[] getName() {
@@ -342,5 +386,27 @@ public class FatName {
         out.print("*******************************************");
 
         return out.toString();
+    }
+
+    static final class PreTail {
+        private final byte[] basis;
+        private final boolean lossy;
+        private final boolean stripped;
+        private final boolean fit;
+
+        private PreTail(byte[] basis, boolean lossy, boolean stripped, boolean fit) {
+            this.basis = basis;
+            this.lossy = lossy;
+            this.stripped = stripped;
+            this.fit = fit;
+        }
+
+        byte[] basis() {
+            return basis;
+        }
+
+        boolean isMangled() {
+            return (lossy || stripped || !fit);
+        }
     }
 }

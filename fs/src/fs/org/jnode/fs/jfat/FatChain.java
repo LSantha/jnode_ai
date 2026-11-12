@@ -46,20 +46,8 @@ public class FatChain {
 
     private boolean dolog = false;
 
-    /**
-     * Incremented whenever the chain is structurally modified, and read by
-     * {@link #read} to decide whether a cached read-hint is still valid.
-     *
-     * <p>{@code volatile} supplies visibility; the atomicity of the increment
-     * comes from {@link #noteChainModified} being {@code synchronized}, so every
-     * update is serialised on this chain's monitor and a reader can only ever
-     * observe the pre- or post-increment value. Volatile alone would not give
-     * that - a read-modify-write under no lock can lose an update, and a lost
-     * update would leave the stamp unchanged, which is precisely the state that
-     * lets a stale read-hint survive.</p>
-     */
-    private volatile long modificationStamp;
-    private volatile ReadHint readHint;
+    private volatile ChainHint readHint;
+    private volatile ChainHint writeHint;
 
     public FatChain(FatFileSystem fs, int startEntry) {
         this.fs = fs;
@@ -70,9 +58,9 @@ public class FatChain {
         this.dirty = false;
     }
 
-    private synchronized void noteChainModified() {
-        modificationStamp++;
+    private void invalidateHints() {
         readHint = null;
+        writeHint = null;
     }
 
     private void mylog(String msg) {
@@ -92,7 +80,7 @@ public class FatChain {
             throw new IllegalArgumentException("illegal head: " + value);
 
         head = value;
-        noteChainModified();
+        invalidateHints();
 
         dirty = true;
     }
@@ -304,6 +292,7 @@ public class FatChain {
     }
 
     private void rollbackAllocated(List<Integer> allocated) {
+        invalidateHints();
         if (allocated == null || allocated.isEmpty()) {
             return;
         }
@@ -353,7 +342,6 @@ public class FatChain {
      */
 
     public void allocateAndClear(int n) throws IOException {
-        noteChainModified();
         try {
             int last = allocateTail(n, n - 1, 0, true);
             int first = getEndCluster();
@@ -370,7 +358,6 @@ public class FatChain {
                 setStartCluster(last);
             }
         } finally {
-            noteChainModified();
             fat.flush();
         }
     }
@@ -382,51 +369,47 @@ public class FatChain {
         if (n < 0)
             throw new IOException("n<0");
 
-        noteChainModified();
+        invalidateHints();
 
         // Hold the Fat monitor for the whole walk so no concurrent allocation
         // can claim a cluster that this chain is in the middle of releasing
         // (see allocateTail).
-        try {
-            synchronized (fat) {
-                int count = size();
+        synchronized (fat) {
+            int count = size();
 
-                if (count < n)
-                    throw new IOException("not enough cluster: count[" + count + "] n[" + n + "]");
+            if (count < n)
+                throw new IOException("not enough cluster: count[" + count + "] n[" + n + "]");
 
-                if (dolog)
-                    mylog("count[" + count + "] n[" + n + "]");
+            if (dolog)
+                mylog("count[" + count + "] n[" + n + "]");
 
-                ChainIterator i;
+            ChainIterator i;
 
-                try {
-                    if (count > n) {
-                        i = listIterator(count - n - 1);
-                        int l = i.next();
-                        fat.set(l, fat.eofChain());
-                        if (dolog)
-                            mylog(l + ":" + fat.eofChain());
-                    } else
-                        i = listIterator(0);
-
-                    while (i.hasNext()) {
-                        int l = i.next();
-                        fat.set(l, fat.freeEntry());
-                        if (dolog)
-                            mylog(l + ":" + fat.freeEntry());
-                    }
-                } finally {
-                    fat.flush();
-                }
-
-                if (count == n) {
-                    setStartCluster(0);
+            try {
+                if (count > n) {
+                    i = listIterator(count - n - 1);
+                    int l = i.next();
+                    fat.set(l, fat.eofChain());
                     if (dolog)
-                        mylog("zero");
+                        mylog(l + ":" + fat.eofChain());
+                } else
+                    i = listIterator(0);
+
+                while (i.hasNext()) {
+                    int l = i.next();
+                    fat.set(l, fat.freeEntry());
+                    if (dolog)
+                        mylog(l + ":" + fat.freeEntry());
                 }
+            } finally {
+                fat.flush();
             }
-        } finally {
-            noteChainModified();
+
+            if (count == n) {
+                setStartCluster(0);
+                if (dolog)
+                    mylog("zero");
+            }
         }
     }
 
@@ -434,28 +417,24 @@ public class FatChain {
      * implemented separately for efficiency
      */
     public void freeAllClusters() throws IOException {
-        noteChainModified();
+        invalidateHints();
         // Hold the Fat monitor for the whole walk so no concurrent allocation
         // can claim a cluster that this chain is in the middle of releasing
         // (see allocateTail).
-        try {
-            synchronized (fat) {
-                ChainIterator i = listIterator(0);
+        synchronized (fat) {
+            ChainIterator i = listIterator(0);
 
-                try {
-                    while (i.hasNext()) {
-                        int l = i.next();
-                        fat.set(l, fat.freeEntry());
-                    }
-                } finally {
-                    fat.flush();
+            try {
+                while (i.hasNext()) {
+                    int l = i.next();
+                    fat.set(l, fat.freeEntry());
                 }
+            } finally {
+                fat.flush();
             }
-
-            setStartCluster(0);
-        } finally {
-            noteChainModified();
         }
+
+        setStartCluster(0);
     }
 
     public void read(long offset, ByteBuffer dst) throws IOException {
@@ -466,14 +445,13 @@ public class FatChain {
             return;
 
         ChainPosition p = new ChainPosition(offset);
-        long stampAtStart = modificationStamp;
         ChainIterator i = listIterator();
         int targetIndex = p.getIndex();
-        ReadHint hint = readHint;
+        ChainHint hint = readHint;
 
-        if (hint != null && hint.stamp == stampAtStart && targetIndex >= hint.index) {
+        if (hint != null && hint.head == head && hint.index <= targetIndex) {
             try {
-                i.seekFromHint(hint.cursor, hint.index, targetIndex);
+                i.seekFromHint(hint.index, hint.prevCluster, targetIndex);
             } catch (NoSuchElementException ex) {
                 throw new ChainBeyondEndException("attempt to seek after End Of Chain " + offset, ex);
             }
@@ -485,6 +463,8 @@ public class FatChain {
             }
         }
 
+        int lastCluster = 0;
+
         for (int l = dst.remaining(), sz = p.getPartial(), ofs = p.getOffset(), size; l > 0; l -=
                 size, sz = p.getSize(), ofs = 0) {
 
@@ -494,6 +474,7 @@ public class FatChain {
             } catch (NoSuchElementException ex) {
                 throw new ChainBeyondEndException("read past end of chain at offset " + offset, ex);
             }
+            lastCluster = cluster;
 
             size = Math.min(sz, l);
 
@@ -510,8 +491,7 @@ public class FatChain {
             }
         }
 
-        if (modificationStamp == stampAtStart)
-            readHint = new ReadHint(stampAtStart, i.nextIndex(), i.cursor);
+        readHint = new ChainHint(head, i.nextIndex(), lastCluster);
     }
 
     private void zeroRange(long from, long to) throws IOException {
@@ -555,8 +535,6 @@ public class FatChain {
         if (offset < 0)
             throw new IllegalArgumentException("offset<0");
 
-        noteChainModified();
-
         int savedHead = head;
         int savedEnd = 0;
         boolean savedEndCaptured = false;
@@ -569,7 +547,7 @@ public class FatChain {
         int clidx = p.getIndex();
 
         ChainIterator i = listIterator();
-        int cluster = i.getCluster(clidx);
+        int cluster = getClusterWithHint(i, clidx);
         int last = i.nextIndex();
 
         // System.out.println ( "head=" + head + " clidx=" + clidx + " cluster="
@@ -699,12 +677,11 @@ public class FatChain {
         } catch (RuntimeException ex) {
             rollbackWrite(allocatedClusters, savedHead, savedEnd);
             throw ex;
-        } finally {
-            noteChainModified();
         }
     }
 
     private void rollbackWrite(List<Integer> allocatedClusters, int savedHead, int savedEnd) {
+        invalidateHints();
         if (allocatedClusters == null || allocatedClusters.isEmpty()) {
             return;
         }
@@ -834,15 +811,27 @@ public class FatChain {
         }
     }
 
-    private static final class ReadHint {
-        private final long stamp;
-        private final int index;
-        private final int cursor;
+    private int getClusterWithHint(ChainIterator i, int position) throws IOException {
+        ChainHint hint = writeHint;
+        int cluster;
+        if (hint != null && hint.head == head && hint.index <= position) {
+            cluster = i.seekFromHint(hint.index, hint.prevCluster, position);
+        } else {
+            cluster = i.getCluster(position);
+        }
+        writeHint = new ChainHint(head, i.nextIndex(), cluster);
+        return cluster;
+    }
 
-        private ReadHint(long stamp, int index, int cursor) {
-            this.stamp = stamp;
+    private static final class ChainHint {
+        private final int head;
+        private final int index;
+        private final int prevCluster;
+
+        private ChainHint(int head, int index, int prevCluster) {
+            this.head = head;
             this.index = index;
-            this.cursor = cursor;
+            this.prevCluster = prevCluster;
         }
     }
 
@@ -928,14 +917,24 @@ public class FatChain {
             }
         }
 
-        private void seekFromHint(int hintCursor, int hintIndex, int position) throws IOException {
+        private int seekFromHint(int hintIndex, int hintPrevCluster, int position) throws IOException {
             if (hintIndex < 0 || hintIndex > position)
                 throw new IllegalArgumentException("bad seek hint: " + hintIndex + " -> " + position);
             this.address = head;
-            this.cursor = hintCursor;
             this.index = hintIndex;
-            for (int i = hintIndex; i < position; i++)
-                next();
+            if (hintIndex == 0)
+                this.cursor = head;
+            else
+                this.cursor = fat.get(hintPrevCluster);
+            if (position == hintIndex)
+                return hintIndex == 0 ? 0 : hintPrevCluster;
+            int cluster = 0;
+            for (int i = hintIndex; i < position; i++) {
+                if (!hasNext())
+                    break;
+                cluster = next();
+            }
+            return cluster;
         }
 
         private int getCluster(int position) throws IOException {
