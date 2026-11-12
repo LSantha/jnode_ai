@@ -242,6 +242,20 @@ public class FatShortNameGoldenTest {
         {"ninelettX.txt", "NINELE~1.TXT"},
         {"UPPERCASE.TXT", "UPPERC~1.TXT"},
         {"AAAAAAAA.txt", "AAAAAAAA.txt"},
+        {"AAAAAAA.tx+", "AAAAAA~1.TX_"},
+        {"AAAAAAA.tx++", "AAAAAA~2.TX_"},
+        {"AAAAAAA.tx+++", "AAAAAA~3.TX_"},
+        {"BBBBBB.tx+", "BBBBBB~1.TX_"},
+        {"BBBBBB.tx++", "BBBBBB~2.TX_"},
+        {"BBBBBB.tx+++", "BBBBBB~3.TX_"},
+        {"BBBBBB.tx++++", "BBBBBB~4.TX_"},
+        {"BBBBBB.tx+++++", "BBBBBB~5.TX_"},
+        {"BBBBBB.tx++++++", "BBBBBB~6.TX_"},
+        {"BBBBBB.tx+++++++", "BBBBBB~7.TX_"},
+        {"BBBBBB.tx++++++++", "BBBBBB~8.TX_"},
+        {"BBBBBB.tx+++++++++", "BBBBBB~9.TX_"},
+        {"BBBBBB.tx++++++++++", "BBBBB~10.TX_"},
+        {"BBBBBB.tx+++++++++++", "BBBBB~11.TX_"},
     };
 
     private static final String[][] GOLDEN_DIRS = {

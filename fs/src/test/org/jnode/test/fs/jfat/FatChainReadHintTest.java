@@ -22,7 +22,6 @@ package org.jnode.test.fs.jfat;
 
 import java.io.File;
 import java.lang.reflect.Field;
-import java.lang.reflect.Method;
 import java.nio.ByteBuffer;
 
 import org.jnode.driver.block.FileDevice;
@@ -47,11 +46,12 @@ import static org.junit.Assert.*;
 
 /**
  * Deterministic tests for the read-hint invalidation protocol of
- * FatChain: any hint recorded while a structural mutation is in flight
- * must be discarded when that mutation ends, whatever the outcome.
- * The concurrent coverage lives in FatChainConcurrencyTest; the two
- * bumps that bound every mutation window are emulated here through
- * reflection so the interleaving can be replayed exactly.
+ * FatChain: any hint recorded before a structural mutation must be
+ * discarded once that mutation rolls back, and an append must leave
+ * the cached hint usable for subsequent reads. The interleavings that
+ * a mutation window can produce live in FatChainConcurrencyTest; the
+ * append and rollback paths exercised here drive the same invalidation
+ * points as the concurrent writer.
  */
 public class FatChainReadHintTest {
 
@@ -113,51 +113,52 @@ public class FatChainReadHintTest {
     }
 
     @Test
-    public void testStableReadCachesHintAndLeavesStampAlone() throws Exception {
+    public void testStableReadCachesHint() throws Exception {
         FatChain chain = chain();
-        long before = stamp(chain);
         ByteBuffer buf = ByteBuffer.allocate(INITIAL_LENGTH);
 
         chain.read(0, buf);
 
         assertEquals("read must transfer the full buffer", INITIAL_LENGTH, buf.position());
-        assertNotNull("read with a stable stamp must cache a hint", readHint(chain));
-        assertEquals("read must not bump the stamp", before, stamp(chain));
+        assertNotNull("read with a stable chain must cache a hint", readHint(chain));
     }
 
     @Test
-    public void testHintCachedInsideMutationWindowIsDiscardedAtWindowEnd() throws Exception {
+    public void testHintCachedBeforeMutationIsDiscardedByRollback() throws Exception {
         FatChain chain = chain();
         ByteBuffer buf = ByteBuffer.allocate(INITIAL_LENGTH);
         chain.read(0, buf);
         assertNotNull(readHint(chain));
 
-        noteChainModified(chain);
-        buf.clear();
-        chain.read(0, buf);
-        assertNotNull("reader completing inside the window caches a hint", readHint(chain));
-
-        noteChainModified(chain);
-        assertNull("hint cached inside the window must be discarded at the window end",
+        try {
+            chain.write(0xFFFFFFF0L, ByteBuffer.wrap(new byte[APPEND_LENGTH]));
+            fail("write past the end of the disk must fail");
+        } catch (IllegalArgumentException expected) {
+        } catch (java.io.IOException expected) {
+        }
+        assertNull("hint cached before a failed mutation must be discarded by rollback",
             readHint(chain));
     }
 
     @Test
-    public void testAppendBumpsStampAtBothEndsAndClearsHint() throws Exception {
+    public void testAppendKeepsHintUsable() throws Exception {
         FatChain chain = chain();
         ByteBuffer buf = ByteBuffer.allocate(INITIAL_LENGTH);
         chain.read(0, buf);
         assertNotNull(readHint(chain));
 
-        long before = stamp(chain);
         byte[] payload = new byte[APPEND_LENGTH];
         for (int i = 0; i < payload.length; i++) {
             payload[i] = writerByte(INITIAL_LENGTH + i);
         }
         chain.write(INITIAL_LENGTH, ByteBuffer.wrap(payload));
 
-        assertNull("completed append must leave no cached hint", readHint(chain));
-        assertTrue("append must bump the stamp at both ends", stamp(chain) - before >= 2);
+        assertNotNull("append must leave the cached hint usable", readHint(chain));
+
+        ByteBuffer appended = ByteBuffer.allocate(APPEND_LENGTH);
+        chain.read(INITIAL_LENGTH, appended);
+        assertEquals("appended region must be readable through the cached hint",
+            APPEND_LENGTH, appended.position());
     }
 
     @Test
@@ -183,12 +184,12 @@ public class FatChainReadHintTest {
     }
 
     @Test
-    public void testFailedAppendBumpsStampAndClearsHint() throws Exception {
+    public void testFailedAppendDiscardsHint() throws Exception {
         FatChain chain = chain();
         ByteBuffer buf = ByteBuffer.allocate(INITIAL_LENGTH);
         chain.read(0, buf);
+        assertNotNull(readHint(chain));
 
-        long before = stamp(chain);
         try {
             chain.write(0xFFFFFFF0L, ByteBuffer.wrap(new byte[APPEND_LENGTH]));
             fail("write past the end of the disk must fail");
@@ -196,8 +197,7 @@ public class FatChainReadHintTest {
         } catch (java.io.IOException expected) {
         }
 
-        assertNull("failed mutation must leave no cached hint", readHint(chain));
-        assertTrue("failed mutation must bump the stamp", stamp(chain) > before);
+        assertNull("failed mutation must discard the cached hint", readHint(chain));
     }
 
     private FatChain chain() throws Exception {
@@ -207,24 +207,10 @@ public class FatChainReadHintTest {
         return ((FatEntry) entry).getChain();
     }
 
-    private static void noteChainModified(FatChain chain) throws Exception {
-        Method m = FatChain.class.getDeclaredMethod("noteChainModified");
-        m.setAccessible(true);
-        m.invoke(chain);
-    }
-
     private static Object readHint(FatChain chain) throws Exception {
         Field f = FatChain.class.getDeclaredField("readHint");
         f.setAccessible(true);
         return f.get(chain);
-    }
-
-    private static long stamp(FatChain chain) throws Exception {
-        Field f = FatChain.class.getDeclaredField("modificationStamp");
-        f.setAccessible(true);
-        // A volatile long: reads are plain, the atomicity of the increment lives
-        // in noteChainModified()'s monitor.
-        return f.getLong(chain);
     }
 
     private static byte readerByte(int i) {
