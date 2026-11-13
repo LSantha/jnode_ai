@@ -58,8 +58,20 @@ public class FatDirEntry {
             this.lastDirEntry = true;
     }
 
+    /**
+     * Marks this entry free by writing {@link #FREE} into byte 0 of the
+     * underlying buffer; the buffer is left dirty so the change is flushed.
+     * After {@code delete()} the in-memory view is consistent with the
+     * buffer: {@link #isFreeDirEntry()} returns {@code true} and
+     * {@link #isLastDirEntry()} returns {@code false} (byte 0 is no longer
+     * {@link #EOD}). {@link #getIndex()} is unchanged: it still identifies the
+     * slot this entry occupies in the directory, which is what deletion and
+     * later reuse of the slot ({@code scanForFreeEntries()}) operate on.
+     */
     public void delete() {
         entry.setUInt8(0, FREE);
+        freeDirEntry = true;
+        lastDirEntry = false;
     }
 
     public FatFileSystem getFatFileSystem() {

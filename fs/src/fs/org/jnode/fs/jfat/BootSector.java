@@ -31,6 +31,17 @@ import org.jnode.util.LittleEndian;
 import org.jnode.util.NumberUtils;
 
 /**
+ * The sector buffer is authoritative. The {@code set*} methods write through to the
+ * sector buffer immediately (marking it dirty) and are the only way to change what
+ * {@link #write(BlockDeviceAPI, long)} emits. They do <em>not</em> refresh the decoded
+ * fields ({@code getBytesPerSector()}, {@code getSectorsPerFat()}, {@code getCountOfClusters()},
+ * {@code isFat32()}, ...) or the computed fields derived from them ({@code FATSz},
+ * {@code FirstDataSector}, {@code type}, ...); those always reflect the last
+ * {@link #read(BlockDeviceAPI)} (or an explicit decode of the constructor-supplied sector).
+ * {@code write()} serialises the buffer verbatim and clears the dirty flag. To observe a
+ * {@code set*} value through an accessor, re-read the sector (e.g. into a new
+ * {@code BootSector}) - the field view of this instance is stale after {@code set*}.
+ *
  * @author gvt
  * @author Tango
  */
@@ -125,7 +136,6 @@ public class BootSector {
     }
 
     public synchronized void write(BlockDeviceAPI device, long offset) throws IOException {
-        //encode();//TODO: Notice here once (Changed Now)
         device.write(offset, ByteBuffer.wrap(sector));
 
         dirty = false;
@@ -259,48 +269,6 @@ public class BootSector {
             BS_VolID = get32(67);
             BS_VolLab = getString(71, 11);
             BS_FilSysType = getString(82, 8);
-        }
-    }
-
-    @SuppressWarnings("unused")
-    private void encode() {
-        setBytes(0, 3, BS_jmpBoot);
-        setString(3, 8, BS_OEMName);
-        set16(11, BPB_BytsPerSec);
-        set8(13, BPB_SecPerClus);
-        set16(14, BPB_RsvdSecCnt);
-        set8(16, BPB_NumFATs);
-        set16(17, BPB_RootEntCnt);
-        set16(19, BPB_TotSec16);
-        set8(21, BPB_Media);
-        set16(22, BPB_FATSz16);
-        set16(24, BPB_SecPerTrk);
-        set16(26, BPB_NumHeads);
-        set32(28, BPB_HiddSec);
-        set32(32, BPB_TotSec32);
-
-        if (!isFat32()) {
-            set8(36, BS_DrvNum);
-            set8(37, BS_Reserved1);
-            set8(38, BS_BootSig);
-            set32(39, BS_VolID);
-            setString(43, 11, BS_VolLab);
-            setString(54, 8, BS_FilSysType);
-        } else {
-            set32(36, BPB_FATSz32);
-            set16(40, BPB_ExtFlags);
-            set16(42, BPB_FSVer);
-            set32(44, BPB_RootClus);
-            set16(48, BPB_FSInfo);
-            set16(50, BPB_BkBootSec);
-            setBytes(52, 12, BPB_Reserved);
-
-            set8(64, BS_DrvNum);
-            set8(65, BS_Reserved1);
-            set8(66, BS_BootSig);
-            set32(67, BS_VolID);
-            setString(71, 11, BS_VolLab);
-            setString(82, 8, BS_FilSysType);
         }
     }
 
@@ -475,8 +443,8 @@ public class BootSector {
     }
 
     /**
-     * The Setting methods are writing here.
-     *
+     * The set* methods write through to the sector buffer; see the class javadoc for
+     * the serialisation contract.
      */
     public void setBS_JmpBoot(byte[] BS_jmpBoot) {
         setBytes(0, 3, BS_jmpBoot);

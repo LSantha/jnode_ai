@@ -37,7 +37,21 @@ public class Fat32 extends Fat {
         return (long) (4 * index);
     }
 
+    /**
+     * Returns the byte position of a data cluster. FAT32 has no fixed root
+     * directory sector: RootDirSectors == 0 and the root directory is a
+     * cluster chain starting at BPB_RootClus, so cluster 0 has no meaning.
+     * Passing 0 fails with a message naming that invariant; the inherited
+     * index == 0 branch (fixed root directory sector) applies to FAT12/FAT16
+     * only. Valid cluster indexes start at {@link #firstCluster()}.
+     */
     public long getClusterPosition(int index) {
+        if (index == 0) {
+            throw new IllegalArgumentException("illegal cluster # : 0 - FAT32 has no fixed "
+                + "root directory sector (RootDirSectors == 0); the root directory is a cluster "
+                + "chain starting at BPB_RootClus and valid data clusters start at "
+                + firstCluster());
+        }
         return getClusterSector(index) * (long) getBootSector().getBytesPerSector();
     }
 
