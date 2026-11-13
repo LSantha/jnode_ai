@@ -23,9 +23,7 @@ package org.jnode.test.fs.jfat;
 import java.io.File;
 import java.io.IOException;
 import java.nio.ByteBuffer;
-import java.util.ArrayList;
 import java.util.Arrays;
-import java.util.List;
 
 import org.jnode.driver.block.FileDevice;
 import org.jnode.emu.naming.BasicNameSpace;
@@ -50,26 +48,35 @@ import static org.junit.Assert.*;
 /**
  * Pins the behavior of the count-accepting FatChain.free(int, int) overload,
  * which is what FatFile.freeClusters uses on the truncate path so the chain
- * is not walked twice.
+ * does not walk itself a second time to count it.
  *
- * The entry length is the authority for length everywhere else in JFAT, so
- * the count passed down comes from the directory entry while the chain
- * itself is what the single-argument free(int) walks. The two can disagree
- * (a length extended without a matching chain append, i.e. the write-failure
- * shapes). The decided policy, pinned here:
+ * The core contract is walk parity: free(int, chainClusters) always frees
+ * exactly the set free(int) would free - the last n clusters measured from
+ * the actual chain end, never fewer, never more - and fails the same way
+ * (IOException, no FAT entry modified) when the chain holds fewer than n
+ * clusters. The entry-derived count is used as a hint to locate the
+ * entry-implied cut point; the tail from that point to end of chain is
+ * scanned WITHOUT writing, and on any mismatch (unreachable or missing cut
+ * point, tail length != n) the method defers entirely to the walk. Every
+ * desync path therefore leaves the FAT untouched until the tail is known
+ * to match, and the freed-set parity with free(int) holds in all shapes.
+ *
+ * The decided policy, pinned here:
  *
  *   1. No desync: behavior is identical to free(int) (same FAT image).
- *   2. Chain shorter than the entry, cut point still reachable: the chain is
- *      cut at the entry-implied new length; only clusters at index
- *      >= newClusters are freed (fewer than n clusters may be freed).
- *   3. Chain shorter than the entry, cut point unreachable: no FAT entry is
- *      modified and an IOException is thrown, mirroring the zero-side-effect
- *      failure of free(int).
- *   4. Chain longer than the entry: clusters at index >= newClusters are all
- *      freed, including the unreachable surplus beyond the entry-implied old
- *      length (more than n clusters).
- *   5. Truncate to zero with chainClusters == n: the whole actual chain is
- *      freed and the start cluster is reset to 0.
+ *   2. Chain shorter than the entry (any cut point): defers to the walk;
+ *      free(n) throws IOException because the chain holds fewer than n
+ *      clusters; no FAT entry is modified.
+ *   3. Boundary desync: the entry-implied cut point is exactly one cluster
+ *      past the end of the actual chain; an IOException is thrown (never a
+ *      NoSuchElementException) and no FAT entry is modified.
+ *   4. Chain longer than the entry: defers to the walk; exactly the actual
+ *      last n clusters are freed (the surplus beyond the entry-implied old
+ *      length is NOT reclaimed, reproducing free(int)'s behavior); the FAT
+ *      image is byte-identical to calling free(int) on an identically
+ *      formatted image.
+ *   5. Truncate to zero under desync: defers to the walk; identical freed
+ *      set and failure mode to free(int).
  */
 public class FatChainFreeWithCountTest {
 
@@ -152,28 +159,31 @@ public class FatChainFreeWithCountTest {
     }
 
     @Test
-    public void testDesyncChainShorterThanEntryCutReachable() throws Exception {
+    public void testDesyncChainShorterThanEntryDefersToWalkFailsClosed() throws Exception {
         FatFileSystem fs = formatImage(diskFile);
         FSFile file = createChainFile(fs, "short.bin", 4);
-        List<Integer> chain = chainClusters(((FatEntry) file).getChain());
-        assertEquals(4, chain.size());
+        int head = ((FatEntry) file).getStartCluster();
 
         // write-failure shape: a length extended without a matching chain
         // append, i.e. the entry claims 10 clusters but only 4 exist
         forceEntryLength(file, 10L * fs.getClusterSize());
 
-        file.setLength(2L * fs.getClusterSize());
+        int[] before = snapshotFat(fs.getFat());
 
-        assertEquals(2L * fs.getClusterSize(), file.getLength());
-        FatChain chainObj = ((FatEntry) file).getChain();
-        assertEquals(2, chainObj.size());
-        Fat fat = fs.getFat();
-        assertTrue("cluster at index 2 must be freed", fat.isFreeEntry(chain.get(2)));
-        assertTrue("cluster at index 3 must be freed", fat.isFreeEntry(chain.get(3)));
-        assertFalse("cluster at index 0 must be kept", fat.isFreeEntry(chain.get(0)));
-        assertFalse("cluster at index 1 must be kept", fat.isFreeEntry(chain.get(1)));
-        assertArrayEquals(Arrays.copyOf(pattern(4 * fs.getClusterSize()), 2 * fs.getClusterSize()),
-            readAll(file));
+        // n would be 8; free(8) on a 4-cluster chain must throw and free
+        // nothing, so the counted overload defers to the walk and fails the
+        // same way: IOException, no FAT entry modified
+        try {
+            file.setLength(2L * fs.getClusterSize());
+            fail("expected IOException when the chain holds fewer clusters than n");
+        } catch (IOException expected) {
+        }
+
+        assertArrayEquals("no FAT entry may be modified under desync",
+            before, snapshotFat(fs.getFat()));
+        assertEquals("chain head must be unchanged", head, ((FatEntry) file).getStartCluster());
+        assertEquals("chain must be intact", 4, ((FatEntry) file).getChain().size());
+        assertEquals("entry length must be unchanged", 10L * fs.getClusterSize(), file.getLength());
         fs.close();
     }
 
@@ -189,7 +199,8 @@ public class FatChainFreeWithCountTest {
         int[] before = snapshotFat(fs.getFat());
         try {
             // entry-implied cut lands at index 4, beyond the 2-cluster chain:
-            // nothing may be freed, mirroring free(int)'s count < n failure
+            // the overload defers to the walk, and free(n) fails on a chain
+            // shorter than n - nothing may be freed
             file.setLength(5L * fs.getClusterSize());
             fail("expected IOException when the entry-implied cut point is unreachable");
         } catch (IOException expected) {
@@ -204,53 +215,160 @@ public class FatChainFreeWithCountTest {
     }
 
     @Test
-    public void testDesyncChainLongerThanEntry() throws Exception {
+    public void testDesyncBoundaryCutExactlyOneClusterPastEnd() throws Exception {
         FatFileSystem fs = formatImage(diskFile);
-        FSFile file = createChainFile(fs, "long.bin", 6);
-        List<Integer> chain = chainClusters(((FatEntry) file).getChain());
-        assertEquals(6, chain.size());
+        FSFile file = createChainFile(fs, "boundary.bin", 2);
+        int head = ((FatEntry) file).getStartCluster();
 
-        // chain holds 6 clusters, the entry claims 4
-        forceEntryLength(file, 4L * fs.getClusterSize());
+        // chain holds 2 clusters, the entry claims 10; the entry-implied cut
+        // (index chainClusters - n - 1 == 2) is exactly one cluster past the
+        // end of the actual chain, where the iterator is positioned at EOF
+        forceEntryLength(file, 10L * fs.getClusterSize());
 
-        file.setLength(2L * fs.getClusterSize());
+        int[] before = snapshotFat(fs.getFat());
+        try {
+            file.setLength(3L * fs.getClusterSize());
+            fail("expected IOException when the entry-implied cut point is one cluster past the end");
+        } catch (IOException expected) {
+            // an IOException, never a NoSuchElementException
+        }
 
-        assertEquals(2L * fs.getClusterSize(), file.getLength());
-        FatChain chainObj = ((FatEntry) file).getChain();
-        assertEquals(2, chainObj.size());
-        Fat fat = fs.getFat();
-        assertFalse("cluster at index 0 must be kept", fat.isFreeEntry(chain.get(0)));
-        assertFalse("cluster at index 1 must be kept", fat.isFreeEntry(chain.get(1)));
-        assertTrue("cluster at index 2 must be freed", fat.isFreeEntry(chain.get(2)));
-        assertTrue("cluster at index 3 must be freed", fat.isFreeEntry(chain.get(3)));
-        // the entry-implied surplus beyond the old entry length is reclaimed
-        // as well: more than n clusters are freed, never anything before the cut
-        assertTrue("surplus cluster at index 4 must be freed", fat.isFreeEntry(chain.get(4)));
-        assertTrue("surplus cluster at index 5 must be freed", fat.isFreeEntry(chain.get(5)));
-        assertArrayEquals(Arrays.copyOf(pattern(6 * fs.getClusterSize()), 2 * fs.getClusterSize()),
-            readAll(file));
+        assertArrayEquals("no FAT entry may be modified at the boundary cut",
+            before, snapshotFat(fs.getFat()));
+        assertEquals("chain head must be unchanged", head, ((FatEntry) file).getStartCluster());
+        assertEquals("chain must be intact", 2, ((FatEntry) file).getChain().size());
+        assertEquals("entry length must be unchanged", 10L * fs.getClusterSize(), file.getLength());
         fs.close();
     }
 
     @Test
-    public void testDesyncTruncateToZeroFreesWholeActualChain() throws Exception {
-        FatFileSystem fs = formatImage(diskFile);
-        FSFile file = createChainFile(fs, "zero.bin", 2);
-        List<Integer> chain = chainClusters(((FatEntry) file).getChain());
+    public void testDesyncChainLongerThanEntryMatchesWalk() throws Exception {
+        // image A: the truncate goes through FatFile.setLength -> counted
+        // overload. image B: the same desync is forced and the single-argument
+        // free(int) is called directly. Walk parity pins the counted overload to
+        // free exactly the set free(n) frees: the actual last n clusters, never
+        // fewer, never more.
+        File imageB = File.createTempFile("jfat-free-count-test-b", ".img");
+        imageB.deleteOnExit();
+        FileDevice deviceB = null;
+        FatFileSystem fsB = null;
+        try {
+            FatFileSystem fsA = formatImage(diskFile);
+            deviceB = new FileDevice(imageB, "rw");
+            deviceB.setLength(68L * 1024 * 1024);
+            fsB = new FatFileSystemFormatter(ClusterSize._1Kb).format(deviceB);
 
-        // entry claims 10 clusters, chain holds 2; chainClusters == n
+            FSFile fileA = createChainFile(fsA, "long.bin", 6);
+            FSFile fileB = createChainFile(fsB, "long.bin", 6);
+
+            // chain holds 6 clusters, the entry claims 4
+            forceEntryLength(fileA, 4L * fsA.getClusterSize());
+            forceEntryLength(fileB, 4L * fsB.getClusterSize());
+
+            fileA.setLength(2L * fsA.getClusterSize());
+            ((FatEntry) fileB).getChain().free(2);
+
+            assertEquals("start cluster must match the walk",
+                ((FatEntry) fileB).getStartCluster(), ((FatEntry) fileA).getStartCluster());
+            assertEquals("remaining chain length must match the walk",
+                ((FatEntry) fileB).getChain().size(), ((FatEntry) fileA).getChain().size());
+            assertArrayEquals("FAT must be byte-identical to the walk's FAT",
+                snapshotFat(fsB.getFat()), snapshotFat(fsA.getFat()));
+            assertEquals("entry length must be the new truncated length",
+                2L * fsA.getClusterSize(), fileA.getLength());
+            assertArrayEquals(Arrays.copyOf(pattern(6 * fsA.getClusterSize()), 2 * fsA.getClusterSize()),
+                readAll(fileA));
+            fsA.close();
+        } finally {
+            if (fsB != null) {
+                try {
+                    fsB.close();
+                } catch (Exception e) {
+                }
+            }
+            if (deviceB != null) {
+                try {
+                    deviceB.close();
+                } catch (Exception e) {
+                }
+            }
+            imageB.delete();
+        }
+    }
+
+    @Test
+    public void testDesyncTruncateToZeroMatchesWalk() throws Exception {
+        // image A: the truncate goes through FatFile.setLength -> counted
+        // overload. image B: the same desync is forced and the single-argument
+        // free(int) is called directly. Walk parity pins the counted overload to
+        // free exactly the set free(n) frees.
+        File imageB = File.createTempFile("jfat-free-count-test-b", ".img");
+        imageB.deleteOnExit();
+        FileDevice deviceB = null;
+        FatFileSystem fsB = null;
+        try {
+            FatFileSystem fsA = formatImage(diskFile);
+            deviceB = new FileDevice(imageB, "rw");
+            deviceB.setLength(68L * 1024 * 1024);
+            fsB = new FatFileSystemFormatter(ClusterSize._1Kb).format(deviceB);
+
+            FSFile fileA = createChainFile(fsA, "zero.bin", 6);
+            FSFile fileB = createChainFile(fsB, "zero.bin", 6);
+
+            // chain holds 6 clusters, the entry claims 4
+            forceEntryLength(fileA, 4L * fsA.getClusterSize());
+            forceEntryLength(fileB, 4L * fsB.getClusterSize());
+
+            fileA.setLength(0);
+            ((FatEntry) fileB).getChain().free(4);
+
+            assertEquals("start cluster must match the walk",
+                ((FatEntry) fileB).getStartCluster(), ((FatEntry) fileA).getStartCluster());
+            assertEquals("remaining chain length must match the walk",
+                ((FatEntry) fileB).getChain().size(), ((FatEntry) fileA).getChain().size());
+            assertArrayEquals("FAT must be byte-identical to the walk's FAT",
+                snapshotFat(fsB.getFat()), snapshotFat(fsA.getFat()));
+            assertEquals("entry length must be 0", 0, fileA.getLength());
+            fsA.close();
+        } finally {
+            if (fsB != null) {
+                try {
+                    fsB.close();
+                } catch (Exception e) {
+                }
+            }
+            if (deviceB != null) {
+                try {
+                    deviceB.close();
+                } catch (Exception e) {
+                }
+            }
+            imageB.delete();
+        }
+    }
+
+    @Test
+    public void testDesyncTruncateToZeroChainShorterThanEntryFailsClosed() throws Exception {
+        FatFileSystem fs = formatImage(diskFile);
+        FSFile file = createChainFile(fs, "zeroshort.bin", 2);
+        int head = ((FatEntry) file).getStartCluster();
+
+        // chain holds 2 clusters, the entry claims 10; even a truncate to zero
+        // defers to the walk, and free(10) on a 2-cluster chain throws
         forceEntryLength(file, 10L * fs.getClusterSize());
 
-        file.setLength(0);
+        int[] before = snapshotFat(fs.getFat());
+        try {
+            file.setLength(0);
+            fail("expected IOException when the chain holds fewer clusters than n");
+        } catch (IOException expected) {
+        }
 
-        assertEquals(0, file.getLength());
-        assertEquals("start cluster must be reset to 0", 0, ((FatEntry) file).getStartCluster());
-        Fat fat = fs.getFat();
-        assertTrue("cluster at index 0 must be freed", fat.isFreeEntry(chain.get(0)));
-        assertTrue("cluster at index 1 must be freed", fat.isFreeEntry(chain.get(1)));
-        ByteBuffer empty = ByteBuffer.allocate(1024);
-        file.read(0, empty);
-        assertEquals(0, empty.position());
+        assertArrayEquals("no FAT entry may be modified under desync",
+            before, snapshotFat(fs.getFat()));
+        assertEquals("chain head must be unchanged", head, ((FatEntry) file).getStartCluster());
+        assertEquals("chain must be intact", 2, ((FatEntry) file).getChain().size());
+        assertEquals("entry length must be unchanged", 10L * fs.getClusterSize(), file.getLength());
         fs.close();
     }
 
@@ -273,15 +391,6 @@ public class FatChainFreeWithCountTest {
 
     private void forceEntryLength(FSFile file, long length) {
         ((FatEntry) file).getEntry().setLength(length);
-    }
-
-    private List<Integer> chainClusters(FatChain chain) throws Exception {
-        List<Integer> clusters = new ArrayList<Integer>();
-        FatChain.ChainIterator iterator = chain.listIterator();
-        while (iterator.hasNext()) {
-            clusters.add(iterator.next());
-        }
-        return clusters;
     }
 
     private int[] snapshotFat(Fat fat) throws Exception {
