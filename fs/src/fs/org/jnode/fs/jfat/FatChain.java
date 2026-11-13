@@ -103,16 +103,17 @@ public class FatChain {
         return new ChainIterator(index);
     }
 
+    /*
+     * O(clusters): we have to follow the whole chain to get the last cluster
+     * value. Do not call this on a hot path; pass the count through instead
+     * (see the two-argument free(int, int) overload).
+     *
+     * special case: a chain with one cluster at EOF
+     * the iterator starts at that cluster and hasNext() returns false
+     * so we need to check the head cluster separately
+     */
     private int getEndCluster() throws IOException {
         int last = 0;
-        /*
-         * not cheap: we have to follow the whole chain to get the last cluster
-         * value
-         * 
-         * special case: a chain with one cluster at EOF
-         * the iterator starts at that cluster and hasNext() returns false
-         * so we need to check the head cluster separately
-         */
         ChainIterator i = listIterator(0);
         int address = i.getCluster(0);
         if (address != 0 && fat.isEofChain(fat.get(address))) {
@@ -125,12 +126,16 @@ public class FatChain {
         return last;
     }
 
+    /**
+     * O(clusters): the whole chain is walked to know the chain size. Do not
+     * call this on a hot path; callers that already know the chain length
+     * (e.g. from the directory entry length) must use the two-argument
+     * {@link #free(int, int)} overload instead of routing through this method.
+     */
     public int size() throws IOException {
         int count = 0;
-        /*
-         * not cheap: we have to follow the whole chain to know the chain size
-         */
-        for (ChainIterator i = listIterator(0); i.hasNext(); i.next())
+        ChainIterator i = listIterator(0);
+        for (; i.hasNext(); i.next())
             count++;
 
         return count;
@@ -366,6 +371,14 @@ public class FatChain {
         }
     }
 
+    /**
+     * Free the last {@code n} clusters of this chain.
+     *
+     * <p>O(clusters): the chain is walked once to count it and once more from
+     * the split point to the end. Callers that already know the chain length
+     * (e.g. from the directory entry length) must use the two-argument
+     * {@link #free(int, int)} overload instead.
+     */
     public void free(int n) throws IOException {
         if (n == 0)
             return;
@@ -381,43 +394,129 @@ public class FatChain {
             // (see allocateTail).
             synchronized (fat) {
                 int count = size();
-
-                if (count < n)
-                    throw new IOException("not enough cluster: count[" + count + "] n[" + n + "]");
-
-                if (dolog)
-                    mylog("count[" + count + "] n[" + n + "]");
-
-                ChainIterator i;
-
-                try {
-                    if (count > n) {
-                        i = listIterator(count - n - 1);
-                        int l = i.next();
-                        fat.set(l, fat.eofChain());
-                        if (dolog)
-                            mylog(l + ":" + fat.eofChain());
-                    } else
-                        i = listIterator(0);
-
-                    while (i.hasNext()) {
-                        int l = i.next();
-                        fat.set(l, fat.freeEntry());
-                        if (dolog)
-                            mylog(l + ":" + fat.freeEntry());
-                    }
-                } finally {
-                    fat.flush();
-                }
-
-                if (count == n) {
-                    setStartCluster(0);
-                    if (dolog)
-                        mylog("zero");
-                }
+                freeCounted(n, count);
             }
         } finally {
             invalidateHints();
+        }
+    }
+
+    /**
+     * Free the last {@code n} clusters of this chain, using a caller-supplied
+     * chain length instead of walking the whole chain to count it.
+     *
+     * <p>O(clusters): unlike {@link #free(int)} only the clusters from the
+     * split point onward are visited, not the head of the chain.
+     *
+     * <p>The {@code chainClusters} value is the caller's entry-derived belief
+     * of the current chain length in clusters (the directory entry is the
+     * authority for length everywhere else in JFAT, e.g. {@code FatFile}).
+     * The core contract is identical to {@link #free(int)}: the chain is cut
+     * at index {@code chainClusters - n - 1} (set to end-of-chain) and every
+     * cluster after it is freed. In the non-desync case (the entry-derived
+     * count equals the actual chain length) the behavior is identical to
+     * {@link #free(int)}.
+     *
+     * <p><b>Entry/chain desync policy.</b> When the entry-derived count and
+     * the actual chain disagree (a length extended without a matching chain
+     * append, i.e. the write-failure shapes):
+     * <ul>
+     * <li>If {@code chainClusters == n} the <em>whole actual chain</em> is
+     * freed and the start cluster is reset to 0. Freeing a complete chain
+     * cannot disturb any cluster owned by another file, and a length-zero
+     * truncate must reclaim the entire chain even under desync.</li>
+     * <li>Otherwise the chain is cut at the entry-implied position
+     * {@code chainClusters - n}: the cluster at index
+     * {@code chainClusters - n - 1} is set to end-of-chain and every cluster
+     * after it is freed, including clusters beyond the entry-implied old
+     * length. The entry length is the authority, so clusters excluded by the
+     * new length are always reclaimed; clusters before the cut are never
+     * modified. The number of clusters freed can therefore differ from
+     * {@code n}: fewer when the actual chain is shorter than
+     * {@code chainClusters} (only physically present clusters are freed),
+     * more when it is longer (the unreachable surplus is freed as well).
+     * This deliberately differs from {@link #free(int)}, which frees exactly
+     * {@code n} clusters measured from the actual chain end; here the
+     * entry-implied new length, not the physical chain end, is the cut
+     * position.</li>
+     * <li>If the chain ends before index {@code chainClusters - n - 1} can
+     * be located, no FAT entry is modified; an {@code IOException} is thrown,
+     * mirroring the zero-side-effect failure of {@link #free(int)} when the
+     * chain holds fewer clusters than {@code n}.</li>
+     * </ul>
+     *
+     * @param n the number of clusters to free from the end of the chain
+     * @param chainClusters the caller's entry-derived chain length in
+     *        clusters (must be {@code >= 0}); pass the single-argument
+     *        {@link #free(int)} when no entry length is available
+     */
+    public void free(int n, int chainClusters) throws IOException {
+        if (n == 0)
+            return;
+
+        if (n < 0)
+            throw new IOException("n<0");
+
+        if (chainClusters < 0)
+            throw new IllegalArgumentException("chainClusters<0");
+
+        invalidateHints();
+
+        try {
+            // Hold the Fat monitor for the whole operation so no concurrent allocation
+            // can claim a cluster that this chain is in the middle of releasing
+            // (see allocateTail).
+            synchronized (fat) {
+                freeCounted(n, chainClusters);
+            }
+        } finally {
+            invalidateHints();
+        }
+    }
+
+    private void freeCounted(int n, int count) throws IOException {
+        if (count < n)
+            throw new IOException("not enough cluster: count[" + count + "] n[" + n + "]");
+
+        if (dolog)
+            mylog("count[" + count + "] n[" + n + "]");
+
+        ChainIterator i;
+
+        try {
+            if (count > n) {
+                try {
+                    i = listIterator(count - n - 1);
+                } catch (NoSuchElementException ex) {
+                    // The chain ended before the entry-implied cut point.
+                    // No FAT entry has been modified yet; fail the same way
+                    // free(int) does when the chain holds fewer clusters
+                    // than n instead of leaking unchecked past the caller.
+                    throw new IOException(
+                        "chain ended before entry-implied split point: chainClusters["
+                        + count + "] n[" + n + "]", ex);
+                }
+                int l = i.next();
+                fat.set(l, fat.eofChain());
+                if (dolog)
+                    mylog(l + ":" + fat.eofChain());
+            } else
+                i = listIterator(0);
+
+            while (i.hasNext()) {
+                int l = i.next();
+                fat.set(l, fat.freeEntry());
+                if (dolog)
+                    mylog(l + ":" + fat.freeEntry());
+            }
+        } finally {
+            fat.flush();
+        }
+
+        if (count == n) {
+            setStartCluster(0);
+            if (dolog)
+                mylog("zero");
         }
     }
 
@@ -719,10 +818,12 @@ public class FatChain {
         write(0, offset, src);
     }
 
+    /**
+     * O(clusters): the whole chain is walked to know the chain length. Do not
+     * call this on a hot path; callers that already know the entry length
+     * (e.g. {@code FatFile}) must use that instead of this method.
+     */
     public long getLength() throws IOException {
-        /*
-         * not cheap: we have to follow the whole chain to know the chain length
-         */
         return size() * fat.getClusterSize();
     }
 

@@ -59,7 +59,9 @@ public class FatFile extends FatEntry implements FSFile, FSFileSlackSpace {
 
         if (oldClusters == newClusters) return;
 
-        getChain().free(oldClusters - newClusters);
+        // oldClusters is derived from the directory entry length; pass it down
+        // so the chain does not walk itself a second time to recompute it.
+        getChain().free(oldClusters - newClusters, oldClusters);
     }
 
     public void setLength(long length) throws IOException {
