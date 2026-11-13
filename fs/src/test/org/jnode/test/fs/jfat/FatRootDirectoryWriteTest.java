@@ -152,6 +152,43 @@ public class FatRootDirectoryWriteTest {
     }
 
     @Test
+    public void testFat16NonZeroReservedSectorsRootFilePersistsAcrossRemount() throws Exception {
+        tempImage = createFat16ReservedSectorsImageFile("jfat16-rsvd");
+        FatFileSystem fs = mountRW(tempImage);
+        assertTrue(fs.getBootSector().isFat16());
+        assertEquals(4, fs.getBootSector().getNrReservedSectors());
+
+        byte[] before = readRawRootRegion(fs);
+        assertFalse(containsRootName(before, "AAA"));
+
+        FSDirectory root = fs.getRootEntry().getDirectory();
+        byte[] data = "0123456789".getBytes("US-ASCII");
+        FSFile file = root.addFile("aaa.bin").getFile();
+        file.write(0, ByteBuffer.wrap(data));
+        file.flush();
+        fs.flush();
+
+        byte[] after = readRawRootRegion(fs);
+        assertFalse("Fixed root region must change on write", Arrays.equals(before, after));
+        assertTrue("Fixed root region must contain AAA entry", containsRootName(after, "AAA"));
+
+        fs.close();
+        device.close();
+
+        fs = mountRO(tempImage);
+        root = fs.getRootEntry().getDirectory();
+        FSEntry entry = root.getEntry("aaa.bin");
+        assertNotNull("aaa.bin missing after remount", entry);
+        assertEquals(data.length, entry.getFile().getLength());
+        ByteBuffer buf = ByteBuffer.allocate(data.length);
+        entry.getFile().read(0, buf);
+        assertArrayEquals(data, buf.array());
+
+        fs.close();
+        device.close();
+    }
+
+    @Test
     public void testFat16SubdirectoryWriteStillPersists() throws Exception {
         tempImage = copyFixture("test/fs/jfat/test.fat16", "jfat16-sub");
         FatFileSystem fs = mountRW(tempImage);
@@ -297,6 +334,50 @@ public class FatRootDirectoryWriteTest {
 
         fs.close();
         device.close();
+    }
+
+    private static File createFat16ReservedSectorsImageFile(String prefix) throws Exception {
+        File tempFile = File.createTempFile(prefix, ".img");
+        tempFile.deleteOnExit();
+        FileDevice fileDevice = new FileDevice(tempFile, "rw");
+        try {
+            fileDevice.setLength(9000L * 512);
+            BootSector bs = new BootSector(512);
+            bs.setBS_JmpBoot(new byte[]{(byte) 0xEB, (byte) 0x3C, (byte) 0x90});
+            bs.setBS_OemName("JNODE10");
+            bs.setBPB_BytesPerSector(512);
+            bs.setBPB_SecPerCluster(2);
+            bs.setBPB_RsvSecCount(4);
+            bs.setBPB_NoFATs(2);
+            bs.setBPB_RootEntCnt(224);
+            bs.setBPB_TotSec16(9000);
+            bs.setBPB_MediumDescriptor(0xF8);
+            bs.setBPB_FATSz16(18);
+            bs.setBPB_SecPerTrk(63);
+            bs.setBPB_NumHeads(16);
+            bs.setBPB_HiddSec(0);
+            bs.setBPB_TotSec32(0);
+
+            BlockDeviceAPI api = fileDevice.getAPI(BlockDeviceAPI.class);
+            bs.write(api, 0);
+
+            byte[] fat = new byte[18 * 512];
+            setFat16Entry(fat, 0, 0xFFF8);
+            setFat16Entry(fat, 1, 0xFFFF);
+            long fatOffset = 4L * 512;
+            api.write(fatOffset, ByteBuffer.wrap(fat));
+            api.write(fatOffset + fat.length, ByteBuffer.wrap(fat));
+            api.flush();
+        } finally {
+            fileDevice.close();
+        }
+        return tempFile;
+    }
+
+    private static void setFat16Entry(byte[] fat, int index, int value) {
+        int offset = 2 * index;
+        fat[offset] = (byte) (value & 0xFF);
+        fat[offset + 1] = (byte) ((value >> 8) & 0xFF);
     }
 
     private FatFileSystem mountRW(File file) throws Exception {
