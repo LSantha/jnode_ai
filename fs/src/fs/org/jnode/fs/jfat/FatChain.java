@@ -127,10 +127,11 @@ public class FatChain {
     }
 
     /**
-     * O(clusters): the whole chain is walked to know the chain size. Do not
-     * call this on a hot path; callers that already know the chain length
-     * (e.g. from the directory entry length) must use the two-argument
-     * {@link #free(int, int)} overload instead of routing through this method.
+     * O(clusters): the whole chain is walked to know the chain size. size()
+     * is not only used by free(); on the truncate path, callers that already
+     * know the chain length (e.g. from the directory entry length) must use
+     * the two-argument {@link #free(int, int)} overload instead of routing
+     * through this method.
      */
     public int size() throws IOException {
         int count = 0;
@@ -405,10 +406,11 @@ public class FatChain {
      * Free the last {@code n} clusters of this chain, using a caller-supplied
      * chain length instead of walking the whole chain to count it.
      *
-     * <p>O(clusters): the head of the chain is still traversed once, to locate
-     * and verify the entry-implied split point; the saved work over
-     * {@link #free(int)} is the separate full-chain count walk, not the chain
-     * walk itself.
+     * <p>O(chain length) with a smaller constant than {@link #free(int)}:
+     * the caller-supplied count replaces the {@link #size()} walk, so the
+     * truncate path walks the chain once instead of twice. The split point
+     * is still reached by walking from the head of the chain (FAT has no
+     * back pointers); only the separate full-chain count walk is eliminated.
      *
      * <p>The {@code chainClusters} value is the caller's entry-derived belief
      * of the current chain length in clusters (the directory entry is the
@@ -428,7 +430,9 @@ public class FatChain {
      * never more. When the chain holds fewer than {@code n} clusters, no FAT
      * entry is modified and an {@code IOException} is thrown, mirroring the
      * zero-side-effect failure of {@link #free(int)}. The same zero-side-effect
-     * guarantee holds on every desync path of this overload. Note the
+     * guarantee holds on every failing desync path of this overload (a desync
+     * that falls back to the walk and frees clusters does modify the FAT,
+     * exactly as {@link #free(int)} would). Note the
      * walk-parity caveat this implies under desync: if the chain is longer
      * than the entry implies and the entry-implied new length would exclude
      * clusters beyond it, those surplus clusters are <em>not</em> reclaimed;
