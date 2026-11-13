@@ -26,6 +26,13 @@ import java.util.NoSuchElementException;
 
 
 public class FatRootDirectory extends FatDirectory {
+    private static long rootEntryOffset(BootSector bootSector, int index) {
+        if (index >= bootSector.getNrRootDirEntries()) {
+            throw new NoSuchElementException();
+        }
+        return bootSector.getFirstRootDirSector() * bootSector.getBytesPerSector() + 32L * index;
+    }
+
     /*
      * for root directory
      */
@@ -49,17 +56,12 @@ public class FatRootDirectory extends FatDirectory {
 
         BootSector bootSector = getFatFileSystem().getBootSector();
 
-        // Check if this is the end of the root entires
-        if (index >= bootSector.getNrRootDirEntries()) {
-            throw new NoSuchElementException();
-        }
-
         FatMarshal entry = new FatMarshal(32);
         ByteBuffer dest = entry.getByteBuffer();
-        long rootDirectoryOffset = bootSector.getFirstRootDirSector() * bootSector.getBytesPerSector();
+        long rootDirectoryOffset = rootEntryOffset(bootSector, index);
 
         dest.limit(dest.position() + entry.length());
-        getFatFileSystem().getApi().read(rootDirectoryOffset + 32 * index, dest);
+        getFatFileSystem().getApi().read(rootDirectoryOffset, dest);
 
         return createDirEntry(entry, index, allowDeleted);
     }
@@ -73,12 +75,13 @@ public class FatRootDirectory extends FatDirectory {
 
         BootSector bootSector = getFatFileSystem().getBootSector();
 
-        if (entry.getIndex() >= bootSector.getNrRootDirEntries()) {
+        final long rootDirectoryOffset;
+        try {
+            rootDirectoryOffset = rootEntryOffset(bootSector, entry.getIndex());
+        } catch (NoSuchElementException e) {
             throw new IOException("Directory is full");
         }
-
-        long rootDirectoryOffset = bootSector.getFirstRootDirSector() * bootSector.getBytesPerSector();
-        getFatFileSystem().getApi().write(rootDirectoryOffset + 32L * entry.getIndex(), entry.getByteBuffer());
+        getFatFileSystem().getApi().write(rootDirectoryOffset, entry.getByteBuffer());
         onShortEntryWritten(entry);
     }
 
