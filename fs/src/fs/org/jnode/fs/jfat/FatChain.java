@@ -419,31 +419,32 @@ public class FatChain {
      * at index {@code chainClusters - n - 1} (set to end-of-chain) and every
      * cluster after it is freed.
      *
-     * <p><b>Entry/chain desync.</b> Before any FAT entry is written, the
-     * chain from the entry-implied split point to its end is scanned without
-     * modifying the FAT. If that scan disagrees with {@code n} - fewer or
-     * more clusters than the entry implies, or the entry-implied split point
-     * cannot be located - the entry-derived count is treated as a hint and
-     * the method defers entirely to the walk {@link #free(int)} performs, so
-     * the freed set is exactly the one {@code free(n)} would free: the last
-     * {@code n} clusters measured from the actual chain end, never fewer and
-     * never more. When the chain holds fewer than {@code n} clusters, no FAT
-     * entry is modified and an {@code IOException} is thrown, mirroring the
-     * zero-side-effect failure of {@link #free(int)}. The same zero-side-effect
-     * guarantee holds on every failing desync path of this overload (a desync
-     * that falls back to the walk and frees clusters does modify the FAT,
-     * exactly as {@link #free(int)} would). Note the
-     * walk-parity caveat this implies under desync: if the chain is longer
-     * than the entry implies and the entry-implied new length would exclude
-     * clusters beyond it, those surplus clusters are <em>not</em> reclaimed;
-     * they remain allocated, exactly as they do after {@link #free(int)}
-     * (the directory entry is the only authority the walk consults). A file
-     * truncated under desync can therefore leak clusters beyond its entry
-     * length; that is the walk's behavior, reproduced deliberately.
+     * <p><b>Entry/chain desync policy.</b> When the entry-derived count and
+     * the actual chain disagree (a length extended without a matching chain
+     * append, i.e. the write-failure shapes) the entry-implied new length,
+     * not the physical chain end, is the authority:
+     * <ul>
+     * <li>If {@code chainClusters == n} the <em>whole actual chain</em> is
+     * freed and the start cluster is reset to 0. A length-zero truncate must
+     * reclaim the entire chain even under desync.</li>
+     * <li>Otherwise the chain is cut at the entry-implied position: the
+     * cluster at index {@code chainClusters - n - 1} is set to end-of-chain
+     * and every cluster after it is freed, including clusters beyond the
+     * entry-implied old length. Clusters excluded by the new length are
+     * always reclaimed; clusters before the cut are never modified. The
+     * number of clusters freed can therefore differ from {@code n}: fewer
+     * when the actual chain is shorter than {@code chainClusters} (only
+     * physically present clusters are freed), more when it is longer (the
+     * unreachable surplus beyond the entry-implied old length is freed as
+     * well).</li>
+     * <li>If the chain ends before index {@code chainClusters - n - 1} can
+     * be located, no FAT entry is modified; an {@code IOException} is thrown,
+     * mirroring the zero-side-effect failure of {@link #free(int)} when the
+     * chain holds fewer clusters than {@code n}.</li>
+     * </ul>
      *
      * <p>In the non-desync case (the entry-derived count equals the actual
-     * chain length) the scan tail always has length {@code n} by construction
-     * and behavior is identical to {@link #free(int)}.
+     * chain length) behavior is identical to {@link #free(int)}.
      *
      * @param n the number of clusters to free from the end of the chain
      * @param chainClusters the caller's entry-derived chain length in
@@ -467,66 +468,7 @@ public class FatChain {
             // can claim a cluster that this chain is in the middle of releasing
             // (see allocateTail).
             synchronized (fat) {
-                int newClusters = chainClusters - n;
-                if (newClusters < 0) {
-                    // The request exceeds the entry-derived chain length: defer
-                    // to the walk, which frees the actual last n clusters or
-                    // throws when the chain holds fewer than n.
-                    freeCounted(n, size());
-                    return;
-                }
-                // Locate the entry-implied cut and scan the tail to end of
-                // chain WITHOUT writing, so a desync detected here leaves the
-                // FAT untouched.
-                List<Integer> tail = new ArrayList<Integer>();
-                ChainIterator i;
-                int cutCluster = -1;
-                try {
-                    if (newClusters > 0) {
-                        i = listIterator(newClusters - 1);
-                        if (!i.hasNext()) {
-                            // The entry-implied cut cluster does not exist;
-                            // defer to the walk. No FAT entry has been modified.
-                            freeCounted(n, size());
-                            return;
-                        }
-                        cutCluster = i.next();
-                    } else {
-                        i = listIterator(0);
-                    }
-                    for (; i.hasNext();) {
-                        tail.add(Integer.valueOf(i.next()));
-                    }
-                } catch (NoSuchElementException ex) {
-                    // The chain ended before the entry-implied split point.
-                    // No FAT entry has been modified; defer to the walk.
-                    freeCounted(n, size());
-                    return;
-                }
-                if (tail.size() != n) {
-                    // The entry-derived count and the actual chain disagree:
-                    // the entry-derived count was only a hint. Defer to the
-                    // walk so the freed set matches free(n) exactly.
-                    freeCounted(n, size());
-                    return;
-                }
-                if (cutCluster >= 0) {
-                    fat.set(cutCluster, fat.eofChain());
-                    if (dolog)
-                        mylog(cutCluster + ":" + fat.eofChain());
-                }
-                for (int k = 0; k < tail.size(); k++) {
-                    int l = tail.get(k).intValue();
-                    fat.set(l, fat.freeEntry());
-                    if (dolog)
-                        mylog(l + ":" + fat.freeEntry());
-                }
-                fat.flush();
-                if (newClusters == 0) {
-                    setStartCluster(0);
-                    if (dolog)
-                        mylog("zero");
-                }
+                freeCounted(n, chainClusters);
             }
         } finally {
             invalidateHints();
