@@ -149,6 +149,76 @@ public class FatChain {
      * shared lock: it also serialises Fat.set/Fat.flush, so a cluster that is
      * freed or re-linked here can never be observed in an intermediate state.
      */
+
+    /**
+     * Locate {@code n} free clusters on the FAT, preferring the run at and after
+     * the free-cluster hint.
+     *
+     * <p>Precondition: the caller must hold the {@code fat} monitor.
+     *
+     * <p>Postcondition: either returns the index of the largest of the located free
+     * clusters ({@code >= fat.firstCluster()}), or throws
+     * {@link FileSystemFullException} when fewer than {@code n} free clusters exist;
+     * no FAT entry is modified either way.</p>
+     */
+    private int findFreeSegment(int n) throws IOException {
+        int i, found = 0, l = 0;
+        int suffixFound = 0;
+
+        for (i = fat.getLastFree(); i < fat.size(); i++) {
+            if (fat.isFreeEntry(i)) {
+                l = i;
+                suffixFound++;
+                found++;
+            }
+            if (found == n)
+                break;
+        }
+
+        if (found < n) {
+            for (i = fat.firstCluster(); i < fat.getLastFree(); i++) {
+                if (fat.isFreeEntry(i)) {
+                    if (suffixFound == 0)
+                        l = i;
+                    found++;
+                }
+                if (found == n)
+                    break;
+            }
+        }
+
+        if (found < n || l < fat.firstCluster())
+            throw new FileSystemFullException("no free clusters");
+
+        if (dolog)
+            mylog("found[" + found + "] last[" + l + "]");
+
+        return l;
+    }
+
+    /**
+     * Allocate a tail segment on the FAT: locate {@code n} free clusters, mark
+     * {@code last} (the largest of them) as end-of-chain and link the remaining
+     * {@code n - 1} clusters backwards underneath it.
+     *
+     * <p>Precondition: this or its caller holds the {@code fat} monitor.
+     *
+     * <p>Postcondition: on return, {@code n} clusters are removed from the free list
+     * and linked into one segment; the returned cluster is the head of the segment.
+     * The free-cluster hint is moved past the segment. If the link phase fails, the
+     * FAT is rolled back via {@link #rollbackAllocated(List)} and the exception
+     * propagates.</p>
+     *
+     * @param n number of clusters to allocate in the segment ({@code >= 1})
+     * @param m number of clusters below the write position that may be reused as-is
+     *        (they are linked, not zeroed, when {@code zero} is false)
+     * @param offset byte offset within the first linked cluster; when non-zero, the
+     *        first (lowest-indexed) linked cluster is treated as partially written
+     * @param zero when true, every linked cluster is fully cleared
+     * @return the head cluster (lowest index) of the newly allocated segment
+     * @throws FileSystemFullException when fewer than {@code n} clusters can be linked
+     * @throws IOException when a FAT write fails
+     */
     private int allocateTail(int n, int m, int offset, boolean zero) throws IOException {
         synchronized (fat) {
             if (n <= 0)
@@ -163,40 +233,10 @@ public class FatChain {
             if (dolog)
                 mylog("n[" + n + "] m[" + m + "] offset[" + offset + "]");
 
-            final int last;
-            int i, found = 0, l = 0;
-            int suffixFound = 0;
-            int k = (offset > 0) ? 2 : 1;
-
-            for (i = fat.getLastFree(); i < fat.size(); i++) {
-                if (fat.isFreeEntry(i)) {
-                    l = i;
-                    suffixFound++;
-                    found++;
-                }
-                if (found == n)
-                    break;
-            }
-
-            if (found < n) {
-                for (i = fat.firstCluster(); i < fat.getLastFree(); i++) {
-                    if (fat.isFreeEntry(i)) {
-                        if (suffixFound == 0)
-                            l = i;
-                        found++;
-                    }
-                    if (found == n)
-                        break;
-                }
-            }
-
-            if (found < n || l < fat.firstCluster())
-                throw new FileSystemFullException("no free clusters");
-
-            last = l;
+            int last = findFreeSegment(n);
 
             if (dolog)
-                mylog("found[" + found + "] last[" + last + "]");
+                mylog("last[" + last + "]");
 
             List<Integer> allocated = new ArrayList<Integer>();
             allocated.add(last);
@@ -211,84 +251,14 @@ public class FatChain {
                     fat.clearCluster(last);
                 }
 
-                //
-                found = 0;
-                l = last;
-                i = last;
-                //
-                for (; found < (n - m - k) && i >= fat.firstCluster(); i--) {
-                    if (fat.isFreeEntry(i)) {
-                        if (zero)
-                            fat.clearCluster(i);
-                        fat.set(i, l);
-                        allocated.add(i);
-                        if (dolog)
-                            mylog((n - found - 1) + "\t|allo|\t" + i + " " + l);
-                        l = i;
-                        found++;
-                    }
-                }
-                //
-                if (offset > 0) {
-                    for (; i >= fat.firstCluster(); i--) {
-                        if (fat.isFreeEntry(i)) {
-                            if (zero)
-                                fat.clearCluster(i);
-                            else
-                                fat.clearCluster(i, 0, offset);
-                            fat.set(i, l);
-                            allocated.add(i);
-                            if (dolog)
-                                mylog((n - found - 1) + "\t|part|\t" + i + " " + l);
-                            l = i;
-                            found++;
-                            break;
-                        }
+                int head = appendAllocatedTail(last, n, m, offset, zero, allocated);
 
-                    }
-                }
-                //
-                for (; found < (n - 1) && i >= fat.firstCluster(); i--) {
-                    if (fat.isFreeEntry(i)) {
-                        fat.clearCluster(i);
-                        fat.set(i, l);
-                        allocated.add(i);
-                        if (dolog)
-                            mylog((n - found - 1) + "\t|zero|\t" + i + " " + l);
-                        l = i;
-                        found++;
-                    }
-                }
-
-                if (found < n - 1)
-                    throw new FileSystemFullException("no free clusters");
-
-                //
-                // Set the free-cluster hint to one past the last allocated cluster
-                // so the next allocation scan starts in the right area.
-                //
-                boolean foundNext = false;
-                for (i = last + 1; i < fat.size(); i++) {
-                    if (fat.isFreeEntry(i)) {
-                        fat.setLastFree(i);
-                        foundNext = true;
-                        break;
-                    }
-                }
-                if (!foundNext) {
-                    for (i = fat.firstCluster(); i <= last; i++) {
-                        if (fat.isFreeEntry(i)) {
-                            fat.setLastFree(i);
-                            foundNext = true;
-                            break;
-                        }
-                    }
-                }
+                moveFreeHintPast(last);
 
                 if (dolog)
                     mylog("LastFree: " + fat.getLastFree());
 
-                return l;
+                return head;
             } catch (IOException ex) {
                 rollbackAllocated(allocated);
                 throw ex;
@@ -299,6 +269,163 @@ public class FatChain {
         }
     }
 
+    /**
+     * Link the {@code n - 1} clusters below {@code segmentHead} into a descending
+     * chain that ends at {@code segmentHead}. The first {@code n - m - k} clusters are
+     * whole-cluster links (k = 2 when a partial head cluster is expected, else 1), the
+     * next one (when {@code offset > 0}) is the partially-written head cluster, and the
+     * rest are whole-cluster links that are always cleared.
+     *
+     * <p>Preconditions: {@code fat.set(segmentHead, fat.eofChain())} has been applied and
+     * {@code segmentHead} is not a free entry; the caller holds the {@code fat} monitor;
+     * {@code allocated} contains {@code segmentHead}.
+     *
+     * <p>Postcondition: the returned cluster is the head of the new segment; every linked
+     * cluster is appended to {@code allocated} in link order; the linked clusters form an
+     * ascending FAT chain that ends at {@code segmentHead}. Throws
+     * {@link FileSystemFullException} when the backward scan runs out of free clusters
+     * before {@code n - 1} clusters are linked.</p>
+     */
+    private int appendAllocatedTail(int segmentHead, int n, int m, int offset, boolean zero,
+            List<Integer> allocated) throws IOException {
+        BackwardLink st = new BackwardLink(segmentHead);
+        int k = (offset > 0) ? 2 : 1;
+        linkWholeClusters(st, n - m - k, zero, allocated);
+        if (offset > 0)
+            linkPartialCluster(st, offset, zero, allocated);
+        linkRemainingClusters(st, n - 1, allocated);
+        if (st.found < n - 1)
+            throw new FileSystemFullException("no free clusters");
+        return st.l;
+    }
+
+    /**
+     * Phase 1 of {@link #appendAllocatedTail}: link up to {@code target} whole free
+     * clusters, scanning downwards from the cursor. A cluster is only cleared when
+     * {@code zero} is set; clusters whose data is fully overwritten by the write are
+     * therefore cleared unconditionally there, everything else is left alone.
+     *
+     * <p>Precondition: {@code st} was constructed for this segment and its cursor is at
+     * or below {@code segmentHead}.
+     *
+     * <p>Postcondition: {@code st.found} increased by the number of clusters linked;
+     * each linked cluster points at the previous {@code st.l} and {@code st.l} is
+     * updated to it; linked clusters are appended to {@code allocated}.</p>
+     */
+    private void linkWholeClusters(BackwardLink st, int target, boolean zero,
+            List<Integer> allocated) throws IOException {
+        for (; st.found < target && st.i >= fat.firstCluster(); st.i--) {
+            if (fat.isFreeEntry(st.i)) {
+                if (zero)
+                    fat.clearCluster(st.i);
+                fat.set(st.i, st.l);
+                allocated.add(st.i);
+                if (dolog)
+                    mylog("\t|allo|\t" + st.i + " " + st.l);
+                st.l = st.i;
+                st.found++;
+            }
+        }
+    }
+
+    /**
+     * Phase 2 of {@link #appendAllocatedTail}: link at most one cluster, the partially
+     * written head cluster that straddles the write offset. The cluster is fully cleared
+     * when {@code zero} is set, otherwise only the {@code [0, offset)} range is cleared
+     * (the remainder holds data the write will not touch here).
+     *
+     * <p>Precondition: {@code offset > 0}; phase 1 has run.
+     *
+     * <p>Postcondition: at most one cluster was linked; if a free cluster was found it is
+     * added to {@code allocated} and {@code st} is advanced past it. The scan cursor is
+     * left where the phase stopped.</p>
+     */
+    private void linkPartialCluster(BackwardLink st, int offset, boolean zero,
+            List<Integer> allocated) throws IOException {
+        for (; st.i >= fat.firstCluster(); st.i--) {
+            if (fat.isFreeEntry(st.i)) {
+                if (zero)
+                    fat.clearCluster(st.i);
+                else
+                    fat.clearCluster(st.i, 0, offset);
+                fat.set(st.i, st.l);
+                allocated.add(st.i);
+                if (dolog)
+                    mylog("\t|part|\t" + st.i + " " + st.l);
+                st.l = st.i;
+                st.found++;
+                return;
+            }
+        }
+    }
+
+    /**
+     * Phase 3 of {@link #appendAllocatedTail}: link whole free clusters until
+     * {@code st.found} reaches {@code target}. Unlike phase 1 these clusters are always
+     * fully cleared because they sit below the write position and their previous
+     * contents (if any) must not survive.
+     *
+     * <p>Precondition: phases 1 and 2 (when applicable) have run.
+     *
+     * <p>Postcondition: {@code st.found} increased by the number of clusters linked;
+     * each linked cluster points at the previous {@code st.l} and {@code st.l} is
+     * updated to it; linked clusters are appended to {@code allocated}.</p>
+     */
+    private void linkRemainingClusters(BackwardLink st, int target, List<Integer> allocated)
+            throws IOException {
+        for (; st.found < target && st.i >= fat.firstCluster(); st.i--) {
+            if (fat.isFreeEntry(st.i)) {
+                fat.clearCluster(st.i);
+                fat.set(st.i, st.l);
+                allocated.add(st.i);
+                if (dolog)
+                    mylog("\t|zero|\t" + st.i + " " + st.l);
+                st.l = st.i;
+                st.found++;
+            }
+        }
+    }
+
+    /**
+     * Advance the free-cluster hint to the smallest free cluster above {@code last},
+     * wrapping to the smallest free cluster in {@code [fat.firstCluster(), last]} when
+     * there is none above. If no free cluster exists at all the hint is left unchanged.
+     *
+     * <p>Precondition: the caller holds the {@code fat} monitor and the segment above
+     * {@code last} has just been marked allocated.
+     */
+    private void moveFreeHintPast(int last) throws IOException {
+        boolean foundNext = false;
+        for (int i = last + 1; i < fat.size(); i++) {
+            if (fat.isFreeEntry(i)) {
+                fat.setLastFree(i);
+                foundNext = true;
+                break;
+            }
+        }
+        if (!foundNext) {
+            for (int i = fat.firstCluster(); i <= last; i++) {
+                if (fat.isFreeEntry(i)) {
+                    fat.setLastFree(i);
+                    foundNext = true;
+                    break;
+                }
+            }
+        }
+    }
+
+    /**
+     * Best-effort rollback of a partially allocated segment: mark every cluster in
+     * {@code allocated} as a free entry (in reverse allocation order), rewind the
+     * free-cluster hint and flush the FAT.
+     *
+     * <p>Hints are invalidated first so no cached chain state survives a partial
+     * allocation. Every failure is logged and swallowed; this method never throws.
+     *
+     * <p>Postcondition (on return, success or not): each cluster in
+     * {@code allocated} is either marked with the free entry, or a warning naming the
+     * cluster has been logged.</p>
+     */
     private void rollbackAllocated(List<Integer> allocated) {
         invalidateHints();
         if (allocated == null || allocated.isEmpty()) {
@@ -319,6 +446,18 @@ public class FatChain {
         }
     }
 
+    /**
+     * Collect every cluster of the freshly linked segment headed by {@code segmentHead}
+     * into {@code allocated}, walking forward along the new chain.
+     *
+     * <p>Precondition: {@code segmentHead} is the head (lowest index) cluster of a
+     * segment that has just been linked; its FAT entry points at the next cluster of
+     * the segment (or at end-of-chain when the segment holds one cluster).
+     *
+     * <p>Postcondition: {@code allocated} lists every cluster of the segment from
+     * {@code segmentHead} up to the end-of-chain or free entry that terminates it.
+     * Clusters already present in {@code allocated} are not duplicated.</p>
+     */
     private void collectAllocated(List<Integer> allocated, int segmentHead) throws IOException {
         int cluster = segmentHead;
         while (cluster != 0 && !allocated.contains(cluster)) {
@@ -329,14 +468,6 @@ public class FatChain {
             }
             cluster = next;
         }
-    }
-
-    private int allocateTail(int n, int m, int offset) throws IOException {
-        return allocateTail(n, m, offset, false);
-    }
-
-    private int allocateTail(int n) throws IOException {
-        return allocateTail(n, 0, 0);
     }
 
     /*
@@ -616,6 +747,18 @@ public class FatChain {
             readHint = new ChainHint(head, i.nextIndex(), lastCluster, stampAtStart);
     }
 
+    /**
+     * Zero the byte range {@code [from, to)} of this chain, cluster by cluster, using a
+     * fresh iterator. This is the only place gap zeroing happens; the write path zeroes
+     * the gap between the old end of chain and a newly grown position exclusively
+     * through this method.
+     *
+     * <p>Precondition: the chain covers {@code [from, to)} as far as it currently
+     * reaches; the iteration stops at the end of the chain without error.
+     *
+     * <p>Postcondition: every cluster intersecting {@code [from, to)} is zeroed over the
+     * intersection. No FAT entry is modified.</p>
+     */
     private void zeroRange(long from, long to) throws IOException {
         if (from >= to)
             return;
@@ -645,7 +788,7 @@ public class FatChain {
     /*
      * length is used to zero the last cluster allocated to a chain when this is
      * required i.e. from FatFile
-     * 
+     *
      * when there is no need to zero the cluster at the end of the chain, last
      * cluster, we can use any clsize multiple or zero
      */
@@ -657,98 +800,129 @@ public class FatChain {
         if (offset < 0)
             throw new IllegalArgumentException("offset<0");
 
-        int savedHead = head;
-        int savedEnd = 0;
-        boolean savedEndCaptured = false;
-        List<Integer> allocatedClusters = new ArrayList<Integer>();
-        try {
-        boolean empty = src.remaining() == 0;
+        WriteRollback rb = new WriteRollback(head);
+        boolean empty = (src.remaining() == 0);
 
-        ChainPosition p = new ChainPosition(offset);
+        try {
+            ChainPosition p = new ChainPosition(offset);
+            ChainIterator i = listIterator();
+            GrowResult grown = ensureChainHasClusterIndex(rb, i, p, src, offset, length);
+            writeDataClusters(rb, i, p, src, grown.cluster);
+
+            if (empty && !grown.allocated && offset > length)
+                zeroRange(length, offset);
+        } catch (IOException ex) {
+            rollbackTo(rb);
+            throw ex;
+        } catch (RuntimeException ex) {
+            rollbackTo(rb);
+            throw ex;
+        }
+    }
+
+    /**
+     * Grow this chain, if necessary, so that chain index {@code p.getIndex()} exists and
+     * every byte before it reads as zero, then leave the iterator ready for the data
+     * copy.
+     *
+     * <p>Preconditions: {@code i} is a fresh iterator (chain index 0); {@code rb} records
+     * no allocations yet.
+     *
+     * <p>Postconditions:
+     * <ul>
+     * <li>when the chain had to grow, every newly linked cluster is recorded in
+     * {@code rb.allocatedClusters}, {@code rb.savedEnd} is captured at the first link,
+     * and (for a non-empty write) the iterator is positioned at
+     * {@code p.getIndex()}; the newly allocated gap and the head of the
+     * {@code p.getIndex()} cluster are zeroed exclusively through
+     * {@link #zeroRange(long, long)};</li>
+     * <li>the tail of the pre-existing tail cluster beyond {@code length} is zeroed when
+     * {@code length} falls inside that cluster;</li>
+     * <li>when the chain already covers {@code p.getIndex()}, the FAT is left
+     * untouched.</li>
+     * </ul>
+     *
+     * @return the grow outcome; {@code cluster} is the cluster at chain index
+     *         {@code p.getIndex() - 1} (0 when there is none), used as link target by a
+     *         mid-write append
+     */
+    private GrowResult ensureChainHasClusterIndex(WriteRollback rb, ChainIterator i,
+            ChainPosition p, ByteBuffer src, long offset, long length) throws IOException {
         int clsize = p.getSize();
         int clidx = p.getIndex();
+        boolean empty = (src.remaining() == 0);
 
-        ChainIterator i = listIterator();
         int cluster = getClusterWithHint(i, clidx);
         int last = i.nextIndex();
 
-        // System.out.println ( "head=" + head + " clidx=" + clidx + " cluster="
-        // + cluster + " last=" + last );
+        boolean needsGrow = (last != clidx)
+            || (empty && !i.hasNext() && offset > (long) last * clsize);
+        if (!needsGrow)
+            return new GrowResult(cluster, false);
+
+        int chainSize = last;
+        int m = clidx - last;
+
+        long lst = offset + src.remaining() - last * clsize;
+
+        // lst <= offset + Integer.MAX_VALUE <= 0xFFFFFFFFL + Integer.MAX_VALUE
+        // (offset is validated <= 0xFFFFFFFFL by setPosition), and clsize >= 512,
+        // so lst / clsize <= 12582910; guard anyway so no (int) cast truncates
+        long clustersNeeded = lst / clsize;
+        if ((lst % clsize) != 0)
+            clustersNeeded++;
+        if (clustersNeeded > Integer.MAX_VALUE)
+            throw new IllegalArgumentException("cluster count " + clustersNeeded
+                + " exceeds the maximum chain index");
+        int n = (int) clustersNeeded;
+
+        if (empty)
+            appendAllocatedChain(rb, i, cluster, n, n - 1, 0, true);
+        else
+            appendAllocatedChain(rb, i, cluster, n, m, p.getOffset(), false);
+
+        if (src.remaining() > 0)
+            zeroRange((long) chainSize * clsize, (long) clidx * clsize + p.getOffset());
 
         /*
-         * for ( last = 0; last < clidx; last++ ) if ( i.hasNext() ) cluster =
-         * i.next(); else break;
+         * here length is used to decide if we have to zero the data
+         * inside the last cluster tail
          */
+        // length % clsize < clsize <= 130560, fits in int
+        int ofs = (int) (length % clsize);
 
-        boolean allocated = false;
+        if (ofs != 0 && cluster != 0)
+            fat.clearCluster(cluster, ofs, clsize);
 
-        if (last != clidx || (empty && !i.hasNext() && offset > (long) last * clsize)) {
-            allocated = true;
-            int chainSize = last;
-            int m = clidx - last;
-
-            long lst = offset + src.remaining() - last * clsize;
-
-            // lst <= offset + Integer.MAX_VALUE <= 0xFFFFFFFFL + Integer.MAX_VALUE
-            // (offset is validated <= 0xFFFFFFFFL by setPosition), and clsize >= 512,
-            // so lst / clsize <= 12582910; guard anyway so no (int) cast truncates
-            long clustersNeeded = lst / clsize;
-            if ((lst % clsize) != 0)
-                clustersNeeded++;
-            if (clustersNeeded > Integer.MAX_VALUE)
-                throw new IllegalArgumentException("cluster count " + clustersNeeded
-                    + " exceeds the maximum chain index");
-            int n = (int) clustersNeeded;
-
-            if (empty)
-                last = allocateTail(n, n - 1, 0, true);
-            else
-                last = allocateTail(n, m, p.getOffset(), false);
-            collectAllocated(allocatedClusters, last);
-
-            if (!savedEndCaptured) {
-                savedEnd = cluster;
-                savedEndCaptured = true;
+        if (src.remaining() > 0) {
+            try {
+                i.setPosition(clidx);
+            } catch (NoSuchElementException ex) {
+                throw new ChainBeyondEndException("attempt to seek after End Of Chain " + offset, ex);
             }
-            if (cluster != 0) {
-                fat.set(cluster, last);
-                i.appendChain(last);
-            } else {
-                setStartCluster(last);
-                i.reset();
-            }
-
-            if (src.remaining() > 0) {
-                ChainIterator gap = listIterator(chainSize);
-                for (int idx = chainSize; idx < clidx; idx++) {
-                    if (!gap.hasNext())
-                        break;
-                    fat.clearCluster(gap.next());
-                }
-                if (clidx >= chainSize && gap.hasNext()) {
-                    int target = gap.next();
-                    if (p.getOffset() != 0)
-                        fat.clearCluster(target, 0, p.getOffset());
-                }
-            }
-
-            /*
-             * here length is used to decide if we have to zero the data
-             * inside the last cluster tail
-             */
-            // length % clsize < clsize <= 130560, fits in int
-            int ofs = (int) (length % clsize);
-
-            if (ofs != 0 && cluster != 0)
-                fat.clearCluster(cluster, ofs, clsize);
-
-            if (src.remaining() > 0)
-                try {
-                    i.setPosition(clidx);
-                } catch (NoSuchElementException ex) {
-                    throw new ChainBeyondEndException("attempt to seek after End Of Chain " + offset, ex);
-                }
         }
+
+        return new GrowResult(cluster, true);
+    }
+
+    /**
+     * Copy the remaining bytes of {@code src} into this chain, starting at the iterator's
+     * current position, growing the chain by whole segments when it runs out.
+     *
+     * <p>Preconditions: {@code i} is positioned at chain index {@code p.getIndex()} and
+     * the chain covers it; {@code startCluster} is the cluster at chain index
+     * {@code p.getIndex() - 1} (0 when there is none), used as link target by the first
+     * mid-write append.
+     *
+     * <p>Postconditions: {@code src.position()} is at its limit and every byte has been
+     * written; every segment appended mid-write is recorded in
+     * {@code rb.allocatedClusters} (with {@code rb.savedEnd} captured at the first link);
+     * the iterator advances past the last written cluster.</p>
+     */
+    private void writeDataClusters(WriteRollback rb, ChainIterator i, ChainPosition p,
+            ByteBuffer src, int startCluster) throws IOException {
+        int clsize = p.getSize();
+        int cluster = startCluster;
 
         for (int l = src.remaining(), sz = p.getPartial(), ofs = p.getOffset(), size; l > 0; l -=
                 size, sz = clsize, ofs = 0) {
@@ -758,20 +932,7 @@ public class FatChain {
                 if ((l % clsize) != 0)
                     n++;
 
-                last = allocateTail(n);
-                collectAllocated(allocatedClusters, last);
-
-                if (!savedEndCaptured) {
-                    savedEnd = cluster;
-                    savedEndCaptured = true;
-                }
-                if (cluster != 0) {
-                    fat.set(cluster, last);
-                    i.appendChain(last);
-                } else {
-                    setStartCluster(last);
-                    i.reset();
-                }
+                appendAllocatedChain(rb, i, cluster, n, 0, 0, false);
             }
 
             cluster = i.next();
@@ -790,29 +951,78 @@ public class FatChain {
                 src.limit(limit);
             }
         }
+    }
 
-        if (empty && !allocated && offset > length)
-            zeroRange(length, offset);
-        } catch (IOException ex) {
-            rollbackWrite(allocatedClusters, savedHead, savedEnd);
-            throw ex;
-        } catch (RuntimeException ex) {
-            rollbackWrite(allocatedClusters, savedHead, savedEnd);
-            throw ex;
+    /**
+     * Allocate a segment of {@code n} clusters and append it to this chain, linking from
+     * {@code clusterBeforeAppend}.
+     *
+     * <p>Precondition: every cluster previously recorded in {@code rb.allocatedClusters}
+     * is linked into the chain (it was recorded at link time); {@code clusterBeforeAppend}
+     * is the cluster the segment must be linked onto, or 0 when the segment becomes the
+     * first chain segment.
+     *
+     * <p>Postconditions: the segment head is recorded in {@code rb.allocatedClusters};
+     * {@code rb.savedEnd} captures {@code clusterBeforeAppend}; either
+     * {@code fat.set(clusterBeforeAppend, head)} and {@code i.appendChain(head)} have been
+     * applied, or {@code head} became the chain start cluster and the iterator was reset.
+     *
+     * @return the head cluster of the newly allocated segment
+     */
+    private int appendAllocatedChain(WriteRollback rb, ChainIterator i, int clusterBeforeAppend,
+            int n, int m, int offset, boolean zero) throws IOException {
+        int last = allocateTail(n, m, offset, zero);
+        collectAllocated(rb.allocatedClusters, last);
+        rb.captureSavedEnd(clusterBeforeAppend);
+        linkAppendedChain(i, clusterBeforeAppend, last);
+        return last;
+    }
+
+    /**
+     * Link an already-allocated segment onto this chain and reposition the iterator.
+     *
+     * <p>Precondition: {@code segmentHead} is the end-of-chain head cluster of a freshly
+     * allocated segment.
+     *
+     * <p>Postcondition: if {@code clusterBeforeAppend != 0} its FAT entry points at
+     * {@code segmentHead} and the iterator cursor is {@code segmentHead}; otherwise
+     * {@code segmentHead} becomes the chain start cluster and the iterator is reset to
+     * the start of the chain.</p>
+     */
+    private void linkAppendedChain(ChainIterator i, int clusterBeforeAppend, int segmentHead)
+            throws IOException {
+        if (clusterBeforeAppend != 0) {
+            fat.set(clusterBeforeAppend, segmentHead);
+            i.appendChain(segmentHead);
+        } else {
+            setStartCluster(segmentHead);
+            i.reset();
         }
     }
 
-    private void rollbackWrite(List<Integer> allocatedClusters, int savedHead, int savedEnd) {
+    /**
+     * Undo everything a failed {@link #write(long, long, ByteBuffer)} allocated or linked.
+     *
+     * <p>Postcondition: the hints are invalidated; every cluster in
+     * {@code rb.allocatedClusters} is marked free (see
+     * {@link #rollbackAllocated(List)}); the link appended before the failure is removed:
+     * when {@code rb.savedEnd} is non-zero its FAT entry is set back to end-of-chain,
+     * otherwise the chain start cluster is restored to {@code rb.savedHead}. Every
+     * failure is logged and swallowed; this method never throws.</p>
+     *
+     * @param rb the rollback state captured by the failed {@code write()} call
+     */
+    private void rollbackTo(WriteRollback rb) {
         invalidateHints();
-        if (allocatedClusters == null || allocatedClusters.isEmpty()) {
+        if (rb.allocatedClusters.isEmpty()) {
             return;
         }
-        rollbackAllocated(allocatedClusters);
+        rollbackAllocated(rb.allocatedClusters);
         try {
-            if (savedEnd != 0) {
-                fat.set(savedEnd, fat.eofChain());
+            if (rb.savedEnd != 0) {
+                fat.set(rb.savedEnd, fat.eofChain());
             } else {
-                setStartCluster(savedHead);
+                setStartCluster(rb.savedHead);
             }
             fat.flush();
         } catch (Exception ex) {
@@ -953,6 +1163,77 @@ public class FatChain {
             if (attempt >= 3)
                 throw new ChainBeyondEndException("chain changed during write at chain index " + position);
             i.reset();
+        }
+    }
+
+    /**
+     * Mutable rollback state for a single {@code write()} call.
+     *
+     * <p>{@code allocatedClusters} accumulates every cluster allocated by the write, in
+     * allocation order; {@link #rollbackTo} frees them in reverse order. {@code savedHead}
+     * is the chain head captured before any mutation. {@code savedEnd} captures the
+     * cluster from which the first appended segment was linked onto the pre-existing
+     * chain; it is captured at most once (the later links target clusters allocated by
+     * this write), and stays 0 when the write extended an empty chain, in which case
+     * rollback restores {@code savedHead} as the start cluster.</p>
+     */
+    private static final class WriteRollback {
+        private final int savedHead;
+        private int savedEnd;
+        private boolean savedEndCaptured;
+        private final List<Integer> allocatedClusters = new ArrayList<Integer>();
+
+        private WriteRollback(int savedHead) {
+            this.savedHead = savedHead;
+        }
+
+        private void captureSavedEnd(int cluster) {
+            if (!savedEndCaptured) {
+                savedEnd = cluster;
+                savedEndCaptured = true;
+            }
+        }
+    }
+
+    /**
+     * Outcome of {@link #ensureChainHasClusterIndex}.
+     *
+     * <p>{@code cluster} is the cluster at chain index {@code clidx - 1} (0 when there is
+     * none), used as link target by a mid-write append. {@code allocated} is true when
+     * the call grew the chain.</p>
+     */
+    private static final class GrowResult {
+        private final int cluster;
+        private final boolean allocated;
+
+        private GrowResult(int cluster, boolean allocated) {
+            this.cluster = cluster;
+            this.allocated = allocated;
+        }
+    }
+
+    /**
+     * Mutable backward-scan state for {@link #appendAllocatedTail}.
+     *
+     * <p>Invariants:
+     * <ul>
+     * <li>{@code i} is the next candidate cluster index to examine, scanning downwards;</li>
+     * <li>{@code l} is the cluster index that the next linked cluster must point at (the
+     * running tail of the segment being built);</li>
+     * <li>{@code found} is the number of clusters linked so far; the segment is complete
+     * when {@code found == n - 1} (the end cluster is counted separately by the
+     * caller).</li>
+     * </ul>
+     */
+    private static final class BackwardLink {
+        private int i;
+        private int l;
+        private int found;
+
+        private BackwardLink(int segmentHead) {
+            this.i = segmentHead;
+            this.l = segmentHead;
+            this.found = 0;
         }
     }
 
