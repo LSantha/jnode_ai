@@ -67,8 +67,6 @@ public abstract class Fat {
 
     private int freeClusterCount;
 
-    private final ByteBuffer clearbuf;
-
     protected Fat(BootSector bs, BlockDeviceAPI api) throws IOException {
         this.bs = bs;
         this.api = api;
@@ -86,17 +84,6 @@ public abstract class Fat {
         rewindFree();
 
         freeClusterCount = freeEntries();
-
-        /*
-         * and blank the clear buffer
-         */
-        byte[] cleardata = new byte[getClusterSize()];
-        Arrays.fill(cleardata, 0, cleardata.length, (byte) 0x00);
-
-        /*
-         * setup the clear buffer
-         */
-        clearbuf = ByteBuffer.wrap(cleardata).asReadOnlyBuffer();
     }
 
     /**
@@ -221,6 +208,15 @@ public abstract class Fat {
         getApi().write(getClusterPosition(cluster) + offset, src);
     }
 
+    /**
+     * Zero the byte range {@code [start, end)} of a cluster on the device.
+     *
+     * <p>The zero buffer is allocated per call ({@code new byte[end - start]},
+     * JVM-zeroed) and is never shared between threads or between calls, so this
+     * method carries no cross-call mutable state and needs no synchronization of
+     * its own. Callers that hold the {@code fat} monitor (e.g.
+     * {@code FatChain.allocateTail}) may nest freely.</p>
+     */
     public void clearCluster(int cluster, int start, int end) throws IOException {
         if (start < 0) {
             throw new IllegalArgumentException("start<0");
@@ -235,9 +231,11 @@ public abstract class Fat {
                 getClusterSize() + "]");
         }
 
-        clearbuf.clear();
-        clearbuf.limit(end - start);
+        if (end == start) {
+            return;
+        }
 
+        ByteBuffer clearbuf = ByteBuffer.wrap(new byte[end - start]);
         writeCluster(cluster, start, clearbuf);
     }
 
