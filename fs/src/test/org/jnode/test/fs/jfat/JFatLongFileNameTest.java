@@ -21,9 +21,12 @@
 package org.jnode.test.fs.jfat;
 
 import java.io.File;
+import java.lang.reflect.Field;
+import java.lang.reflect.Method;
 import java.nio.ByteBuffer;
 import java.util.Arrays;
 import java.util.Iterator;
+import java.util.Vector;
 
 import org.jnode.driver.block.FileDevice;
 import org.jnode.emu.naming.BasicNameSpace;
@@ -40,6 +43,7 @@ import org.jnode.fs.jfat.FatEntry;
 import org.jnode.fs.jfat.FatFileSystem;
 import org.jnode.fs.jfat.FatFileSystemFormatter;
 import org.jnode.fs.jfat.FatFileSystemType;
+import org.jnode.fs.jfat.FatLongDirEntry;
 import org.jnode.fs.service.FileSystemService;
 import org.jnode.fs.service.def.FileSystemPlugin;
 import org.jnode.naming.InitialNaming;
@@ -722,5 +726,238 @@ public class JFatLongFileNameTest {
         }
         assertEquals("Should find all 10 files", 10, count);
         fs.close();
+    }
+
+    /**
+     * Test the FAT32 LFN maximum: a 255-character long name.
+     * 255 characters require exactly 20 long entries of 13 characters each,
+     * with the last entry holding the remaining 8 characters (255 = 19 * 13 + 8).
+     */
+    @Test
+    public void testMaximumLengthLongName() throws Exception {
+        StringBuilder sb = new StringBuilder();
+        while (sb.length() < 251) {
+            sb.append("abcdefghij");
+        }
+        final String longName = sb.substring(0, 251) + ".txt";
+        assertEquals("test name must be exactly 255 characters", 255, longName.length());
+        assertEquals(255, longName.getBytes("US-ASCII").length);
+
+        final byte[] data = "maximum length lfn".getBytes("US-ASCII");
+
+        FatFileSystem fs = formatAndOpenRW();
+        FSDirectory rootDir = fs.getRootEntry().getDirectory();
+
+        FSEntry entry = rootDir.addFile(longName);
+        FSFile file = entry.getFile();
+        file.write(0, ByteBuffer.wrap(data));
+        file.flush();
+        fs.flush();
+
+        Vector<FatLongDirEntry> longEntries = ((FatEntry) entry).getRecord().getLongEntries();
+        assertEquals("255 characters must span exactly 20 long entries", 20, longEntries.size());
+        int totalComponentChars = 0;
+        int lastComponentLength = -1;
+        for (FatLongDirEntry lde : longEntries) {
+            totalComponentChars += lde.getComponent().length();
+            if (lde.isLast()) {
+                lastComponentLength = lde.getComponent().length();
+            }
+        }
+        assertEquals("components must spell the full long name", 255, totalComponentChars);
+        assertEquals("last long entry carries the remaining 8 characters", 8, lastComponentLength);
+        for (int i = 1; i < longEntries.size(); i++) {
+            assertEquals("leading long entry component must be 13 characters",
+                13, longEntries.get(i).getComponent().length());
+        }
+
+        fs.close();
+
+        fs = openReadOnly();
+        rootDir = fs.getRootEntry().getDirectory();
+
+        FSEntry found = rootDir.getEntry(longName);
+        assertNotNull("255-character file not found after remount", found);
+        assertEquals("255-character name not reconstructed byte-identically", longName, found.getName());
+
+        FSFile readFile = found.getFile();
+        ByteBuffer buf = ByteBuffer.allocate((int) readFile.getLength());
+        readFile.read(0, buf);
+        buf.flip();
+        byte[] read = new byte[buf.remaining()];
+        buf.get(read);
+        assertTrue("data mismatch for 255-character file after remount", Arrays.equals(data, read));
+
+        Vector<FatLongDirEntry> remounted = ((FatEntry) found).getRecord().getLongEntries();
+        assertEquals("remount must reconstruct exactly 20 long entries", 20, remounted.size());
+        int remountedChars = 0;
+        for (FatLongDirEntry lde : remounted) {
+            remountedChars += lde.getComponent().length();
+        }
+        assertEquals("remount must reconstruct the full name", 255, remountedChars);
+
+        fs.close();
+    }
+
+    /**
+     * The illegal short-name characters (everything in the short_illegal set except
+     * '+' and '=' which are frozen in FatShortNameGoldenTest) and control characters
+     * below 0x20 must map to '_', set the lossy flag and mangle the name. The short
+     * name produced by FatName must carry the underscore.
+     */
+    @Test
+    public void testInvalidCharactersInShortNameBasis() throws Exception {
+        char[] illegal = {'"', '*', ',', '/', ':', ';', '<', '>', '?', '[', '\\', ']', '|'};
+        char[] control = {'\u0001', '\u001F'};
+
+        FatFileSystem fs = formatAndOpenRW();
+        FSDirectory rootDir = fs.getRootEntry().getDirectory();
+
+        String[] names = new String[illegal.length + control.length];
+        for (int i = 0; i < names.length; i++) {
+            char c = (i < illegal.length ? illegal[i] : control[i - illegal.length]);
+            String shown = (c < 0x20 ? "0x" + Integer.toHexString(c) : ("'" + c + "'"));
+            String name = "A" + c + "B.txt";
+            names[i] = name;
+
+            Object preTail = invokeComputePreTail(name);
+            assertTrue("lossy flag must be set for " + shown, preTailLossy(preTail));
+            assertTrue("name with " + shown + " must be mangled", preTailMangled(preTail));
+            byte[] basis = preTailBasis(preTail);
+            assertEquals("basis head for 'A' + " + shown + " + 'B'", (byte) 'A', basis[0]);
+            assertEquals("illegal char " + shown + " must map to underscore", (byte) '_', basis[1]);
+            assertEquals("basis tail for 'A' + " + shown + " + 'B'", (byte) 'B', basis[2]);
+
+            FSEntry entry = rootDir.addFile(name);
+            String shortName = ((FatEntry) entry).getShortName();
+            assertTrue("mangled short name must contain a numeric tail: " + shortName,
+                shortName.indexOf('~') > 0);
+            assertEquals("underscore must be at the illegal char position in: " + shortName,
+                1, shortName.indexOf('_'));
+            assertTrue("short name must keep the extension: " + shortName, shortName.endsWith(".TXT"));
+        }
+        fs.flush();
+        fs.close();
+
+        // Remount: every entry with an illegal/control char round-trips byte-identically
+        fs = openReadOnly();
+        rootDir = fs.getRootEntry().getDirectory();
+        for (String name : names) {
+            FSEntry found = rootDir.getEntry(name);
+            assertNotNull("file not found after remount: " + showAscii(name), found);
+            assertEquals("name not reconstructed byte-identically after remount: " + showAscii(name),
+                name, found.getName());
+            String shortName = ((FatEntry) found).getShortName();
+            assertEquals("underscore lost after remount for: " + showAscii(name), 1, shortName.indexOf('_'));
+        }
+        fs.close();
+    }
+
+    /**
+     * A directory that already holds the real (non-mangled, 8.3-legal) short names
+     * "AAAAAA~1.TXT" .. "AAAAAA~9.TXT" must not produce a colliding generated short
+     * name for a long name that mangles to basis "AAAAAAAA". The generator must skip
+     * the occupied tails and resolve without corrupting an existing entry.
+     * Note: "AAAAAAAA~N" is not a legal 8.3 short name (10-character base), so the
+     * 1-digit tail slots for basis "AAAAAAAA" live in "AAAAAA~N.TXT".
+     */
+    @Test
+    public void testGeneratedShortNameDoesNotCollideWithExistingRealShortNames() throws Exception {
+        final byte[] data = "collision resolution test".getBytes("US-ASCII");
+
+        FatFileSystem fs = formatAndOpenRW();
+        FSDirectory rootDir = fs.getRootEntry().getDirectory();
+
+        for (int i = 1; i <= 9; i++) {
+            String realName = "AAAAAA~" + i + ".TXT";
+            FSEntry real = rootDir.addFile(realName);
+            assertEquals("test setup: an 8.3-legal name must be stored as its own short name",
+                realName, ((FatEntry) real).getShortName());
+        }
+
+        StringBuilder longNameBuilder = new StringBuilder();
+        for (int i = 0; i < 58; i++) {
+            longNameBuilder.append('A');
+        }
+        final String longName = longNameBuilder.append(".txt").toString();
+
+        FSEntry entry = rootDir.addFile(longName);
+        FSFile file = entry.getFile();
+        file.write(0, ByteBuffer.wrap(data));
+        file.flush();
+        fs.flush();
+
+        String generated = ((FatEntry) entry).getShortName();
+        for (int i = 1; i <= 9; i++) {
+            assertFalse("generated short name must not collide with existing real short name AAAAAA~" + i + ".TXT",
+                ("AAAAAA~" + i + ".TXT").equals(generated));
+        }
+        assertEquals("collision must resolve to the next free tail", "AAAAA~10.TXT", generated);
+
+        fs.close();
+
+        // Remount: no corrupt or lost entries; the generated short name survives as-is
+        fs = openReadOnly();
+        rootDir = fs.getRootEntry().getDirectory();
+
+        FSEntry found = rootDir.getEntry(longName);
+        assertNotNull("long-named file not found after remount", found);
+        assertEquals(longName, found.getName());
+        assertEquals("generated short name changed across remount", "AAAAA~10.TXT",
+            ((FatEntry) found).getShortName());
+
+        FSFile readFile = found.getFile();
+        ByteBuffer buf = ByteBuffer.allocate((int) readFile.getLength());
+        readFile.read(0, buf);
+        buf.flip();
+        byte[] read = new byte[buf.remaining()];
+        buf.get(read);
+        assertTrue("data mismatch after remount", Arrays.equals(data, read));
+
+        for (int i = 1; i <= 9; i++) {
+            FSEntry real = rootDir.getEntry("AAAAAA~" + i + ".TXT");
+            assertNotNull("real short-named file AAAAAA~" + i + ".TXT lost after remount", real);
+        }
+        fs.close();
+    }
+
+    private static Object invokeComputePreTail(String longName) throws Exception {
+        Class<?> codePageClass = Class.forName("org.jnode.fs.jfat.CodePage");
+        Class<?> fatNameClass = Class.forName("org.jnode.fs.jfat.FatName");
+        Method computePreTail = fatNameClass.getDeclaredMethod("computePreTail", String.class, codePageClass);
+        computePreTail.setAccessible(true);
+        Object codePage = codePageClass.getMethod("forName", String.class).invoke(null, "ISO_8859_1");
+        return computePreTail.invoke(null, longName, codePage);
+    }
+
+    private static boolean preTailLossy(Object preTail) throws Exception {
+        Field lossy = preTail.getClass().getDeclaredField("lossy");
+        lossy.setAccessible(true);
+        return lossy.getBoolean(preTail);
+    }
+
+    private static boolean preTailMangled(Object preTail) throws Exception {
+        Method isMangled = preTail.getClass().getDeclaredMethod("isMangled");
+        isMangled.setAccessible(true);
+        return ((Boolean) isMangled.invoke(preTail)).booleanValue();
+    }
+
+    private static byte[] preTailBasis(Object preTail) throws Exception {
+        Method basis = preTail.getClass().getDeclaredMethod("basis");
+        basis.setAccessible(true);
+        return (byte[]) basis.invoke(preTail);
+    }
+
+    private static String showAscii(String s) {
+        StringBuilder out = new StringBuilder(s.length() * 2);
+        for (int i = 0; i < s.length(); i++) {
+            char c = s.charAt(i);
+            if (c < 0x20 || c > 0x7E) {
+                out.append("0x").append(Integer.toHexString(c));
+            } else {
+                out.append(c);
+            }
+        }
+        return out.toString();
     }
 }
