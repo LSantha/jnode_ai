@@ -35,6 +35,17 @@ import org.jnode.util.LittleEndian;
  * A cache for FAT sectors ("elements") shared by every thread that uses a
  * {@link Fat}.
  *
+ * <p>FAT copy authority, ticket #944: the cache keys every element at the
+ * absolute device position of one FAT copy - the active copy selected by
+ * {@code BPB_ExtFlags} (see {@link Fat#getActiveFatIndex()}). When
+ * {@code BPB_ExtFlags} bit 7 is set (single active FAT, FAT32 only) reads
+ * hit that copy and a dirty element is written to that copy only; the
+ * inactive copies are left byte-identical, because they may hold
+ * intentional, different data. When bit 7 is clear (mirrored volumes, and
+ * every FAT12/FAT16 volume) behaviour is unchanged: reads hit FAT copy 0
+ * and every dirty element is written to all {@code BPB_NumFATs} copies.
+ * The read and write paths therefore always agree on which copy wins.</p>
+ *
  * <p>Thread-safety contract: one cache per filesystem, serialised internally;
  * callers need not lock. All public methods, including the read-modify-write
  * sequences and every internal mutation of the map, the free list, the counters
@@ -77,6 +88,8 @@ public class FatCache {
     private final BlockDeviceAPI api;
     private final long fatsize;
     private final int nrfats;
+    private final int activeFat;
+    private final boolean mirrorAll;
 
     private int elementSize;
 
@@ -91,6 +104,8 @@ public class FatCache {
         this.fatsize =
             fat.getBootSector().getSectorsPerFat() * fat.getBootSector().getBytesPerSector();
         this.nrfats = fat.getBootSector().getNrFats();
+        this.activeFat = fat.getBootSector().getActiveFat();
+        this.mirrorAll = !fat.getBootSector().isFatMirrorDisabled();
         this.elementSize = elementSize;
 
         // allocate the LinkedHashMap
@@ -214,7 +229,7 @@ public class FatCache {
         CacheElement c = get(addr);
         byte[] data = c.getData();
 
-        if (ofs == elementSize - 1 && offset - fat.getFirst(0) + 1 < fatsize) {
+        if (ofs == elementSize - 1 && offset - fat.getFirst(activeFat) + 1 < fatsize) {
             int oldLow = data[ofs] & 0xFF;
             int oldHigh = data[ofs + 1] & 0xFF;
             LittleEndian.setInt8(data, ofs, value);
@@ -255,19 +270,19 @@ public class FatCache {
     }
 
     public synchronized long getUInt16(int index) throws IOException {
-        return getUInt16(fat.position(0, index));
+        return getUInt16(fat.position(activeFat, index));
     }
 
     public synchronized long getUInt32(int index) throws IOException {
-        return getUInt32(fat.position(0, index));
+        return getUInt32(fat.position(activeFat, index));
     }
 
     public synchronized void setInt16(int index, int element) throws IOException {
-        setInt16(fat.position(0, index), element);
+        setInt16(fat.position(activeFat, index), element);
     }
 
     public synchronized void setInt32(int index, int element) throws IOException {
-        setInt32(fat.position(0, index), element);
+        setInt32(fat.position(activeFat, index), element);
     }
 
     public synchronized void flush() throws IOException {
@@ -527,10 +542,16 @@ public class FatCache {
 
             long addr = address.get() * elementSize;
 
-            for (int i = 0; i < nrfats; i++) {
+            if (mirrorAll) {
+                long dst = addr;
+                for (int i = 0; i < nrfats; i++) {
+                    src.clear();
+                    api.write(dst, src);
+                    dst += fatsize;
+                }
+            } else {
                 src.clear();
                 api.write(addr, src);
-                addr += fatsize;
             }
         }
 

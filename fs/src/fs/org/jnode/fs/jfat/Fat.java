@@ -50,6 +50,29 @@ import org.jnode.fs.FileSystemException;
  * FAT. Runtime maintenance of FSInfo is a separate ticket and must be atomic
  * with the FAT update.</p>
  *
+ * <p>FAT copy authority, ticket #944: when the volume is FAT32 and
+ * {@code BPB_ExtFlags} bit 7 is set (FAT spec: "only one FAT is active"),
+ * the FAT copy named by the low nibble (bits 0-3) is the only copy JFAT
+ * treats as authoritative. Reads and writes both go through this same
+ * selection - {@link FatCache} positions every cache element at
+ * {@code getFirst(getActiveFatIndex())} - so the read path and the write
+ * path can never disagree: an inconsistent read/write pair would
+ * silently target different copies. When bit 7 is set, every dirty cache
+ * element is written only to the active copy, and {@link #compareFatCopies()}
+ * reports no divergence, because divergence against a deliberately inactive
+ * copy is a condition the volume legitimately exhibits. When bit 7 is clear
+ * (the default, the only case on FAT12/FAT16, and the case on every volume
+ * in the test suite) behaviour is unchanged: reads hit FAT copy 0, dirty
+ * cache elements are written to all copies, and {@code compareFatCopies()}
+ * compares copy 0 against the rest as before. If bit 7 is set and the
+ * declared active index is greater than or equal to {@code BPB_NumFATs},
+ * the mount is refused with {@link org.jnode.fs.FileSystemException} at
+ * boot-sector decode time rather than guessing which copy to trust; the
+ * decoded index is validated once, so the read and write paths always
+ * agree on the winner. Honouring the active index (rather than refusing
+ * every single-active-FAT mount) was chosen so that volumes which other
+ * FAT implementations mount can also be used by JNode.</p>
+ *
  * @author gvt
  */
 public abstract class Fat {
@@ -133,6 +156,17 @@ public abstract class Fat {
 
     public final BootSector getBootSector() {
         return bs;
+    }
+
+    /**
+     * @return the index of the FAT copy JFAT treats as authoritative: the
+     * active FAT from {@code BPB_ExtFlags} when only one FAT is active
+     * (FAT32 with bit 7 set), otherwise 0. Reads, writes and copy
+     * comparison are all keyed off this one value, so the paths cannot
+     * disagree.
+     */
+    public final int getActiveFatIndex() {
+        return bs.getActiveFat();
     }
 
     public final BlockDeviceAPI getApi() {
@@ -361,6 +395,9 @@ public abstract class Fat {
 
     public final List<Long> compareFatCopies() {
         List<Long> divergent = new ArrayList<Long>();
+        if (bs.isFatMirrorDisabled()) {
+            return divergent;
+        }
         int nrFats = bs.getNrFats();
         if (nrFats <= 1) {
             return divergent;

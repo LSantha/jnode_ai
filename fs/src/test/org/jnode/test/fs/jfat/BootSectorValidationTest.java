@@ -30,6 +30,7 @@ import org.jnode.fs.jfat.Fat;
 import org.jnode.util.LittleEndian;
 import org.junit.Test;
 
+import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertTrue;
 import static org.junit.Assert.fail;
 
@@ -180,6 +181,53 @@ public class BootSectorValidationTest {
         BootSector bs = new BootSector(validFat32Sector());
         assertTrue("Should be FAT32", bs.isFat32());
         assertTrue("Should not be FAT12", !bs.isFat12());
+    }
+
+    @Test
+    public void testValidFat32WithExtFlagsSingleActiveFatMounts() throws Exception {
+        byte[] sector = validFat32Sector();
+        LittleEndian.setInt16(sector, 40, 0x0081);
+        BootSector bs = new BootSector(sector);
+        assertTrue("Should be FAT32", bs.isFat32());
+        assertTrue("bit 7 must disable the mirror", bs.isFatMirrorDisabled());
+        assertEquals("active FAT must come from bits 0-3", 1, bs.getActiveFat());
+        assertEquals("getExtFlags must return the raw field", 0x0081, bs.getExtFlags());
+    }
+
+    @Test
+    public void testFat32ExtFlagsSingleActiveFatZeroMounts() throws Exception {
+        byte[] sector = validFat32Sector();
+        LittleEndian.setInt16(sector, 40, 0x0080);
+        BootSector bs = new BootSector(sector);
+        assertTrue("bit 7 must disable the mirror", bs.isFatMirrorDisabled());
+        assertEquals("active FAT 0 must be honoured", 0, bs.getActiveFat());
+    }
+
+    @Test
+    public void testFat32ExtFlagsActiveFatBeyondNumFatsFails() {
+        byte[] sector = validFat32Sector();
+        LittleEndian.setInt16(sector, 40, 0x0080 | 2);
+        expectFailure(sector, "BPB_ExtFlags", "2");
+    }
+
+    @Test
+    public void testFat32ExtFlagsMirroredIgnoresActiveIndex() throws Exception {
+        byte[] sector = validFat32Sector();
+        LittleEndian.setInt16(sector, 40, 0x0001);
+        BootSector bs = new BootSector(sector);
+        assertTrue("bit 7 clear must report a mirrored volume", !bs.isFatMirrorDisabled());
+        assertEquals("mirrored volume must report active FAT 0", 0, bs.getActiveFat());
+    }
+
+    @Test
+    public void testFat12IgnoresExtFlagsBytes() throws Exception {
+        byte[] sector = validFat12Sector();
+        sector[40] = (byte) 0x81;
+        sector[41] = 0x00;
+        BootSector bs = new BootSector(sector);
+        assertTrue("FAT12 must not expose BPB_ExtFlags", !bs.isFatMirrorDisabled());
+        assertEquals("FAT12 must report active FAT 0", 0, bs.getActiveFat());
+        assertEquals("FAT12 must report raw ExtFlags 0", 0, bs.getExtFlags());
     }
 
     @Test

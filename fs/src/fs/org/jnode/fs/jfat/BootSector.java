@@ -169,6 +169,13 @@ public class BootSector {
             throw new FileSystemException("Invalid BPB_RootEntCnt: " + BPB_RootEntCnt
                 + " (expected 0 iff FAT32, where FAT32 is RootEntCnt==0 and BPB_FATSz16==0)");
         }
+        if (isFat32 && (BPB_ExtFlags & 0x80) != 0) {
+            int active = BPB_ExtFlags & 0x0F;
+            if (active >= BPB_NumFATs) {
+                throw new FileSystemException("Invalid BPB_ExtFlags: active FAT index " + active
+                    + " (expected < BPB_NumFATs " + BPB_NumFATs + ")");
+            }
+        }
     }
 
     private void validateGeometry() throws FileSystemException {
@@ -244,6 +251,9 @@ public class BootSector {
         if (BPB_FATSz16 == 0)
             BPB_FATSz32 = get32(36);
 
+        if (BPB_RootEntCnt == 0 && BPB_FATSz16 == 0)
+            BPB_ExtFlags = get16(40);
+
         validateBpb();
         compute();
         validateGeometry();
@@ -256,7 +266,6 @@ public class BootSector {
             BS_VolLab = getString(43, 11);
             BS_FilSysType = getString(54, 8);
         } else {
-            BPB_ExtFlags = get16(40);
             BPB_FSVer = get16(42);
             BPB_RootClus = get32(44);
             BPB_FSInfo = get16(48);
@@ -408,6 +417,36 @@ public class BootSector {
 
     public int getNrFats() {
         return BPB_NumFATs;
+    }
+
+    /**
+     * @return the raw BPB_ExtFlags field. Zero on FAT12/FAT16, where the
+     * field does not exist (offset 40 is part of BS_VolID there); only
+     * FAT32 volumes carry it.
+     */
+    public int getExtFlags() {
+        return isFat32() ? BPB_ExtFlags : 0;
+    }
+
+    /**
+     * @return true when BPB_ExtFlags bit 7 declares that only one FAT copy
+     * is active and the remaining copies may be stale or filler by design.
+     * Always false on FAT12/FAT16.
+     */
+    public boolean isFatMirrorDisabled() {
+        return (getExtFlags() & 0x80) != 0;
+    }
+
+    /**
+     * @return the zero-based index (BPB_ExtFlags bits 0-3) of the single
+     * active FAT when {@link #isFatMirrorDisabled()} is set; 0 for mirrored
+     * volumes and for FAT12/FAT16, where every copy is maintained.
+     */
+    public int getActiveFat() {
+        if (!isFatMirrorDisabled()) {
+            return 0;
+        }
+        return getExtFlags() & 0x0F;
     }
 
     public long getRootDirectoryStartCluster() {
