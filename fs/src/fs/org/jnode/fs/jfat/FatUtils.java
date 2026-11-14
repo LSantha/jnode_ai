@@ -22,6 +22,7 @@ package org.jnode.fs.jfat;
 
 import java.text.SimpleDateFormat;
 import java.util.Calendar;
+import java.util.Locale;
 import org.jnode.util.TimeUtils;
 
 /**
@@ -129,18 +130,33 @@ public class FatUtils {
         return s1.equalsIgnoreCase(s2);
     }
 
+    /**
+     * Case-insensitive canonicalization kept for exported-API compatibility.
+     *
+     * @deprecated kept for exported-API compatibility; the fold is
+     *   pinned to {@link Locale#ROOT} so it is no longer locale-dependent. New callers
+     *   should use {@link #toUpperCase(String)}.
+     */
+    @Deprecated
     public static final String toIgnoreCase(String s) {
-        //
-        // it may be the right solution for what
-        // the spec (pag 29) ditctate and to
-        // solve the "Georgian Alphabet" problem
-        // (source of Java String)?
-        //
-        return s.toUpperCase().toLowerCase();
+        return s.toUpperCase(Locale.ROOT).toLowerCase(Locale.ROOT);
     }
 
+    /**
+     * This is THE case fold for JFAT names. The short-name basis generator
+     * ({@code FatName.computePreTail}) encodes through this fold, the stored 8.3
+     * bytes derive from it, and short-name lookups compare the stored bytes
+     * directly ({@code FatDirectory.ShortNameKey}) - so generation and lookup agree.
+     * The fold is pinned to {@link Locale#ROOT}: the FAT short-name rules are defined
+     * on the OEM codepage, not on the JVM default locale (a Turkish default locale
+     * would otherwise fold 'i' via the dotted-I rule). The earlier "Georgian alphabet"
+     * upper-then-lower double fold is vestigial: the Unicode mappings for Mkhedruli,
+     * Asomtavruli and Nuskhuri are stable and locale-independent, and Georgian
+     * codepoints are unmappable in the FAT codepages so they reach the basis as the
+     * lossy replacement byte anyway.
+     */
     public static final String toUpperCase(String s) {
-        return toIgnoreCase(s).toUpperCase();
+        return s.toUpperCase(Locale.ROOT);
     }
 
     public static final boolean isLowerCase(String s) {
