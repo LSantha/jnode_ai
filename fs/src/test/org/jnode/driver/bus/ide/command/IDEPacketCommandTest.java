@@ -134,14 +134,14 @@ public class IDEPacketCommandTest implements IDEConstants {
         // endless DRQ+CoD phases: unexpected combination
         for (int i = 0; i < 64; i++) {
             io.addPhase(new FakeIDEIO.Phase(
-                ST_DEVICE_READY | ST_DATA_REQUEST, IR_CD, 512, null, false));
+                ST_DEVICE_READY | ST_DATA_REQUEST, IR_CD, 512, null, false, true));
         }
         // keep feeding the same phase forever by re-adding on drain:
         final Thread filler = new Thread(new Runnable() {
             public void run() {
                 while (!Thread.currentThread().isInterrupted()) {
                     io.addPhase(new FakeIDEIO.Phase(
-                        ST_DEVICE_READY | ST_DATA_REQUEST, IR_CD, 512, null, false));
+                        ST_DEVICE_READY | ST_DATA_REQUEST, IR_CD, 512, null, false, true));
                     try {
                         Thread.sleep(1);
                     } catch (InterruptedException ex) {

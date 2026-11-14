@@ -101,6 +101,9 @@ public class IDEDiskDriverMultiSectorWriteTest implements IDEConstants {
         openDriver(props);
         final byte[] payload = randomBytes(WRITE_SECTORS * SECTOR_SIZE, 613L);
         io.clearObservations();
+        for (int i = 0; i < WRITE_SECTORS; i++) {
+            io.addPhase(FakeIDEIO.Phase.writeReady());
+        }
 
         final long start = System.currentTimeMillis();
         driver.write(WRITE_LBA * SECTOR_SIZE, ByteBuffer.wrap(payload));
@@ -129,6 +132,7 @@ public class IDEDiskDriverMultiSectorWriteTest implements IDEConstants {
         props.setProperty("jnode.ide.writethrough", "true");
         openDriver(props);
         io.clearObservations();
+        io.addPhase(FakeIDEIO.Phase.writeReady());
 
         driver.write(0, ByteBuffer.wrap(randomBytes(SECTOR_SIZE, 1L)));
 
@@ -140,6 +144,7 @@ public class IDEDiskDriverMultiSectorWriteTest implements IDEConstants {
     public void testWriteThroughDefaultSkipsFlush() throws Exception {
         openDriver(new Properties());
         io.clearObservations();
+        io.addPhase(FakeIDEIO.Phase.writeReady());
 
         driver.write(0, ByteBuffer.wrap(randomBytes(SECTOR_SIZE, 3L)));
 
@@ -152,6 +157,7 @@ public class IDEDiskDriverMultiSectorWriteTest implements IDEConstants {
         props.setProperty("jnode.ide.writethrough", "false");
         openDriver(props);
         io.clearObservations();
+        io.addPhase(FakeIDEIO.Phase.writeReady());
 
         driver.write(0, ByteBuffer.wrap(randomBytes(SECTOR_SIZE, 2L)));
 
@@ -196,6 +202,7 @@ public class IDEDiskDriverMultiSectorWriteTest implements IDEConstants {
         driver = new IDEDiskDriver();
         device.setDriver(driver);
         VmIOContext.setGlobalProperties(props);
+        io.addPhase(FakeIDEIO.Phase.dataIn(new byte[SECTOR_SIZE]));
         driver.startDevice();
     }
 

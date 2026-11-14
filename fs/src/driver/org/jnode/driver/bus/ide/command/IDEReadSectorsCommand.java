@@ -35,8 +35,6 @@ public class IDEReadSectorsCommand extends IDERWSectorsCommand {
 
     private static final Logger log = Logger.getLogger(IDEReadSectorsCommand.class);
 
-    private int readSectors = 0;
-
     public IDEReadSectorsCommand(
         boolean primary,
         boolean master,
@@ -58,11 +56,17 @@ public class IDEReadSectorsCommand extends IDERWSectorsCommand {
         // Read data
         for (int i = 0; i < sectorCount; i++) {
             if (log.isDebugEnabled()) log.debug("RDSect pw " + i);
-            if (!pollWait(io, false))
+            if (!pollDataPhase(io, "readSector " + i, i)) {
                 return;
+            }
             // Read sector
             if (log.isDebugEnabled()) log.debug("RDSect trf " + i);
             transferOneSector(ide, io);
+        }
+
+        // Check the command completion state (after the last sector)
+        if (!pollWait(io, true, sectorCount - 1)) {
+            return;
         }
 
         // We're done

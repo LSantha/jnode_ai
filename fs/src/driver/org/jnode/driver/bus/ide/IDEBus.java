@@ -298,18 +298,28 @@ public class IDEBus extends Bus implements IDEConstants, IRQHandler,
         TimeUtils.sleep(5);
         // Reset reset
         io.setControlReg(CTR_BLANK);
-        // Wait until not busy
-        int loops = 5;
-        while (loops-- > 0) {
-            if ((io.getStatusReg() & ST_BUSY) == 0) {
-                // Device is ready
-                this.currentCommand = null;
-                return;
-            } else {
-                TimeUtils.sleep(5);
-            }
+        // ACS-4: at least 400ns with SRST de-asserted before the bus is sampled
+        for (int i = 0; i < 4; i++) {
+            io.getAltStatusReg();
         }
-        log.info("Software reset of ide " + (primary ? "pri" : "sec") + " failed, still busy");
+        // Wait until not busy (a device may take up to 31s per ACS-4; bound at IDE_TIMEOUT here)
+        try {
+            io.waitUntilStatus(ST_BUSY, 0, IDE_TIMEOUT, "softwareReset");
+        } catch (TimeoutException ex) {
+            log.info("Software reset of ide " + (primary ? "pri" : "sec")
+                + " did not clear BSY/settle: " + ex.getMessage());
+        }
+        // ACS-4 diagnostic signature: ATA (CL=0x00 CH=0x00), ATAPI (CL=0x14 CH=0xEB)
+        final int sc = io.getSectorCountReg();
+        final int sn = io.getLbaLowReg();
+        final int cl = io.getLbaMidReg();
+        final int ch = io.getLbaHighReg();
+        log.debug("Software reset signature SC=0x" + NumberUtils.hex(sc, 2)
+            + " SN=0x" + NumberUtils.hex(sn, 2)
+            + " CL=0x" + NumberUtils.hex(cl, 2)
+            + " CH=0x" + NumberUtils.hex(ch, 2)
+            + (((cl == 0x14) && (ch == 0xEB)) ? " (ATAPI)" : " (ATA)"));
+        this.currentCommand = null;
     }
 
     /**

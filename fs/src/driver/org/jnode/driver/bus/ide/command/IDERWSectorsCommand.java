@@ -35,6 +35,8 @@ public abstract class IDERWSectorsCommand extends IDECommand {
     protected final int sectorCount;
     protected final boolean is48bit;
 
+    private int failedSector = -1;
+
     public IDERWSectorsCommand(boolean primary, boolean master,
                                boolean is48bit, long lbaStart, int sectorCount) {
         super(primary, master);
@@ -92,33 +94,91 @@ public abstract class IDERWSectorsCommand extends IDECommand {
     }
 
     /**
+     * Sector index (within this command) that failed, or -1 if no sector failed.
+     */
+    public final int getFailedSector() {
+        return failedSector;
+    }
+
+    protected final void setFailedSector(int failedSector) {
+        this.failedSector = failedSector;
+    }
+
+    /**
      * Poll waiting.
      *
+     * @param failedSectorIndex sector index to attribute an error to; recorded before the error is published
      * @return true if waiting succeeded, false in case of an error.
      */
-    protected final boolean pollWait(IDEIO io, boolean checkState) throws TimeoutException {
+    protected final boolean pollWait(IDEIO io, boolean checkState, int failedSectorIndex) throws TimeoutException {
         // Force a 400ns wait
         for (int i = 0; i < 4; i++) {
             io.getAltStatusReg(); // This wastes 100ns
         }
-        // Wait for BUSY to be cleared
-        io.waitUntilStatus(ST_BUSY, 0, IDE_DATA_XFER_TIMEOUT, "pollWait");
+        // Wait for BUSY to be cleared. The completion can race a
+        // device-posted error; surface it through checkDeviceState.
+        try {
+            io.waitUntilStatus(ST_BUSY, 0, IDE_DATA_XFER_TIMEOUT, "pollWait");
+        } catch (TimeoutException ex) {
+            if (!checkState || !hasDeviceError(io)) {
+                throw ex;
+            }
+            return checkDeviceState(io, failedSectorIndex);
+        }
         // Check state
         if (checkState) {
-            final int state = io.getStatusReg();
-            if ((state & ST_ERROR) != 0) {
-                setError(io.getErrorReg());
-                return false;
-            }
-            if ((state & ST_DEVICE_FAULT) != 0) {
-                setError(ERR_ABORT);
-                return false;
-            }
-            if ((state & ST_DEVICE_READY) == 0) {
-                setError(ERR_ABORT);
-                return false;
-            }
+            return checkDeviceState(io, failedSectorIndex);
         }
         return true;
+    }
+
+    /**
+     * Wait for the next sector data phase: BUSY cleared and DRQ set,
+     * as ACS-4 PIO Data-In/Data-Out requires before every 256-word
+     * transfer. Validates ERR/DWF/DRDY after the wait.
+     *
+     * @param failedSectorIndex sector index to attribute an error to; recorded before the error is published
+     * @return true if the device is ready to exchange a sector, false in case of an error.
+     */
+    protected final boolean pollDataPhase(IDEIO io, String message, int failedSectorIndex) throws TimeoutException {
+        // Force a 400ns wait
+        for (int i = 0; i < 4; i++) {
+            io.getAltStatusReg(); // This wastes 100ns
+        }
+        // Wait for BUSY to be cleared and DRQ to be set. The IDE
+        // implementation fails fast once ERR is observed, so a device
+        // that posts ERR/DWF mid-transfer surfaces here as a
+        // TimeoutException; treat that as a device-posted fault and
+        // fall through to checkDeviceState, otherwise rethrow.
+        try {
+            io.waitUntilStatus(ST_BUSY | ST_DATA_REQUEST, ST_DATA_REQUEST, IDE_DATA_XFER_TIMEOUT, message);
+        } catch (TimeoutException ex) {
+            if (!hasDeviceError(io)) {
+                throw ex;
+            }
+        }
+        return checkDeviceState(io, failedSectorIndex);
+    }
+
+    private boolean hasDeviceError(IDEIO io) {
+        final int state = io.getAltStatusReg();
+        return (state & (ST_ERROR | ST_DEVICE_FAULT)) != 0;
+    }
+
+    private boolean checkDeviceState(IDEIO io, int failedSectorIndex) {
+        final int state = io.getStatusReg();
+        final int error;
+        if ((state & ST_ERROR) != 0) {
+            error = io.getErrorReg();
+        } else if ((state & ST_DEVICE_FAULT) != 0) {
+            error = ERR_ABORT;
+        } else if ((state & ST_DEVICE_READY) == 0) {
+            error = ERR_ABORT;
+        } else {
+            return true;
+        }
+        setFailedSector(failedSectorIndex);
+        setError(error);
+        return false;
     }
 }
