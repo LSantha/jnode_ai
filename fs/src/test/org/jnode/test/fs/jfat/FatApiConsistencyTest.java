@@ -88,6 +88,7 @@ public class FatApiConsistencyTest {
         LittleEndian.setInt32(sector, 28, 0);
         LittleEndian.setInt32(sector, 32, 204800);
         LittleEndian.setInt32(sector, 36, 794);
+        LittleEndian.setInt32(sector, 44, 2);
         sector[510] = 0x55;
         sector[511] = (byte) 0xAA;
         return sector;

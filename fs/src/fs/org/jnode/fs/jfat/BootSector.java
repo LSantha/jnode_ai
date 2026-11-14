@@ -147,6 +147,13 @@ public class BootSector {
             throw new FileSystemException("Invalid BPB_BytsPerSec: " + BPB_BytsPerSec
                 + " (expected one of 512, 1024, 2048, 4096)");
         }
+        // BPB_Media accepted set (fatgen103): F0h (removable media, e.g. floppy)
+        // and F8h-FFh (F8h = fixed disk, the rest removable). Anything else is
+        // rejected at mount with the field and value.
+        if (BPB_Media != 0xF0 && BPB_Media < 0xF8) {
+            throw new FileSystemException("Invalid BPB_Media: " + BPB_Media
+                + " (expected 0xF0 or 0xF8-0xFF)");
+        }
         if (BPB_SecPerClus == 0 || (BPB_SecPerClus & (BPB_SecPerClus - 1)) != 0) {
             throw new FileSystemException("Invalid BPB_SecPerClus: " + BPB_SecPerClus
                 + " (expected a non-zero power of two)");
@@ -168,6 +175,24 @@ public class BootSector {
         if ((BPB_RootEntCnt == 0) != isFat32) {
             throw new FileSystemException("Invalid BPB_RootEntCnt: " + BPB_RootEntCnt
                 + " (expected 0 iff FAT32, where FAT32 is RootEntCnt==0 and BPB_FATSz16==0)");
+        }
+    }
+
+    private void validateFat32() throws FileSystemException {
+        // BPB_FSVer accepted set (fatgen103): 0x0000 is the only FAT32 version
+        // defined at the time JFAT was written (mkfs.fat and Linux both write
+        // it). A driver must refuse a volume whose version it does not know.
+        if (BPB_FSVer != 0x0000) {
+            throw new FileSystemException("Invalid BPB_FSVer: " + BPB_FSVer
+                + " (expected 0x0000, the only FAT32 version defined when JFAT was written)");
+        }
+        // BPB_RootClus valid range (fatgen103): 2 through CountOfClusters + 1;
+        // 0 and 1 are reserved. A corrupt or zeroed value otherwise surfaces as
+        // a cluster chain walk through reserved entries deep in the I/O path.
+        if (BPB_RootClus < 2 || BPB_RootClus > CountOfClusters + 1) {
+            throw new FileSystemException("Invalid BPB_RootClus: " + BPB_RootClus
+                + " (expected 2.." + (CountOfClusters + 1)
+                + ", i.e. >= 2 and <= CountOfClusters + 1)");
         }
     }
 
@@ -262,6 +287,7 @@ public class BootSector {
             BPB_FSInfo = get16(48);
             BPB_BkBootSec = get16(50);
             BPB_Reserved = getBytes(52, 12);
+            validateFat32();
 
             BS_DrvNum = get8(64);
             BS_Reserved1 = get8(65);

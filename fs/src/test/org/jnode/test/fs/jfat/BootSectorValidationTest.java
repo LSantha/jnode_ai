@@ -21,12 +21,15 @@
 package org.jnode.test.fs.jfat;
 
 import java.io.File;
+import java.io.FileInputStream;
 import java.io.FileOutputStream;
+import java.io.IOException;
 
 import org.jnode.driver.block.FileDevice;
 import org.jnode.fs.FileSystemException;
 import org.jnode.fs.jfat.BootSector;
 import org.jnode.fs.jfat.Fat;
+import org.jnode.test.fs.FileSystemTestUtils;
 import org.jnode.util.LittleEndian;
 import org.junit.Test;
 
@@ -80,6 +83,8 @@ public class BootSectorValidationTest {
         LittleEndian.setInt32(sector, 28, 0);
         LittleEndian.setInt32(sector, 32, 204800);
         LittleEndian.setInt32(sector, 36, 794);
+        LittleEndian.setInt16(sector, 42, 0);
+        LittleEndian.setInt32(sector, 44, 2);
         sector[510] = 0x55;
         sector[511] = (byte) 0xAA;
         return sector;
@@ -159,6 +164,113 @@ public class BootSectorValidationTest {
         byte[] sector = validFat12Sector();
         LittleEndian.setInt16(sector, 17, 0);
         expectFailure(sector, "BPB_RootEntCnt", "0");
+    }
+
+    @Test
+    public void testMediaF0AndF8ToFFAccepted() throws Exception {
+        int[] accepted = { 0xF0, 0xF8, 0xF9, 0xFA, 0xFB, 0xFC, 0xFD, 0xFE, 0xFF };
+        for (int media : accepted) {
+            byte[] sector = validFat12Sector();
+            sector[21] = (byte) media;
+            new BootSector(sector);
+        }
+    }
+
+    @Test
+    public void testMediaOutsideF0AndF8ToFFRejected() {
+        int[] rejected = { 0x00, 0xEF, 0xF1, 0xF5, 0xF7 };
+        for (int media : rejected) {
+            byte[] sector = validFat12Sector();
+            sector[21] = (byte) media;
+            expectFailure(sector, "BPB_Media", String.valueOf(media));
+        }
+    }
+
+    @Test
+    public void testFat32FsVerZeroAccepted() throws Exception {
+        BootSector bs = new BootSector(validFat32Sector());
+        assertTrue("Should be FAT32", bs.isFat32());
+    }
+
+    @Test
+    public void testFat32FsVerNonZeroRejected() {
+        byte[] sector = validFat32Sector();
+        LittleEndian.setInt16(sector, 42, 0x1234);
+        expectFailure(sector, "BPB_FSVer", "4660");
+    }
+
+    @Test
+    public void testFat32RootClusZeroRejected() {
+        byte[] sector = validFat32Sector();
+        LittleEndian.setInt32(sector, 44, 0);
+        expectFailure(sector, "BPB_RootClus", "0");
+    }
+
+    @Test
+    public void testFat32RootClusOneRejected() {
+        byte[] sector = validFat32Sector();
+        LittleEndian.setInt32(sector, 44, 1);
+        expectFailure(sector, "BPB_RootClus", "1");
+    }
+
+    @Test
+    public void testFat32RootClusAboveCountOfClustersPlusOneRejected() {
+        // Synthetic sector: TotSec32=204800, RsvdSecCnt=36, 2 FATs of 794 sectors,
+        // SecPerClus=2 -> CountOfClusters = (204800 - 1624) / 2 = 101588,
+        // so the highest valid cluster number is 101589.
+        byte[] sector = validFat32Sector();
+        LittleEndian.setInt32(sector, 44, 101590);
+        expectFailure(sector, "BPB_RootClus", "101590");
+    }
+
+    @Test
+    public void testFat32RootClusCountOfClustersPlusOneAccepted() throws Exception {
+        byte[] sector = validFat32Sector();
+        LittleEndian.setInt32(sector, 44, 101589);
+        BootSector bs = new BootSector(sector);
+        assertTrue("Should be FAT32", bs.isFat32());
+    }
+
+    @Test
+    public void testAllFiveFixturesDecode() throws Exception {
+        String[] names = {
+            "test.fat16",
+            "test.fat32",
+            "test.mkfsfat12",
+            "test.mkfsfat16label",
+            "test.mkfsfat16nolabel"
+        };
+        for (String name : names) {
+            byte[] sector = readFixtureBootSector(name);
+            BootSector bs = new BootSector(sector);
+            if ("test.fat32".equals(name)) {
+                assertTrue("test.fat32 should be FAT32", bs.isFat32());
+            } else {
+                assertTrue(name + " should not be FAT32", !bs.isFat32());
+            }
+        }
+    }
+
+    private static byte[] readFixtureBootSector(String name) throws IOException {
+        File file = FileSystemTestUtils.getTestFile("test/fs/jfat/" + name);
+        byte[] sector = new byte[512];
+        FileInputStream in = new FileInputStream(file);
+        try {
+            int offset = 0;
+            while (offset < sector.length) {
+                int n = in.read(sector, offset, sector.length - offset);
+                if (n < 0) {
+                    break;
+                }
+                offset += n;
+            }
+            if (offset != sector.length) {
+                throw new IOException("Short read of fixture boot sector " + name + ": " + offset);
+            }
+        } finally {
+            in.close();
+        }
+        return sector;
     }
 
     @Test
