@@ -132,12 +132,12 @@ public class IDEBus extends Bus implements IDEConstants, IRQHandler,
      * Add the given command to the queue of commands to be executed and wait
      * for the command to finish.
      *
-     * The wait is implemented as a sleep-poll loop on purpose: every
-     * Thread.sleep suspends this thread, which runs a scheduler reschedule,
-     * which in turn dispatches pending device interrupts
-     * (IRQManager.dispatchInterrupts). Relying on Object.wait-notify alone
-     * can deadlock on a fully blocked system, where nothing else ever
-     * triggers a reschedule to deliver the interrupt that would notify us.
+     * The wait is event driven: the queue processor thread executes the
+     * command and calls notifyFinished() itself, so the completion notify
+     * does not depend on an IRQ delivery or a scheduler reschedule. The
+     * waitUntilFinished() wait releases the monitor and the CPU while
+     * blocked, and the timeout still bounds the wait if a device or
+     * emulator misbehaves.
      *
      * @param command
      * @param timeout Maximum time to wait
@@ -147,13 +147,10 @@ public class IDEBus extends Bus implements IDEConstants, IRQHandler,
     public void executeAndWait(IDECommand command, long timeout)
         throws InterruptedException, TimeoutException {
         execute(command);
-        final long deadline = System.currentTimeMillis() + timeout;
-        while (!command.isFinished()) {
-            Thread.sleep(20);
-            if (!command.isFinished() && System.currentTimeMillis() >= deadline) {
-                throw new TimeoutException("timeout");
-            }
+        if (command.isFinished()) {
+            return;
         }
+        command.waitUntilFinished(timeout);
     }
 
     /**

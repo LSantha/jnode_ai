@@ -370,9 +370,21 @@ public class DefaultIDEIO implements IDEIO {
     }
 
     /**
+     * How long to spin on the alt-status register before sleeping.
+     */
+    private static final long SPIN_PHASE_MS = 1;
+
+    /**
+     * How long to sleep in 1 ms steps before falling back to 10 ms steps.
+     */
+    private static final long SHORT_SLEEP_PHASE_MS = 10;
+
+    /**
      * Block the current thread until the status of the controller masked by the given mask equals value.
      */
     public void waitUntilStatus(int mask, int value, long timeout, String message) throws TimeoutException {
+        final long start = System.currentTimeMillis();
+        final long deadline = start + Math.max(0, timeout);
         while ((getAltStatusReg() & mask) != value) {
             final int state = getAltStatusReg();
             if ((state & ST_ERROR) != 0) {
@@ -381,8 +393,21 @@ public class DefaultIDEIO implements IDEIO {
             if (timeout <= 0) {
                 throw new TimeoutException((message != null) ? message : "Timeout in waitUntilStatus");
             }
-            TimeUtils.sleep(10);
-            timeout -= 10;
+            final long now = System.currentTimeMillis();
+            if (now >= deadline) {
+                timeout = 0;
+                continue;
+            }
+            final long elapsed = now - start;
+            if (elapsed < SPIN_PHASE_MS) {
+                Thread.yield();
+            } else if (elapsed < SHORT_SLEEP_PHASE_MS) {
+                TimeUtils.sleep(1);
+                timeout -= 1;
+            } else {
+                TimeUtils.sleep(10);
+                timeout -= 10;
+            }
         }
     }
 
