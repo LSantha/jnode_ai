@@ -46,7 +46,7 @@ public class Fat16 extends Fat {
 
         int masked = element & 0xFFFF;
         setInt16(index, masked);
-        noteFreeTransition((int) (old & 0x0000FFFF), masked);
+        noteFreeTransition(index, (int) (old & 0x0000FFFF), masked);
 
         return (int) (old & 0x0000FFFF);
     }
