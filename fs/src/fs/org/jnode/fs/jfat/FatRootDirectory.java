@@ -26,6 +26,14 @@ import java.util.NoSuchElementException;
 
 
 public class FatRootDirectory extends FatDirectory {
+    /**
+     * Cluster-level read buffer for the fixed FAT12/16 root directory. Avoids reading 32 bytes at a time:
+     * a cluster holds entriesPerCluster entries, so we read that many entries per disk I/O instead of 1.
+     * Invalidated on every write. FAT32 does not use this buffer (it goes through FatDirectory).
+     */
+    private byte[] entryClusterBuffer;
+    private int entryClusterIndex = -1;
+
     private static long rootEntryOffset(BootSector bootSector, int index) {
         if (index >= bootSector.getNrRootDirEntries()) {
             throw new NoSuchElementException();
@@ -48,7 +56,7 @@ public class FatRootDirectory extends FatDirectory {
     }
 
     @Override
-    public FatDirEntry getFatDirEntry(int index, boolean allowDeleted) throws IOException {
+    public synchronized FatDirEntry getFatDirEntry(int index, boolean allowDeleted) throws IOException {
         if (getFatFileSystem().getFat().isFat32()) {
             // FAT32 uses the FAT to allocate space to the root directory too, so no special handling is required
             return super.getFatDirEntry(index, allowDeleted);
@@ -56,18 +64,34 @@ public class FatRootDirectory extends FatDirectory {
 
         BootSector bootSector = getFatFileSystem().getBootSector();
 
-        FatMarshal entry = new FatMarshal(32);
-        ByteBuffer dest = entry.getByteBuffer();
-        long rootDirectoryOffset = rootEntryOffset(bootSector, index);
+        // the bound check must stay first: FatDirectory.getFatFreeEntries and FatEntriesFactory rely on it
+        rootEntryOffset(bootSector, index);
 
-        dest.limit(dest.position() + entry.length());
-        getFatFileSystem().getApi().read(rootDirectoryOffset, dest);
+        final int entrySize = FatDirEntry.LENGTH;
+        final int clusterSize = getFatFileSystem().getClusterSize();
+        final int entriesPerCluster = clusterSize / entrySize;
+        final int clusterIndex = index / entriesPerCluster;
+        final int offsetInCluster = (index % entriesPerCluster) * entrySize;
 
+        if (entryClusterBuffer == null || entryClusterIndex != clusterIndex) {
+            long rootStart = bootSector.getFirstRootDirSector() * (long) bootSector.getBytesPerSector();
+            long rootRegionBytes = bootSector.getNrRootDirEntries() * entrySize;
+            long clusterOffset = rootStart + (long) clusterIndex * clusterSize;
+            int bytesToRead = (int) Math.min((long) clusterSize, rootRegionBytes - (long) clusterIndex * clusterSize);
+
+            ByteBuffer dest = ByteBuffer.allocate(bytesToRead);
+            getFatFileSystem().getApi().read(clusterOffset, dest);
+            entryClusterBuffer = dest.array();
+            entryClusterIndex = clusterIndex;
+        }
+
+        FatMarshal entry = new FatMarshal(entrySize);
+        System.arraycopy(entryClusterBuffer, offsetInCluster, entry.getArray(), 0, entrySize);
         return createDirEntry(entry, index, allowDeleted);
     }
 
     @Override
-    public void setFatDirEntry(FatDirEntry entry) throws IOException {
+    public synchronized void setFatDirEntry(FatDirEntry entry) throws IOException {
         if (getFatFileSystem().getFat().isFat32()) {
             super.setFatDirEntry(entry);
             return;
@@ -82,6 +106,8 @@ public class FatRootDirectory extends FatDirectory {
             throw new IOException("Directory is full");
         }
         getFatFileSystem().getApi().write(rootDirectoryOffset, entry.getByteBuffer());
+        entryClusterBuffer = null;
+        entryClusterIndex = -1;
         onShortEntryWritten(entry);
     }
 
