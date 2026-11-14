@@ -22,6 +22,7 @@ package org.jnode.test.fs.filesystem;
 
 import org.jnode.fs.jifs.files.JIFSFpluginJarTest;
 import org.jnode.fs.service.def.FileHandleManagerTest;
+import org.jnode.fs.service.def.FileHandleBarrierTest;
 import org.jnode.test.fs.ext4.Ext4FileSystemTest;
 import org.jnode.test.fs.filesystem.tests.BasicFSTest;
 import org.jnode.test.fs.filesystem.tests.ConcurrentAccessFSTest;
@@ -48,6 +49,7 @@ import org.jnode.test.fs.jfat.FatFreeClusterCountTest;
 import org.jnode.test.fs.jfat.FatSectorSizeGuardTest;
 import org.jnode.test.fs.jfat.FatFailurePathTest;
 import org.jnode.test.fs.jfat.FatFlushOrderTest;
+import org.jnode.test.fs.jfat.FatBarrierTest;
 import org.jnode.test.fs.jfat.FatBeyondEofWriteTest;
 import org.jnode.test.fs.jfat.FatSetLengthTest;
 import org.jnode.test.fs.jfat.FatReadWriteTest;
@@ -90,6 +92,7 @@ import org.junit.runners.Suite.SuiteClasses;
     FatSetNameTest.class,
     FatFailurePathTest.class,
     FatFlushOrderTest.class,
+    FatBarrierTest.class,
     FatBeyondEofWriteTest.class,
     FatSetLengthTest.class,
     FatSizeBoundaryTest.class,
@@ -118,6 +121,7 @@ import org.junit.runners.Suite.SuiteClasses;
     FatWriteBench.class,
     JFatLongFileNameTest.class,
     FileHandleManagerTest.class,
+    FileHandleBarrierTest.class,
     JIFSFpluginJarTest.class,
     FatApiConsistencyTest.class,
     FatUtilsConcurrencyTest.class,

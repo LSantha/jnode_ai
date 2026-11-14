@@ -48,6 +48,8 @@ import org.jnode.driver.bus.ide.IDEDriverUtils;
 import org.jnode.driver.bus.ide.command.IDEFlushCacheCommand;
 import org.jnode.driver.bus.ide.command.IDERWSectorsCommand;
 import org.jnode.driver.bus.ide.command.IDEReadSectorsCommand;
+import org.jnode.driver.bus.ide.command.IDESetMultipleModeCommand;
+import org.jnode.driver.bus.ide.command.IDEWriteMultipleFUACommand;
 import org.jnode.driver.bus.ide.command.IDEWriteSectorsCommand;
 import org.jnode.naming.InitialNaming;
 import org.jnode.partitions.ibm.IBMPartitionTable;
@@ -57,6 +59,53 @@ import org.jnode.vm.VmIOContext;
 
 /**
  * Device driver for IDE disks.
+ *
+ * <h2>Write durability posture</h2>
+ *
+ * <p>This driver does not guarantee that a completed {@code write(2)} is
+ * durable. Data may sit in the device's volatile write cache until a
+ * barrier is issued. Durability is guaranteed only at the explicit
+ * barriers:</p>
+ * <ul>
+ *   <li>{@link #flush()} - issues a FLUSH CACHE (or FLUSH CACHE EXT on
+ *   48-bit devices) command;</li>
+ *   <li>{@code FileHandleImpl.close()} - ends in {@code FSFile.flush()},
+ *   which reaches {@code BlockDeviceAPI.flush()} and therefore a FLUSH
+ *   CACHE command;</li>
+ *   <li>{@code AbstractFileSystem.close()} and {@code FatFileSystem.flush()} -
+ *   end in {@code BlockDeviceAPI.flush()};</li>
+ *   <li>{@code sync} (org.jnode.fs.command.SyncCommand) - flushes every
+ *   mounted filesystem and then calls {@code BlockDeviceAPI.flush()};</li>
+ *   <li>{@code stopDevice()} - calls {@link #flush()} before the device is
+ *   torn down.</li>
+ * </ul>
+ *
+ * <p>Power loss at any other point may lose data that the filesystem has
+ * handed to this driver. The window is exactly "everything since the last
+ * barrier".</p>
+ *
+ * <p>Two properties control the posture (see jnode.properties):</p>
+ * <ul>
+ *   <li>{@code jnode.ide.writethrough} (default {@code false}): when
+ *   {@code true}, every write is followed by a FLUSH CACHE command. This
+ *   restores the pre-2026 behaviour (one flush per write) at the cost of
+ *   roughly double the command count ("~2x commands, per-write
+ *   durable").</li>
+ *   <li>{@code jnode.ide.fua} (default {@code false}, opt-in): when
+ *   {@code true} and the device declares FUA support (ATA device,
+ *   48-bit addressing, IDENTIFY word 84 bit 14 set, word 84 bit 15 clear,
+ *   word 84 bit 6 set), writes use WRITE MULTIPLE FUA EXT
+ *   (0xCE, PIO), which forces the data to non-volatile media before
+ *   command completion is reported. With {@code jnode.ide.writethrough=true}
+ *   the per-write FLUSH CACHE is replaced by the FUA command (one queue
+ *   turn instead of two). With {@code jnode.ide.writethrough=false} (the
+ *   default) the FUA command provides the per-write durability guarantee
+ *   without any separate cache flush: one command, durable at completion.
+ *   A device that does not declare FUA support, or that rejects the
+ *   SET MULTIPLE MODE command used to enable multiple mode, falls back to
+ *   plain WRITE followed by FLUSH CACHE. Devices that silently ignore FUA
+ *   would otherwise void this contract, so the gate fails closed.</li>
+ * </ul>
  *
  * @author epr
  */
@@ -85,7 +134,9 @@ public class IDEDiskDriver extends Driver
     private boolean is48bit;
     private IDEDiskBus diskBus;
     private IBMPartitionTable pt;
-    private boolean writeThrough = true;
+    private boolean writeThrough = false;
+    private boolean fuaRequested;
+    private boolean fuaEnabled;
 
     protected void startDevice() throws DriverException {
         final IDEDevice dev = (IDEDevice) getDevice();
@@ -101,8 +152,15 @@ public class IDEDiskDriver extends Driver
         is48bit = descr.supports48bitAddressing();
         maxSector = descr.getSectorsAddressable();
 
-        writeThrough = !"false".equals(
+        writeThrough = "true".equals(
             VmIOContext.getGlobalProperties().getProperty("jnode.ide.writethrough"));
+        fuaRequested = "true".equals(
+            VmIOContext.getGlobalProperties().getProperty("jnode.ide.fua"));
+        if (fuaRequested) {
+            fuaEnabled = enableFua(dev, descr);
+        } else {
+            fuaEnabled = false;
+        }
 
         // Look for partitions
         try {
@@ -195,6 +253,56 @@ public class IDEDiskDriver extends Driver
         this.pt = null;
     }
 
+    /**
+     * Resolve the opt-in FUA request against what the device actually
+     * declares. Never assumes: when the device does not declare FUA
+     * support, or rejects the SET MULTIPLE MODE command that multiple
+     * mode requires, FUA is disabled and the caller falls back to a
+     * plain FLUSH CACHE barrier.
+     */
+    private boolean enableFua(final IDEDevice dev, IDEDriveDescriptor descr) {
+        if (!is48bit) {
+            log.warn("jnode.ide.fua=true, but the device has no 48-bit addressing; "
+                + "falling back to FLUSH CACHE");
+            return false;
+        }
+        if (!descr.supportsFUA()) {
+            log.warn("jnode.ide.fua=true, but the device does not declare FUA support "
+                + "(IDENTIFY word 84 bit 6); falling back to FLUSH CACHE");
+            return false;
+        }
+        if (descr.getMultipleSectorsPerBlock() != 0) {
+            if (log.isDebugEnabled()) {
+                log.debug("FUA enabled; device is already in multiple mode ("
+                    + descr.getMultipleSectorsPerBlock() + " sectors per block)");
+            }
+            return true;
+        }
+        final IDEBus bus = (IDEBus) dev.getBus();
+        IDESetMultipleModeCommand cmd =
+            new IDESetMultipleModeCommand(dev.isPrimary(), dev.isMaster(), 1);
+        try {
+            bus.executeAndWait(cmd, IDE_DATA_XFER_TIMEOUT);
+            if (cmd.hasError()) {
+                log.warn("jnode.ide.fua=true, but SET MULTIPLE MODE was rejected (error="
+                    + cmd.getError() + "); falling back to FLUSH CACHE");
+                return false;
+            }
+            if (log.isDebugEnabled()) {
+                log.debug("FUA enabled; multiple mode set to 1 sector per block");
+            }
+            return true;
+        } catch (InterruptedException ex) {
+            log.warn("jnode.ide.fua=true, but SET MULTIPLE MODE was interrupted; "
+                + "falling back to FLUSH CACHE", ex);
+            return false;
+        } catch (TimeoutException ex) {
+            log.warn("jnode.ide.fua=true, but SET MULTIPLE MODE timed out; "
+                + "falling back to FLUSH CACHE", ex);
+            return false;
+        }
+    }
+
     public void flush() throws IOException {
         final IDEDevice dev = (IDEDevice) getDevice();
         final IDEBus bus = (IDEBus) dev.getBus();
@@ -247,6 +355,7 @@ public class IDEDiskDriver extends Driver
         final int maxSectorCount = is48bit ? MAX_SECTOR_COUNT_48 : MAX_SECTOR_COUNT_28;
         final boolean primary = dev.isPrimary();
         final boolean master = dev.isMaster();
+        final boolean fuaWrite = isWrite && fuaEnabled;
 
         while (length > 0) {
             final long partLbaStart = devOffset / SECTOR_SIZE;
@@ -254,7 +363,9 @@ public class IDEDiskDriver extends Driver
             final int partLength = partSectorCount * SECTOR_SIZE;
 
             final IDERWSectorsCommand cmd = isWrite ?
-                new IDEWriteSectorsCommand(primary, master, is48bit, partLbaStart, partSectorCount, buf) :
+                (fuaWrite ?
+                    new IDEWriteMultipleFUACommand(primary, master, partLbaStart, partSectorCount, buf) :
+                    new IDEWriteSectorsCommand(primary, master, is48bit, partLbaStart, partSectorCount, buf)) :
                 new IDEReadSectorsCommand(primary, master, is48bit, partLbaStart, partSectorCount, buf);
             try {
                 if (log.isDebugEnabled()) {
@@ -275,7 +386,11 @@ public class IDEDiskDriver extends Driver
             devOffset += partLength;
         }
 
-        if (isWrite && writeThrough) {
+        // FUA writes land on non-volatile media before command completion,
+        // which makes a separate FLUSH CACHE redundant. A requested but
+        // unavailable FUA still gets the flush, so durability never fails
+        // open.
+        if (isWrite && !fuaWrite && (writeThrough || fuaRequested)) {
             flush();
         }
     }

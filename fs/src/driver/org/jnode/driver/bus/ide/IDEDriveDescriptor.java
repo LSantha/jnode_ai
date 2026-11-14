@@ -197,6 +197,41 @@ public class IDEDriveDescriptor {
     }
 
     /**
+     * Does this device declare support for the Forced Unit Access (FUA)
+     * commands, i.e. WRITE DMA FUA EXT and WRITE MULTIPLE FUA EXT?
+     *
+     * <p>The gate is fail-closed: it requires an ATA device (bit 15 of
+     * word 0 clear), 48-bit addressing (word 83 bit 10), a valid
+     * command-set word 84 (bit 14 set, bit 15 clear) and word 84 bit 6.
+     * A device that does not declare FUA support is reported as
+     * unsupported, so callers fall back to a plain cache flush rather
+     * than assuming the FUA guarantee.</p>
+     *
+     * @return True if this device declares FUA support, false otherwise
+     */
+    public boolean supportsFUA() {
+        if (!isAta() || !supports48bitAddressing()) {
+            return false;
+        }
+        final int w84 = data[84];
+        return ((w84 & 0x4000) != 0) && ((w84 & 0x8000) == 0) && ((w84 & 0x0040) != 0);
+    }
+
+    /**
+     * Gets the current multiple-sector setting of this device, i.e. the
+     * number of sectors per DRQ data block reported by word 59.
+     *
+     * @return the sectors per DRQ block, or 0 when the device reports
+     *         multiple mode as invalid or disabled
+     */
+    public int getMultipleSectorsPerBlock() {
+        if ((data[59] & 0x0100) == 0) {
+            return 0;
+        }
+        return data[59] & 0x00FF;
+    }
+
+    /**
      * Gets the number of addressable sectors
      */
     public long getSectorsAddressable() {

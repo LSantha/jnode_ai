@@ -250,6 +250,7 @@ public interface IDEConstants {
     public static final int CFA_WRITE_SECT_WO_ERASE = 0x38; /* CFA Write Sectors without erase */
     public static final int CMD_MULTWRITE_EXT = 0x39; /* 48-Bit */
     public static final int CMD_WRITE_VERIFY = 0x3C; /* 28-Bit */
+    public static final int CMD_WRITE_MULTIPLE_FUA_EXT = 0xCE; /* 48-Bit - write sectors, data forced to media before completion */
     public static final int CMD_VERIFY = 0x40; /* 28-Bit - Read Verify Sectors */
     public static final int CMD_VERIFY_EXT = 0x42; /* 48-Bit */
     public static final int CMD_FORMAT = 0x50;

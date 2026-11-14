@@ -259,4 +259,54 @@ public class IDEDriveDescriptorTest {
         assertEquals("CD-ROM firmware", "105C", result);
     }
 
+    @Test
+    public void testSupportsFUAFalseWhenBit6Clear() {
+        assertFalse("a 48-bit device without word 84 bit 6 must not report FUA",
+            new IDEDriveDescriptor(fuaDescriptor(0x0108, 0x4023), false).supportsFUA());
+    }
+
+    @Test
+    public void testSupportsFUATrueWhen48bitAndWord84ValidAndBit6Set() {
+        assertTrue("a 48-bit device with word 84 valid and bit 6 set must report FUA",
+            new IDEDriveDescriptor(fuaDescriptor(0x0108, 0x4062), false).supportsFUA());
+    }
+
+    @Test
+    public void testSupportsFUAFalseWhenWord84ValidBitClear() {
+        assertFalse("word 84 without the valid bit must not report FUA",
+            new IDEDriveDescriptor(fuaDescriptor(0x0108, 0x0062), false).supportsFUA());
+    }
+
+    @Test
+    public void testSupportsFUAFalseWhenWord84Bit15Set() {
+        assertFalse("word 84 with bit 15 set is invalid and must not report FUA",
+            new IDEDriveDescriptor(fuaDescriptor(0x0108, 0xC062), false).supportsFUA());
+    }
+
+    @Test
+    public void testSupportsFUAFalseForAtapi() {
+        final int[] data = fuaDescriptor(0x0108, 0x4062);
+        data[0] = 0x8580; // packet device, bit 15 set
+        assertFalse("ATAPI devices must not report FUA",
+            new IDEDriveDescriptor(data, true).supportsFUA());
+    }
+
+    @Test
+    public void testGetMultipleSectorsPerBlock() {
+        assertEquals("multiple mode valid with 8 sectors per block",
+            8, new IDEDriveDescriptor(fuaDescriptor(0x0108, 0x4062), false).getMultipleSectorsPerBlock());
+        assertEquals("multiple mode invalid must report 0",
+            0, new IDEDriveDescriptor(fuaDescriptor(0x0000, 0x4062), false).getMultipleSectorsPerBlock());
+    }
+
+    private static int[] fuaDescriptor(int word59, int word84) {
+        final int[] data = new int[256];
+        data[60] = 0xFF;
+        data[61] = 0xFF;
+        data[83] = 0x4000 | 0x0400;
+        data[59] = word59;
+        data[84] = word84;
+        return data;
+    }
+
 }
