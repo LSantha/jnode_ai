@@ -107,9 +107,10 @@ public abstract class IDERWSectorsCommand extends IDECommand {
     /**
      * Poll waiting.
      *
+     * @param failedSectorIndex sector index to attribute an error to; recorded before the error is published
      * @return true if waiting succeeded, false in case of an error.
      */
-    protected final boolean pollWait(IDEIO io, boolean checkState) throws TimeoutException {
+    protected final boolean pollWait(IDEIO io, boolean checkState, int failedSectorIndex) throws TimeoutException {
         // Force a 400ns wait
         for (int i = 0; i < 4; i++) {
             io.getAltStatusReg(); // This wastes 100ns
@@ -122,11 +123,11 @@ public abstract class IDERWSectorsCommand extends IDECommand {
             if (!checkState || !hasDeviceError(io)) {
                 throw ex;
             }
-            return checkDeviceState(io);
+            return checkDeviceState(io, failedSectorIndex);
         }
         // Check state
         if (checkState) {
-            return checkDeviceState(io);
+            return checkDeviceState(io, failedSectorIndex);
         }
         return true;
     }
@@ -136,9 +137,10 @@ public abstract class IDERWSectorsCommand extends IDECommand {
      * as ACS-4 PIO Data-In/Data-Out requires before every 256-word
      * transfer. Validates ERR/DWF/DRDY after the wait.
      *
+     * @param failedSectorIndex sector index to attribute an error to; recorded before the error is published
      * @return true if the device is ready to exchange a sector, false in case of an error.
      */
-    protected final boolean pollDataPhase(IDEIO io, String message) throws TimeoutException {
+    protected final boolean pollDataPhase(IDEIO io, String message, int failedSectorIndex) throws TimeoutException {
         // Force a 400ns wait
         for (int i = 0; i < 4; i++) {
             io.getAltStatusReg(); // This wastes 100ns
@@ -155,7 +157,7 @@ public abstract class IDERWSectorsCommand extends IDECommand {
                 throw ex;
             }
         }
-        return checkDeviceState(io);
+        return checkDeviceState(io, failedSectorIndex);
     }
 
     private boolean hasDeviceError(IDEIO io) {
@@ -163,20 +165,20 @@ public abstract class IDERWSectorsCommand extends IDECommand {
         return (state & (ST_ERROR | ST_DEVICE_FAULT)) != 0;
     }
 
-    private boolean checkDeviceState(IDEIO io) {
+    private boolean checkDeviceState(IDEIO io, int failedSectorIndex) {
         final int state = io.getStatusReg();
+        final int error;
         if ((state & ST_ERROR) != 0) {
-            setError(io.getErrorReg());
-            return false;
+            error = io.getErrorReg();
+        } else if ((state & ST_DEVICE_FAULT) != 0) {
+            error = ERR_ABORT;
+        } else if ((state & ST_DEVICE_READY) == 0) {
+            error = ERR_ABORT;
+        } else {
+            return true;
         }
-        if ((state & ST_DEVICE_FAULT) != 0) {
-            setError(ERR_ABORT);
-            return false;
-        }
-        if ((state & ST_DEVICE_READY) == 0) {
-            setError(ERR_ABORT);
-            return false;
-        }
-        return true;
+        setFailedSector(failedSectorIndex);
+        setError(error);
+        return false;
     }
 }

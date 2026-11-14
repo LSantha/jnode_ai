@@ -56,8 +56,7 @@ public class IDEReadSectorsCommand extends IDERWSectorsCommand {
         // Read data
         for (int i = 0; i < sectorCount; i++) {
             if (log.isDebugEnabled()) log.debug("RDSect pw " + i);
-            if (!pollDataPhase(io, "readSector " + i)) {
-                setFailedSector(i);
+            if (!pollDataPhase(io, "readSector " + i, i)) {
                 return;
             }
             // Read sector
@@ -66,8 +65,7 @@ public class IDEReadSectorsCommand extends IDERWSectorsCommand {
         }
 
         // Check the command completion state (after the last sector)
-        if (!pollWait(io, true)) {
-            setFailedSector(sectorCount - 1);
+        if (!pollWait(io, true, sectorCount - 1)) {
             return;
         }
 

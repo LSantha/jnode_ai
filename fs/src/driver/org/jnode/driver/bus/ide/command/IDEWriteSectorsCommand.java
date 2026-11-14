@@ -63,8 +63,7 @@ public class IDEWriteSectorsCommand extends IDERWSectorsCommand {
         // Send data
         for (int i = 0; i < sectorCount; i++) {
             if (log.isDebugEnabled()) log.debug("WRSect pw " + i);
-            if (!pollDataPhase(io, "writeSector " + i)) {
-                setFailedSector(i);
+            if (!pollDataPhase(io, "writeSector " + i, i)) {
                 return;
             }
             // Transfer sector
@@ -73,8 +72,7 @@ public class IDEWriteSectorsCommand extends IDERWSectorsCommand {
         }
 
         // Check the command completion state (after the last sector)
-        if (!pollWait(io, true)) {
-            setFailedSector(sectorCount - 1);
+        if (!pollWait(io, true, sectorCount - 1)) {
             return;
         }
 
