@@ -121,6 +121,84 @@ public class FatCopyComparisonTest {
     }
 
     @Test
+    public void testSingleActiveFat32WritesOnlyActiveFatAndReportsNoDivergence() throws Exception {
+        tempImage = Fat32ImageBuilder.createImageFile("jfat32-single-active", 0x0081, true);
+        FatFileSystem fs = mountRW(tempImage);
+        assertTrue(fs.getBootSector().isFat32());
+        assertTrue("BPB_ExtFlags bit 7 must mark the mirror as disabled",
+            fs.getBootSector().isFatMirrorDisabled());
+        assertEquals("active FAT index must be decoded from bits 0-3",
+            1, fs.getBootSector().getActiveFat());
+        Fat fat = fs.getFat();
+        assertEquals("active FAT index must be exposed on Fat", 1, fat.getActiveFatIndex());
+        assertEquals("root cluster must decode from the active FAT (FAT 1), not the filler FAT 0",
+            0x0FFFFFFF, fat.get(2));
+        assertTrue("comparison is meaningless against a deliberately inactive FAT",
+            fat.getDivergentFatSectors().isEmpty());
+        assertTrue("compareFatCopies must skip single-active-FAT comparison",
+            fat.compareFatCopies().isEmpty());
+
+        int old = fat.set(9, 0x0FFFFFFF);
+        assertEquals(0, old);
+        fs.flush();
+        fs.close();
+        device.close();
+
+        byte[] fat0 = readRawFat(tempImage, 0);
+        byte[] fat1 = readRawFat(tempImage, 1);
+        assertInt32Le(0xAAAAAAAAL, fat0, 9 * 4);
+        assertInt32Le(0x0FFFFFFF, fat1, 9 * 4);
+
+        fs = mountRO(tempImage);
+        assertEquals("entry written before remount must be visible via the active FAT",
+            0x0FFFFFFF, fs.getFat().get(9));
+        assertTrue(fs.getFat().getDivergentFatSectors().isEmpty());
+        fs.close();
+        device.close();
+    }
+
+    @Test
+    public void testSingleActiveFat32ActiveZeroWritesOnlyFat0() throws Exception {
+        tempImage = Fat32ImageBuilder.createImageFile("jfat32-active-zero", 0x0080, false);
+        byte[] fat1Before = readRawFat(tempImage, 1);
+        FatFileSystem fs = mountRW(tempImage);
+        assertTrue(fs.getBootSector().isFatMirrorDisabled());
+        assertEquals(0, fs.getBootSector().getActiveFat());
+        Fat fat = fs.getFat();
+        assertEquals("active FAT 0 must decode entry 2", 0x0FFFFFFF, fat.get(2));
+        fat.set(9, 0x0FFFFFFF);
+        fs.flush();
+        fs.close();
+        device.close();
+
+        byte[] fat0 = readRawFat(tempImage, 0);
+        byte[] fat1 = readRawFat(tempImage, 1);
+        assertInt32Le(0x0FFFFFFF, fat0, 9 * 4);
+        assertArrayEquals("FAT 1 must stay byte-identical when FAT 0 is the single active FAT",
+            fat1Before, fat1);
+    }
+
+    @Test
+    public void testMirroredFat32WritesReachAllCopiesUnchanged() throws Exception {
+        tempImage = Fat32ImageBuilder.createImageFile("jfat32-mirrored", 0x0000, false);
+        FatFileSystem fs = mountRW(tempImage);
+        assertFalse(fs.getBootSector().isFatMirrorDisabled());
+        assertEquals(0, fs.getBootSector().getActiveFat());
+        Fat fat = fs.getFat();
+        assertTrue("identical mirrored copies must not be flagged",
+            fat.getDivergentFatSectors().isEmpty());
+
+        int old = fat.set(9, 0x0FFFFFFF);
+        assertEquals(0, old);
+        fs.flush();
+        fs.close();
+        device.close();
+
+        assertInt32Le(0x0FFFFFFF, readRawFat(tempImage, 0), 9 * 4);
+        assertInt32Le(0x0FFFFFFF, readRawFat(tempImage, 1), 9 * 4);
+    }
+
+    @Test
     public void testDivergentFat16CopyWarnsAndContinuesWithCopy0() throws Exception {
         tempImage = copyFixture("test/fs/jfat/test.fat16", "jfat16-copies-divergent");
         long fat1First = fatFirstOffset(tempImage, 1);
@@ -134,6 +212,30 @@ public class FatCopyComparisonTest {
         assertNotNull(fs.getRootEntry().getDirectory().getEntry("test.txt"));
         fs.close();
         device.close();
+    }
+
+    private byte[] readRawFat(File file, int fatNum) throws Exception {
+        FileDevice probe = new FileDevice(file, "r");
+        try {
+            BlockDeviceAPI api = probe.getAPI(BlockDeviceAPI.class);
+            BootSector bs = new BootSector(512);
+            bs.read(api);
+            long fatSectors = bs.getSectorsPerFat();
+            long firstSector = (long) bs.getNrReservedSectors() + fatSectors * fatNum;
+            byte[] fat = new byte[(int) fatSectors * bs.getBytesPerSector()];
+            api.read(firstSector * bs.getBytesPerSector(), ByteBuffer.wrap(fat));
+            return fat;
+        } finally {
+            probe.close();
+        }
+    }
+
+    private static void assertInt32Le(long expected, byte[] raw, int offset) {
+        long actual = ((long) raw[offset] & 0xFF)
+            | (((long) raw[offset + 1] & 0xFF) << 8)
+            | (((long) raw[offset + 2] & 0xFF) << 16)
+            | (((long) raw[offset + 3] & 0xFF) << 24);
+        assertEquals("32-bit LE word at offset " + offset, expected, actual);
     }
 
     private FatFileSystem mountRW(File file) throws Exception {
