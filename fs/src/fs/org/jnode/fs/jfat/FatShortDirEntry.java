@@ -24,6 +24,7 @@ import java.io.IOException;
 import java.nio.charset.CharacterCodingException;
 import java.util.Arrays;
 import java.util.Calendar;
+import java.util.Locale;
 import org.apache.log4j.Logger;
 import org.jnode.util.NumberUtils;
 
@@ -130,9 +131,9 @@ public class FatShortDirEntry extends FatDirEntry {
         }
 
         if (ncase.isLowerBase())
-            base = baseName.trim().toLowerCase();
+            base = baseName.trim().toLowerCase(Locale.ROOT);
         else
-            base = baseName.trim().toUpperCase();
+            base = baseName.trim().toUpperCase(Locale.ROOT);
     }
 
     protected void decodeExt() {
@@ -147,9 +148,9 @@ public class FatShortDirEntry extends FatDirEntry {
         }
 
         if (ncase.isLowerExt())
-            ext = extName.trim().toLowerCase();
+            ext = extName.trim().toLowerCase(Locale.ROOT);
         else
-            ext = extName.trim().toUpperCase();
+            ext = extName.trim().toUpperCase(Locale.ROOT);
     }
 
     protected void decodeAttr() {

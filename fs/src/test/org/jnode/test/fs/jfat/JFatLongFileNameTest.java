@@ -26,6 +26,7 @@ import java.lang.reflect.Method;
 import java.nio.ByteBuffer;
 import java.util.Arrays;
 import java.util.Iterator;
+import java.util.Locale;
 import java.util.Vector;
 
 import org.jnode.driver.block.FileDevice;
@@ -44,6 +45,7 @@ import org.jnode.fs.jfat.FatFileSystem;
 import org.jnode.fs.jfat.FatFileSystemFormatter;
 import org.jnode.fs.jfat.FatFileSystemType;
 import org.jnode.fs.jfat.FatLongDirEntry;
+import org.jnode.fs.jfat.FatUtils;
 import org.jnode.fs.service.FileSystemService;
 import org.jnode.fs.service.def.FileSystemPlugin;
 import org.jnode.naming.InitialNaming;
@@ -919,6 +921,137 @@ public class JFatLongFileNameTest {
             assertNotNull("real short-named file AAAAAA~" + i + ".TXT lost after remount", real);
         }
         fs.close();
+    }
+
+    /**
+     * The JFAT short-name case fold must be locale-independent and pinned to
+     * Locale.ROOT: Turkish dotted/dotless I is the classic divergence, Georgian
+     * the historical double-fold rationale. Also pins the 8.3 basis bytes for an
+     * i-heavy long name so the generator cannot drift back to the default locale.
+     */
+    @Test
+    public void testShortNameFoldIsLocaleIndependent() throws Exception {
+        Locale original = Locale.getDefault();
+        Locale[] locales = {
+            Locale.ROOT, new Locale("tr"), new Locale("ka"), new Locale("en")
+        };
+
+        try {
+            for (int i = 0; i < locales.length; i++) {
+                Locale.setDefault(locales[i]);
+                String label = locales[i].getLanguage();
+
+                // ASCII baseline
+                assertEquals("ASCII fold (" + label + ")",
+                    "ABCXYZ019.TXT", FatUtils.toUpperCase("abcXYZ019.txt"));
+                // Turkish dotted/dotless I (i, I, U+0131 dotless, U+0130 dotted)
+                assertEquals("lowercase i (" + label + ")", "I", FatUtils.toUpperCase("i"));
+                assertEquals("uppercase I (" + label + ")", "I", FatUtils.toUpperCase("I"));
+                assertEquals("dotless i U+0131 (" + label + ")", "I", FatUtils.toUpperCase("\u0131"));
+                assertEquals("dotted I U+0130 (" + label + ")", "\u0130", FatUtils.toUpperCase("\u0130"));
+                // Georgian: Nuskhuri folds to Asomtavruli (stable Unicode mapping)
+                assertEquals("Nuskhuri folds to Asomtavruli (" + label + ")",
+                    "\u10A0", FatUtils.toUpperCase("\u2D00"));
+            }
+
+            // Georgian Mkhedruli/Asomtavruli/Nuskhuri: fold must not vary with the
+            // default locale (exact mappings are JDK Unicode-data dependent)
+            String[] georgian = {
+                "\u10D0\u10D1\u10D2\u10D3",
+                "\u10A0\u10A1\u10A2\u10A3",
+                "\u2D00\u2D01\u2D02\u2D03",
+                "aB\u10D0\u10A0\u2D00"
+            };
+            for (int i = 0; i < georgian.length; i++) {
+                Locale.setDefault(Locale.ROOT);
+                String reference = FatUtils.toUpperCase(georgian[i]);
+                for (int j = 0; j < locales.length; j++) {
+                    Locale.setDefault(locales[j]);
+                    assertEquals("Georgian fold must not depend on default locale "
+                            + locales[j].getLanguage(),
+                        reference, FatUtils.toUpperCase(georgian[i]));
+                }
+            }
+
+            byte[] referenceBasis = null;
+            for (int i = 0; i < locales.length; i++) {
+                Locale.setDefault(locales[i]);
+                Object preTail = invokeComputePreTail(
+                    "initialInternationalInteroperabilityImplementationInterface.txt");
+                byte[] basis = preTailBasis(preTail);
+                if (referenceBasis == null) {
+                    referenceBasis = basis;
+                } else {
+                    assertTrue("basis must not depend on default locale "
+                            + locales[i].getLanguage(),
+                        Arrays.equals(referenceBasis, basis));
+                }
+            }
+            assertTrue("basis must be the ROOT-fold 8.3 bytes 'INITIALI' + 'TXT'",
+                Arrays.equals("INITIALITXT".getBytes("US-ASCII"), referenceBasis));
+        } finally {
+            Locale.setDefault(original);
+        }
+    }
+
+    /**
+     * Short-name generation and lookup must agree regardless of the default
+     * locale at creation vs lookup time: create under a Turkish default locale,
+     * remount under en, and verify long-name and raw short-name
+     * (FatDirectory.getEntryByShortName) lookups both find the entries.
+     */
+    @Test
+    public void testShortNameGenerationAndLookupIdenticalAcrossLocales() throws Exception {
+        Locale original = Locale.getDefault();
+        String longName = "initialInternationalInteroperabilityImplementationInterface.txt";
+        String georgianName = "gruzino\u10D0\u10D1\u10D2VeryLongGeorgianFileNameTest.txt";
+
+        try {
+            Locale.setDefault(new Locale("tr"));
+            FatFileSystem fs = formatAndOpenRW();
+            FSDirectory rootDir = fs.getRootEntry().getDirectory();
+
+            FSFile asciiFile = rootDir.addFile(longName).getFile();
+            asciiFile.write(0, ByteBuffer.wrap("ascii".getBytes()));
+            asciiFile.flush();
+            FSFile georgianFile = rootDir.addFile(georgianName).getFile();
+            georgianFile.write(0, ByteBuffer.wrap("georgian".getBytes()));
+            georgianFile.flush();
+            fs.flush();
+
+            FSEntry asciiEntry = rootDir.getEntry(longName);
+            assertNotNull("file must be listed after creation under tr", asciiEntry);
+            String shortName = ((FatEntry) asciiEntry).getShortName();
+            assertEquals("short name must be the ROOT-fold result, not the tr fold",
+                "INITIA~1.TXT", shortName);
+            byte[] shortNameBytes = ((FatEntry) asciiEntry).getEntry().getName();
+            byte[] georgianShortNameBytes =
+                ((FatEntry) rootDir.getEntry(georgianName)).getEntry().getName();
+            fs.close();
+
+            Locale.setDefault(new Locale("en"));
+            fs = openReadOnly();
+            rootDir = fs.getRootEntry().getDirectory();
+
+            FSEntry byLong = rootDir.getEntry(longName);
+            assertNotNull("long-name lookup must find entry created under tr", byLong);
+            assertEquals(longName, byLong.getName());
+
+            FatDirectory fatRootDir = (FatDirectory) rootDir;
+            FSEntry byShort = fatRootDir.getEntryByShortName(shortNameBytes);
+            assertNotNull("raw short-name lookup must find entry created under tr", byShort);
+            assertEquals(longName, byShort.getName());
+
+            FSEntry byGeorgianLong = rootDir.getEntry(georgianName);
+            assertNotNull("Georgian-named file must be found after locale switch", byGeorgianLong);
+            assertEquals(georgianName, byGeorgianLong.getName());
+            FSEntry byGeorgianShort = fatRootDir.getEntryByShortName(georgianShortNameBytes);
+            assertNotNull("raw short-name lookup must find Georgian-named entry", byGeorgianShort);
+            assertEquals(georgianName, byGeorgianShort.getName());
+            fs.close();
+        } finally {
+            Locale.setDefault(original);
+        }
     }
 
     private static Object invokeComputePreTail(String longName) throws Exception {
