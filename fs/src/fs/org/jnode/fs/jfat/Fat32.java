@@ -64,7 +64,7 @@ public class Fat32 extends Fat {
 
         int masked = element & 0x0FFFFFFF;
         setInt32(index, (int) (masked | (old & 0xF0000000)));
-        noteFreeTransition((int) (old & 0x0FFFFFFF), masked);
+        noteFreeTransition(index, (int) (old & 0x0FFFFFFF), masked);
 
         return (int) (old & 0x0FFFFFFF);
     }

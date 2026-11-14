@@ -156,6 +156,17 @@ public class FatChain {
      *
      * <p>Precondition: the caller must hold the {@code fat} monitor.
      *
+     * <p>Hint semantics: {@code fat.getLastFree()} is a <em>lower bound</em> on
+     * where the forward scan should start, not an exact pointer to a free
+     * cluster. The forward scan covers {@code [getLastFree(), size())} and the
+     * wrap scan covers {@code [firstCluster(), getLastFree())}, so together they
+     * cover the whole FAT regardless of where the hint stands. The hint may be
+     * stale-low (costs scan time only) but must never be treated as a complete
+     * description of free space below it; the wrap scan must stay. Lowering the
+     * hint is always safe; it is lowered incrementally by
+     * {@code Fat#noteFreeTransition(int, int, int)} on every free transition, and
+     * raised only past provably consumed clusters by {@link #moveFreeHintPast}.
+     *
      * <p>Postcondition: either returns the index of the largest of the located free
      * clusters ({@code >= fat.firstCluster()}), or throws
      * {@link FileSystemFullException} when fewer than {@code n} free clusters exist;
@@ -391,10 +402,24 @@ public class FatChain {
      * wrapping to the smallest free cluster in {@code [fat.firstCluster(), last]} when
      * there is none above. If no free cluster exists at all the hint is left unchanged.
      *
+     * <p>Raising the hint past the clusters consumed by the allocation is the only
+     * sound direction here: everything at or below {@code last} was either just
+     * consumed by {@link #allocateTail} or is re-examined by the wrap scan in
+     * {@link #findFreeSegment}. The hint is lowered incrementally in
+     * {@code Fat#noteFreeTransition(int, int, int)} instead, so this method never
+     * needs to scan below the consumed segment to restore it.
+     *
+     * <p>When the allocation consumed the last free cluster there is no free entry
+     * above {@code last} or below it, so the scans below are skipped: they would
+     * walk the whole FAT only to leave the hint unchanged.
+     *
      * <p>Precondition: the caller holds the {@code fat} monitor and the segment above
      * {@code last} has just been marked allocated.
      */
     private void moveFreeHintPast(int last) throws IOException {
+        if (fat.getFreeClusterCount() == 0) {
+            return;
+        }
         boolean foundNext = false;
         for (int i = last + 1; i < fat.size(); i++) {
             if (fat.isFreeEntry(i)) {

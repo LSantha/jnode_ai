@@ -45,6 +45,7 @@ import org.jnode.test.fs.jfat.FatFileSystemTest;
 import org.jnode.test.fs.jfat.FatFormatterRawStructureTest;
 import org.jnode.test.fs.jfat.FatFormatterRoundTripTest;
 import org.jnode.test.fs.jfat.FatFsInfoRuntimeTest;
+import org.jnode.test.fs.jfat.FatAllocHintTest;
 import org.jnode.test.fs.jfat.FatFreeClusterCountTest;
 import org.jnode.test.fs.jfat.FatSectorSizeGuardTest;
 import org.jnode.test.fs.jfat.FatFailurePathTest;
@@ -106,6 +107,7 @@ import org.junit.runners.Suite.SuiteClasses;
     FatCopyComparisonTest.class,
     FatFormatterRoundTripTest.class,
     FatFormatterRawStructureTest.class,
+    FatAllocHintTest.class,
     FatFreeClusterCountTest.class,
     FatFsInfoRuntimeTest.class,
     FatSectorSizeGuardTest.class,

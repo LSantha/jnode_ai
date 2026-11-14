@@ -41,7 +41,11 @@ import org.jnode.fs.FileSystemException;
  * {@link #getFreeClusterCount()} (seeded by a full scan in the constructor and
  * maintained incrementally by {@code noteFreeTransition}), and the FAT itself;
  * {@code FatFileSystem.getFreeSpace()} is built on it and must not regress to
- * an O(n) scan. The FSInfo sector is written by {@code FatFormatter} only for
+ * an O(n) scan. The free-cluster hint ({@link #getLastFree()}) is seeded by
+ * {@link #rewindFree()} at mount and maintained the same way: it may move
+ * downwards on any free transition and upwards only after an allocation has
+ * provably consumed the clusters below the new value (see
+ * {@code FatChain#moveFreeHintPast}). The FSInfo sector is written by {@code FatFormatter} only for
  * foreign readers, and only with {@code FSI_Free_Count} and
  * {@code FSI_Nxt_Free} set to {@code 0xFFFFFFFF} ("unknown"). Because JFAT
  * never reads FSInfo, no signature or range validation is applied on mount;
@@ -443,14 +447,44 @@ public abstract class Fat {
         return isFree(get(entry));
     }
 
+    /**
+     * The free-cluster hint: a <em>lower bound</em> on where allocation should
+     * start scanning, not an exact pointer to a free cluster. {@code FatChain}
+     * scans forward from this value and then wraps from
+     * {@link #firstCluster()} back to it, so every cluster below the hint is
+     * re-examined by the wrap scan whenever the forward scan cannot locate
+     * enough free clusters. A stale-low hint only costs scan time; a stale-high
+     * hint below no known free cluster is harmless as long as the wrap scan is
+     * kept.
+     *
+     * <p>The hint may move DOWN at any time (lowering it can never skip a free
+     * cluster; a free transition at index {@code i} lowers it via
+     * {@link #noteFreeTransition(int, int, int)}). It may move UP only past
+     * clusters that are provably not free - after an allocation consumed them
+     * ({@code FatChain#moveFreeHintPast(int)}). Never raise it to "the highest
+     * free cluster seen" or to an unverified value: any free cluster below the
+     * raised hint would be silently skipped by allocation strategies that rely
+     * on the bound, and fragmentation would result.
+     */
     public final synchronized int getLastFree() {
         return lastfree;
     }
 
+    /**
+     * Raise or lower the free-cluster hint. Callers that cannot prove the
+     * clusters between the current value and {@code value} are not free must
+     * only ever lower the hint; see {@link #getLastFree()}.
+     */
     public final synchronized void setLastFree(int value) {
         lastfree = value;
     }
 
+    /**
+     * Reset the free-cluster hint to the first allocatable cluster. Used by
+     * mount and by the rollback path in {@code FatChain}; discarding the hint
+     * can never skip a free cluster because the wrap scan re-examines
+     * everything below the bound.
+     */
     public final synchronized void rewindFree() {
         lastfree = firstCluster();
     }
@@ -469,13 +503,35 @@ public abstract class Fat {
         return freeClusterCount;
     }
 
-    protected final void noteFreeTransition(int oldValue, int newValue) {
+    /**
+     * Maintain {@link #getFreeClusterCount()} and the free-cluster hint after
+     * an entry transition. Every transition of cluster {@code index} from one
+     * raw value to another passes through here, so this is the one place that
+     * knows about every free transition.
+     *
+     * <p>Hint direction (the whole trap): the hint is a <em>lower bound</em>.
+     * On a cluster becoming free at {@code index} the bound may only move
+     * DOWN ({@code if (index < lastfree) setLastFree(index)}), because a free
+     * cluster at or below the bound would be found by the forward scan only if
+     * the bound were at or below it - and the wrap scan in
+     * {@code findFreeSegment} covers everything below the bound precisely so a
+     * stale-high hint stays correct. Raising the bound is only sound for
+     * clusters provably consumed, which is what
+     * {@code FatChain#moveFreeHintPast(int)} does after an allocation. A naive
+     * "set the hint to the cluster that was just freed" is fine; a naive "set
+     * the hint to the highest free cluster seen" silently skips every lower
+     * free cluster and fragments allocation.
+     */
+    protected final void noteFreeTransition(int index, int oldValue, int newValue) {
         boolean wasFree = isFree(oldValue);
         boolean nowFree = isFree(newValue);
         if (wasFree && !nowFree) {
             freeClusterCount--;
         } else if (!wasFree && nowFree) {
             freeClusterCount++;
+            if (index >= firstCluster() && index < lastfree) {
+                lastfree = index;
+            }
         }
     }
 

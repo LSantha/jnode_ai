@@ -62,7 +62,7 @@ public class Fat12 extends Fat {
             old = (raw >> 4) & 0xFFF;
             setInt16(index, (raw & 0x000F) | (value << 4));
         }
-        noteFreeTransition(old, value);
+        noteFreeTransition(index, old, value);
 
         return old;
     }
