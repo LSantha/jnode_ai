@@ -92,18 +92,19 @@ import org.jnode.vm.VmIOContext;
  *   roughly double the command count ("~2x commands, per-write
  *   durable").</li>
  *   <li>{@code jnode.ide.fua} (default {@code false}, opt-in): when
- *   {@code true} <em>and</em> {@code jnode.ide.writethrough=true} <em>and</em>
- *   the device declares FUA support (ATA device, 48-bit addressing,
- *   IDENTIFY word 84 bit 14 set, word 84 bit 15 clear, word 84 bit 6 set),
- *   the per-write FLUSH CACHE is replaced by WRITE MULTIPLE FUA EXT
+ *   {@code true} and the device declares FUA support (ATA device,
+ *   48-bit addressing, IDENTIFY word 84 bit 14 set, word 84 bit 15 clear,
+ *   word 84 bit 6 set), writes use WRITE MULTIPLE FUA EXT
  *   (0xCE, PIO), which forces the data to non-volatile media before
- *   command completion is reported. Same guarantee, one queue turn instead
- *   of two. A device that does not declare FUA support, or that rejects the
+ *   command completion is reported. With {@code jnode.ide.writethrough=true}
+ *   the per-write FLUSH CACHE is replaced by the FUA command (one queue
+ *   turn instead of two). With {@code jnode.ide.writethrough=false} (the
+ *   default) the FUA command provides the per-write durability guarantee
+ *   without any separate cache flush: one command, durable at completion.
+ *   A device that does not declare FUA support, or that rejects the
  *   SET MULTIPLE MODE command used to enable multiple mode, falls back to
  *   plain WRITE followed by FLUSH CACHE. Devices that silently ignore FUA
- *   would otherwise void this contract, so the gate fails closed.
- *   When {@code jnode.ide.writethrough=false} (the default) there is no
- *   per-write barrier and {@code jnode.ide.fua} has no effect.</li>
+ *   would otherwise void this contract, so the gate fails closed.</li>
  * </ul>
  *
  * @author epr
@@ -155,7 +156,7 @@ public class IDEDiskDriver extends Driver
             VmIOContext.getGlobalProperties().getProperty("jnode.ide.writethrough"));
         fuaRequested = "true".equals(
             VmIOContext.getGlobalProperties().getProperty("jnode.ide.fua"));
-        if (writeThrough && fuaRequested) {
+        if (fuaRequested) {
             fuaEnabled = enableFua(dev, descr);
         } else {
             fuaEnabled = false;
@@ -354,7 +355,7 @@ public class IDEDiskDriver extends Driver
         final int maxSectorCount = is48bit ? MAX_SECTOR_COUNT_48 : MAX_SECTOR_COUNT_28;
         final boolean primary = dev.isPrimary();
         final boolean master = dev.isMaster();
-        final boolean fuaWrite = isWrite && writeThrough && fuaEnabled;
+        final boolean fuaWrite = isWrite && fuaEnabled;
 
         while (length > 0) {
             final long partLbaStart = devOffset / SECTOR_SIZE;
@@ -386,8 +387,10 @@ public class IDEDiskDriver extends Driver
         }
 
         // FUA writes land on non-volatile media before command completion,
-        // which makes a separate FLUSH CACHE redundant.
-        if (isWrite && writeThrough && !fuaWrite) {
+        // which makes a separate FLUSH CACHE redundant. A requested but
+        // unavailable FUA still gets the flush, so durability never fails
+        // open.
+        if (isWrite && !fuaWrite && (writeThrough || fuaRequested)) {
             flush();
         }
     }

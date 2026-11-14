@@ -186,13 +186,20 @@ public class IDEDiskDriverFuaTest implements IDEConstants {
     }
 
     @Test
-    public void testFuaRequestIssuesNoSetMultipleModeWhenWriteThroughDisabled() throws Exception {
+    public void testFuaRequestIssuesSetMultipleModeWhenWriteThroughDisabled() throws Exception {
         final Properties props = new Properties();
         props.setProperty("jnode.ide.fua", "true");
         openDriver(props, create48BitDescriptor(0x0000, 0x4062));
 
-        assertTrue("SET MULTIPLE MODE must not be issued at boot when writethrough=false",
-            !io.getWrittenCommands().contains(Integer.valueOf(CMD_SETMULT)));
+        assertEquals("driver must issue SET MULTIPLE MODE at boot when fua=true, "
+                + "independent of writethrough, and the device reports multiple mode disabled",
+            Integer.valueOf(CMD_SETMULT), io.getWrittenCommands().get(0));
+        io.clearObservations();
+
+        driver.write(0, ByteBuffer.wrap(randomBytes(SECTOR_SIZE, 16L)));
+
+        assertEquals(Arrays.asList(Integer.valueOf(CMD_WRITE_MULTIPLE_FUA_EXT)),
+            io.getWrittenCommands());
     }
 
     @Test
@@ -213,7 +220,21 @@ public class IDEDiskDriverFuaTest implements IDEConstants {
     }
 
     @Test
-    public void testFuaHasNoEffectWhenWriteThroughDisabled() throws Exception {
+    public void testFuaFallsBackToFlushWhenWriteThroughDisabledAndDeviceDoesNotDeclareSupport()
+        throws Exception {
+        final Properties props = new Properties();
+        props.setProperty("jnode.ide.fua", "true");
+        openDriver(props, create48BitDescriptor(0x0108, 0x4023));
+        io.clearObservations();
+
+        driver.write(0, ByteBuffer.wrap(randomBytes(SECTOR_SIZE, 24L)));
+
+        assertEquals(Arrays.asList(Integer.valueOf(CMD_WRITE_EXT), Integer.valueOf(CMD_FLUSH_CACHE_EXT)),
+            io.getWrittenCommands());
+    }
+
+    @Test
+    public void testFuaUsedWhenWriteThroughDisabled() throws Exception {
         final Properties props = new Properties();
         props.setProperty("jnode.ide.fua", "true");
         openDriver(props, create48BitDescriptor(0x0108, 0x4062));
@@ -221,7 +242,8 @@ public class IDEDiskDriverFuaTest implements IDEConstants {
 
         driver.write(0, ByteBuffer.wrap(randomBytes(SECTOR_SIZE, 15L)));
 
-        assertEquals(Arrays.asList(Integer.valueOf(CMD_WRITE_EXT)), io.getWrittenCommands());
+        assertEquals(Arrays.asList(Integer.valueOf(CMD_WRITE_MULTIPLE_FUA_EXT)),
+            io.getWrittenCommands());
     }
 
     private void openDriver(Properties props, IDEDriveDescriptor descr) throws Exception {
