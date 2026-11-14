@@ -27,6 +27,7 @@ import org.jnode.test.fs.filesystem.tests.BasicFSTest;
 import org.jnode.test.fs.filesystem.tests.ConcurrentAccessFSTest;
 import org.jnode.test.fs.filesystem.tests.FileFSTest;
 import org.jnode.test.fs.filesystem.tests.TreeFSTest;
+import org.jnode.test.fs.jfat.FatUtilsConcurrencyTest;
 import org.jnode.test.fs.jfat.BootSectorValidationTest;
 import org.jnode.test.fs.jfat.FatApiConsistencyTest;
 import org.jnode.test.fs.jfat.Fat12ChainTest;
@@ -119,6 +120,7 @@ import org.junit.runners.Suite.SuiteClasses;
     FileHandleManagerTest.class,
     JIFSFpluginJarTest.class,
     FatApiConsistencyTest.class,
+    FatUtilsConcurrencyTest.class,
 }
 )
 public class FSTestSuite {

@@ -29,9 +29,17 @@ import org.jnode.util.TimeUtils;
  * @author Tango
  */
 public class FatUtils {
-    private static final SimpleDateFormat time = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss.S");
+    private static final ThreadLocal<SimpleDateFormat> time = new ThreadLocal<SimpleDateFormat>() {
+        protected SimpleDateFormat initialValue() {
+            return new SimpleDateFormat("yyyy-MM-dd HH:mm:ss.S");
+        }
+    };
 
-    private static final SimpleDateFormat date = new SimpleDateFormat("yyyy-MM-dd");
+    private static final ThreadLocal<SimpleDateFormat> date = new ThreadLocal<SimpleDateFormat>() {
+        protected SimpleDateFormat initialValue() {
+            return new SimpleDateFormat("yyyy-MM-dd");
+        }
+    };
 
     public static long decodeDateTime(final int dosDate, final int dosTime, final int dosTenth) {
         if (dosDate < 0 || dosDate > 0xFFFF)
@@ -110,11 +118,11 @@ public class FatUtils {
     }
 
     public static String fTime(long javaDateTime) {
-        return time.format(javaDateTime);
+        return time.get().format(javaDateTime);
     }
 
     public static String fDate(long javaDateTime) {
-        return date.format(javaDateTime);
+        return date.get().format(javaDateTime);
     }
 
     public static final boolean compareIgnoreCase(String s1, String s2) {
