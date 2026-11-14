@@ -67,14 +67,18 @@ public class IDEWriteMultipleFUACommand extends IDERWSectorsCommand {
         // Send data
         for (int i = 0; i < sectorCount; i++) {
             if (log.isDebugEnabled()) log.debug("WTMultiFUA pw " + i);
-            if (!pollWait(io, false))
+            if (!pollDataPhase(io, "fuaWriteSector " + i)) {
+                setFailedSector(i);
                 return;
+            }
             if (log.isDebugEnabled()) log.debug("WTMultiFUA trf " + i);
             transferOneSector(ide, io);
         }
 
-        if (!pollWait(io, true))
+        if (!pollWait(io, true)) {
+            setFailedSector(sectorCount - 1);
             return;
+        }
 
         // We're done
         notifyFinished();

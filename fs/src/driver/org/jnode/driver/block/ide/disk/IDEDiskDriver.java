@@ -167,11 +167,6 @@ public class IDEDiskDriver extends Driver
             // Find the devicemanager
             DeviceManager devMan = InitialNaming.lookup(DeviceManager.NAME);
             // Read the bootsector
-            final byte[] bs1 = new byte[SECTOR_SIZE];
-            read(0, ByteBuffer.wrap(bs1));
-
-            // Read the bootsector twice, since the first read seems to fail.
-            // todo: THIS IS A WORKAROUND
             final byte[] bs = new byte[SECTOR_SIZE];
             read(0, ByteBuffer.wrap(bs));
 
@@ -379,7 +374,10 @@ public class IDEDiskDriver extends Driver
                 throw new InterruptedIOException("IDE timeout: " + ex.getMessage());
             }
             if (cmd.hasError()) {
-                throw new IOException("IDE " + errorSource + " error:" + cmd.getError());
+                final int failed = cmd.getFailedSector();
+                final String where = (failed >= 0)
+                    ? (" at lba " + (partLbaStart + failed)) : "";
+                throw new IOException("IDE " + errorSource + " error:" + cmd.getError() + where);
             }
 
             length -= partLength;

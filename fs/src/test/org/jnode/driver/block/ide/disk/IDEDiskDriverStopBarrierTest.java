@@ -135,6 +135,7 @@ public class IDEDiskDriverStopBarrierTest implements IDEConstants {
         driver = new IDEDiskDriver();
         device.setDriver(driver);
         VmIOContext.setGlobalProperties(props);
+        io.addPhase(FakeIDEIO.Phase.dataIn(new byte[SECTOR_SIZE]));
         driver.startDevice();
     }
 
