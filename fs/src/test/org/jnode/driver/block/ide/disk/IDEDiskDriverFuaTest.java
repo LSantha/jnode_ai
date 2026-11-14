@@ -98,6 +98,9 @@ public class IDEDiskDriverFuaTest implements IDEConstants {
         props.setProperty("jnode.ide.fua", "true");
         openDriver(props, create48BitDescriptor(0x0108, 0x4062));
         io.clearObservations();
+        for (int i = 0; i < WRITE_SECTORS; i++) {
+            io.addPhase(FakeIDEIO.Phase.writeReady());
+        }
 
         driver.write(0, ByteBuffer.wrap(randomBytes(WRITE_SECTORS * SECTOR_SIZE, 11L)));
 
@@ -110,12 +113,14 @@ public class IDEDiskDriverFuaTest implements IDEConstants {
         final Properties props = new Properties();
         props.setProperty("jnode.ide.writethrough", "true");
         props.setProperty("jnode.ide.fua", "true");
+        io.addPhase(FakeIDEIO.Phase.completed());
         openDriver(props, create48BitDescriptor(0x0000, 0x4062));
 
         assertEquals("driver must issue SET MULTIPLE MODE before any other "
                 + "command when the device reports multiple mode disabled",
             Integer.valueOf(CMD_SETMULT), io.getWrittenCommands().get(0));
         io.clearObservations();
+        io.addPhase(FakeIDEIO.Phase.writeReady());
 
         driver.write(0, ByteBuffer.wrap(randomBytes(SECTOR_SIZE, 12L)));
 
@@ -145,6 +150,7 @@ public class IDEDiskDriverFuaTest implements IDEConstants {
                 + "does not declare FUA support",
             !io.getWrittenCommands().contains(Integer.valueOf(CMD_SETMULT)));
         io.clearObservations();
+        io.addPhase(FakeIDEIO.Phase.writeReady());
 
         driver.write(0, ByteBuffer.wrap(randomBytes(SECTOR_SIZE, 13L)));
 
@@ -159,6 +165,7 @@ public class IDEDiskDriverFuaTest implements IDEConstants {
         props.setProperty("jnode.ide.fua", "true");
         openDriver(props, create48BitDescriptor(0x0108, 0x0062));
         io.clearObservations();
+        io.addPhase(FakeIDEIO.Phase.writeReady());
 
         driver.write(0, ByteBuffer.wrap(randomBytes(SECTOR_SIZE, 14L)));
 
@@ -189,12 +196,14 @@ public class IDEDiskDriverFuaTest implements IDEConstants {
     public void testFuaRequestIssuesSetMultipleModeWhenWriteThroughDisabled() throws Exception {
         final Properties props = new Properties();
         props.setProperty("jnode.ide.fua", "true");
+        io.addPhase(FakeIDEIO.Phase.completed());
         openDriver(props, create48BitDescriptor(0x0000, 0x4062));
 
         assertEquals("driver must issue SET MULTIPLE MODE at boot when fua=true, "
                 + "independent of writethrough, and the device reports multiple mode disabled",
             Integer.valueOf(CMD_SETMULT), io.getWrittenCommands().get(0));
         io.clearObservations();
+        io.addPhase(FakeIDEIO.Phase.writeReady());
 
         driver.write(0, ByteBuffer.wrap(randomBytes(SECTOR_SIZE, 16L)));
 
@@ -207,11 +216,11 @@ public class IDEDiskDriverFuaTest implements IDEConstants {
         final Properties props = new Properties();
         props.setProperty("jnode.ide.writethrough", "true");
         props.setProperty("jnode.ide.fua", "true");
-        io.addPhase(FakeIDEIO.Phase.completed());
         io.addPhase(FakeIDEIO.Phase.error(0x24));
         openDriver(props, create48BitDescriptor(0x0000, 0x4062));
         assertEquals(Integer.valueOf(CMD_SETMULT), io.getWrittenCommands().get(0));
         io.clearObservations();
+        io.addPhase(FakeIDEIO.Phase.writeReady());
 
         driver.write(0, ByteBuffer.wrap(randomBytes(SECTOR_SIZE, 23L)));
 
@@ -226,6 +235,7 @@ public class IDEDiskDriverFuaTest implements IDEConstants {
         props.setProperty("jnode.ide.fua", "true");
         openDriver(props, create48BitDescriptor(0x0108, 0x4023));
         io.clearObservations();
+        io.addPhase(FakeIDEIO.Phase.writeReady());
 
         driver.write(0, ByteBuffer.wrap(randomBytes(SECTOR_SIZE, 24L)));
 
@@ -239,6 +249,7 @@ public class IDEDiskDriverFuaTest implements IDEConstants {
         props.setProperty("jnode.ide.fua", "true");
         openDriver(props, create48BitDescriptor(0x0108, 0x4062));
         io.clearObservations();
+        io.addPhase(FakeIDEIO.Phase.writeReady());
 
         driver.write(0, ByteBuffer.wrap(randomBytes(SECTOR_SIZE, 15L)));
 
@@ -252,6 +263,7 @@ public class IDEDiskDriverFuaTest implements IDEConstants {
         driver = new IDEDiskDriver();
         device.setDriver(driver);
         VmIOContext.setGlobalProperties(props);
+        io.addPhase(FakeIDEIO.Phase.dataIn(new byte[SECTOR_SIZE]));
         driver.startDevice();
     }
 

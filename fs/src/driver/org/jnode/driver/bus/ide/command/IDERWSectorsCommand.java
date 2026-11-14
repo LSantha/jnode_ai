@@ -114,8 +114,16 @@ public abstract class IDERWSectorsCommand extends IDECommand {
         for (int i = 0; i < 4; i++) {
             io.getAltStatusReg(); // This wastes 100ns
         }
-        // Wait for BUSY to be cleared
-        io.waitUntilStatus(ST_BUSY, 0, IDE_DATA_XFER_TIMEOUT, "pollWait");
+        // Wait for BUSY to be cleared. The completion can race a
+        // device-posted error; surface it through checkDeviceState.
+        try {
+            io.waitUntilStatus(ST_BUSY, 0, IDE_DATA_XFER_TIMEOUT, "pollWait");
+        } catch (TimeoutException ex) {
+            if (!checkState || !hasDeviceError(io)) {
+                throw ex;
+            }
+            return checkDeviceState(io);
+        }
         // Check state
         if (checkState) {
             return checkDeviceState(io);
@@ -135,9 +143,24 @@ public abstract class IDERWSectorsCommand extends IDECommand {
         for (int i = 0; i < 4; i++) {
             io.getAltStatusReg(); // This wastes 100ns
         }
-        // Wait for BUSY to be cleared and DRQ to be set
-        io.waitUntilStatus(ST_BUSY | ST_DATA_REQUEST, ST_DATA_REQUEST, IDE_DATA_XFER_TIMEOUT, message);
+        // Wait for BUSY to be cleared and DRQ to be set. The IDE
+        // implementation fails fast once ERR is observed, so a device
+        // that posts ERR/DWF mid-transfer surfaces here as a
+        // TimeoutException; treat that as a device-posted fault and
+        // fall through to checkDeviceState, otherwise rethrow.
+        try {
+            io.waitUntilStatus(ST_BUSY | ST_DATA_REQUEST, ST_DATA_REQUEST, IDE_DATA_XFER_TIMEOUT, message);
+        } catch (TimeoutException ex) {
+            if (!hasDeviceError(io)) {
+                throw ex;
+            }
+        }
         return checkDeviceState(io);
+    }
+
+    private boolean hasDeviceError(IDEIO io) {
+        final int state = io.getAltStatusReg();
+        return (state & (ST_ERROR | ST_DEVICE_FAULT)) != 0;
     }
 
     private boolean checkDeviceState(IDEIO io) {

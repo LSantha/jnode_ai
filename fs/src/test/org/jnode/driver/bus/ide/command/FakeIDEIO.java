@@ -44,6 +44,7 @@ public class FakeIDEIO implements IDEIO, IDEConstants {
         final boolean expectErrorReg;
         int expectWordsOut;    // number of 256-word blocks to consume via setDataReg, 0 = none
         final boolean persistent; // status-only phase that is never retired (hostile-device script)
+        int errorReg = -1;     // device error register value carried by an error phase
 
         public Phase(int status, int intReason, int byteCount,
                       byte[] dataIn, boolean expectErrorReg) {
@@ -79,7 +80,8 @@ public class FakeIDEIO implements IDEIO, IDEConstants {
         }
 
         public static Phase notReady() {
-            return new Phase(0, 0, 0, null, false);
+            // DRQ set but DRDY clear: a data phase in which the device is not ready
+            return new Phase(ST_DATA_REQUEST, 0, 0, null, false);
         }
 
         public static Phase completed() {
@@ -87,7 +89,16 @@ public class FakeIDEIO implements IDEIO, IDEConstants {
         }
 
         public static Phase error(int errorReg) {
-            return new Phase(ST_ERROR | ST_DEVICE_READY, 0x03, 0, null, true);
+            final Phase p = new Phase(ST_ERROR | ST_DEVICE_READY, 0x03, 0, null, true);
+            p.errorReg = errorReg;
+            return p;
+        }
+
+        public static Phase persistentError(int errorReg) {
+            // device posts ERR but never clears BUSY (hostile completion race)
+            final Phase p = new Phase(ST_BUSY | ST_ERROR | ST_DEVICE_READY, 0x03, 0, null, true, true);
+            p.errorReg = errorReg;
+            return p;
         }
     }
 
@@ -157,6 +168,7 @@ public class FakeIDEIO implements IDEIO, IDEConstants {
         phases.clear();
         currentWordIndex = 0;
         currentWordIndexOut = 0;
+        commandIssued = false;
         errorRegValue = 0;
         lastControlValue = -1;
     }
@@ -179,24 +191,42 @@ public class FakeIDEIO implements IDEIO, IDEConstants {
         this.altStatusOverride = value;
     }
 
-    /** Head phase, or null if the script is exhausted. Status-only phases are
-     *  retired by getStatusReg(); data phases are retired when their payload
-     *  has fully crossed the 16-bit data register. */
+    /** Scripted phases become visible to the bus only once a command has
+     *  been issued; before that (and after a status-only phase retires)
+     *  the device presents an idle bus. The window closes again when the
+     *  script drains. */
+    private boolean commandIssued;
+
+    /** Head phase while a command is in flight, else null (idle bus).
+     *  Status-only phases are retired by getStatusReg(); data phases are
+     *  retired when their payload has fully crossed the 16-bit data
+     *  register. */
     private Phase peekPhase() {
-        return phases.peekFirst();
+        return commandIssued ? phases.peekFirst() : null;
+    }
+
+    private void maybeCloseWindow() {
+        if (phases.isEmpty()) {
+            commandIssued = false;
+        }
+    }
+
+    private int errorRegOf(Phase p) {
+        return (p != null && p.errorReg >= 0) ? p.errorReg : errorRegValue;
     }
 
     /** Status of the head phase, retiring status-only phases (which carry no data). */
     public int getStatusReg() {
-        final Phase p = phases.peekFirst();
+        final Phase p = peekPhase();
         if (p == null) {
             return ST_DEVICE_READY;
         }
-        if (p.expectErrorReg) {
-            errorRegValue = 0x24; // ABRT
+        if (p.expectErrorReg && p.errorReg >= 0) {
+            errorRegValue = p.errorReg;
         }
         if (p.dataIn == null && p.expectWordsOut == 0 && !p.persistent) {
             phases.pollFirst();
+            commandIssued = false;
         }
         return p.status;
     }
@@ -207,7 +237,7 @@ public class FakeIDEIO implements IDEIO, IDEConstants {
         if (readWords.size() > 65536) {
             return 0; // stop growing; device offers nothing more
         }
-        final Phase p = phases.peekFirst();
+        final Phase p = peekPhase();
         if (p == null || p.dataIn == null) {
             readWords.add(0);
             return 0;
@@ -221,6 +251,7 @@ public class FakeIDEIO implements IDEIO, IDEConstants {
             phases.pollFirst();
             currentWordIndex = 0;
             currentWordIndexOut = 0;
+            maybeCloseWindow();
         }
         return v;
     }
@@ -232,13 +263,14 @@ public class FakeIDEIO implements IDEIO, IDEConstants {
             new Exception("setDataReg flood probe").printStackTrace();
             writtenWords.add(-1); // marker
         }
-        final Phase p = phases.peekFirst();
+        final Phase p = peekPhase();
         if (p != null && p.expectWordsOut > 0) {
             currentWordIndexOut++;
             if (currentWordIndexOut >= p.expectWordsOut) {
                 phases.pollFirst();
                 currentWordIndex = 0;
                 currentWordIndexOut = 0;
+                maybeCloseWindow();
             }
         }
     }
@@ -302,11 +334,13 @@ public class FakeIDEIO implements IDEIO, IDEConstants {
             busyTicksOnCommandIssue--;
             return ST_BUSY;
         }
-        return 0;
+        final Phase p = peekPhase();
+        return (p == null) ? ST_DEVICE_READY : p.status;
     }
 
     public void setCommandReg(int command) {
         writtenCommands.add(command);
+        commandIssued = true;
     }
 
     public void setControlReg(int control) {
@@ -320,7 +354,20 @@ public class FakeIDEIO implements IDEIO, IDEConstants {
     public void waitUntilStatus(int mask, int value, long timeout, String message)
         throws TimeoutException {
         waitCalls.add(new int[]{mask, value});
-        // The fake never stays BUSY long enough to time out.
+        // Mirror DefaultIDEIO: poll alt status; a device-posted ERR fails
+        // fast, a timeout throws with the caller's message. No real
+        // sleeping - the budget is consumed in virtual 1ms steps.
+        long remaining = Math.max(0, timeout);
+        while ((getAltStatusReg() & mask) != value) {
+            final int state = getAltStatusReg();
+            if ((state & ST_ERROR) != 0) {
+                throw new TimeoutException("IDE error " + Integer.toHexString(errorRegOf(peekPhase())));
+            }
+            if (remaining <= 0) {
+                throw new TimeoutException((message != null) ? message : "Timeout in waitUntilStatus");
+            }
+            remaining--;
+        }
     }
 
     public int getIrq() {

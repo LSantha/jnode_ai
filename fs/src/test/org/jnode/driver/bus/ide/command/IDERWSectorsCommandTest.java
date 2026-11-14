@@ -120,6 +120,23 @@ public class IDERWSectorsCommandTest implements IDEConstants {
     }
 
     @Test
+    public void testReadMidTransferErrorCarriesDevicePostedErrorCode() throws Exception {
+        io.addPhase(FakeIDEIO.Phase.dataIn(randomBytes(SECTOR_SIZE, 9)));
+        io.addPhase(FakeIDEIO.Phase.error(0x04));
+
+        final ByteBuffer buf = ByteBuffer.allocate(2 * SECTOR_SIZE);
+        final IDEReadSectorsCommand cmd =
+            new IDEReadSectorsCommand(true, true, false, 7, 2, buf);
+        cmd.setup(null, io);
+        cmd.waitUntilFinished(1000);
+
+        assertTrue(cmd.hasError());
+        assertEquals("error must carry the device error register value, not a hard-coded one",
+            0x04, cmd.getError());
+        assertEquals(1, cmd.getFailedSector());
+    }
+
+    @Test
     public void testReadMidTransferDeviceFaultFailsAtThatSector() throws Exception {
         io.addPhase(FakeIDEIO.Phase.dataIn(randomBytes(SECTOR_SIZE, 4)));
         io.addPhase(FakeIDEIO.Phase.fault());
@@ -172,20 +189,39 @@ public class IDERWSectorsCommandTest implements IDEConstants {
 
     @Test
     public void testReadDrqWaitTimeoutPropagatesAsTimeout() throws Exception {
-        final FakeIDEIO timingOut = new FakeIDEIO() {
-            @Override
-            public void waitUntilStatus(int mask, int value, long timeout, String message)
-                throws TimeoutException {
-                throw new TimeoutException("drq timeout");
-            }
-        };
         final IDEReadSectorsCommand cmd =
             new IDEReadSectorsCommand(true, true, false, 7, 1, ByteBuffer.allocate(SECTOR_SIZE));
         try {
-            cmd.setup(null, timingOut);
+            cmd.setup(null, new FakeIDEIO() {
+                @Override
+                public void waitUntilStatus(int mask, int value, long timeout, String message)
+                    throws TimeoutException {
+                    if ((mask & ST_DATA_REQUEST) != 0 && value == ST_DATA_REQUEST) {
+                        throw new TimeoutException("drq timeout");
+                    }
+                    super.waitUntilStatus(mask, value, timeout, message);
+                }
+            });
             fail("a DRQ wait timeout must propagate, not be swallowed");
         } catch (TimeoutException expected) {
         }
+    }
+
+    @Test
+    public void testReadCompletionErrorRacingBusySurfacesAtLastSector() throws Exception {
+        io.addPhase(FakeIDEIO.Phase.dataIn(randomBytes(SECTOR_SIZE, 13)));
+        io.addPhase(FakeIDEIO.Phase.persistentError(0x24));
+
+        final ByteBuffer buf = ByteBuffer.allocate(SECTOR_SIZE);
+        final IDEReadSectorsCommand cmd =
+            new IDEReadSectorsCommand(true, true, false, 7, 1, buf);
+        cmd.setup(null, io);
+        cmd.waitUntilFinished(1000);
+
+        assertTrue(cmd.hasError());
+        assertEquals(0x24, cmd.getError());
+        assertEquals(0, cmd.getFailedSector());
+        assertEquals(SECTOR_SIZE / 2, io.getReadWords().size());
     }
 
     // ---- write path ----
