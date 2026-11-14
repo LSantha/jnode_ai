@@ -26,7 +26,6 @@ import java.lang.reflect.Method;
 import java.lang.reflect.Proxy;
 import java.nio.ByteBuffer;
 import java.util.Arrays;
-import java.util.List;
 import java.util.Properties;
 import java.util.Random;
 import org.jnode.driver.Bus;
@@ -50,6 +49,7 @@ import org.junit.Test;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertTrue;
+import static org.junit.Assert.fail;
 
 public class IDEDiskDriverFuaTest implements IDEConstants {
 
@@ -161,6 +161,52 @@ public class IDEDiskDriverFuaTest implements IDEConstants {
         io.clearObservations();
 
         driver.write(0, ByteBuffer.wrap(randomBytes(SECTOR_SIZE, 14L)));
+
+        assertEquals(Arrays.asList(Integer.valueOf(CMD_WRITE_EXT), Integer.valueOf(CMD_FLUSH_CACHE_EXT)),
+            io.getWrittenCommands());
+    }
+
+    @Test
+    public void testFuaFinalStatusErrorSurfacesAsIoException() throws Exception {
+        final Properties props = new Properties();
+        props.setProperty("jnode.ide.writethrough", "true");
+        props.setProperty("jnode.ide.fua", "true");
+        openDriver(props, create48BitDescriptor(0x0108, 0x4062));
+        io.clearObservations();
+        io.addPhase(FakeIDEIO.Phase.completed());
+        io.addPhase(FakeIDEIO.Phase.error(0x24));
+
+        try {
+            driver.write(0, ByteBuffer.wrap(randomBytes(SECTOR_SIZE, 21L)));
+            fail("final-sector write fault must surface as IOException");
+        } catch (IOException expected) {
+        }
+        assertEquals(Arrays.asList(Integer.valueOf(CMD_WRITE_MULTIPLE_FUA_EXT)),
+            io.getWrittenCommands());
+    }
+
+    @Test
+    public void testFuaRequestIssuesNoSetMultipleModeWhenWriteThroughDisabled() throws Exception {
+        final Properties props = new Properties();
+        props.setProperty("jnode.ide.fua", "true");
+        openDriver(props, create48BitDescriptor(0x0000, 0x4062));
+
+        assertTrue("SET MULTIPLE MODE must not be issued at boot when writethrough=false",
+            !io.getWrittenCommands().contains(Integer.valueOf(CMD_SETMULT)));
+    }
+
+    @Test
+    public void testFuaFallsBackToFlushWhenSetMultipleModeRejected() throws Exception {
+        final Properties props = new Properties();
+        props.setProperty("jnode.ide.writethrough", "true");
+        props.setProperty("jnode.ide.fua", "true");
+        io.addPhase(FakeIDEIO.Phase.completed());
+        io.addPhase(FakeIDEIO.Phase.error(0x24));
+        openDriver(props, create48BitDescriptor(0x0000, 0x4062));
+        assertEquals(Integer.valueOf(CMD_SETMULT), io.getWrittenCommands().get(0));
+        io.clearObservations();
+
+        driver.write(0, ByteBuffer.wrap(randomBytes(SECTOR_SIZE, 23L)));
 
         assertEquals(Arrays.asList(Integer.valueOf(CMD_WRITE_EXT), Integer.valueOf(CMD_FLUSH_CACHE_EXT)),
             io.getWrittenCommands());

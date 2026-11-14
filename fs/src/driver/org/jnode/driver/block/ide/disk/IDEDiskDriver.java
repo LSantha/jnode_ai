@@ -155,7 +155,7 @@ public class IDEDiskDriver extends Driver
             VmIOContext.getGlobalProperties().getProperty("jnode.ide.writethrough"));
         fuaRequested = "true".equals(
             VmIOContext.getGlobalProperties().getProperty("jnode.ide.fua"));
-        if (fuaRequested) {
+        if (writeThrough && fuaRequested) {
             fuaEnabled = enableFua(dev, descr);
         } else {
             fuaEnabled = false;
@@ -354,13 +354,13 @@ public class IDEDiskDriver extends Driver
         final int maxSectorCount = is48bit ? MAX_SECTOR_COUNT_48 : MAX_SECTOR_COUNT_28;
         final boolean primary = dev.isPrimary();
         final boolean master = dev.isMaster();
+        final boolean fuaWrite = isWrite && writeThrough && fuaEnabled;
 
         while (length > 0) {
             final long partLbaStart = devOffset / SECTOR_SIZE;
             final int partSectorCount = Math.min(length / SECTOR_SIZE, maxSectorCount);
             final int partLength = partSectorCount * SECTOR_SIZE;
 
-            final boolean fuaWrite = isWrite && writeThrough && fuaEnabled;
             final IDERWSectorsCommand cmd = isWrite ?
                 (fuaWrite ?
                     new IDEWriteMultipleFUACommand(primary, master, partLbaStart, partSectorCount, buf) :
@@ -387,7 +387,7 @@ public class IDEDiskDriver extends Driver
 
         // FUA writes land on non-volatile media before command completion,
         // which makes a separate FLUSH CACHE redundant.
-        if (isWrite && writeThrough && !(fuaEnabled && is48bit)) {
+        if (isWrite && writeThrough && !fuaWrite) {
             flush();
         }
     }

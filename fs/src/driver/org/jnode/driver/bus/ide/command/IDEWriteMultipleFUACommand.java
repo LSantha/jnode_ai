@@ -73,6 +73,9 @@ public class IDEWriteMultipleFUACommand extends IDERWSectorsCommand {
             transferOneSector(ide, io);
         }
 
+        if (!pollWait(io, true))
+            return;
+
         // We're done
         notifyFinished();
     }
