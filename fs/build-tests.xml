@@ -46,6 +46,8 @@ help         Output these messages
             <test name="org.jnode.driver.bus.ide.DefaultIDEIOWaitUntilStatusTest" todir="${basedir}/build/reports/junit"/>
             <test name="org.jnode.driver.bus.ide.command.IDEPacketCommandTest" todir="${basedir}/build/reports/junit"/>
             <test name="org.jnode.driver.block.ide.disk.IDEDiskDriverMultiSectorWriteTest" todir="${basedir}/build/reports/junit"/>
+            <test name="org.jnode.driver.block.ide.disk.IDEDiskDriverFuaTest" todir="${basedir}/build/reports/junit"/>
+            <test name="org.jnode.driver.block.ide.disk.IDEDiskDriverStopBarrierTest" todir="${basedir}/build/reports/junit"/>
             <test name="org.jnode.test.fs.filesystem.FSTestSuite" todir="${basedir}/build/reports/junit"/>
             <test name="org.jnode.test.fs.driver.tests.BlockDeviceAPITest" todir="${basedir}/build/reports/junit"/>
             <test name="org.jnode.test.fs.command.SyncCommandTest" todir="${basedir}/build/reports/junit"/>

@@ -19,16 +19,26 @@
 package org.jnode.test.fs.command;
 
 import java.io.IOException;
+import java.io.PrintWriter;
+import java.io.StringWriter;
+import java.lang.reflect.Method;
+import java.nio.ByteBuffer;
 import java.util.HashMap;
 import java.util.Map;
 
 import junit.framework.TestCase;
 
+import org.jnode.driver.Bus;
 import org.jnode.driver.Device;
+import org.jnode.driver.block.BlockDeviceAPI;
+import org.jnode.fs.FSDirectory;
 import org.jnode.fs.FSEntry;
+import org.jnode.fs.FSFile;
 import org.jnode.fs.FileSystem;
+import org.jnode.fs.FileSystemException;
 import org.jnode.fs.FileSystemType;
 import org.jnode.fs.command.SyncCommand;
+import org.jnode.fs.spi.AbstractFileSystem;
 
 public class SyncCommandTest extends TestCase {
 
@@ -78,6 +88,98 @@ public class SyncCommandTest extends TestCase {
             SyncCommand.findMountPoint(mountPoints, "/");
         assertNotNull(result);
         assertEquals("/", result.getKey());
+    }
+
+    public void testFlushFileSystemIssuesFileSystemAndDeviceBarriers() throws Exception {
+        SyncCommand command = new SyncCommand();
+        RecordingBlockDeviceAPI recordingApi = new RecordingBlockDeviceAPI();
+        Device device = new Device(new Bus((Bus) null) {
+        }, "syncTestDevice");
+        device.registerAPI(BlockDeviceAPI.class, recordingApi);
+        RecordingFileSystem fs = new RecordingFileSystem(device);
+        StringWriter outText = new StringWriter();
+        PrintWriter out = new PrintWriter(outText);
+        PrintWriter err = new PrintWriter(outText);
+
+        Method m = SyncCommand.class.getDeclaredMethod("flushFileSystem",
+            FileSystem.class, String.class, PrintWriter.class, PrintWriter.class);
+        m.setAccessible(true);
+        try {
+            m.invoke(command, fs, "/", out, err);
+        } catch (java.lang.reflect.InvocationTargetException e) {
+            Throwable cause = e.getCause();
+            if (cause instanceof Exception) {
+                throw (Exception) cause;
+            }
+            throw e;
+        }
+
+        assertEquals("FileSystem.flush() must be called", 1, fs.flushCalls);
+        assertEquals("BlockDeviceAPI.flush() must be called on the mounted device",
+            1, recordingApi.flushCalls);
+        assertTrue(outText.toString().contains("synced /"));
+    }
+
+    private static class RecordingFileSystem extends AbstractFileSystem<FSEntry> {
+        private int flushCalls;
+
+        private RecordingFileSystem(Device device) throws FileSystemException {
+            super(device, false, null);
+        }
+
+        @Override
+        public void flush() {
+            flushCalls++;
+        }
+
+        public long getTotalSpace() throws IOException {
+            return -1;
+        }
+
+        public long getFreeSpace() throws IOException {
+            return -1;
+        }
+
+        public long getUsableSpace() throws IOException {
+            return -1;
+        }
+
+        public String getVolumeName() throws IOException {
+            return "synctest";
+        }
+
+        @Override
+        protected FSFile createFile(FSEntry entry) throws IOException {
+            return null;
+        }
+
+        @Override
+        protected FSDirectory createDirectory(FSEntry entry) throws IOException {
+            return null;
+        }
+
+        @Override
+        protected FSEntry createRootEntry() throws IOException {
+            return null;
+        }
+    }
+
+    private static class RecordingBlockDeviceAPI implements BlockDeviceAPI {
+        private int flushCalls;
+
+        public long getLength() throws IOException {
+            return 0;
+        }
+
+        public void read(long devOffset, ByteBuffer dest) throws IOException {
+        }
+
+        public void write(long devOffset, ByteBuffer src) throws IOException {
+        }
+
+        public void flush() throws IOException {
+            flushCalls++;
+        }
     }
 
     private static class StubFileSystem implements FileSystem<FSEntry> {

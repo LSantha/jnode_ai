@@ -96,7 +96,9 @@ public class IDEDiskDriverMultiSectorWriteTest implements IDEConstants {
 
     @Test
     public void testMultiSectorWriteCompletesWithExpectedTaskfileAndData() throws Exception {
-        openDriver(new Properties());
+        final Properties props = new Properties();
+        props.setProperty("jnode.ide.writethrough", "true");
+        openDriver(props);
         final byte[] payload = randomBytes(WRITE_SECTORS * SECTOR_SIZE, 613L);
         io.clearObservations();
 
@@ -123,13 +125,25 @@ public class IDEDiskDriverMultiSectorWriteTest implements IDEConstants {
 
     @Test
     public void testWriteThroughFlushesAfterWrite() throws Exception {
-        openDriver(new Properties());
+        final Properties props = new Properties();
+        props.setProperty("jnode.ide.writethrough", "true");
+        openDriver(props);
         io.clearObservations();
 
         driver.write(0, ByteBuffer.wrap(randomBytes(SECTOR_SIZE, 1L)));
 
         assertEquals(Arrays.asList(Integer.valueOf(CMD_WRITE), Integer.valueOf(CMD_FLUSH_CACHE)),
             io.getWrittenCommands());
+    }
+
+    @Test
+    public void testWriteThroughDefaultSkipsFlush() throws Exception {
+        openDriver(new Properties());
+        io.clearObservations();
+
+        driver.write(0, ByteBuffer.wrap(randomBytes(SECTOR_SIZE, 3L)));
+
+        assertEquals(Arrays.asList(Integer.valueOf(CMD_WRITE)), io.getWrittenCommands());
     }
 
     @Test
