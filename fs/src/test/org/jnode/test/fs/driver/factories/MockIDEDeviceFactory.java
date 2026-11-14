@@ -82,9 +82,22 @@ public class MockIDEDeviceFactory extends AbstractMockDeviceFactory implements
                 mockIDEIO.expects(testCase.atLeastOnce()).method(
                     "setControlReg").withAnyArguments();
 
-                Integer statusReg = new Integer(13);
-                mockIDEIO.expects(testCase.atLeastOnce())
-                    .method("getStatusReg").withNoArguments().will(new ReturnStub(statusReg));
+                mockIDEIO.expects(testCase.atLeastOnce()).method(
+                    "waitUntilStatus").withAnyArguments();
+
+                Integer altStatus = new Integer(0);
+                mockIDEIO.expects(testCase.atLeastOnce()).method("getAltStatusReg")
+                    .withNoArguments().will(new ReturnStub(altStatus));
+
+                Integer signature = new Integer(0);
+                mockIDEIO.expects(testCase.atLeastOnce()).method("getSectorCountReg")
+                    .withNoArguments().will(new ReturnStub(signature));
+                mockIDEIO.expects(testCase.atLeastOnce()).method("getLbaLowReg")
+                    .withNoArguments().will(new ReturnStub(signature));
+                mockIDEIO.expects(testCase.atLeastOnce()).method("getLbaMidReg")
+                    .withNoArguments().will(new ReturnStub(signature));
+                mockIDEIO.expects(testCase.atLeastOnce()).method("getLbaHighReg")
+                    .withNoArguments().will(new ReturnStub(signature));
             }
         };
 

@@ -63,11 +63,19 @@ public class IDEWriteSectorsCommand extends IDERWSectorsCommand {
         // Send data
         for (int i = 0; i < sectorCount; i++) {
             if (log.isDebugEnabled()) log.debug("WRSect pw " + i);
-            if (!pollWait(io, false))
+            if (!pollDataPhase(io, "writeSector " + i)) {
+                setFailedSector(i);
                 return;
+            }
             // Transfer sector
             if (log.isDebugEnabled()) log.debug("WRSect trf " + i);
             transferOneSector(ide, io);
+        }
+
+        // Check the command completion state (after the last sector)
+        if (!pollWait(io, true)) {
+            setFailedSector(sectorCount - 1);
+            return;
         }
 
         // Flush data is deferred to IDEDiskDriver.flush() / sync

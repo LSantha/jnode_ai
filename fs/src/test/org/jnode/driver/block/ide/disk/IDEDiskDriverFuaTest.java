@@ -173,7 +173,7 @@ public class IDEDiskDriverFuaTest implements IDEConstants {
         props.setProperty("jnode.ide.fua", "true");
         openDriver(props, create48BitDescriptor(0x0108, 0x4062));
         io.clearObservations();
-        io.addPhase(FakeIDEIO.Phase.completed());
+        io.addPhase(FakeIDEIO.Phase.writeReady());
         io.addPhase(FakeIDEIO.Phase.error(0x24));
 
         try {

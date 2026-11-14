@@ -42,20 +42,44 @@ public class FakeIDEIO implements IDEIO, IDEConstants {
         final int byteCount;
         final byte[] dataIn;   // device -> host payload (may be null)
         final boolean expectErrorReg;
+        int expectWordsOut;    // number of 256-word blocks to consume via setDataReg, 0 = none
+        final boolean persistent; // status-only phase that is never retired (hostile-device script)
 
         public Phase(int status, int intReason, int byteCount,
                       byte[] dataIn, boolean expectErrorReg) {
+            this(status, intReason, byteCount, dataIn, expectErrorReg, false);
+        }
+
+        public Phase(int status, int intReason, int byteCount,
+                      byte[] dataIn, boolean expectErrorReg, boolean persistent) {
             this.status = status;
             this.intReason = intReason;
             this.byteCount = byteCount;
             this.dataIn = dataIn;
             this.expectErrorReg = expectErrorReg;
+            this.persistent = persistent;
         }
 
         public static Phase dataIn(byte[] payload) {
             // DRQ set, CoD clear (data), IO set (device -> host)
             return new Phase(ST_DEVICE_READY | ST_DATA_REQUEST, IR_IO,
                 payload.length, payload, false);
+        }
+
+        public static Phase writeReady() {
+            // DRQ set, CoD clear (data), IO clear (host -> device); drains after 256 words out
+            final Phase p = new Phase(ST_DEVICE_READY | ST_DATA_REQUEST, 0,
+                SECTOR_SIZE, null, false);
+            p.expectWordsOut = SECTOR_SIZE / 2;
+            return p;
+        }
+
+        public static Phase fault() {
+            return new Phase(ST_DEVICE_FAULT | ST_DEVICE_READY, 0, 0, null, false);
+        }
+
+        public static Phase notReady() {
+            return new Phase(0, 0, 0, null, false);
         }
 
         public static Phase completed() {
@@ -80,6 +104,7 @@ public class FakeIDEIO implements IDEIO, IDEConstants {
     final List<Integer> writtenLbaMids = new ArrayList<Integer>();
     final List<Integer> writtenLbaHighs = new ArrayList<Integer>();
     final List<Integer> writtenSelects = new ArrayList<Integer>();
+    final List<int[]> waitCalls = new ArrayList<int[]>();
     int errorRegValue;
     int lastControlValue = -1;
 
@@ -115,6 +140,10 @@ public class FakeIDEIO implements IDEIO, IDEConstants {
         return writtenSelects;
     }
 
+    public List<int[]> getWaitCalls() {
+        return waitCalls;
+    }
+
     public void clearObservations() {
         writtenCommands.clear();
         writtenWords.clear();
@@ -124,13 +153,17 @@ public class FakeIDEIO implements IDEIO, IDEConstants {
         writtenLbaMids.clear();
         writtenLbaHighs.clear();
         writtenSelects.clear();
+        waitCalls.clear();
+        phases.clear();
+        currentWordIndex = 0;
+        currentWordIndexOut = 0;
         errorRegValue = 0;
         lastControlValue = -1;
     }
 
     // ---- runtime state ----
-    private Phase current;
     private int currentWordIndex;
+    private int currentWordIndexOut;
     private int altStatusOverride = -1;
 
     public void addPhase(Phase p) {
@@ -146,19 +179,26 @@ public class FakeIDEIO implements IDEIO, IDEConstants {
         this.altStatusOverride = value;
     }
 
-    private void advancePhaseIfDrained() {
-        if (current != null && current.dataIn != null
-            && currentWordIndex >= current.byteCount / 2) {
-            current = null;
-        }
+    /** Head phase, or null if the script is exhausted. Status-only phases are
+     *  retired by getStatusReg(); data phases are retired when their payload
+     *  has fully crossed the 16-bit data register. */
+    private Phase peekPhase() {
+        return phases.peekFirst();
     }
 
-    private Phase peekPhase() {
-        if (current == null && !phases.isEmpty()) {
-            current = phases.pollFirst();
-            currentWordIndex = 0;
+    /** Status of the head phase, retiring status-only phases (which carry no data). */
+    public int getStatusReg() {
+        final Phase p = phases.peekFirst();
+        if (p == null) {
+            return ST_DEVICE_READY;
         }
-        return current;
+        if (p.expectErrorReg) {
+            errorRegValue = 0x24; // ABRT
+        }
+        if (p.dataIn == null && p.expectWordsOut == 0 && !p.persistent) {
+            phases.pollFirst();
+        }
+        return p.status;
     }
 
     // ---- IDEIO ----
@@ -167,17 +207,22 @@ public class FakeIDEIO implements IDEIO, IDEConstants {
         if (readWords.size() > 65536) {
             return 0; // stop growing; device offers nothing more
         }
-        Phase p = peekPhase();
-        if ((p == null) || (p.dataIn == null)) {
+        final Phase p = phases.peekFirst();
+        if (p == null || p.dataIn == null) {
             readWords.add(0);
             return 0;
         }
-        int idx = currentWordIndex++;
-        int b0 = (idx * 2 < p.dataIn.length) ? p.dataIn[idx * 2] & 0xFF : 0;
-        int b1 = (idx * 2 + 1 < p.dataIn.length) ? p.dataIn[idx * 2 + 1] & 0xFF : 0;
-        readWords.add(b0 | (b1 << 8));
-        advancePhaseIfDrained();
-        return b0 | (b1 << 8);
+        final int idx = currentWordIndex++;
+        final int b0 = (idx * 2 < p.dataIn.length) ? p.dataIn[idx * 2] & 0xFF : 0;
+        final int b1 = (idx * 2 + 1 < p.dataIn.length) ? p.dataIn[idx * 2 + 1] & 0xFF : 0;
+        final int v = b0 | (b1 << 8);
+        readWords.add(v);
+        if (currentWordIndex >= p.dataIn.length / 2) {
+            phases.pollFirst();
+            currentWordIndex = 0;
+            currentWordIndexOut = 0;
+        }
+        return v;
     }
 
     public void setDataReg(int dataWord) {
@@ -186,6 +231,15 @@ public class FakeIDEIO implements IDEIO, IDEConstants {
         } else if (writtenWords.size() == 8192) {
             new Exception("setDataReg flood probe").printStackTrace();
             writtenWords.add(-1); // marker
+        }
+        final Phase p = phases.peekFirst();
+        if (p != null && p.expectWordsOut > 0) {
+            currentWordIndexOut++;
+            if (currentWordIndexOut >= p.expectWordsOut) {
+                phases.pollFirst();
+                currentWordIndex = 0;
+                currentWordIndexOut = 0;
+            }
         }
     }
 
@@ -240,17 +294,6 @@ public class FakeIDEIO implements IDEIO, IDEConstants {
         writtenSelects.add(select & 0xFF);
     }
 
-    public int getStatusReg() {
-        Phase p = peekPhase();
-        if (p == null) {
-            return ST_DEVICE_READY;
-        }
-        if (p.expectErrorReg) {
-            errorRegValue = 0x24; // ABRT
-        }
-        return p.status;
-    }
-
     public int getAltStatusReg() {
         if (altStatusOverride != -1) {
             return altStatusOverride;
@@ -264,8 +307,6 @@ public class FakeIDEIO implements IDEIO, IDEConstants {
 
     public void setCommandReg(int command) {
         writtenCommands.add(command);
-        current = null;
-        currentWordIndex = 0;
     }
 
     public void setControlReg(int control) {
@@ -278,6 +319,7 @@ public class FakeIDEIO implements IDEIO, IDEConstants {
 
     public void waitUntilStatus(int mask, int value, long timeout, String message)
         throws TimeoutException {
+        waitCalls.add(new int[]{mask, value});
         // The fake never stays BUSY long enough to time out.
     }
 
