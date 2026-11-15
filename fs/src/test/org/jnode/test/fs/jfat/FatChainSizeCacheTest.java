@@ -147,6 +147,30 @@ public class FatChainSizeCacheTest {
     }
 
     @Test
+    public void testFailedTruncateFlushInvalidatesCache() throws Exception {
+        FatFileSystem fs = new FatFileSystemFormatter(ClusterSize._1Kb).format(fileDevice);
+        FSFile file = fs.getRootEntry().getDirectory().addFile("truncate.bin").getFile();
+        byte[] data = pattern(10 * fs.getClusterSize());
+        file.write(0, ByteBuffer.wrap(data));
+        file.flush();
+
+        FatChain chain = ((FatEntry) file).getChain();
+        assertEquals(10, chain.size());
+
+        fileDevice.armFailAfterWrites(0);
+        try {
+            file.setLength(4L * fs.getClusterSize());
+            fail("expected IOException from failing device");
+        } catch (IOException expected) {
+        }
+
+        fileDevice.disarm();
+        assertEquals("chain must reflect the in-memory cut after a failed truncate flush",
+            4, chain.size());
+        fs.close();
+    }
+
+    @Test
     public void testAllocateAndClearAdvancesCachedCount() throws Exception {
         FatFileSystem fs = new FatFileSystemFormatter(ClusterSize._1Kb).format(fileDevice);
         FSFile file = fs.getRootEntry().getDirectory().addFile("grow.bin").getFile();

@@ -50,8 +50,8 @@ public class FatChain {
     private volatile ChainHint readHint;
     private volatile ChainHint writeHint;
 
-    private int cachedClusterCount = -1;
-    private int cachedTailCluster = -1;
+    private volatile int cachedClusterCount = -1;
+    private volatile int cachedTailCluster = -1;
 
     /**
      * Debug-only double check for the cluster count/tail cache. When true,
@@ -155,6 +155,18 @@ public class FatChain {
     private void invalidateClusterCache() {
         cachedClusterCount = -1;
         cachedTailCluster = -1;
+    }
+
+    private void flushDirtyAndInvalidateOnFailure() throws IOException {
+        try {
+            fat.flushDirty();
+        } catch (IOException ex) {
+            invalidateClusterCache();
+            throw ex;
+        } catch (RuntimeException ex) {
+            invalidateClusterCache();
+            throw ex;
+        }
     }
 
     /**
@@ -768,7 +780,7 @@ public class FatChain {
             }
             ok = true;
         } finally {
-            fat.flushDirty();
+            flushDirtyAndInvalidateOnFailure();
             if (!ok)
                 invalidateClusterCache();
         }
@@ -802,7 +814,7 @@ public class FatChain {
                     }
                     ok = true;
                 } finally {
-                    fat.flushDirty();
+                    flushDirtyAndInvalidateOnFailure();
                     if (!ok)
                         invalidateClusterCache();
                 }
