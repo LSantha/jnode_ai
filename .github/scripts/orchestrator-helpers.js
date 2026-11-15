@@ -657,12 +657,39 @@ module.exports = function createHelpers({ github, context, core }) {
    * as commit_title, which overrides both the repo setting and GitHub's
    * one-commit rule.
    */
+  /**
+   * Strip the decorations agents leave on a title before it becomes a squash
+   * subject: a leading "#<issue>" prefix (any separator - hyphen, colon,
+   * en-dash or whitespace alone), a trailing "(<n> chars)" title-length aid,
+   * and a trailing "(#<n>)" that duplicates the issue or PR reference already
+   * carried by the prefix and the appended suffix. "#N - x", "#N: x",
+   * "x (NN chars)" and "x (#N)" all collapse to "<clean title>".
+   */
+  function stripTitleDecorations(title, num, prNumber) {
+    var s = (title || "").replace(/^#\d+\s*[-:\u2013]?\s*/, "");
+    for (;;) {
+      var before = s;
+      s = s.replace(/\s*\(\d+\s*chars?\)\s*$/i, "");
+      var m = s.match(/\s*\(#(\d+)\)\s*$/);
+      if (m) {
+        var ref = parseInt(m[1], 10);
+        if ((num && ref === num) || (prNumber && ref === prNumber)) {
+          s = s.replace(/\s*\(#\d+\)\s*$/, "");
+        }
+      }
+      s = s.trim();
+      if (s === before) {
+        return s;
+      }
+    }
+  }
+
   function mergeSubject(pr) {
     var data = pr && pr.data ? pr.data : {};
     var title = data.title || "";
     var num = closingIssueNumber(data) || issueFromHeadRef(data) ||
       issueFromTitle(title);
-    var strip = title.replace(/^#\d+\s*-\s*/, "").trim();
+    var strip = stripTitleDecorations(title, num, data.number || 0);
     var subject = num ? "#" + num + " - " + strip : strip;
     // GitHub appends " (#N)" itself only on the default-title path; an explicit
     // commit_title is used verbatim, so the reference is added here.
@@ -681,7 +708,7 @@ module.exports = function createHelpers({ github, context, core }) {
   }
 
   function issueFromTitle(title) {
-    var m = (title || "").match(/^#(\d+)\s*-/);
+    var m = (title || "").match(/^#(\d+)\s*[-:\u2013]?\s*/);
     return m ? parseInt(m[1], 10) : 0;
   }
 
@@ -798,6 +825,8 @@ module.exports = function createHelpers({ github, context, core }) {
     isBotUser: isBotUser,
     collectReviewerModels: collectReviewerModels,
     buildMergeMessage: buildMergeMessage,
+    mergeSubject: mergeSubject,
+    issueFromTitle: issueFromTitle,
     isTrustedAuthor: isTrustedAuthor,
     mergePR: mergePR,
     extractLabels: extractLabels,

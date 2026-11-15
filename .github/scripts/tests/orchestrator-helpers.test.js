@@ -485,3 +485,84 @@ test("checkBaseCurrency: fail-closed on an unreadable PR", async () => {
   assert.strictEqual(info.current, false);
   assert.strictEqual(info.lag.length, 0);
 });
+
+test("mergeSubject normalizes the observed title shapes to '#N - <clean title>'", () => {
+  // Regression table for the squash-subject artifacts that reached master:
+  // "#963 - #963 FAT dirty-set flush; tests green (37 chars)" (bb73b3655a),
+  // "#961 - #961: ..." (d5b0d65845) and "#954 - ... (38 chars)" (b9159e4a58).
+  // Every row pins the full output, including the appended " (#PR)" suffix.
+  const { h } = helpersFor();
+  const subject = (title, overrides) => h.mergeSubject({
+    data: Object.assign({
+      number: 99,
+      title: title,
+      head: { ref: "opencode/issue42-fix" },
+      body: "Closes #42"
+    }, overrides || {})
+  });
+  const shapes = [
+    // [title, expected]
+    ["#42 - Fix FAT root", "#42 - Fix FAT root (#99)"],
+    ["#42: Fix FAT root", "#42 - Fix FAT root (#99)"],
+    ["#42\u2013 Fix FAT root", "#42 - Fix FAT root (#99)"],
+    ["#42 Fix FAT root", "#42 - Fix FAT root (#99)"],
+    ["Fix FAT root (#42)", "#42 - Fix FAT root (#99)"],
+    ["Fix FAT root (#99)", "#42 - Fix FAT root (#99)"],
+    ["Fix FAT root (37 chars)", "#42 - Fix FAT root (#99)"],
+    ["Fix FAT root (1 char)", "#42 - Fix FAT root (#99)"],
+    ["Fix FAT root (37 CHARS)", "#42 - Fix FAT root (#99)"],
+    ["Fix FAT root", "#42 - Fix FAT root (#99)"],
+    ["#42: FAT dirty-set flush; tests green (37 chars)",
+      "#42 - FAT dirty-set flush; tests green (#99)"],
+    ["#42 - Fix FAT root (37 chars) (#42)", "#42 - Fix FAT root (#99)"],
+    // an unrelated trailing reference is not stripped
+    ["Fix FAT root (#999)", "#42 - Fix FAT root (#999) (#99)"]
+  ];
+  for (const [title, expected] of shapes) {
+    assert.strictEqual(subject(title), expected, JSON.stringify(title));
+  }
+});
+
+test("mergeSubject reproduces the #965 acceptance example verbatim", () => {
+  const { h } = helpersFor();
+  const out = h.mergeSubject({
+    data: {
+      number: 964,
+      title: "#963: FAT dirty-set flush; tests green (37 chars)",
+      head: { ref: "opencode/issue963-20261115" },
+      body: "Closes #963"
+    }
+  });
+  assert.strictEqual(out, "#963 - FAT dirty-set flush; tests green (#964)");
+});
+
+test("mergeSubject keeps the closingIssueNumber > issueFromHeadRef > issueFromTitle precedence", () => {
+  const { h } = helpersFor();
+  // body ref wins over a disagreeing title prefix and head ref
+  const out = h.mergeSubject({
+    data: {
+      number: 99,
+      title: "#43 - Fix FAT root",
+      head: { ref: "opencode/issue43-fix" },
+      body: "Closes #42"
+    }
+  });
+  assert.strictEqual(out, "#42 - Fix FAT root (#99)");
+});
+
+test("mergeSubject resolves the issue from a colon-prefixed title when nothing else matches", () => {
+  const { h } = helpersFor();
+  const out = h.mergeSubject({
+    data: { number: 99, title: "#42: FAT root fix", head: { ref: "misc" }, body: "" }
+  });
+  assert.strictEqual(out, "#42 - FAT root fix (#99)");
+});
+
+test("issueFromTitle accepts colon, en-dash, whitespace and hyphen separators", () => {
+  const { h } = helpersFor();
+  assert.strictEqual(h.issueFromTitle("#42 - x"), 42);
+  assert.strictEqual(h.issueFromTitle("#42: x"), 42);
+  assert.strictEqual(h.issueFromTitle("#42\u2013 x"), 42);
+  assert.strictEqual(h.issueFromTitle("#42 x"), 42);
+  assert.strictEqual(h.issueFromTitle("plain title"), 0);
+});
