@@ -233,6 +233,93 @@ public abstract class Fat {
         getApi().read(getClusterPosition(cluster) + offset, dst);
     }
 
+    /*
+     * Fixed request cap for coalesced runs: IDE LBA28 commands accept at most
+     * 256 sectors, so every request issued to the device (or its test double)
+     * is at most that large, regardless of the run length the caller passed.
+     * The 48-bit boundary is unreachable from JFAT: the API offsets are
+     * partition-relative and 2^48 sectors is 128 PiB.
+     */
+    private static final int MAX_REQUEST_SECTORS = 256;
+
+    /*
+     * The number of clusters that fit in one MAX_REQUEST_SECTORS request.
+     * At least one, even for a 64 KiB FAT cluster (128 sectors).
+     */
+    final int getMaxRunClusters() {
+        int sectorsPerCluster = getBootSector().getSectorsPerCluster();
+        int max = sectorsPerCluster > 0 ? MAX_REQUEST_SECTORS / sectorsPerCluster : 1;
+        return max < 1 ? 1 : max;
+    }
+
+    /*
+     * Run reads and writes are single device requests covering clusterCount
+     * physically contiguous clusters, starting at firstCluster. Contiguity is
+     * the caller's contract: consecutive cluster numbers at
+     * getClusterPosition(firstCluster), firstCluster + clusterSize, ... The
+     * run is chunked internally so no device request exceeds
+     * MAX_REQUEST_SECTORS sectors; dst/src may span fewer bytes than the full
+     * run, in which case the remaining bytes are left unread/untouched and the
+     * error path mirrors readCluster/writeCluster (buffer advanced by what was
+     * transferred). The per-cluster clusterCount * clusterSize bound is
+     * validated against the buffer so a caller typo cannot over-read past the
+     * run. Cluster order and linkage are NOT re-validated from the FAT; the
+     * chain walker that calls this has already done so.
+     */
+    public void readClusterRun(int firstCluster, int clusterCount, ByteBuffer dst) throws IOException {
+        checkClusterRun(firstCluster, clusterCount, dst.remaining());
+
+        long position = getClusterPosition(firstCluster);
+        int maxClusterBytes = getMaxRunClusters() * getClusterSize();
+        while (dst.hasRemaining()) {
+            int take = (int) Math.min((long) dst.remaining(), (long) maxClusterBytes);
+            int limit = dst.limit();
+            try {
+                dst.limit(dst.position() + take);
+                getApi().read(position, dst);
+            } finally {
+                dst.limit(limit);
+            }
+            position += take;
+        }
+    }
+
+    public void writeClusterRun(int firstCluster, int clusterCount, ByteBuffer src) throws IOException {
+        checkClusterRun(firstCluster, clusterCount, src.remaining());
+
+        long position = getClusterPosition(firstCluster);
+        int maxClusterBytes = getMaxRunClusters() * getClusterSize();
+        while (src.hasRemaining()) {
+            int take = (int) Math.min((long) src.remaining(), (long) maxClusterBytes);
+            int limit = src.limit();
+            try {
+                src.limit(src.position() + take);
+                getApi().write(position, src);
+            } finally {
+                src.limit(limit);
+            }
+            position += take;
+        }
+    }
+
+    private void checkClusterRun(int firstCluster, int clusterCount, int bufferRemaining)
+            throws IOException {
+        if (firstCluster < firstCluster()) {
+            throw new IOException("illegal cluster # : " + firstCluster);
+        }
+        if (clusterCount <= 0) {
+            throw new IllegalArgumentException("clusterCount<=0");
+        }
+        long clusterSize = getClusterSize();
+        if ((long) bufferRemaining > (long) clusterCount * clusterSize) {
+            throw new IllegalArgumentException("length[" + bufferRemaining + "] " +
+                "exceed run[" + clusterCount + " x clusterSize[" + clusterSize + "]]");
+        }
+        if ((long) firstCluster + clusterCount - 1 >= size()) {
+            throw new IllegalArgumentException("illegal cluster # : " + ((long) firstCluster + clusterCount - 1));
+        }
+    }
+
     public void writeCluster(int cluster, int offset, ByteBuffer src) throws IOException {
         if (offset < 0) {
             throw new IllegalArgumentException("offset<0");
