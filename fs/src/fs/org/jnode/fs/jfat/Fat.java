@@ -371,15 +371,33 @@ public abstract class Fat {
         try {
             cache.flush();
         } catch (Exception ex) {
-            recomputeFreeClusterCountQuietly();
-            if (ex instanceof IOException) {
-                throw (IOException) ex;
-            }
-            if (ex instanceof RuntimeException) {
-                throw (RuntimeException) ex;
-            }
-            throw new RuntimeException(ex);
+            throw unwrapFlushException(ex);
         }
+    }
+
+    /*
+     * Flush only the elements dirtied since the last flush. Used by the
+     * cluster-chain operations (allocation, free, truncate) whose dirty set
+     * is usually one or two elements; the full flush() remains the explicit
+     * durability boundary for fs.flush()/close().
+     */
+    synchronized void flushDirty() throws IOException {
+        try {
+            cache.flushDirty();
+        } catch (Exception ex) {
+            throw unwrapFlushException(ex);
+        }
+    }
+
+    private IOException unwrapFlushException(Exception ex) {
+        recomputeFreeClusterCountQuietly();
+        if (ex instanceof IOException) {
+            return (IOException) ex;
+        }
+        if (ex instanceof RuntimeException) {
+            throw (RuntimeException) ex;
+        }
+        throw new RuntimeException(ex);
     }
 
     /*

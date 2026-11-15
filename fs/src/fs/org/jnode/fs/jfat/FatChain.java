@@ -465,7 +465,7 @@ public class FatChain {
         }
         fat.rewindFree();
         try {
-            fat.flush();
+            fat.flushDirty();
         } catch (Exception ex) {
             log.warn("rollback flush failed", ex);
         }
@@ -516,7 +516,7 @@ public class FatChain {
 
             if (first != 0) {
                 fat.set(first, last);
-                fat.flush();
+                fat.flushDirty();
             } else {
                 if (dolog)
                     mylog("allocate chain");
@@ -524,7 +524,7 @@ public class FatChain {
             }
         } finally {
             invalidateHints();
-            fat.flush();
+            fat.flushDirty();
         }
     }
 
@@ -675,7 +675,7 @@ public class FatChain {
                     mylog(l + ":" + fat.freeEntry());
             }
         } finally {
-            fat.flush();
+            fat.flushDirty();
         }
 
         if (count == n) {
@@ -703,7 +703,7 @@ public class FatChain {
                         fat.set(l, fat.freeEntry());
                     }
                 } finally {
-                    fat.flush();
+                    fat.flushDirty();
                 }
             }
 
@@ -1049,7 +1049,7 @@ public class FatChain {
             } else {
                 setStartCluster(rb.savedHead);
             }
-            fat.flush();
+            fat.flushDirty();
         } catch (Exception ex) {
             log.warn("rollback link restore failed", ex);
         }
