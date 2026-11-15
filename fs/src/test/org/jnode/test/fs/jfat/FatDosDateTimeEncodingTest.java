@@ -21,6 +21,7 @@
 package org.jnode.test.fs.jfat;
 
 import java.util.Calendar;
+import java.util.Locale;
 import java.util.TimeZone;
 
 import org.jnode.fs.jfat.FatUtils;
@@ -40,16 +41,20 @@ import static org.junit.Assert.*;
 public class FatDosDateTimeEncodingTest {
 
     private TimeZone originalZone;
+    private Locale originalLocale;
 
     @Before
     public void setUp() {
         originalZone = TimeZone.getDefault();
+        originalLocale = Locale.getDefault();
         TimeZone.setDefault(TimeZone.getTimeZone("UTC"));
+        Locale.setDefault(Locale.ROOT);
     }
 
     @After
     public void tearDown() {
         TimeZone.setDefault(originalZone);
+        Locale.setDefault(originalLocale);
     }
 
     @Test
@@ -173,6 +178,27 @@ public class FatDosDateTimeEncodingTest {
         }
     }
 
+    @Test
+    public void testEncodeIsLocaleIndependent() {
+        long min = FatUtils.getMinDateTime();
+        Locale[] locales = {
+            Locale.ROOT,
+            new Locale("th", "TH"),
+            new Locale("ja", "JP", "JP"),
+            new Locale("tr")
+        };
+        try {
+            for (int i = 0; i < locales.length; i++) {
+                Locale.setDefault(locales[i]);
+                assertEquals("encodeDate under " + locales[i], 33, FatUtils.encodeDate(min));
+                assertEquals("encodeTime under " + locales[i], 0, FatUtils.encodeTime(min));
+                assertEquals("encodeTenth under " + locales[i], 0, FatUtils.encodeTenth(min));
+            }
+        } finally {
+            Locale.setDefault(Locale.ROOT);
+        }
+    }
+
     private static void assertMatchesCalendar(String zone, long millis) {
         assertEquals("encodeDate mismatch in " + zone + " for " + millis,
             calendarEncodeDate(millis), FatUtils.encodeDate(millis));
@@ -183,21 +209,21 @@ public class FatDosDateTimeEncodingTest {
     }
 
     private static int calendarEncodeTime(long javaDateTime) {
-        Calendar cal = Calendar.getInstance();
+        Calendar cal = Calendar.getInstance(Locale.ROOT);
         cal.setTimeInMillis(FatUtils.checkDateTime(javaDateTime));
         return 2048 * cal.get(Calendar.HOUR_OF_DAY) + 32 * cal.get(Calendar.MINUTE)
             + cal.get(Calendar.SECOND) / 2;
     }
 
     private static int calendarEncodeDate(long javaDateTime) {
-        Calendar cal = Calendar.getInstance();
+        Calendar cal = Calendar.getInstance(Locale.ROOT);
         cal.setTimeInMillis(FatUtils.checkDateTime(javaDateTime));
         return 512 * (cal.get(Calendar.YEAR) - 1980) + 32 * (cal.get(Calendar.MONTH) + 1)
             + cal.get(Calendar.DATE);
     }
 
     private static int calendarEncodeTenth(long javaDateTime) {
-        Calendar cal = Calendar.getInstance();
+        Calendar cal = Calendar.getInstance(Locale.ROOT);
         cal.setTimeInMillis(FatUtils.checkDateTime(javaDateTime));
         return 100 * (cal.get(Calendar.SECOND) % 2) + cal.get(Calendar.MILLISECOND) / 10;
     }
