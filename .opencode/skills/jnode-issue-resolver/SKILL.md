@@ -180,7 +180,10 @@ If you find yourself past 5 minutes still "looking into it", you have failed the
 ### 5.1 `code-fix` / `chore` / `test` PR
 
 - **Branch name** — `opencode/issue<N>-<YYYYMMDDHHMMSS>` (matches the convention of `c706daa1b`, `2b48d2c3b`, `7d7a73f42`).
-- **Commit message** — imperative mood, body explains *why*. Subject: `#<issue> - <Subject>`, counted ≤ 72 chars *in full* (the issue reference counts):
+- **Commit message** — imperative mood, body explains *why*. Subject: `#<issue> - <Subject>`, under 72 characters in full (the issue reference counts toward the limit).
+  - **Never write the character count into the subject.** `(37 chars)` is noise, not compliance - the limit is a constraint to satisfy, not a value to report.
+  - **Test status never goes in the subject.** No `tests green`, `tests pass`, `all pass`, `N/N tests`, `418/418` or similar: the subject says *what changed*, the PR body says *what it was verified against* (and how). These phrases are why `#965 - Fixed mergeSubject normalization; tests pass; committed.` reads as noise on master, and normalisation cannot be taught every phrasing.
+  - **Do not repeat the issue number** in the subject; the `#<N> - ` prefix already carries it.
   ```
   #<N> - <Subject>
 
