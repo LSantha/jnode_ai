@@ -364,6 +364,11 @@ public class FatFormatterRoundTripTest {
      * so Calendar received a garbage epoch and the serial was arbitrary. The test
      * recomputes the published formula from the same long and requires a match -
      * reintroducing the cast breaks it, whichever the local timezone is.
+     *
+     * The recompute is an independent Calendar reading: month is 0-based, year is
+     * relative to 1980 and the day field is the day of month (an earlier helper
+     * returned the day of week). Ticket #970 derives all seven fields from a
+     * single {@code FatUtils.localCivilMillis} decomposition instead.
      */
     @org.junit.Test
     public void testDriveSerialNumberUsesTheUntruncatedEpoch() throws Exception {
@@ -371,13 +376,16 @@ public class FatFormatterRoundTripTest {
         // same instant, or a second boundary between two readings fails an
         // otherwise-correct serial.
         long time = 1762000000000L;
-        int year = FatUtils.getYear(time);
-        int month = FatUtils.getMonth(time);
-        int day = FatUtils.getDay(time);
-        int hour = FatUtils.getHours(time);
-        int minute = FatUtils.getMinutes(time);
-        int second = FatUtils.getSeconds(time);
-        int milliSecond = (int) FatUtils.getMilliSeconds(time);
+        java.util.Calendar cal = java.util.Calendar.getInstance();
+        cal.setTimeInMillis(time);
+
+        int year = cal.get(java.util.Calendar.YEAR) - 1980;
+        int month = cal.get(java.util.Calendar.MONTH);
+        int day = cal.get(java.util.Calendar.DAY_OF_MONTH);
+        int hour = cal.get(java.util.Calendar.HOUR_OF_DAY);
+        int minute = cal.get(java.util.Calendar.MINUTE);
+        int second = cal.get(java.util.Calendar.SECOND);
+        int milliSecond = cal.get(java.util.Calendar.MILLISECOND);
 
         int low = day + (month << 8);
         low += (milliSecond / 10) + (second << 8);

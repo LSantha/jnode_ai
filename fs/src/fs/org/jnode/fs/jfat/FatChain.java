@@ -54,6 +54,15 @@ public class FatChain {
     private volatile int cachedTailCluster = -1;
 
     /**
+     * Per-chain scratch for {@link #readClusterData(int)}. The only consumer is
+     * {@code FatDirectory.getFatDirEntry}, which consumes the bytes immediately
+     * via {@code System.arraycopy} and never retains the array itself beyond the
+     * next {@code readClusterData} call on this chain. The returned array is the
+     * scratch itself; callers that need the bytes to stay stable must copy them.
+     */
+    private byte[] clusterDataScratch;
+
+    /**
      * Debug-only double check for the cluster count/tail cache. When true,
      * {@link #size()} and {@link #getEndCluster()} always walk the chain and
      * throw {@link IllegalStateException} if the cached values disagree with
@@ -1200,16 +1209,21 @@ public class FatChain {
      * Read an entire cluster's worth of data from the chain.
      * The clusterIndex is the 0-based index within the chain (not the physical cluster number).
      *
+     * <p>The returned array is a per-chain scratch that is reused between calls; it is
+     * fully overwritten on success (or an exception is thrown). Callers that need the
+     * bytes to stay stable must copy them and must not retain the returned array.
+     *
      * @param clusterIndex the index of the cluster within this chain (0-based)
-     * @return byte array containing the cluster data
+     * @return byte array containing the cluster data; a reused per-chain scratch
      * @throws IOException if the read fails
      */
     public byte[] readClusterData(int clusterIndex) throws IOException {
         int clusterSize = fat.getClusterSize();
-        byte[] data = new byte[clusterSize];
+        if (clusterDataScratch == null || clusterDataScratch.length != clusterSize)
+            clusterDataScratch = new byte[clusterSize];
         long offset = (long) clusterIndex * clusterSize;
-        read(offset, ByteBuffer.wrap(data));
-        return data;
+        read(offset, ByteBuffer.wrap(clusterDataScratch));
+        return clusterDataScratch;
     }
 
     public String toString() {

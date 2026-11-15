@@ -144,7 +144,11 @@ public class MkfsFatFileSystemTest {
 
         assertTrue("Should be FAT32", fs.getBootSector().isFat32());
         try {
-            decodeEntry(fs, 0x1000, 7);
+            /*
+             * Decoding is lazy: the FstClusHi guard fires at first access,
+             * not at construction.
+             */
+            decodeEntry(fs, 0x1000, 7).getStartCluster();
             fail("FAT32 FstClusHi above 28 bits should be rejected");
         } catch (IllegalArgumentException e) {
             assertTrue("Unexpected message: " + e.getMessage(),

@@ -58,9 +58,10 @@ public class FatLongDirEntry extends FatDirEntry {
     private FatAttr attr;
     private byte chksum;
 
+    private boolean decoded;
+
     public FatLongDirEntry(FatFileSystem fs, FatMarshal entry, int index) throws IOException {
         super(fs, entry, index);
-        decode();
     }
 
     public FatLongDirEntry(FatFileSystem fs, String component, byte ordinal, byte chksum,
@@ -232,6 +233,17 @@ public class FatLongDirEntry extends FatDirEntry {
         decodeOthers();
     }
 
+    private void ensureDecoded() {
+        if (decoded)
+            return;
+        try {
+            decode();
+        } catch (IOException ex) {
+            throw new IllegalStateException("unable to decode long directory entry", ex);
+        }
+        decoded = true;
+    }
+
     @SuppressWarnings("unused")
     private void encode() throws IOException {
         encodeOrdinal();
@@ -246,6 +258,7 @@ public class FatLongDirEntry extends FatDirEntry {
     }
 
     public byte getOrdinal() {
+        ensureDecoded();
         return ordinal;
     }
 
@@ -255,6 +268,7 @@ public class FatLongDirEntry extends FatDirEntry {
     }
 
     public boolean isLast() {
+        ensureDecoded();
         return last;
     }
 
@@ -264,6 +278,7 @@ public class FatLongDirEntry extends FatDirEntry {
     }
 
     public String getComponent() {
+        ensureDecoded();
         return component;
     }
 
@@ -273,6 +288,7 @@ public class FatLongDirEntry extends FatDirEntry {
     }
 
     public FatAttr getAttr() {
+        ensureDecoded();
         return attr;
     }
 
@@ -284,6 +300,7 @@ public class FatLongDirEntry extends FatDirEntry {
     }
 
     public byte getChkSum() {
+        ensureDecoded();
         return chksum;
     }
 
@@ -293,21 +310,25 @@ public class FatLongDirEntry extends FatDirEntry {
     }
 
     public boolean isDamaged() {
+        ensureDecoded();
         return damaged;
     }
 
     public void setDamaged(boolean value) {
+        ensureDecoded();
         damaged = value;
     }
 
     @Override
     public String toString() {
+        ensureDecoded();
         return String.format(
             "Long Entry [%s] index:%d attr:%s type:%d ckhsum:%s last:%b",
             component, getIndex(), NumberUtils.hex(lAttr, 2), lType, NumberUtils.hex(lChksum, 2), isLast());
     }
 
     public String toDebugString() {
+        ensureDecoded();
         StrWriter out = new StrWriter();
 
         out.println("*******************************************");

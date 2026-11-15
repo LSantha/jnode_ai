@@ -62,6 +62,8 @@ public class FatDirectory extends FatEntry implements FSDirectory, FSDirectoryId
     /**
      * Cluster-level read buffer for directory entries. Avoids reading 32 bytes at a time.
      * A 4KB cluster holds 128 entries, so we read 128 entries per disk I/O instead of 1.
+     * Aliases the chain's {@code readClusterData} scratch on cluster change; entries are
+     * byte-copied out of it immediately, before the scratch can be recycled.
      */
     private byte[] entryClusterBuffer;
     private int entryClusterIndex = -1;
@@ -113,7 +115,17 @@ public class FatDirectory extends FatEntry implements FSDirectory, FSDirectoryId
         final int offsetInCluster = (index % entriesPerCluster) * entrySize;
 
         if (entryClusterBuffer == null || entryClusterIndex != clusterIndex) {
-            entryClusterBuffer = getChain().readClusterData(clusterIndex);
+            try {
+                entryClusterBuffer = getChain().readClusterData(clusterIndex);
+            } catch (IOException ex) {
+                /*
+                 * The chain scratch may be partially written on a failed read;
+                 * never serve it afterwards under the stale cluster index.
+                 */
+                entryClusterBuffer = null;
+                entryClusterIndex = -1;
+                throw ex;
+            }
             entryClusterIndex = clusterIndex;
         }
 

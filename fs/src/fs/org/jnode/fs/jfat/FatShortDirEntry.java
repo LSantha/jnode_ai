@@ -64,13 +64,14 @@ public class FatShortDirEntry extends FatDirEntry {
     private int cluster;
     private long length;
 
+    private boolean decoded;
+
     protected FatShortDirEntry(FatFileSystem fs) {
         super(fs, new FatMarshal(LENGTH), 0);
     }
 
     public FatShortDirEntry(FatFileSystem fs, FatMarshal entry, int index) {
         super(fs, entry, index);
-        decode();
     }
 
     public FatShortDirEntry(FatFileSystem fs, FatName name, int index) throws IOException {
@@ -291,6 +292,13 @@ public class FatShortDirEntry extends FatDirEntry {
         decodeLength();
     }
 
+    protected void ensureDecoded() {
+        if (decoded)
+            return;
+        decode();
+        decoded = true;
+    }
+
     @SuppressWarnings("unused")
     private void encode() {
         encodeNameCase();
@@ -308,14 +316,17 @@ public class FatShortDirEntry extends FatDirEntry {
     }
 
     private FatCase getNameCase() {
+        ensureDecoded();
         return ncase;
     }
 
     public boolean isBaseLowerCase() {
+        ensureDecoded();
         return ncase.isLowerBase();
     }
 
     public boolean isExtLowertCase() {
+        ensureDecoded();
         return ncase.isLowerExt();
     }
 
@@ -325,6 +336,7 @@ public class FatShortDirEntry extends FatDirEntry {
     }
 
     protected FatAttr getAttr() {
+        ensureDecoded();
         return attr;
     }
 
@@ -334,66 +346,80 @@ public class FatShortDirEntry extends FatDirEntry {
     }
 
     public boolean isReadOnly() {
+        ensureDecoded();
         return attr.isReadOnly();
     }
 
     public void setReadOnly() {
+        ensureDecoded();
         attr.setReadOnly(true);
         encodeAttr();
     }
 
     public boolean isHidden() {
+        ensureDecoded();
         return attr.isHidden();
     }
 
     public void setHidden() {
+        ensureDecoded();
         attr.setHidden(true);
         encodeAttr();
     }
 
     public boolean isSystem() {
+        ensureDecoded();
         return attr.isSystem();
     }
 
     public void setSystem() {
+        ensureDecoded();
         attr.setSystem(true);
         encodeAttr();
     }
 
     public boolean isLabel() {
+        ensureDecoded();
         return attr.isLabel();
     }
 
     public void setLabel() {
+        ensureDecoded();
         attr.setLabel(true);
         encodeAttr();
     }
 
     public boolean isDirectory() {
+        ensureDecoded();
         return attr.isDirectory();
     }
 
     public void setDirectory() {
+        ensureDecoded();
         attr.setDirectory(true);
         encodeAttr();
     }
 
     public boolean isArchive() {
+        ensureDecoded();
         return attr.isArchive();
     }
 
     public void setArchive() {
+        ensureDecoded();
         attr.setArchive(true);
         encodeAttr();
     }
 
     public byte[] getName() {
+        ensureDecoded();
         return lName;
     }
 
     public void setName(byte[] value) {
         if (value.length != 11)
             throw new IllegalArgumentException("illegal shortname length: " + value.length);
+        ensureDecoded();
         lName = value;
         encodeName();
     }
@@ -407,14 +433,17 @@ public class FatShortDirEntry extends FatDirEntry {
     }
 
     public String getBase() {
+        ensureDecoded();
         return base;
     }
 
     public String getExt() {
+        ensureDecoded();
         return ext;
     }
 
     public String getLabel() {
+        ensureDecoded();
         String label;
 
         try {
@@ -443,6 +472,7 @@ public class FatShortDirEntry extends FatDirEntry {
      * Java has not unsigned types (sigh!)
      */
     public byte getChkSum() {
+        ensureDecoded();
         int sum = 0;
         for (int i = 0; i < 11; i++) {
             sum = (((sum & 1) == 1) ? 0x80 : 0) + (sum >> 1) + lName[i];
@@ -452,6 +482,7 @@ public class FatShortDirEntry extends FatDirEntry {
     }
 
     public long getCreated() {
+        ensureDecoded();
         return created;
     }
 
@@ -462,6 +493,7 @@ public class FatShortDirEntry extends FatDirEntry {
     }
 
     public long getLastAccessed() {
+        ensureDecoded();
         return accessed;
     }
 
@@ -472,6 +504,7 @@ public class FatShortDirEntry extends FatDirEntry {
     }
 
     public long getLastModified() {
+        ensureDecoded();
         return modified;
     }
 
@@ -482,6 +515,7 @@ public class FatShortDirEntry extends FatDirEntry {
     }
 
     public int getStartCluster() {
+        ensureDecoded();
         return cluster;
     }
 
@@ -491,6 +525,7 @@ public class FatShortDirEntry extends FatDirEntry {
     }
 
     public long getLength() {
+        ensureDecoded();
         return length;
     }
 
@@ -501,12 +536,14 @@ public class FatShortDirEntry extends FatDirEntry {
 
     @Override
     public String toString() {
+        ensureDecoded();
         return String.format(
             "Short Entry [%s] index:%d attr:%s size:%d",
             getShortName(), getIndex(), NumberUtils.hex(lAttr, 2), lFileSize);
     }
 
     public String toDebugString() {
+        ensureDecoded();
         StrWriter out = new StrWriter();
 
         out.println("*******************************************");
