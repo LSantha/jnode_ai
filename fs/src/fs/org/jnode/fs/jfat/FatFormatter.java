@@ -413,18 +413,22 @@ public class FatFormatter {
      * serial.
      *
      * FatUtils takes epoch MILLISECONDS, and the parameter is exactly that, so
-     * every field is derived from it. Passing (int) time truncated ~1.76e12 to
-     * its low 32 bits and fed Calendar a garbage epoch, which made the volume
-     * serial an arbitrary value rather than the date. Ticket #878.
+     * every field is derived from it. All seven fields come from a single
+     * {@link FatUtils#localCivilMillis(long)} decomposition of the instant.
+     * The month stays 0-based to match the historical formula; the day field
+     * is the day of month (the old helper returned the day of week, which was
+     * not a date-of-month at all). Ticket #878.
      */
     public static int getDriveSerialNumber(long time) {
-        int year = FatUtils.getYear(time);
-        int month = FatUtils.getMonth(time);
-        int day = FatUtils.getDay(time);
-        int hour = FatUtils.getHours(time);
-        int minute = FatUtils.getMinutes(time);
-        int second = FatUtils.getSeconds(time);
-        int milliSecond = (int) FatUtils.getMilliSeconds(time);
+        long[] civil = FatUtils.localCivilMillis(time);
+
+        int year = (int) civil[0] - 1980;
+        int month = (int) civil[1] - 1;
+        int day = (int) civil[2];
+        int hour = (int) civil[3];
+        int minute = (int) civil[4];
+        int second = (int) civil[5];
+        int milliSecond = (int) civil[6];
 
         int low = day + (month << 8);
         int tmp = (milliSecond / 10) + (second << 8);

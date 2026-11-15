@@ -290,6 +290,11 @@ public class FatEntry extends FatObject implements FSEntry, FSEntryCreated, FSEn
         throw new UnsupportedOperationException("not implemented yet");
     }
 
+    /**
+     * Debug/log helper only; do not call on hot paths. The path is rebuilt with
+     * {@code StringBuilder.insert(0, ...)} per ancestor, making it O(depth^2) in
+     * the tree depth and allocating the intermediate strings each time.
+     */
     public String getPath() {
         StringBuilder path = new StringBuilder(1024);
         FatDirectory parent = (FatDirectory) getParent();

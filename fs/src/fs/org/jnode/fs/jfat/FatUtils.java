@@ -91,6 +91,15 @@ public class FatUtils {
         return millis + TimeZone.getDefault().getOffset(millis);
     }
 
+    /*
+     * Local-time civil decomposition of epoch milliseconds:
+     * {year, month 1..12, day-of-month, hour, minute, second, millis}.
+     * Package-visible for FatFormatter.getDriveSerialNumber; allocates one long[7].
+     */
+    static long[] localCivilMillis(final long javaDateTime) {
+        return localCivil(localMillis(javaDateTime));
+    }
+
     private static long[] localCivil(final long local) {
         long totalSeconds = local / 1000;
         long days = totalSeconds / 86400;
