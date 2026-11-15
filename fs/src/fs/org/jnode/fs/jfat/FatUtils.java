@@ -23,6 +23,7 @@ package org.jnode.fs.jfat;
 import java.text.SimpleDateFormat;
 import java.util.Calendar;
 import java.util.Locale;
+import java.util.TimeZone;
 import org.jnode.util.TimeUtils;
 
 /**
@@ -86,12 +87,35 @@ public class FatUtils {
             return javaDateTime;
     }
 
+    private static long localMillis(final long millis) {
+        return millis + TimeZone.getDefault().getOffset(millis);
+    }
+
+    private static long[] localCivil(final long local) {
+        long totalSeconds = local / 1000;
+        long days = totalSeconds / 86400;
+        int secOfDay = (int) (totalSeconds - days * 86400);
+        long z = days + 719468;
+        long era = z / 146097;
+        long doe = z - era * 146097;
+        long yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
+        long y = yoe + era * 400;
+        long doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+        long mp = (5 * doy + 2) / 153;
+        long d = doy - (153 * mp + 2) / 5 + 1;
+        long m = mp + (mp < 10 ? 3 : -9);
+        long year = y + (m <= 2 ? 1 : 0);
+        return new long[] {
+            year, m, d,
+            secOfDay / 3600, (secOfDay % 3600) / 60, secOfDay % 60,
+            local % 1000
+        };
+    }
+
     public static int encodeTime(long javaDateTime) {
-        Calendar cal = Calendar.getInstance();
+        long[] civil = localCivil(localMillis(checkDateTime(javaDateTime)));
 
-        cal.setTimeInMillis(checkDateTime(javaDateTime));
-
-        return encodeTime(cal);
+        return (int) (2048 * civil[3] + 32 * civil[4] + civil[5] / 2);
     }
 
     public static int encodeTime(Calendar cal) {
@@ -99,11 +123,9 @@ public class FatUtils {
     }
 
     public static int encodeDate(long javaDateTime) {
-        Calendar cal = Calendar.getInstance();
+        long[] civil = localCivil(localMillis(checkDateTime(javaDateTime)));
 
-        cal.setTimeInMillis(checkDateTime(javaDateTime));
-
-        return encodeDate(cal);
+        return (int) (512 * (civil[0] - 1980) + 32 * civil[1] + civil[2]);
     }
 
     public static int encodeDate(Calendar cal) {
@@ -111,11 +133,9 @@ public class FatUtils {
     }
 
     public static int encodeTenth(long javaDateTime) {
-        Calendar cal = Calendar.getInstance();
+        long[] civil = localCivil(localMillis(checkDateTime(javaDateTime)));
 
-        cal.setTimeInMillis(checkDateTime(javaDateTime));
-
-        return 100 * (cal.get(Calendar.SECOND) % 2) + (cal.get(Calendar.MILLISECOND) / 10);
+        return (int) (100 * (civil[5] % 2) + civil[6] / 10);
     }
 
     public static String fTime(long javaDateTime) {
