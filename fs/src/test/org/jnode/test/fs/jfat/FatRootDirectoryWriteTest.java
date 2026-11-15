@@ -244,6 +244,54 @@ public class FatRootDirectoryWriteTest {
     }
 
     @Test
+    public void testFat16RootLfnFilePersistsAcrossRemount() throws Exception {
+        tempImage = copyFixture("test/fs/jfat/test.fat16", "jfat16-root-lfn");
+        FatFileSystem fs = mountRW(tempImage);
+        assertTrue(fs.getBootSector().isFat16());
+
+        FSDirectory root = fs.getRootEntry().getDirectory();
+        String name = "a-long-file-name-that-needs-lfn-entries.bin";
+        byte[] data = "0123456789".getBytes("US-ASCII");
+        FSFile file = root.addFile(name).getFile();
+        file.write(0, ByteBuffer.wrap(data));
+        file.flush();
+        fs.flush();
+
+        fs.close();
+        device.close();
+
+        fs = mountRO(tempImage);
+        root = fs.getRootEntry().getDirectory();
+        FSEntry entry = root.getEntry(name);
+        assertNotNull("LFN file missing after remount on FAT16", entry);
+        assertEquals(data.length, entry.getFile().getLength());
+        ByteBuffer buf = ByteBuffer.allocate(data.length);
+        entry.getFile().read(0, buf);
+        assertArrayEquals(data, buf.array());
+        FSEntry original = root.getEntry("test.txt");
+        assertNotNull("test.txt must survive LFN create", original);
+
+        fs.close();
+        device.close();
+
+        fs = mountRW(tempImage);
+        root = fs.getRootEntry().getDirectory();
+        root.remove(name);
+        fs.flush();
+
+        fs.close();
+        device.close();
+
+        fs = mountRO(tempImage);
+        root = fs.getRootEntry().getDirectory();
+        assertNull("LFN file must stay deleted after remount on FAT16", root.getEntry(name));
+        assertNotNull("test.txt must survive LFN delete", root.getEntry("test.txt"));
+
+        fs.close();
+        device.close();
+    }
+
+    @Test
     public void testFat12RootFilePersistsAcrossRemount() throws Exception {
         tempImage = Fat12ImageBuilder.createImageFile("jfat12-root-rw");
         FatFileSystem fs = mountRW(tempImage);

@@ -37,6 +37,7 @@ import org.jnode.fs.FSFile;
 import org.jnode.fs.jfat.ClusterSize;
 import org.jnode.fs.jfat.Fat;
 import org.jnode.fs.jfat.FatChain;
+import org.jnode.fs.jfat.FatDirEntry;
 import org.jnode.fs.jfat.FatEntry;
 import org.jnode.fs.jfat.FatFileSystem;
 import org.jnode.fs.hfsplus.HfsPlusFileSystem;
@@ -57,6 +58,8 @@ import static org.junit.Assert.assertTrue;
 public class FatFlushOrderTest {
 
     private static final String FILE_NAME = "hello.txt";
+    private static final String LONG_DIR_NAME =
+        "a-directory-name-that-is-long-enough-to-need-lfn-entries";
 
     private static class WriteEvent {
         private final long offset;
@@ -238,6 +241,26 @@ public class FatFlushOrderTest {
         return event.offset >= rootStart && event.offset < rootEnd && event.length == 32;
     }
 
+    private boolean isDirEntryBatchWrite(FatFileSystem fs, WriteEvent event) {
+        if (event.flush) {
+            return false;
+        }
+        Fat fat = fs.getFat();
+        long rootStart;
+        long rootEnd;
+        if (fat.isFat32()) {
+            int rootCluster = (int) fs.getBootSector().getRootDirectoryStartCluster();
+            rootStart = fat.getClusterPosition(rootCluster);
+            rootEnd = rootStart + fs.getClusterSize();
+        } else {
+            int sectorSize = fs.getBootSector().getBytesPerSector();
+            rootStart = fs.getBootSector().getFirstRootDirSector() * (long) sectorSize;
+            rootEnd = rootStart + fs.getBootSector().getNrRootDirEntries() * 32L;
+        }
+        return event.offset >= rootStart && event.offset < rootEnd
+            && event.length >= 64 && (event.length % FatDirEntry.LENGTH) == 0;
+    }
+
     @Test
     public void testFatFlushPrecedesDirectoryEntry() throws Exception {
         FatFileSystem fs = formatAndOpenRW();
@@ -270,6 +293,40 @@ public class FatFlushOrderTest {
         assertTrue("FAT sectors must reach the device before the directory entry",
             firstFatWrite < dirEntryWrite);
         assertTrue("device flush must happen after FAT and before directory entry",
+            flushBetween > firstFatWrite && flushBetween < dirEntryWrite);
+
+        fs.close();
+    }
+
+    @Test
+    public void testFatFlushPrecedesMultiEntryDirectoryBatch() throws Exception {
+        FatFileSystem fs = formatAndOpenRW();
+        FSDirectory root = fs.getRootEntry().getDirectory();
+
+        device.clearEvents();
+        root.addDirectory(LONG_DIR_NAME);
+
+        int firstFatWrite = -1;
+        int dirEntryWrite = -1;
+        int flushBetween = -1;
+        for (int i = 0; i < device.events.size(); i++) {
+            WriteEvent event = device.events.get(i);
+            if (isFatWrite(fs, event) && firstFatWrite < 0) {
+                firstFatWrite = i;
+            }
+            if (isDirEntryBatchWrite(fs, event) && dirEntryWrite < 0) {
+                dirEntryWrite = i;
+            }
+            if (event.flush && firstFatWrite >= 0 && dirEntryWrite < 0) {
+                flushBetween = i;
+            }
+        }
+
+        assertTrue("FAT sectors must be written during directory creation", firstFatWrite >= 0);
+        assertTrue("the batched directory-entry write must be recorded", dirEntryWrite >= 0);
+        assertTrue("FAT sectors must reach the device before the batched directory-entry write",
+            firstFatWrite < dirEntryWrite);
+        assertTrue("device flush must happen after FAT and before the batched directory-entry write",
             flushBetween > firstFatWrite && flushBetween < dirEntryWrite);
 
         fs.close();
