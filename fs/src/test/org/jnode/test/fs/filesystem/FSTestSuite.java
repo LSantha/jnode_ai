@@ -51,6 +51,7 @@ import org.jnode.test.fs.jfat.FatFreeClusterCountTest;
 import org.jnode.test.fs.jfat.FatSectorSizeGuardTest;
 import org.jnode.test.fs.jfat.FatFailurePathTest;
 import org.jnode.test.fs.jfat.FatFlushOrderTest;
+import org.jnode.test.fs.jfat.FatDirtyFlushTest;
 import org.jnode.test.fs.jfat.FatBarrierTest;
 import org.jnode.test.fs.jfat.FatBeyondEofWriteTest;
 import org.jnode.test.fs.jfat.FatSetLengthTest;
@@ -95,6 +96,7 @@ import org.junit.runners.Suite.SuiteClasses;
     FatSetNameTest.class,
     FatFailurePathTest.class,
     FatFlushOrderTest.class,
+    FatDirtyFlushTest.class,
     FatBarrierTest.class,
     FatBeyondEofWriteTest.class,
     FatSetLengthTest.class,

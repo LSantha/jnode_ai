@@ -22,6 +22,7 @@ package org.jnode.fs.jfat;
 
 import java.io.IOException;
 import java.nio.ByteBuffer;
+import java.util.ArrayDeque;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Stack;
@@ -94,6 +95,16 @@ public class FatCache {
     private int elementSize;
 
     private CacheMap map;
+
+    /*
+     * Elements dirtied since the last flush, in the order their dirty
+     * transition happened. Entries may be stale (the element was flushed by
+     * the full scan, by eviction, or the element was recycled for another
+     * address); stale entries are no-ops at flush time and are discarded
+     * then. Every currently dirty element is guaranteed to occur at least
+     * once in this deque, so flushDirty() never misses a dirty element.
+     */
+    private final ArrayDeque<CacheElement> dirtyElements = new ArrayDeque<CacheElement>();
 
     private long access = 0;
     private long hit = 0;
@@ -286,8 +297,45 @@ public class FatCache {
     }
 
     public synchronized void flush() throws IOException {
+        try {
+            for (CacheElement c : map.values()) {
+                c.flush();
+            }
+            dirtyElements.clear();
+        } catch (IOException ex) {
+            rebuildDirtySet();
+            throw ex;
+        } catch (RuntimeException ex) {
+            rebuildDirtySet();
+            throw ex;
+        }
+    }
+
+    synchronized void flushDirty() throws IOException {
+        if (map.size() > 0 && dirtyElements.size() >= map.size()) {
+            flush();
+            return;
+        }
+        while (!dirtyElements.isEmpty()) {
+            CacheElement c = dirtyElements.pollFirst();
+            try {
+                c.flush();
+            } catch (IOException ex) {
+                dirtyElements.addFirst(c);
+                throw ex;
+            } catch (RuntimeException ex) {
+                dirtyElements.addFirst(c);
+                throw ex;
+            }
+        }
+    }
+
+    private void rebuildDirtySet() {
+        dirtyElements.clear();
         for (CacheElement c : map.values()) {
-            c.flush();
+            if (c.isDirty()) {
+                dirtyElements.addLast(c);
+            }
         }
     }
 
@@ -560,7 +608,10 @@ public class FatCache {
         }
 
         private void setDirty() {
-            dirty = true;
+            if (!dirty) {
+                dirty = true;
+                dirtyElements.addLast(this);
+            }
         }
 
         private void flush() throws IOException {
