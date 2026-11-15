@@ -66,13 +66,13 @@ public class FatRecord {
                 fs, name.getComponent(n - 1), (byte) n, s.getChkSum(),
                 true, free[0].getIndex());
 
-            addSetFatDirEntry(parent, l);
+            add(l);
 
             for (int i = (n - 2); i >= 0; i--) {
                 l = new FatLongDirEntry(fs, name.getComponent(i), (byte) (i + 1),
                     s.getChkSum(), false, free[n - 1 - i].getIndex());
 
-                addSetFatDirEntry(parent, l);
+                add(l);
             }
         }
 
@@ -114,11 +114,6 @@ public class FatRecord {
             throw new UnsupportedOperationException("Damaged entry, shouldn't happen");
         }
         longEntries.add(entry);
-    }
-
-    private void addSetFatDirEntry(FatDirectory parent, FatLongDirEntry entry) throws IOException {
-        add(entry);
-        parent.setFatDirEntry(entry);
     }
 
     public void close(FatShortDirEntry entry) {

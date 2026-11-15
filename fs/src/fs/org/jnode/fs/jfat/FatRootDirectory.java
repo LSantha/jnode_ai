@@ -22,6 +22,9 @@ package org.jnode.fs.jfat;
 
 import java.io.IOException;
 import java.nio.ByteBuffer;
+import java.util.Collection;
+import java.util.List;
+import java.util.Map;
 import java.util.NoSuchElementException;
 
 
@@ -109,6 +112,50 @@ public class FatRootDirectory extends FatDirectory {
         entryClusterBuffer = null;
         entryClusterIndex = -1;
         onShortEntryWritten(entry);
+    }
+
+    @Override
+    public synchronized void setFatDirEntries(Collection<FatDirEntry> entries) throws IOException {
+        if (getFatFileSystem().getFat().isFat32()) {
+            super.setFatDirEntries(entries);
+            return;
+        }
+        if (entries == null)
+            throw new IllegalArgumentException("entries cannot be null");
+        if (entries.isEmpty())
+            return;
+
+        BootSector bootSector = getFatFileSystem().getBootSector();
+        int clusterSize = getFatFileSystem().getClusterSize();
+        int entriesPerCluster = clusterSize / FatDirEntry.LENGTH;
+        Map<Integer, List<FatDirEntry>> byCluster = groupByCluster(entries, entriesPerCluster);
+        long rootStart = bootSector.getFirstRootDirSector() * (long) bootSector.getBytesPerSector();
+
+        for (Map.Entry<Integer, List<FatDirEntry>> cluster : byCluster.entrySet()) {
+            List<FatDirEntry> clusterEntries = cluster.getValue();
+            int minIndex = minIndexOf(clusterEntries);
+            int maxIndex = maxIndexOf(clusterEntries);
+
+            try {
+                rootEntryOffset(bootSector, maxIndex);
+            } catch (NoSuchElementException e) {
+                throw new IOException("Directory is full");
+            }
+
+            long spanFrom = rootStart + (long) minIndex * FatDirEntry.LENGTH;
+            int length = (maxIndex - minIndex + 1) * FatDirEntry.LENGTH;
+            ByteBuffer dest = ByteBuffer.allocate(length);
+            getFatFileSystem().getApi().read(spanFrom, dest);
+            byte[] buf = dest.array();
+            spliceEntries(clusterEntries, buf, minIndex);
+            getFatFileSystem().getApi().write(spanFrom, ByteBuffer.wrap(buf));
+        }
+
+        entryClusterBuffer = null;
+        entryClusterIndex = -1;
+
+        for (FatDirEntry entry : entries)
+            onShortEntryWritten(entry);
     }
 
     public String getShortName() {

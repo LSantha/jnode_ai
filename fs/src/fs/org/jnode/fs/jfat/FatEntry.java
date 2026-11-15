@@ -22,7 +22,9 @@ package org.jnode.fs.jfat;
 
 import java.io.FileNotFoundException;
 import java.io.IOException;
+import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.List;
 import java.util.Vector;
 import org.apache.log4j.Logger;
 import org.jnode.fs.FSAccessRights;
@@ -79,17 +81,22 @@ public class FatEntry extends FatObject implements FSEntry, FSEntryCreated, FSEn
         setValid(false);
 
         entry.delete();
-        parent.setFatDirEntry(entry);
-        entry.flush();
 
         Vector<FatLongDirEntry> v = record.getLongEntries();
+        List<FatDirEntry> batch = new ArrayList<FatDirEntry>(v.size() + 1);
+        batch.add(entry);
 
         for (int i = 0; i < v.size(); i++) {
             FatLongDirEntry l = v.get(i);
             l.delete();
-            parent.setFatDirEntry(l);
-            l.flush();
+            batch.add(l);
         }
+
+        parent.setFatDirEntries(batch);
+        entry.flush();
+
+        for (int i = 0; i < v.size(); i++)
+            v.get(i).flush();
     }
 
     public void freeAllClusters() throws IOException {
@@ -154,21 +161,35 @@ public class FatEntry extends FatObject implements FSEntry, FSEntryCreated, FSEn
             shortEntry.setStartCluster(oldEntry.getStartCluster());
             shortEntry.setLength(oldEntry.getLength());
             shortEntry.setAttr(new FatAttr(oldEntry.getAttr().getAttr()));
-            dir.setFatDirEntry(shortEntry);
+
+            Vector<FatLongDirEntry> newLongEntries = newRecord.getLongEntries();
+            List<FatDirEntry> newBatch = new ArrayList<FatDirEntry>(newLongEntries.size() + 1);
+            for (int i = 0; i < newLongEntries.size(); i++) {
+                FatLongDirEntry l = newLongEntries.get(i);
+                if (l.isDirty())
+                    newBatch.add(l);
+            }
+            newBatch.add(shortEntry);
+            dir.setFatDirEntries(newBatch);
             shortEntry.flush();
+            for (int i = 0; i < newLongEntries.size(); i++)
+                newLongEntries.get(i).flush();
 
             oldEntry.delete();
-            dir.setFatDirEntry(oldEntry);
-            oldEntry.flush();
 
             Vector<FatLongDirEntry> oldLongEntries = record.getLongEntries();
-
+            List<FatDirEntry> oldBatch = new ArrayList<FatDirEntry>(oldLongEntries.size() + 1);
+            oldBatch.add(oldEntry);
             for (int i = 0; i < oldLongEntries.size(); i++) {
                 FatLongDirEntry l = oldLongEntries.get(i);
                 l.delete();
-                dir.setFatDirEntry(l);
-                l.flush();
+                oldBatch.add(l);
             }
+            dir.setFatDirEntries(oldBatch);
+            oldEntry.flush();
+
+            for (int i = 0; i < oldLongEntries.size(); i++)
+                oldLongEntries.get(i).flush();
 
             dir.getVisitedChildren().removeIfPresent(this);
 
@@ -266,9 +287,31 @@ public class FatEntry extends FatObject implements FSEntry, FSEntryCreated, FSEn
             }
             getFatFileSystem().getFat().flush();
             getFatFileSystem().getApi().flush();
-            if (entry.isDirty()) {
-                parent.setFatDirEntry(entry);
+            Vector<FatLongDirEntry> longs = record != null ? record.getLongEntries() : null;
+            List<FatDirEntry> dirtyLongs = null;
+            if (longs != null) {
+                for (int i = 0; i < longs.size(); i++) {
+                    FatLongDirEntry l = longs.get(i);
+                    if (l.isDirty()) {
+                        if (dirtyLongs == null)
+                            dirtyLongs = new ArrayList<FatDirEntry>();
+                        dirtyLongs.add(l);
+                    }
+                }
+            }
+            if (entry.isDirty() || dirtyLongs != null) {
+                if (dirtyLongs == null) {
+                    parent.setFatDirEntry(entry);
+                } else {
+                    if (entry.isDirty())
+                        dirtyLongs.add(entry);
+                    parent.setFatDirEntries(dirtyLongs);
+                }
                 entry.flush();
+                if (longs != null) {
+                    for (int i = 0; i < longs.size(); i++)
+                        longs.get(i).flush();
+                }
             }
         }
     }

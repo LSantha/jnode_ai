@@ -22,13 +22,16 @@ package org.jnode.fs.jfat;
 
 import java.io.FileNotFoundException;
 import java.io.IOException;
+import java.nio.ByteBuffer;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collection;
 import java.util.HashMap;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 import java.util.NoSuchElementException;
+import java.util.TreeMap;
 import java.util.TreeSet;
 import org.apache.log4j.Logger;
 import org.jnode.fs.FSDirectory;
@@ -99,8 +102,7 @@ public class FatDirectory extends FatEntry implements FSDirectory, FSDirectoryId
         FatDotDirEntry dot = new FatDotDirEntry(fs, false, entry, thisCluster);
         FatDotDirEntry dotDot = new FatDotDirEntry(fs, true, entry, parentCluster);
 
-        setFatDirEntry(dot);
-        setFatDirEntry(dotDot);
+        setFatDirEntries(Arrays.<FatDirEntry>asList(dot, dotDot));
     }
 
     /*
@@ -212,6 +214,92 @@ public class FatDirectory extends FatEntry implements FSDirectory, FSDirectoryId
         entryClusterBuffer = null;
         entryClusterIndex = -1;
         onShortEntryWritten(entry);
+    }
+
+    /**
+     * Writes a batch of directory entries, issuing at most one device write per touched
+     * cluster. Entries are grouped by the cluster that holds them; each group is spliced
+     * into a buffer spanning [minIndex*32, (maxIndex+1)*32) that is written with a single
+     * chain write, so a long-file-name create costs one cluster write instead of one write
+     * per entry. Clusters are written in ascending index order.
+     *
+     * This method does not reorder durability: entries that point at freshly allocated
+     * clusters must only be passed here after the chain data and the FAT have been
+     * flushed (the data, then FAT, then directory-entries order). Callers pass entries
+     * whose target bytes are already durable. The single-entry
+     * {@link #setFatDirEntry(FatDirEntry)} remains for the genuinely single-entry callers.
+     * {@link #onShortEntryWritten(FatDirEntry)} is invoked once per entry written, after
+     * the cluster write(s), never once per batch.
+     */
+    public synchronized void setFatDirEntries(Collection<FatDirEntry> entries) throws IOException {
+        if (entries == null)
+            throw new IllegalArgumentException("entries cannot be null");
+        if (entries.isEmpty())
+            return;
+
+        int clusterSize = getFatFileSystem().getClusterSize();
+        int entriesPerCluster = clusterSize / FatDirEntry.LENGTH;
+        Map<Integer, List<FatDirEntry>> byCluster = groupByCluster(entries, entriesPerCluster);
+
+        for (Map.Entry<Integer, List<FatDirEntry>> cluster : byCluster.entrySet()) {
+            List<FatDirEntry> clusterEntries = cluster.getValue();
+            int minIndex = minIndexOf(clusterEntries);
+            int maxIndex = maxIndexOf(clusterEntries);
+            int from = minIndex * FatDirEntry.LENGTH;
+            int length = (maxIndex - minIndex + 1) * FatDirEntry.LENGTH;
+            byte[] buf = new byte[length];
+            getChain().read(from, ByteBuffer.wrap(buf));
+            spliceEntries(clusterEntries, buf, minIndex);
+            getChain().write(from, ByteBuffer.wrap(buf));
+        }
+
+        entryClusterBuffer = null;
+        entryClusterIndex = -1;
+
+        for (FatDirEntry entry : entries)
+            onShortEntryWritten(entry);
+    }
+
+    static Map<Integer, List<FatDirEntry>> groupByCluster(Collection<FatDirEntry> entries, int entriesPerCluster) {
+        Map<Integer, List<FatDirEntry>> byCluster = new TreeMap<Integer, List<FatDirEntry>>();
+        for (FatDirEntry entry : entries) {
+            Integer key = Integer.valueOf(entry.getIndex() / entriesPerCluster);
+            List<FatDirEntry> list = byCluster.get(key);
+            if (list == null) {
+                list = new ArrayList<FatDirEntry>();
+                byCluster.put(key, list);
+            }
+            list.add(entry);
+        }
+        return byCluster;
+    }
+
+    static int minIndexOf(List<FatDirEntry> entries) {
+        int min = Integer.MAX_VALUE;
+        for (int i = 0; i < entries.size(); i++) {
+            int index = entries.get(i).getIndex();
+            if (index < min)
+                min = index;
+        }
+        return min;
+    }
+
+    static int maxIndexOf(List<FatDirEntry> entries) {
+        int max = -1;
+        for (int i = 0; i < entries.size(); i++) {
+            int index = entries.get(i).getIndex();
+            if (index > max)
+                max = index;
+        }
+        return max;
+    }
+
+    static void spliceEntries(List<FatDirEntry> clusterEntries, byte[] buf, int minIndex) {
+        for (int i = 0; i < clusterEntries.size(); i++) {
+            FatDirEntry entry = clusterEntries.get(i);
+            System.arraycopy(entry.getByteBuffer().array(), 0, buf,
+                (entry.getIndex() - minIndex) * FatDirEntry.LENGTH, FatDirEntry.LENGTH);
+        }
     }
 
     synchronized void onShortEntryWritten(FatDirEntry entry) {
