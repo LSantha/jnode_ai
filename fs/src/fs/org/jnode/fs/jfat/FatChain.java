@@ -877,6 +877,33 @@ public class FatChain {
 
             size = Math.min(sz, l);
 
+            int clsize = p.getSize();
+
+            if (ofs == 0 && size == clsize) {
+                /*
+                 * Whole clusters from a cluster-aligned offset: coalesce the
+                 * physically contiguous run into one read request per
+                 * MAX_REQUEST_SECTORS window instead of one per cluster.
+                 */
+                int runClusters = extendRun(i, cluster, l, clsize);
+                if (runClusters > 1) {
+                    int runBytes = runClusters * clsize;
+                    if (dolog)
+                        mylog("read " + runBytes + " bytes in one request from cluster " + cluster
+                            + " (" + runClusters + " clusters)");
+                    int runLimit = dst.limit();
+                    try {
+                        dst.limit(dst.position() + runBytes);
+                        fat.readClusterRun(cluster, runClusters, dst);
+                    } finally {
+                        dst.limit(runLimit);
+                    }
+                    lastCluster = cluster + runClusters - 1;
+                    size = runBytes;
+                    continue;
+                }
+            }
+
             if (dolog)
                 mylog("read " + size + " bytes from cluster " + cluster + " at offset " + ofs);
 
@@ -892,6 +919,43 @@ public class FatChain {
 
         if (modificationStamp == stampAtStart)
             readHint = new ChainHint(head, i.nextIndex(), lastCluster, stampAtStart);
+    }
+
+    /*
+     * Count physically contiguous clusters that follow {@code firstCluster} in the
+     * chain, consuming them from the iterator, so the read/write paths can issue one
+     * device request per MAX_REQUEST_SECTORS window instead of one per cluster.
+     *
+     * <p>The first cluster is assumed to be already consumed. The scan stops at the
+     * end of the chain, at the destination byte limit, at the device request cap, or
+     * when the chain continues at a non-following cluster number; whatever the scan
+     * consumed is always a contiguous run starting at {@code firstCluster}. Returns
+     * 1 when no contiguous successor exists; the caller then uses the unchanged
+     * single-cluster path.</p>
+     */
+    private int extendRun(ChainIterator i, int firstCluster, int remainingBytes, int clsize)
+            throws IOException {
+        int maxClusters = Math.min(remainingBytes / clsize, fat.getMaxRunClusters());
+        int count = 1;
+        int prev = firstCluster;
+        while (count < maxClusters) {
+            int nextCluster;
+            try {
+                nextCluster = i.peekNext();
+            } catch (NoSuchElementException ex) {
+                break;
+            }
+            if (nextCluster != prev + 1)
+                break;
+            try {
+                i.next();
+            } catch (NoSuchElementException ex) {
+                break;
+            }
+            count++;
+            prev = nextCluster;
+        }
+        return count;
     }
 
     /**
@@ -1085,6 +1149,30 @@ public class FatChain {
             cluster = i.next();
 
             size = Math.min(sz, l);
+
+            if (ofs == 0 && size == clsize) {
+                /*
+                 * Whole clusters from a cluster-aligned offset: coalesce the
+                 * physically contiguous run into one write request per
+                 * MAX_REQUEST_SECTORS window instead of one per cluster.
+                 */
+                int runClusters = extendRun(i, cluster, l, clsize);
+                if (runClusters > 1) {
+                    int runBytes = runClusters * clsize;
+                    if (dolog)
+                        mylog("write " + runBytes + " bytes in one request to cluster " + cluster
+                            + " (" + runClusters + " clusters)");
+                    int runLimit = src.limit();
+                    try {
+                        src.limit(src.position() + runBytes);
+                        fat.writeClusterRun(cluster, runClusters, src);
+                    } finally {
+                        src.limit(runLimit);
+                    }
+                    size = runBytes;
+                    continue;
+                }
+            }
 
             if (dolog)
                 mylog("write " + size + " bytes to cluster " + cluster + " at offset " + ofs);
@@ -1594,6 +1682,20 @@ public class FatChain {
             index++;
 
             return address;
+        }
+
+        /**
+         * The cluster the next {@link #next()} call returns, without advancing.
+         * Used by the run coalescing to detect physically contiguous clusters
+         * ahead of the cursor. The returned value was validated when it became
+         * the cursor (or is the chain head).
+         *
+         * @throws NoSuchElementException when the chain is at its end
+         */
+        private int peekNext() {
+            if (!hasNext())
+                throw new NoSuchElementException();
+            return cursor;
         }
 
         private boolean hasPrevious() {
