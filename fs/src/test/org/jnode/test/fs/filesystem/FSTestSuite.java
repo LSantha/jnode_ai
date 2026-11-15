@@ -37,6 +37,7 @@ import org.jnode.test.fs.jfat.FatChainConcurrencyTest;
 import org.jnode.test.fs.jfat.FatChainFreeWithCountTest;
 import org.jnode.test.fs.jfat.FatChainReadHintTest;
 import org.jnode.test.fs.jfat.FatChainShrinkHintTest;
+import org.jnode.test.fs.jfat.FatChainSizeCacheTest;
 import org.jnode.test.fs.jfat.FatDosDateTimeEncodingTest;
 import org.jnode.test.fs.jfat.FatDirectoryConcurrencyTest;
 import org.jnode.test.fs.jfat.FatDirectoryExtensionTest;
@@ -123,6 +124,7 @@ import org.junit.runners.Suite.SuiteClasses;
     FatChainFreeWithCountTest.class,
     FatChainReadHintTest.class,
     FatChainShrinkHintTest.class,
+    FatChainSizeCacheTest.class,
     FatRootDirectoryWriteTest.class,
     FatRootDirectoryBufferTest.class,
     FatSlackSpaceTest.class,

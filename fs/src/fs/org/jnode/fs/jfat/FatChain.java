@@ -50,6 +50,18 @@ public class FatChain {
     private volatile ChainHint readHint;
     private volatile ChainHint writeHint;
 
+    private volatile int cachedClusterCount = -1;
+    private volatile int cachedTailCluster = -1;
+
+    /**
+     * Debug-only double check for the cluster count/tail cache. When true,
+     * {@link #size()} and {@link #getEndCluster()} always walk the chain and
+     * throw {@link IllegalStateException} if the cached values disagree with
+     * the walked ones. Tests enable this to catch a stale cache; it stays off
+     * in production.
+     */
+    public static volatile boolean debugSizeCacheCheck = false;
+
     public FatChain(FatFileSystem fs, int startEntry) {
         this.fs = fs;
         this.fat = fs.getFat();
@@ -82,6 +94,11 @@ public class FatChain {
             throw new IllegalArgumentException("illegal head: " + value);
 
         head = value;
+        if (value == 0) {
+            setClusterCache(0, 0);
+        } else {
+            invalidateClusterCache();
+        }
         invalidateHints();
 
         dirty = true;
@@ -103,43 +120,112 @@ public class FatChain {
         return new ChainIterator(index);
     }
 
-    /*
-     * O(clusters): we have to follow the whole chain to get the last cluster
-     * value. Do not call this on a hot path; pass the count through instead
-     * (see the two-argument free(int, int) overload).
-     *
-     * special case: a chain with one cluster at EOF
-     * the iterator starts at that cluster and hasNext() returns false
-     * so we need to check the head cluster separately
+    /**
+     * Walk the whole chain once, counting clusters and recording the tail
+     * (cluster whose FAT entry is end-of-chain), then refresh the cache.
+     * When {@link #debugSizeCacheCheck} is set the walked values are
+     * compared against the cached ones first and an
+     * {@link IllegalStateException} is thrown on mismatch.
      */
-    private int getEndCluster() throws IOException {
+    private int[] walkChain() throws IOException {
+        int count = 0;
         int last = 0;
         ChainIterator i = listIterator(0);
-        int address = i.getCluster(0);
-        if (address != 0 && fat.isEofChain(fat.get(address))) {
-            last = address;
-        } else {
-            for (; i.hasNext(); last = i.next())
-                ;
-        }
+        for (; i.hasNext(); last = i.next())
+            count++;
 
-        return last;
+        int tail = (count == 0) ? 0 : last;
+        if (debugSizeCacheCheck) {
+            if (cachedClusterCount >= 0 && cachedClusterCount != count)
+                throw new IllegalStateException(
+                    "chain length cache mismatch: cached [" + cachedClusterCount + "] vs walked [" + count + "]");
+            if (cachedTailCluster >= 0 && cachedTailCluster != tail)
+                throw new IllegalStateException(
+                    "chain tail cache mismatch: cached [" + cachedTailCluster + "] vs walked [" + tail + "]");
+        }
+        setClusterCache(count, tail);
+        return new int[] {count, tail};
+    }
+
+    private void setClusterCache(int count, int tail) {
+        cachedClusterCount = count;
+        cachedTailCluster = tail;
+    }
+
+    private void invalidateClusterCache() {
+        cachedClusterCount = -1;
+        cachedTailCluster = -1;
+    }
+
+    private void flushDirtyAndInvalidateOnFailure() throws IOException {
+        try {
+            fat.flushDirty();
+        } catch (IOException ex) {
+            invalidateClusterCache();
+            throw ex;
+        } catch (RuntimeException ex) {
+            invalidateClusterCache();
+            throw ex;
+        }
     }
 
     /**
-     * O(clusters): the whole chain is walked to know the chain size. size()
-     * is not only used by free(); on the truncate path, callers that already
-     * know the chain length (e.g. from the directory entry length) must use
-     * the two-argument {@link #free(int, int)} overload instead of routing
-     * through this method.
+     * Account for the append of a freshly linked segment of {@code n} clusters
+     * whose own tail (the cluster set to end-of-chain when the segment was
+     * carved out of the FAT) is {@code segmentTail}. The tail is always known
+     * exactly, so it is cached even when the count is not; the count is
+     * advanced only when it was already known, or when the write extended an
+     * empty chain (where the new chain consists of the segment alone).
+     */
+    private void noteAppendedClusters(int n, int segmentTail, boolean chainWasEmpty) {
+        if (chainWasEmpty) {
+            cachedClusterCount = n;
+        } else if (cachedClusterCount >= 0) {
+            cachedClusterCount += n;
+        }
+        cachedTailCluster = segmentTail;
+    }
+
+    /*
+     * The tail cluster is served from cachedTailCluster, maintained on every
+     * mutation this chain performs (allocate/append/free/setStartCluster) and
+     * invalidated on the rollback paths. It is cached independently of the
+     * count rather than derived from size() because the segment tail is known
+     * exactly at append time - even when the count is unknown there is no
+     * need to walk the chain just to find the end.
+     *
+     * The cached values are trusted only for mutations this chain performed;
+     * FAT links mutated behind the chain's back are not detected (FAT writes
+     * cannot be intercepted from here), which is exactly what the debug-only
+     * walk-vs-cached double check (debugSizeCacheCheck) exists to catch in
+     * the tests.
+     *
+     * special case: an empty chain has no clusters, so the tail is 0
+     */
+    private int getEndCluster() throws IOException {
+        if (cachedTailCluster >= 0 && !debugSizeCacheCheck)
+            return cachedTailCluster;
+        return walkChain()[1];
+    }
+
+    /**
+     * The chain length. O(1) after any mutation this chain itself performed
+     * (the count is maintained incrementally by allocation, free, truncate and
+     * the append paths); a walk happens only when the cache is unknown -
+     * a freshly opened chain, or after an invalidation from the rollback
+     * paths. Callers that already know the chain length (e.g. from the
+     * directory entry length) still pass it down instead of calling this
+     * (see the two-argument {@link #free(int, int)} overload).
+     *
+     * The cached value is trusted only for mutations this chain performed;
+     * links mutated behind the chain's back are not detected, which is what
+     * the debug-only walk-vs-cached double check ({@link #debugSizeCacheCheck})
+     * exists to catch in the tests.
      */
     public int size() throws IOException {
-        int count = 0;
-        ChainIterator i = listIterator(0);
-        for (; i.hasNext(); i.next())
-            count++;
-
-        return count;
+        if (cachedClusterCount >= 0 && !debugSizeCacheCheck)
+            return cachedClusterCount;
+        return walkChain()[0];
     }
 
     /*
@@ -226,11 +312,12 @@ public class FatChain {
      * @param offset byte offset within the first linked cluster; when non-zero, the
      *        first (lowest-indexed) linked cluster is treated as partially written
      * @param zero when true, every linked cluster is fully cleared
-     * @return the head cluster (lowest index) of the newly allocated segment
+     * @return the head (lowest index) and tail (the cluster set to end-of-chain) of
+     *         the newly allocated segment
      * @throws FileSystemFullException when fewer than {@code n} clusters can be linked
      * @throws IOException when a FAT write fails
      */
-    private int allocateTail(int n, int m, int offset, boolean zero) throws IOException {
+    private TailAllocation allocateTail(int n, int m, int offset, boolean zero) throws IOException {
         synchronized (fat) {
             if (n <= 0)
                 throw new IllegalArgumentException("n<=0");
@@ -269,7 +356,7 @@ public class FatChain {
                 if (dolog)
                     mylog("LastFree: " + fat.getLastFree());
 
-                return head;
+                return new TailAllocation(head, last);
             } catch (IOException ex) {
                 rollbackAllocated(allocated);
                 throw ex;
@@ -453,6 +540,7 @@ public class FatChain {
      */
     private void rollbackAllocated(List<Integer> allocated) {
         invalidateHints();
+        invalidateClusterCache();
         if (allocated == null || allocated.isEmpty()) {
             return;
         }
@@ -508,20 +596,31 @@ public class FatChain {
     public void allocateAndClear(int n) throws IOException {
         invalidateHints();
         try {
-            int last = allocateTail(n, n - 1, 0, true);
+            TailAllocation ta = allocateTail(n, n - 1, 0, true);
             int first = getEndCluster();
+            boolean chainWasEmpty = (first == 0);
 
             if (dolog)
-                mylog(first + ":" + last);
+                mylog(first + ":" + ta.head);
 
-            if (first != 0) {
-                fat.set(first, last);
-                fat.flushDirty();
-            } else {
-                if (dolog)
-                    mylog("allocate chain");
-                setStartCluster(last);
+            try {
+                if (first != 0) {
+                    fat.set(first, ta.head);
+                    fat.flushDirty();
+                } else {
+                    if (dolog)
+                        mylog("allocate chain");
+                    setStartCluster(ta.head);
+                }
+            } catch (IOException ex) {
+                invalidateClusterCache();
+                throw ex;
+            } catch (RuntimeException ex) {
+                invalidateClusterCache();
+                throw ex;
             }
+
+            noteAppendedClusters(n, ta.tail, chainWasEmpty);
         } finally {
             invalidateHints();
             fat.flushDirty();
@@ -531,10 +630,12 @@ public class FatChain {
     /**
      * Free the last {@code n} clusters of this chain.
      *
-     * <p>O(clusters): the chain is walked once to count it and once more from
-     * the split point to the end. Callers that already know the chain length
-     * (e.g. from the directory entry length) must use the two-argument
-     * {@link #free(int, int)} overload instead.
+     * <p>O(chain length): the chain is walked from the split point to the end.
+     * The chain length comes from the cache when it is valid (any mutation this
+     * chain itself performed keeps it valid), so no separate full-chain count
+     * walk happens in the common case. Callers that already know the chain
+     * length (e.g. from the directory entry length) still use the two-argument
+     * {@link #free(int, int)} overload to avoid depending on the cache.
      */
     public void free(int n) throws IOException {
         if (n == 0)
@@ -560,11 +661,11 @@ public class FatChain {
 
     /**
      * Free the last {@code n} clusters of this chain, using a caller-supplied
-     * chain length instead of walking the whole chain to count it.
+     * chain length instead of relying on the cached chain length.
      *
-     * <p>O(chain length) with a smaller constant than {@link #free(int)}:
-     * the caller-supplied count replaces the {@link #size()} walk, so the
-     * truncate path walks the chain once instead of twice. The split point
+     * <p>O(chain length): the caller-supplied count replaces the chain-length
+     * computation, so the truncate path walks the chain once instead of twice.
+     * The split point
      * is still reached by walking from the head of the chain (FAT has no
      * back pointers); only the separate full-chain count walk is eliminated.
      *
@@ -639,6 +740,8 @@ public class FatChain {
             mylog("count[" + count + "] n[" + n + "]");
 
         ChainIterator i;
+        int finalTail = 0;
+        boolean ok = false;
 
         try {
             if (count > n) {
@@ -663,6 +766,7 @@ public class FatChain {
                 }
                 int l = i.next();
                 fat.set(l, fat.eofChain());
+                finalTail = l;
                 if (dolog)
                     mylog(l + ":" + fat.eofChain());
             } else
@@ -674,14 +778,19 @@ public class FatChain {
                 if (dolog)
                     mylog(l + ":" + fat.freeEntry());
             }
+            ok = true;
         } finally {
-            fat.flushDirty();
+            flushDirtyAndInvalidateOnFailure();
+            if (!ok)
+                invalidateClusterCache();
         }
 
         if (count == n) {
             setStartCluster(0);
             if (dolog)
                 mylog("zero");
+        } else {
+            setClusterCache(count - n, finalTail);
         }
     }
 
@@ -697,13 +806,17 @@ public class FatChain {
             synchronized (fat) {
                 ChainIterator i = listIterator(0);
 
+                boolean ok = false;
                 try {
                     while (i.hasNext()) {
                         int l = i.next();
                         fat.set(l, fat.freeEntry());
                     }
+                    ok = true;
                 } finally {
-                    fat.flushDirty();
+                    flushDirtyAndInvalidateOnFailure();
+                    if (!ok)
+                        invalidateClusterCache();
                 }
             }
 
@@ -996,11 +1109,21 @@ public class FatChain {
      */
     private int appendAllocatedChain(WriteRollback rb, ChainIterator i, int clusterBeforeAppend,
             int n, int m, int offset, boolean zero) throws IOException {
-        int last = allocateTail(n, m, offset, zero);
-        collectAllocated(rb.allocatedClusters, last);
-        rb.captureSavedEnd(clusterBeforeAppend);
-        linkAppendedChain(i, clusterBeforeAppend, last);
-        return last;
+        boolean chainWasEmpty = (head == 0);
+        TailAllocation ta = allocateTail(n, m, offset, zero);
+        try {
+            collectAllocated(rb.allocatedClusters, ta.head);
+            rb.captureSavedEnd(clusterBeforeAppend);
+            linkAppendedChain(i, clusterBeforeAppend, ta.head);
+        } catch (IOException ex) {
+            invalidateClusterCache();
+            throw ex;
+        } catch (RuntimeException ex) {
+            invalidateClusterCache();
+            throw ex;
+        }
+        noteAppendedClusters(n, ta.tail, chainWasEmpty);
+        return ta.head;
     }
 
     /**
@@ -1039,6 +1162,7 @@ public class FatChain {
      */
     private void rollbackTo(WriteRollback rb) {
         invalidateHints();
+        invalidateClusterCache();
         if (rb.allocatedClusters.isEmpty()) {
             return;
         }
@@ -1063,9 +1187,10 @@ public class FatChain {
     }
 
     /**
-     * O(clusters): the whole chain is walked to know the chain length. Do not
-     * call this on a hot path; callers that already know the entry length
-     * (e.g. {@code FatFile}) must use that instead of this method.
+     * The chain length in bytes. O(1) when the cluster count cache is valid
+     * (any mutation this chain itself performed keeps it valid); otherwise a
+     * single walk populates the cache. Callers that already know the entry
+     * length (e.g. {@code FatFile}) must use that instead of this method.
      */
     public long getLength() throws IOException {
         return size() * fat.getClusterSize();
@@ -1188,6 +1313,22 @@ public class FatChain {
             if (attempt >= 3)
                 throw new ChainBeyondEndException("chain changed during write at chain index " + position);
             i.reset();
+        }
+    }
+
+    /**
+     * Head and tail (end-of-chain cluster) of a freshly allocated segment.
+     * The tail is the cluster that was set to the FAT end-of-chain value when
+     * the segment was carved out; both are needed to keep the cached chain
+     * length and tail correct after an append.
+     */
+    private static final class TailAllocation {
+        private final int head;
+        private final int tail;
+
+        private TailAllocation(int head, int tail) {
+            this.head = head;
+            this.tail = tail;
         }
     }
 
