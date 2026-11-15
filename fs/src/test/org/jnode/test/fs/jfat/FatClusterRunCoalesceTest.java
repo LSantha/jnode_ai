@@ -57,7 +57,10 @@ import org.junit.Test;
  * <li>a fragmented file (interleaved allocation) still issues exactly one
  * device read per cluster, with byte-identical content;</li>
  * <li>an unfragmented 1 MiB write issues the same coalesced count;</li>
- * <li>random cluster-aligned reads and a sub-cluster file are unchanged.</li>
+ * <li>random cluster-aligned reads and a sub-cluster file are unchanged;</li>
+ * <li>a coalesced write run that ends at the end of a pre-existing
+ * contiguous chain links a subsequent appended segment to the run's last
+ * cluster (regression: clusters past the run were orphaned).</li>
  * </ul>
  *
  * <p>Only file-data clusters are counted: requests below the first data
@@ -200,6 +203,102 @@ public class FatClusterRunCoalesceTest {
             System.arraycopy(pattern, (int) offsets[i], expected, 0, CLUSTER_SIZE);
             Assert.assertArrayEquals(expected, dst.array());
         }
+
+        fs.close();
+    }
+
+    @Test
+    public void testWritePastEofAfterContiguousRunKeepsChainIntact() throws Exception {
+        FatFileSystem fs = formatAndOpenRW();
+        FSDirectory root = fs.getRootEntry().getDirectory();
+        FSFile file = root.addFile("grow.bin").getFile();
+
+        int seedClusters = 10;
+        byte[] seed = patternBytes(seedClusters * CLUSTER_SIZE);
+        file.write(0, ByteBuffer.wrap(seed));
+        file.flush();
+        fs.flush();
+
+        FatChain seedChain = ((org.jnode.fs.jfat.FatFile) file).getChain();
+        List<Integer> seedClustersList = chainClusters(fs.getFat(), seedChain.getStartCluster());
+        Assert.assertEquals(seedClusters, seedClustersList.size());
+        for (int i = 1; i < seedClustersList.size(); i++) {
+            Assert.assertEquals("seed chain must be contiguous or this test proves nothing",
+                seedClustersList.get(i - 1).intValue() + 1, seedClustersList.get(i).intValue());
+        }
+
+        int bigClusters = 40;
+        byte[] big = patternBytes(bigClusters * CLUSTER_SIZE);
+        file.write(0, ByteBuffer.wrap(big));
+        file.flush();
+        fs.flush();
+
+        Assert.assertEquals(bigClusters * (long) CLUSTER_SIZE, file.getLength());
+
+        FatChain grown = ((org.jnode.fs.jfat.FatFile) file).getChain();
+        List<Integer> clusters = chainClusters(fs.getFat(), grown.getStartCluster());
+        Assert.assertEquals("no cluster may be leaked: the grown chain must hold exactly "
+                + bigClusters + " clusters", bigClusters, clusters.size());
+        for (int i = 1; i < clusters.size(); i++) {
+            Assert.assertEquals("grown chain must stay physically contiguous",
+                clusters.get(i - 1).intValue() + 1, clusters.get(i).intValue());
+        }
+        Assert.assertEquals(bigClusters, grown.size());
+
+        ByteBuffer dst = ByteBuffer.allocate(big.length);
+        file.read(0, dst);
+        Assert.assertArrayEquals(big, dst.array());
+
+        fs.close();
+    }
+
+    @Test
+    public void testWriteStartingInsideChainExtendingPastEof() throws Exception {
+        FatFileSystem fs = formatAndOpenRW();
+        FSDirectory root = fs.getRootEntry().getDirectory();
+        FSFile file = root.addFile("grow2.bin").getFile();
+
+        int seedClusters = 10;
+        byte[] seed = patternBytes(seedClusters * CLUSTER_SIZE);
+        file.write(0, ByteBuffer.wrap(seed));
+        file.flush();
+        fs.flush();
+
+        FatChain seedChain = ((org.jnode.fs.jfat.FatFile) file).getChain();
+        List<Integer> seedClustersList = chainClusters(fs.getFat(), seedChain.getStartCluster());
+        Assert.assertEquals(seedClusters, seedClustersList.size());
+        for (int i = 1; i < seedClustersList.size(); i++) {
+            Assert.assertEquals("seed chain must be contiguous or this test proves nothing",
+                seedClustersList.get(i - 1).intValue() + 1, seedClustersList.get(i).intValue());
+        }
+
+        int headClusters = 5;
+        int tailClusters = 25;
+        byte[] tail = patternBytes(tailClusters * CLUSTER_SIZE);
+        long offset = headClusters * (long) CLUSTER_SIZE;
+        file.write(offset, ByteBuffer.wrap(tail));
+        file.flush();
+        fs.flush();
+
+        Assert.assertEquals((headClusters + tailClusters) * (long) CLUSTER_SIZE, file.getLength());
+
+        FatChain grown = ((org.jnode.fs.jfat.FatFile) file).getChain();
+        int expectedClusters = headClusters + tailClusters;
+        List<Integer> clusters = chainClusters(fs.getFat(), grown.getStartCluster());
+        Assert.assertEquals("no cluster may be leaked: the grown chain must hold exactly "
+                + expectedClusters + " clusters", expectedClusters, clusters.size());
+        for (int i = 1; i < clusters.size(); i++) {
+            Assert.assertEquals("grown chain must stay physically contiguous",
+                clusters.get(i - 1).intValue() + 1, clusters.get(i).intValue());
+        }
+        Assert.assertEquals(expectedClusters, grown.size());
+
+        byte[] expected = new byte[expectedClusters * CLUSTER_SIZE];
+        System.arraycopy(seed, 0, expected, 0, headClusters * CLUSTER_SIZE);
+        System.arraycopy(tail, 0, expected, headClusters * CLUSTER_SIZE, tail.length);
+        ByteBuffer dst = ByteBuffer.allocate(expected.length);
+        file.read(0, dst);
+        Assert.assertArrayEquals(expected, dst.array());
 
         fs.close();
     }

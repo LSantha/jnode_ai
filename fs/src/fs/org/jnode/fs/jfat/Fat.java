@@ -240,7 +240,7 @@ public abstract class Fat {
      * The 48-bit boundary is unreachable from JFAT: the API offsets are
      * partition-relative and 2^48 sectors is 128 PiB.
      */
-    private static final int MAX_REQUEST_SECTORS = IDEConstants.MAX_SECTOR_COUNT_28;
+    private static final int MAX_REQUEST_SECTORS = 256;
 
     /*
      * The number of clusters that fit in one MAX_REQUEST_SECTORS request.
@@ -311,7 +311,7 @@ public abstract class Fat {
             throw new IllegalArgumentException("clusterCount<=0");
         }
         long clusterSize = getClusterSize();
-        if ((long) bufferRemaining > clusterCount * clusterSize) {
+        if ((long) bufferRemaining > (long) clusterCount * clusterSize) {
             throw new IllegalArgumentException("length[" + bufferRemaining + "] " +
                 "exceed run[" + clusterCount + " x clusterSize[" + clusterSize + "]]");
         }

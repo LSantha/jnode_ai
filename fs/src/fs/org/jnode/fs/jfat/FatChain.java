@@ -1170,6 +1170,7 @@ public class FatChain {
                         src.limit(runLimit);
                     }
                     size = runBytes;
+                    cluster = cluster + runClusters - 1;
                     continue;
                 }
             }
