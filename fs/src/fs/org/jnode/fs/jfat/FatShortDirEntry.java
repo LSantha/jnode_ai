@@ -219,10 +219,8 @@ public class FatShortDirEntry extends FatDirEntry {
     }
 
     private void encodeModified() {
-        Calendar cal = Calendar.getInstance();
-        cal.setTimeInMillis(FatUtils.checkDateTime(modified));
-        lWrtDate = FatUtils.encodeDate(cal);
-        lWrtTime = FatUtils.encodeTime(cal);
+        lWrtDate = FatUtils.encodeDate(modified);
+        lWrtTime = FatUtils.encodeTime(modified);
 
         entry.setUInt16(22, lWrtTime);
         entry.setUInt16(24, lWrtDate);
