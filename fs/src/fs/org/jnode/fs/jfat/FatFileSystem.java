@@ -119,7 +119,7 @@ public class FatFileSystem extends AbstractFileSystem<FatRootDirectory> {
         super.flush();
         fat.flush();
         getApi().flush();
-        if (log.isDebugEnabled()) log.debug(getFat().getCacheStat());
+        if (log.isInfoEnabled()) log.info("FAT cache stats: " + getFat().getCacheStat());
     }
 
     @Override

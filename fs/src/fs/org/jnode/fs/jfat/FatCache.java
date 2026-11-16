@@ -25,7 +25,6 @@ import java.nio.ByteBuffer;
 import java.util.ArrayDeque;
 import java.util.LinkedHashMap;
 import java.util.Map;
-import java.util.Stack;
 
 import org.apache.log4j.Logger;
 import org.jnode.driver.block.BlockDeviceAPI;
@@ -83,6 +82,69 @@ public class FatCache {
 
     private static final Logger log = Logger.getLogger(FatCache.class);
 
+    /** Cap applied to the computed (volume-derived) cache size. */
+    public static final int DEFAULT_CACHE_SIZE = 8192;
+    /** Floor applied to the computed (volume-derived) cache size. */
+    public static final int MIN_COMPUTED_CACHE_SIZE = 256;
+    /** Floor applied to an explicit {@code jnode.fat.cacheSize} override. */
+    public static final int MIN_CACHE_SIZE = 16;
+    /** Ceiling applied to an explicit {@code jnode.fat.cacheSize} override. */
+    public static final int MAX_CACHE_SIZE = 65536;
+
+    /**
+     * Compute the default FAT cache size for a volume, in number of
+     * 512-byte elements. Small volumes allocate proportionally less; the
+     * result is always in [{@link #MIN_COMPUTED_CACHE_SIZE},
+     * {@link #DEFAULT_CACHE_SIZE}].
+     */
+    public static int computeCacheSize(long sectorsPerFat) {
+        if (sectorsPerFat <= 0) {
+            return MIN_COMPUTED_CACHE_SIZE;
+        }
+        long computed = sectorsPerFat / 4;
+        if (computed < MIN_COMPUTED_CACHE_SIZE) {
+            return MIN_COMPUTED_CACHE_SIZE;
+        }
+        if (computed > DEFAULT_CACHE_SIZE) {
+            return DEFAULT_CACHE_SIZE;
+        }
+        return (int) computed;
+    }
+
+    /**
+     * Resolve the FAT cache size for a volume. When {@code propertyValue}
+     * (the {@code jnode.fat.cacheSize} property) is set and parses as an
+     * integer it wins, clamped to [{@link #MIN_CACHE_SIZE},
+     * {@link #MAX_CACHE_SIZE}]; an unparseable value is ignored with a
+     * warning and the computed default is used instead.
+     */
+    public static int resolveCacheSize(long sectorsPerFat, String propertyValue) {
+        int computed = computeCacheSize(sectorsPerFat);
+        if (propertyValue == null || propertyValue.trim().length() == 0) {
+            return computed;
+        }
+        final String trimmed = propertyValue.trim();
+        final int requested;
+        try {
+            requested = Integer.parseInt(trimmed);
+        } catch (NumberFormatException e) {
+            log.warn("Ignoring unparseable jnode.fat.cacheSize=\"" + propertyValue
+                + "\"; using computed default " + computed);
+            return computed;
+        }
+        if (requested < MIN_CACHE_SIZE) {
+            log.warn("jnode.fat.cacheSize=" + requested + " below minimum " + MIN_CACHE_SIZE
+                + "; clamping to " + MIN_CACHE_SIZE);
+            return MIN_CACHE_SIZE;
+        }
+        if (requested > MAX_CACHE_SIZE) {
+            log.warn("jnode.fat.cacheSize=" + requested + " above maximum " + MAX_CACHE_SIZE
+                + "; clamping to " + MAX_CACHE_SIZE);
+            return MAX_CACHE_SIZE;
+        }
+        return requested;
+    }
+
     private final float loadFactor = 0.75f;
 
     private final Fat fat;
@@ -138,7 +200,7 @@ public class FatCache {
 
     private CacheElement put(long address) throws IOException {
         /**
-         * get a CacheElement from the stack object pool
+         * get a CacheElement from the free list object pool
          */
         CacheElement c = map.pop();
 
@@ -162,9 +224,9 @@ public class FatCache {
          */
         map.put(c);
 
-        /**
-         * stack "must" contains at least one entry the placeholder ... so let
-         * it throw an exception if this is false
+        /*
+         * the free list "must" contain at least one entry (the placeholder),
+         * so let it throw an exception if this is false
          */
         CacheElement e = map.peek();
         // if an element was discarded from the LRU cache
@@ -371,7 +433,7 @@ public class FatCache {
         private static final long serialVersionUID = 1L;
         private final int cacheSize;
         private final CacheKey key = new CacheKey();
-        private final Stack<CacheElement> free = new Stack<CacheElement>();
+        private final ArrayDeque<CacheElement> free = new ArrayDeque<CacheElement>();
         private boolean requeueing;
 
         private CacheMap(int cacheSize) {
@@ -398,8 +460,8 @@ public class FatCache {
             return free.peek();
         }
 
-        private CacheElement push(CacheElement c) {
-            return free.push(c);
+        private void push(CacheElement c) {
+            free.push(c);
         }
 
         private CacheElement pop() {
@@ -438,8 +500,8 @@ public class FatCache {
             boolean remove = !requeueing && (size() > cacheSize);
 
             /**
-             * before going to discard the eldest push it back on the stacked
-             * object pool
+             * before going to discard the eldest push it back on the free
+             * list object pool
              */
             if (remove)
                 push(eldest.getValue());
