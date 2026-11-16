@@ -138,6 +138,49 @@ public class FatDeferredZeroFillTest {
     }
 
     @Test
+    public void testGapFlushRealizesInBulkRuns() throws Exception {
+        prefill();
+        CountingFSBlockDeviceAPI countingApi = openCountingRW();
+        FatFileSystem fs = create();
+        FSFile file = fs.getRootEntry().getDirectory().addFile("bulk.bin").getFile();
+
+        byte[] head = pattern(4096);
+        file.write(0, ByteBuffer.wrap(head));
+        file.flush();
+        fs.flush();
+        countingApi.resetWriteStats();
+
+        byte[] payload = pattern(4096);
+        file.write(GAP_OFFSET, ByteBuffer.wrap(payload));
+        countingApi.resetWriteStats();
+
+        file.flush();
+
+        /*
+         * The hole is [4096, GAP_OFFSET) = 4095 clusters. FAT flushes are 512-byte
+         * cache elements and the directory entry write is 32 bytes, so every write
+         * of 4096 bytes or more is a zero-fill run. With 256 sectors per request
+         * and 8 sectors per 4 KiB cluster a run covers at most 32 clusters, so
+         * realizing the hole costs at most ceil(4095 / 32) = 128 requests (127
+         * full runs plus the 31-cluster tail); a per-cluster fill would be 4095.
+         * Two extra requests are tolerated in case the free-cluster scan splits
+         * the run.
+         */
+        int clusterSize = fs.getClusterSize();
+        int maxRunClusters = 256 / (clusterSize / 512);
+        long holeClusters = (GAP_OFFSET - clusterSize) / clusterSize;
+        long holeBytes = GAP_OFFSET - clusterSize;
+        long expectedRuns = (holeClusters + maxRunClusters - 1) / maxRunClusters;
+        assertTrue("expected at most " + (expectedRuns + 2) + " bulk zero-fill writes, got "
+                + countingApi.largeWriteCount(),
+            countingApi.largeWriteCount() <= expectedRuns + 2);
+        assertTrue("expected at least the " + holeBytes + " hole bytes on the device, got "
+                + countingApi.largeBytesWritten(),
+            countingApi.largeBytesWritten() >= holeBytes);
+        fs.close();
+    }
+
+    @Test
     public void testSetLengthGrowDoesNotWriteGapEagerly() throws Exception {
         prefill();
         CountingFSBlockDeviceAPI countingApi = openCountingRW();
@@ -412,6 +455,8 @@ public class FatDeferredZeroFillTest {
         private final FileDevice delegate;
         private final AtomicLong writeCount = new AtomicLong();
         private final AtomicLong bytesWritten = new AtomicLong();
+        private final AtomicLong largeWriteCount = new AtomicLong();
+        private final AtomicLong largeBytesWritten = new AtomicLong();
 
         private CountingFSBlockDeviceAPI(FileDevice delegate) {
             this.delegate = delegate;
@@ -428,6 +473,10 @@ public class FatDeferredZeroFillTest {
         public void write(long devOffset, ByteBuffer src) throws IOException {
             writeCount.incrementAndGet();
             bytesWritten.addAndGet(src.remaining());
+            if (src.remaining() >= 4096) {
+                largeWriteCount.incrementAndGet();
+                largeBytesWritten.addAndGet(src.remaining());
+            }
             delegate.write(devOffset, src);
         }
 
@@ -451,9 +500,19 @@ public class FatDeferredZeroFillTest {
             return bytesWritten.get();
         }
 
+        long largeWriteCount() {
+            return largeWriteCount.get();
+        }
+
+        long largeBytesWritten() {
+            return largeBytesWritten.get();
+        }
+
         void resetWriteStats() {
             writeCount.set(0);
             bytesWritten.set(0);
+            largeWriteCount.set(0);
+            largeBytesWritten.set(0);
         }
     }
 }

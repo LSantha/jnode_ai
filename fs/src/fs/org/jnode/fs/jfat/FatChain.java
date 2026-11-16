@@ -73,8 +73,25 @@ public class FatChain {
      * harmless (the bytes are beyond the visible file and re-deferral merges
      * over it), while ranges recorded by a failed write are rolled back via
      * {@link WriteRollback#deferredZeros}.
+     *
+     * <p>Every access is guarded by {@link #holeLock}. Hole realization runs
+     * under the same lock as the data-write + hole-carve sequence of
+     * {@link #writeInternal(boolean, long, long, ByteBuffer)}, so a flush can
+     * never zero bytes a concurrent writer has just written: the writer carves
+     * the written range out of the pending holes (or replaces them) before the
+     * flusher sees them. Reads take the lock only for the hole-list scan, never
+     * for the device transfer.</p>
      */
     private final List<long[]> holes = new ArrayList<long[]>();
+
+    /**
+     * Per-chain lock guarding {@link #holes} and serializing hole realization
+     * against the write + carve sequence. It is deliberately separate from the
+     * {@code fat} monitor: realization issues device writes and must not
+     * serialize allocations on the FAT. Lock order is always {@code holeLock}
+     * then the {@code fat} monitor; nothing takes them in the opposite order.
+     */
+    private final Object holeLock = new Object();
     private byte[] zeroScratch;
 
     /**
@@ -139,8 +156,10 @@ public class FatChain {
      * caller must not persist the directory entry before this method returns.
      */
     public void flush() throws IOException {
-        realizeHoles();
-        dirty = false;
+        synchronized (holeLock) {
+            realizeHoles();
+            dirty = false;
+        }
     }
 
     public ChainIterator listIterator() {
@@ -221,53 +240,57 @@ public class FatChain {
         if (from >= to) {
             return;
         }
-        int i = 0;
-        while (i < holes.size() && holes.get(i)[1] < from) {
-            i++;
-        }
-        long newFrom = from;
-        long newTo = to;
-        int j = i;
-        while (j < holes.size() && holes.get(j)[0] <= newTo) {
-            long[] h = holes.get(j);
-            if (h[0] < newFrom) {
-                newFrom = h[0];
+        synchronized (holeLock) {
+            int i = 0;
+            while (i < holes.size() && holes.get(i)[1] < from) {
+                i++;
             }
-            if (h[1] > newTo) {
-                newTo = h[1];
+            long newFrom = from;
+            long newTo = to;
+            int j = i;
+            while (j < holes.size() && holes.get(j)[0] <= newTo) {
+                long[] h = holes.get(j);
+                if (h[0] < newFrom) {
+                    newFrom = h[0];
+                }
+                if (h[1] > newTo) {
+                    newTo = h[1];
+                }
+                j++;
             }
-            j++;
+            for (int k = j - 1; k >= i; k--) {
+                holes.remove(k);
+            }
+            holes.add(i, new long[] {newFrom, newTo});
+            dirty = true;
         }
-        for (int k = j - 1; k >= i; k--) {
-            holes.remove(k);
-        }
-        holes.add(i, new long[] {newFrom, newTo});
-        dirty = true;
     }
 
     private void removeHoleRange(long from, long to) {
         if (from >= to) {
             return;
         }
-        for (int i = 0; i < holes.size();) {
-            long[] h = holes.get(i);
-            if (h[1] <= from) {
-                i++;
-                continue;
-            }
-            if (h[0] >= to) {
-                break;
-            }
-            long[] left = (h[0] < from) ? new long[] {h[0], from} : null;
-            long[] right = (h[1] > to) ? new long[] {to, h[1]} : null;
-            holes.remove(i);
-            if (left != null) {
-                holes.add(i, left);
-                i++;
-            }
-            if (right != null) {
-                holes.add(i, right);
-                i++;
+        synchronized (holeLock) {
+            for (int i = 0; i < holes.size();) {
+                long[] h = holes.get(i);
+                if (h[1] <= from) {
+                    i++;
+                    continue;
+                }
+                if (h[0] >= to) {
+                    break;
+                }
+                long[] left = (h[0] < from) ? new long[] {h[0], from} : null;
+                long[] right = (h[1] > to) ? new long[] {to, h[1]} : null;
+                holes.remove(i);
+                if (left != null) {
+                    holes.add(i, left);
+                    i++;
+                }
+                if (right != null) {
+                    holes.add(i, right);
+                    i++;
+                }
             }
         }
     }
@@ -276,17 +299,19 @@ public class FatChain {
         if (from >= to) {
             return false;
         }
-        for (int i = 0; i < holes.size(); i++) {
-            long[] h = holes.get(i);
-            if (h[1] <= from) {
-                continue;
+        synchronized (holeLock) {
+            for (int i = 0; i < holes.size(); i++) {
+                long[] h = holes.get(i);
+                if (h[1] <= from) {
+                    continue;
+                }
+                if (h[0] >= to) {
+                    break;
+                }
+                return true;
             }
-            if (h[0] >= to) {
-                break;
-            }
-            return true;
+            return false;
         }
-        return false;
     }
 
     private void deferZero(WriteRollback rb, long from, long to) {
@@ -300,10 +325,12 @@ public class FatChain {
     }
 
     private void realizeHoles() throws IOException {
-        while (!holes.isEmpty()) {
-            long[] h = holes.get(0);
-            zeroHoleRange(h[0], h[1]);
-            holes.remove(0);
+        synchronized (holeLock) {
+            while (!holes.isEmpty()) {
+                long[] h = holes.get(0);
+                zeroHoleRange(h[0], h[1]);
+                holes.remove(0);
+            }
         }
     }
 
@@ -320,7 +347,7 @@ public class FatChain {
         try {
             it = listIterator((int) fromIndex);
         } catch (NoSuchElementException ex) {
-            log.warn("hole range [" + from + ", " + to + ") starts past the end of the chain; "
+            log.debug("hole range [" + from + ", " + to + ") starts past the end of the chain; "
                 + "the range is dropped", ex);
             return;
         }
@@ -328,7 +355,7 @@ public class FatChain {
         int runCount = 0;
         while (pos < end) {
             if (!it.hasNext()) {
-                log.warn("hole range [" + from + ", " + to + ") extends past the end of the chain; "
+                log.debug("hole range [" + from + ", " + to + ") extends past the end of the chain; "
                     + "the unreachable tail is dropped");
                 break;
             }
@@ -611,8 +638,10 @@ public class FatChain {
     /**
      * Phase 2 of {@link #appendAllocatedTail}: link at most one cluster, the partially
      * written head cluster that straddles the write offset. The cluster is fully cleared
-     * when {@code zero} is set; when {@code zero} is not set its {@code [0, offset)}
-     * head range is covered by the deferred-zero hole recorded by the caller.
+     * when {@code zero} is set; when {@code zero} is not set (the file-length path, which
+     * tracks exposure) its {@code [0, offset)} head range is covered by the deferred-zero
+     * hole recorded by the caller. The length-less path passes {@code zero} true instead,
+     * so the range never carries stale device bytes there.
      *
      * <p>Precondition: {@code offset > 0}; phase 1 has run.
      *
@@ -640,8 +669,9 @@ public class FatChain {
     /**
      * Phase 3 of {@link #appendAllocatedTail}: link whole free clusters until
      * {@code st.found} reaches {@code target}. These clusters sit below the write
-     * position; they are fully cleared when {@code zero} is set, otherwise the
-     * caller records their byte range as a deferred-zero hole.
+     * position; they are fully cleared when {@code zero} is set, otherwise the caller
+     * (the file-length path, which tracks exposure) records their byte range as a
+     * deferred-zero hole. The length-less path passes {@code zero} true instead.
      *
      * <p>Precondition: phases 1 and 2 (when applicable) have run.
      *
@@ -1036,7 +1066,10 @@ public class FatChain {
         }
 
         int lastCluster = 0;
-        boolean holeTracking = !holes.isEmpty();
+        boolean holeTracking;
+        synchronized (holeLock) {
+            holeTracking = !holes.isEmpty();
+        }
         long chunkAbs = offset;
 
         for (int l = dst.remaining(), sz = p.getPartial(), ofs = p.getOffset(), size; l > 0; l -=
@@ -1140,37 +1173,39 @@ public class FatChain {
 
     private void readChunkWithHoles(int cluster, int ofs, int size, long chunkAbs, ByteBuffer dst)
             throws IOException {
-        long end = chunkAbs + size;
-        long pos = chunkAbs;
-        while (pos < end) {
-            long holeFrom = -1;
-            long holeTo = -1;
-            for (int i = 0; i < holes.size(); i++) {
-                long[] h = holes.get(i);
-                if (h[1] <= pos) {
-                    continue;
-                }
-                if (h[0] >= end) {
+        synchronized (holeLock) {
+            long end = chunkAbs + size;
+            long pos = chunkAbs;
+            while (pos < end) {
+                long holeFrom = -1;
+                long holeTo = -1;
+                for (int i = 0; i < holes.size(); i++) {
+                    long[] h = holes.get(i);
+                    if (h[1] <= pos) {
+                        continue;
+                    }
+                    if (h[0] >= end) {
+                        break;
+                    }
+                    holeFrom = Math.max(h[0], pos);
+                    holeTo = Math.min(h[1], end);
                     break;
                 }
-                holeFrom = Math.max(h[0], pos);
-                holeTo = Math.min(h[1], end);
-                break;
+                if (holeFrom < 0) {
+                    readDeviceSegment(cluster, ofs, chunkAbs, pos, end, dst);
+                    return;
+                }
+                if (pos < holeFrom) {
+                    readDeviceSegment(cluster, ofs, chunkAbs, pos, holeFrom, dst);
+                }
+                int zeroLen = (int) (holeTo - holeFrom);
+                if (zeroScratch == null || zeroScratch.length < zeroLen) {
+                    zeroScratch = new byte[Math.max(zeroLen, 8192)];
+                }
+                Arrays.fill(zeroScratch, 0, zeroLen, (byte) 0);
+                dst.put(zeroScratch, 0, zeroLen);
+                pos = holeTo;
             }
-            if (holeFrom < 0) {
-                readDeviceSegment(cluster, ofs, chunkAbs, pos, end, dst);
-                return;
-            }
-            if (pos < holeFrom) {
-                readDeviceSegment(cluster, ofs, chunkAbs, pos, holeFrom, dst);
-            }
-            int zeroLen = (int) (holeTo - holeFrom);
-            if (zeroScratch == null || zeroScratch.length < zeroLen) {
-                zeroScratch = new byte[Math.max(zeroLen, 8192)];
-            }
-            Arrays.fill(zeroScratch, 0, zeroLen, (byte) 0);
-            dst.put(zeroScratch, 0, zeroLen);
-            pos = holeTo;
         }
     }
 
@@ -1216,28 +1251,34 @@ public class FatChain {
 
         WriteRollback rb = new WriteRollback(head);
 
-        try {
-            ChainPosition p = new ChainPosition(offset);
-            ChainIterator i = listIterator();
-            GrowResult grown = ensureChainHasClusterIndex(rb, i, p, src, offset);
-            long writtenEnd = offset + src.remaining();
-            writeDataClusters(rb, i, p, src, grown.cluster);
-            removeHoleRange(offset, writtenEnd);
+        // Hole realization (flush()/realizeHoles()) and the data-write + hole-carve
+        // sequence are mutually exclusive under holeLock: the flusher can never zero
+        // bytes this call just wrote, and the rollback path below leaves the hole list
+        // consistent. The lock is re-entrant, so the private helpers may take it again.
+        synchronized (holeLock) {
+            try {
+                ChainPosition p = new ChainPosition(offset);
+                ChainIterator i = listIterator();
+                GrowResult grown = ensureChainHasClusterIndex(rb, i, p, src, offset, trackExposure);
+                long writtenEnd = offset + src.remaining();
+                writeDataClusters(rb, i, p, src, grown.cluster, trackExposure);
+                removeHoleRange(offset, writtenEnd);
 
-            if (trackExposure) {
-                if (offset > length)
-                    deferZero(rb, length, offset);
-                if (writtenEnd > length) {
-                    long coverageEnd = (long) size() * p.getSize();
-                    deferZero(rb, writtenEnd, coverageEnd);
+                if (trackExposure) {
+                    if (offset > length)
+                        deferZero(rb, length, offset);
+                    if (writtenEnd > length) {
+                        long coverageEnd = (long) size() * p.getSize();
+                        deferZero(rb, writtenEnd, coverageEnd);
+                    }
                 }
+            } catch (IOException ex) {
+                rollbackTo(rb);
+                throw ex;
+            } catch (RuntimeException ex) {
+                rollbackTo(rb);
+                throw ex;
             }
-        } catch (IOException ex) {
-            rollbackTo(rb);
-            throw ex;
-        } catch (RuntimeException ex) {
-            rollbackTo(rb);
-            throw ex;
         }
     }
 
@@ -1259,16 +1300,22 @@ public class FatChain {
      * untouched.</li>
      * </ul>
      *
-     * <p>Gap and tail zeroing is not this method's concern: {@code write()} records
-     * every newly exposed byte range as a deferred-zero hole ({@link #holes}) after
-     * the data copy, and {@link #flush()} realizes the holes on the device.</p>
+     * <p>When the caller tracks exposure ({@code trackExposure} is true), the newly
+     * grown clusters are left untouched here: {@code write()} records every newly
+     * exposed byte range as a deferred-zero hole ({@link #holes}) after the data copy,
+     * and {@link #flush()} realizes the holes on the device. When the caller does not
+     * track exposure (the length-less {@link #write(long, ByteBuffer)} overload), no
+     * hole is recorded, so every newly linked cluster is zeroed eagerly instead; the
+     * grown gap must never expose stale device bytes.</p>
      *
+     * @param trackExposure true when the caller records deferred-zero holes for the newly
+     *        exposed bytes (the file-length overload); false zeroes the grown gap eagerly
      * @return the grow outcome; {@code cluster} is the cluster at chain index
      *         {@code p.getIndex() - 1} (0 when there is none), used as link target by a
      *         mid-write append
      */
     private GrowResult ensureChainHasClusterIndex(WriteRollback rb, ChainIterator i,
-            ChainPosition p, ByteBuffer src, long offset) throws IOException {
+            ChainPosition p, ByteBuffer src, long offset, boolean trackExposure) throws IOException {
         int clsize = p.getSize();
         int clidx = p.getIndex();
         boolean empty = (src.remaining() == 0);
@@ -1279,7 +1326,7 @@ public class FatChain {
         boolean needsGrow = (last != clidx)
             || (empty && !i.hasNext() && offset > (long) last * clsize);
         if (!needsGrow)
-            return new GrowResult(cluster, false);
+            return new GrowResult(cluster);
 
         int m = clidx - last;
 
@@ -1296,10 +1343,12 @@ public class FatChain {
                 + " exceeds the maximum chain index");
         int n = (int) clustersNeeded;
 
+        // The file-length overload defers the grown gap as a hole realized at flush;
+        // the length-less overload has no hole to defer through, so zero eagerly.
         if (empty)
-            appendAllocatedChain(rb, i, cluster, n, n - 1, 0, false);
+            appendAllocatedChain(rb, i, cluster, n, n - 1, 0, !trackExposure);
         else
-            appendAllocatedChain(rb, i, cluster, n, m, p.getOffset(), false);
+            appendAllocatedChain(rb, i, cluster, n, m, p.getOffset(), !trackExposure);
 
         if (src.remaining() > 0) {
             try {
@@ -1309,7 +1358,7 @@ public class FatChain {
             }
         }
 
-        return new GrowResult(cluster, true);
+        return new GrowResult(cluster);
     }
 
     /**
@@ -1327,7 +1376,7 @@ public class FatChain {
      * the iterator advances past the last written cluster.</p>
      */
     private void writeDataClusters(WriteRollback rb, ChainIterator i, ChainPosition p,
-            ByteBuffer src, int startCluster) throws IOException {
+            ByteBuffer src, int startCluster, boolean trackExposure) throws IOException {
         int clsize = p.getSize();
         int cluster = startCluster;
 
@@ -1339,7 +1388,7 @@ public class FatChain {
                 if ((l % clsize) != 0)
                     n++;
 
-                appendAllocatedChain(rb, i, cluster, n, 0, 0, false);
+                appendAllocatedChain(rb, i, cluster, n, 0, 0, !trackExposure);
             }
 
             cluster = i.next();
@@ -1482,7 +1531,9 @@ public class FatChain {
      * and whose chain carries live content without a file length: does not
      * record deferred-zero holes for bytes beyond the data. The file-length
      * overload {@link #write(long, long, ByteBuffer)} is for callers that know
-     * the length (FatFile).
+     * the length (FatFile). Because no deferred-zero hole is recorded, every newly
+     * linked cluster is zeroed eagerly instead; the grown gap never exposes stale
+     * device bytes.
      */
     public void write(long offset, ByteBuffer src) throws IOException {
         writeInternal(false, 0, offset, src);
@@ -1673,16 +1724,13 @@ public class FatChain {
      * Outcome of {@link #ensureChainHasClusterIndex}.
      *
      * <p>{@code cluster} is the cluster at chain index {@code clidx - 1} (0 when there is
-     * none), used as link target by a mid-write append. {@code allocated} is true when
-     * the call grew the chain.</p>
+     * none), used as link target by a mid-write append.</p>
      */
     private static final class GrowResult {
         private final int cluster;
-        private final boolean allocated;
 
-        private GrowResult(int cluster, boolean allocated) {
+        private GrowResult(int cluster) {
             this.cluster = cluster;
-            this.allocated = allocated;
         }
     }
 

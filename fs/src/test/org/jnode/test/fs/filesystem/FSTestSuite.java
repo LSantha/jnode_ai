@@ -59,6 +59,7 @@ import org.jnode.test.fs.jfat.FatBarrierTest;
 import org.jnode.test.fs.jfat.FatBeyondEofWriteTest;
 import org.jnode.test.fs.jfat.FatSetLengthTest;
 import org.jnode.test.fs.jfat.FatDeferredZeroFillTest;
+import org.jnode.test.fs.jfat.FatLengthlessWriteGapTest;
 import org.jnode.test.fs.jfat.FatReadWriteTest;
 import org.jnode.test.fs.jfat.FatRootDirectoryBufferTest;
 import org.jnode.test.fs.jfat.FatRootDirectoryWriteTest;
@@ -106,6 +107,7 @@ import org.junit.runners.Suite.SuiteClasses;
     FatBeyondEofWriteTest.class,
     FatSetLengthTest.class,
     FatDeferredZeroFillTest.class,
+    FatLengthlessWriteGapTest.class,
     FatSizeBoundaryTest.class,
     FatDirectoryExtensionTest.class,
     FatDirectoryBatchWriteTest.class,
