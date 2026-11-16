@@ -756,10 +756,13 @@ public class FatFailurePathTest {
      * The recompute inside Fat.flush()'s failure path is made observable here
      * by injecting a stale freeClusterCount (reflection) before an armed
      * flush: if the recompute is removed, the stale value survives and the
-     * assertion fails. The scan itself reads from the cache (the FAT is
-     * cache-resident on this image), so the "keeps the old value when the
-     * rescan itself fails" branch is not reachable in-process; the armed
-     * device fails the write phase, not the rescan. The concurrent counter
+     * assertion fails. The scan reads from the cache; the computed default
+     * cache covers every FAT sector up to the 8192-element cap (~545 sectors
+     * on this 68 MiB image), so the FAT stays cache-resident here and the
+     * "keeps the old value when the rescan itself fails" branch is not
+     * reachable in-process; the armed device fails the write phase, not the
+     * rescan.
+     * The concurrent counter
      * race is covered by ConcurrentAccessFSTest.testCreateWriteRemovePerThreadDirectories.
      */
     @Test

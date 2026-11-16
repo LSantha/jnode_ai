@@ -26,11 +26,13 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
+import java.util.Properties;
 import org.apache.log4j.Logger;
 import org.jnode.driver.block.BlockDeviceAPI;
 import org.jnode.driver.block.FSBlockDeviceAPI;
 import org.jnode.driver.bus.ide.IDEConstants;
 import org.jnode.fs.FileSystemException;
+import org.jnode.vm.VmIOContext;
 
 
 /**
@@ -99,9 +101,11 @@ public abstract class Fat {
         this.api = api;
 
         /*
-         * create a suitable cache
+         * create a suitable cache; size comes from the volume geometry and
+         * the jnode.fat.cacheSize property override, never from a literal
          */
-        cache = new FatCache(this, 8192, 512);
+        cache = new FatCache(this, FatCache.resolveCacheSize(bs.getSectorsPerFat(),
+            cacheSizeOverride()), 512);
 
         divergentFatSectors = compareFatCopies();
 
@@ -652,9 +656,18 @@ public abstract class Fat {
         return getBootSector().isFat12();
     }
 
+    private static String cacheSizeOverride() {
+        try {
+            Properties props = VmIOContext.getGlobalProperties();
+            return props == null ? null : props.getProperty("jnode.fat.cacheSize");
+        } catch (RuntimeException e) {
+            return null;
+        }
+    }
+
     public String getCacheStat() {
         StrWriter out = new StrWriter();
-        out.println("Access: " + cache.getAccess() + " Hits: " + cache.getHit() + " Ratio: " +
+        out.print("Access: " + cache.getAccess() + " Hits: " + cache.getHit() + " Ratio: " +
             cache.getRatio() * 100 + "%");
         return out.toString();
     }
