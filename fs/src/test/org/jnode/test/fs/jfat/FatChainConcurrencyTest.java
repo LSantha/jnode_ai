@@ -21,6 +21,7 @@
 package org.jnode.test.fs.jfat;
 
 import java.io.File;
+import java.io.RandomAccessFile;
 import java.nio.ByteBuffer;
 import java.util.Arrays;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -71,6 +72,12 @@ public class FatChainConcurrencyTest {
     private static final int GROW_INITIAL_LENGTH = 8192;
     private static final int GROW_CHUNK_BYTES = 1024;
     private static final int GROW_MAX_APPEND_BYTES = 192 * 1024;
+
+    private static final int GAP_WRITE_PAIRS = 24;
+    private static final int GAP_STRIDE = 8196;
+    private static final int GAP_MID_OFFSET = 4096;
+    private static final int GAP_MID_LENGTH = 64;
+    private static final int GAP_TAIL_OFFSET = 8192;
 
     private File diskFile;
     private FileDevice fileDevice;
@@ -287,6 +294,139 @@ public class FatChainConcurrencyTest {
         fs.close();
     }
 
+    /**
+     * Regression test for the deferred-zero-fill holes: a gap-extending writer and a
+     * concurrent flusher (and reader) used to race on the unsynchronized hole list, so
+     * the flusher zeroed bytes the writer had already written, and the list itself was
+     * corrupted (NPE/IOOBE). The writer appends {@link #GAP_WRITE_PAIRS} pairs: a
+     * gap-extending write, then an in-gap write that carves the freshly written bytes
+     * out of the pending zero hole. The flusher realizes pending holes continuously.
+     * After a final flush the file is remounted and every byte is checked against the
+     * expected pattern: zeros in the gaps, the payload bytes in between.
+     */
+    @Test
+    public void testConcurrentGapWriterAndFlusher() throws Exception {
+        prefillImage();
+        fileDevice = new SynchronizedFileDevice(diskFile, "rw");
+        FatFileSystemFormatter formatter = new FatFileSystemFormatter(ClusterSize._4Kb);
+        FatFileSystem fs = formatter.format(fileDevice);
+
+        FSDirectory root = fs.getRootEntry().getDirectory();
+        final FSFile file = root.addFile("gap-stress.bin").getFile();
+
+        byte[] head = new byte[SPARSE_CLUSTER_SIZE];
+        Arrays.fill(head, (byte) 0x5A);
+        file.write(0, ByteBuffer.wrap(head));
+        file.flush();
+
+        final AtomicBoolean stop = new AtomicBoolean(false);
+        final AtomicReference<Throwable> failure = new AtomicReference<Throwable>();
+        final AtomicLong writes = new AtomicLong();
+        final AtomicLong flushes = new AtomicLong();
+        final AtomicLong reads = new AtomicLong();
+
+        Thread writer = new Thread(new Runnable() {
+            public void run() {
+                for (int i = 0; i < GAP_WRITE_PAIRS; i++) {
+                    try {
+                        long len = file.getLength();
+                        byte[] tail = new byte[] {(byte) (i + 1), (byte) (i + 1), (byte) (i + 1), (byte) (i + 1)};
+                        file.write(len + GAP_TAIL_OFFSET, ByteBuffer.wrap(tail));
+                        byte[] mid = new byte[GAP_MID_LENGTH];
+                        Arrays.fill(mid, (byte) (0xA0 + i));
+                        file.write(len + GAP_MID_OFFSET, ByteBuffer.wrap(mid));
+                        writes.incrementAndGet();
+                    } catch (Throwable t) {
+                        failure.compareAndSet(null, t);
+                        return;
+                    }
+                }
+                stop.set(true);
+            }
+        }, "fat-chain-gap-writer");
+
+        Thread flusher = new Thread(new Runnable() {
+            public void run() {
+                while (!stop.get()) {
+                    try {
+                        file.flush();
+                        flushes.incrementAndGet();
+                    } catch (Throwable t) {
+                        failure.compareAndSet(null, t);
+                        return;
+                    }
+                }
+            }
+        }, "fat-chain-gap-flusher");
+
+        Thread reader = new Thread(new Runnable() {
+            public void run() {
+                ByteBuffer buf = ByteBuffer.allocate(65536);
+                while (!stop.get()) {
+                    try {
+                        long len = file.getLength();
+                        int readLen = (int) Math.min(len, buf.capacity());
+                        if (readLen > 0) {
+                            buf.clear();
+                            buf.limit(readLen);
+                            file.read(0, buf);
+                            reads.incrementAndGet();
+                        }
+                    } catch (Throwable t) {
+                        failure.compareAndSet(null, t);
+                        return;
+                    }
+                }
+            }
+        }, "fat-chain-gap-reader");
+
+        reader.start();
+        flusher.start();
+        writer.start();
+        writer.join(60000L);
+        stop.set(true);
+        reader.join(60000L);
+        flusher.join(60000L);
+
+        assertNull("gap writer/flusher/reader threw: " + failure.get(), failure.get());
+        assertEquals("writer did not complete every pair", GAP_WRITE_PAIRS, writes.get());
+        assertTrue("flusher made no progress", flushes.get() > 0);
+        assertTrue("reader made no progress", reads.get() > 0);
+
+        file.flush();
+        fs.flush();
+        fs.close();
+        fileDevice.close();
+
+        fileDevice = new FileDevice(diskFile, "r");
+        FatFileSystemType type = fss.getFileSystemType(FatFileSystemType.ID);
+        FatFileSystem ro = (FatFileSystem) type.create(fileDevice, true);
+        FSFile check = ro.getRootEntry().getDirectory().getEntry("gap-stress.bin").getFile();
+        long length = check.getLength();
+        ByteBuffer all = ByteBuffer.allocate((int) length);
+        check.read(0, all);
+        byte[] data = all.array();
+        assertEquals("head byte", (byte) 0x5A, data[0]);
+        for (int i = 0; i < GAP_WRITE_PAIRS; i++) {
+            long base = SPARSE_CLUSTER_SIZE + (long) i * GAP_STRIDE;
+            for (long j = base; j < base + GAP_MID_OFFSET; j++) {
+                assertEquals("gap byte " + j, (byte) 0, data[(int) j]);
+            }
+            for (int j = 0; j < GAP_MID_LENGTH; j++) {
+                assertEquals("mid byte " + (base + GAP_MID_OFFSET + j), (byte) (0xA0 + i),
+                    data[(int) (base + GAP_MID_OFFSET + j)]);
+            }
+            for (long j = base + GAP_MID_OFFSET + GAP_MID_LENGTH; j < base + GAP_TAIL_OFFSET; j++) {
+                assertEquals("gap byte " + j, (byte) 0, data[(int) j]);
+            }
+            for (int j = 0; j < 4; j++) {
+                assertEquals("tail byte " + (base + GAP_TAIL_OFFSET + j), (byte) (i + 1),
+                    data[(int) (base + GAP_TAIL_OFFSET + j)]);
+            }
+        }
+        ro.close();
+    }
+
     @Test
     public void testConcurrentSparseWritesToDifferentFiles() throws Exception {
         fileDevice = new SynchronizedFileDevice(diskFile, "rw");
@@ -355,6 +495,24 @@ public class FatChainConcurrencyTest {
         }
 
         fs.close();
+    }
+
+    private void prefillImage() throws Exception {
+        RandomAccessFile raf = new RandomAccessFile(diskFile, "rw");
+        try {
+            raf.setLength(68L * 1024 * 1024);
+            byte[] chunk = new byte[8192];
+            Arrays.fill(chunk, (byte) 0xAB);
+            raf.seek(0);
+            long remaining = 68L * 1024 * 1024;
+            while (remaining > 0) {
+                int n = (int) Math.min(chunk.length, remaining);
+                raf.write(chunk, 0, n);
+                remaining -= n;
+            }
+        } finally {
+            raf.close();
+        }
     }
 
     private static byte sparsePattern(int thread, int write) {
