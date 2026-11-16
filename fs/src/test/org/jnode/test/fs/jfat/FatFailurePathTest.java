@@ -25,7 +25,6 @@ import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.util.Arrays;
 import java.util.Iterator;
-import java.util.Properties;
 
 import org.jnode.driver.block.BlockDeviceAPI;
 import org.jnode.driver.block.FileDevice;
@@ -54,7 +53,6 @@ import org.jnode.fs.service.def.FileSystemPlugin;
 import org.jnode.naming.InitialNaming;
 import org.jnode.partitions.PartitionTableEntry;
 import org.jnode.partitions.ibm.IBMPartitionTableEntry;
-import org.jnode.vm.VmIOContext;
 import org.junit.After;
 import org.junit.Before;
 import org.junit.Test;
@@ -758,33 +756,17 @@ public class FatFailurePathTest {
      * The recompute inside Fat.flush()'s failure path is made observable here
      * by injecting a stale freeClusterCount (reflection) before an armed
      * flush: if the recompute is removed, the stale value survives and the
-     * assertion fails. The scan reads from the cache; the override pinned
-     * below keeps the FAT cache-resident on this image, so the "keeps the
-     * old value when the rescan itself fails" branch is not reachable
-     * in-process; the armed device fails the write phase, not the rescan.
+     * assertion fails. The scan reads from the cache; the computed default
+     * cache covers every FAT sector up to the 8192-element cap (~545 sectors
+     * on this 68 MiB image), so the FAT stays cache-resident here and the
+     * "keeps the old value when the rescan itself fails" branch is not
+     * reachable in-process; the armed device fails the write phase, not the
+     * rescan.
      * The concurrent counter
      * race is covered by ConcurrentAccessFSTest.testCreateWriteRemovePerThreadDirectories.
      */
-    /**
-     * The FAT on this 68 MiB image (~545 elements) is not resident in the
-     * computed default cache, and a rescan under a dead device then evicts the
-     * dirty element, whose flush fails and aborts the recompute. This test
-     * documents the cache-resident assumption, so it pins the documented
-     * jnode.fat.cacheSize override to the historical 8192.
-     */
     @Test
     public void testFlushFailureReconcilesFreeClusterCount() throws Exception {
-        Properties props = new Properties();
-        props.setProperty("jnode.fat.cacheSize", "8192");
-        VmIOContext.setGlobalProperties(props);
-        try {
-            runFlushFailureReconcilesFreeClusterCount();
-        } finally {
-            VmIOContext.setGlobalProperties(null);
-        }
-    }
-
-    private void runFlushFailureReconcilesFreeClusterCount() throws Exception {
         FatFileSystem fs = formatAndOpenRW();
         Fat fat = fs.getFat();
         int mountCount = fat.getFreeClusterCount();

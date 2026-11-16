@@ -93,22 +93,21 @@ public class FatCache {
 
     /**
      * Compute the default FAT cache size for a volume, in number of
-     * 512-byte elements. Small volumes allocate proportionally less; the
-     * result is always in [{@link #MIN_COMPUTED_CACHE_SIZE},
-     * {@link #DEFAULT_CACHE_SIZE}].
+     * 512-byte elements. One element covers one FAT sector, so the result is
+     * sized to keep the FAT cache-resident up to the cap; the result is
+     * always in [{@link #MIN_COMPUTED_CACHE_SIZE},
+     * {@link #DEFAULT_CACHE_SIZE}]. A cache-resident FAT is required for
+     * the failed-flush recompute in {@code Fat.flush()} to rescan the FAT
+     * without evicting dirty elements against a dead device.
      */
     public static int computeCacheSize(long sectorsPerFat) {
-        if (sectorsPerFat <= 0) {
+        if (sectorsPerFat <= MIN_COMPUTED_CACHE_SIZE) {
             return MIN_COMPUTED_CACHE_SIZE;
         }
-        long computed = sectorsPerFat / 4;
-        if (computed < MIN_COMPUTED_CACHE_SIZE) {
-            return MIN_COMPUTED_CACHE_SIZE;
-        }
-        if (computed > DEFAULT_CACHE_SIZE) {
+        if (sectorsPerFat > DEFAULT_CACHE_SIZE) {
             return DEFAULT_CACHE_SIZE;
         }
-        return (int) computed;
+        return (int) sectorsPerFat;
     }
 
     /**

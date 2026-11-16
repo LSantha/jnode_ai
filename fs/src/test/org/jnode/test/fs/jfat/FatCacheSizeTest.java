@@ -33,22 +33,24 @@ import static org.junit.Assert.*;
 public class FatCacheSizeTest {
 
     @Test
-    public void testComputeCacheSizeTinyVolume() {
+    public void testComputeCacheSizeFloor() {
         assertEquals(FatCache.MIN_COMPUTED_CACHE_SIZE, FatCache.computeCacheSize(0));
         assertEquals(FatCache.MIN_COMPUTED_CACHE_SIZE, FatCache.computeCacheSize(2));
-        assertEquals(FatCache.MIN_COMPUTED_CACHE_SIZE, FatCache.computeCacheSize(1023));
+        assertEquals(FatCache.MIN_COMPUTED_CACHE_SIZE, FatCache.computeCacheSize(255));
     }
 
     @Test
-    public void testComputeCacheSizeProportionalToFatSectors() {
-        assertEquals(256, FatCache.computeCacheSize(1024));
-        assertEquals(512, FatCache.computeCacheSize(2048));
-        assertEquals(2048, FatCache.computeCacheSize(8192));
-        assertEquals(8192, FatCache.computeCacheSize(32768));
+    public void testComputeCacheSizeResidentForFatSectors() {
+        assertEquals(256, FatCache.computeCacheSize(256));
+        assertEquals(1024, FatCache.computeCacheSize(1024));
+        assertEquals(2048, FatCache.computeCacheSize(2048));
+        assertEquals(545, FatCache.computeCacheSize(545));
+        assertEquals(8192, FatCache.computeCacheSize(8192));
     }
 
     @Test
     public void testComputeCacheSizeCappedAtDefault() {
+        assertEquals(FatCache.DEFAULT_CACHE_SIZE, FatCache.computeCacheSize(8193));
         assertEquals(FatCache.DEFAULT_CACHE_SIZE, FatCache.computeCacheSize(32768));
         assertEquals(FatCache.DEFAULT_CACHE_SIZE, FatCache.computeCacheSize(65536));
         assertEquals(FatCache.DEFAULT_CACHE_SIZE, FatCache.computeCacheSize(Long.MAX_VALUE));
@@ -62,7 +64,7 @@ public class FatCacheSizeTest {
     @Test
     public void testResolveCacheSizeDefaultsToComputed() {
         assertEquals(256, FatCache.resolveCacheSize(2, null));
-        assertEquals(512, FatCache.resolveCacheSize(2048, null));
+        assertEquals(2048, FatCache.resolveCacheSize(2048, null));
         assertEquals(8192, FatCache.resolveCacheSize(65536, ""));
         assertEquals(8192, FatCache.resolveCacheSize(65536, "   "));
     }
@@ -87,7 +89,7 @@ public class FatCacheSizeTest {
     @Test
     public void testResolveCacheSizeIgnoresUnparseableOverride() {
         assertEquals(256, FatCache.resolveCacheSize(2, "abc"));
-        assertEquals(512, FatCache.resolveCacheSize(2048, "8.5"));
+        assertEquals(2048, FatCache.resolveCacheSize(2048, "8.5"));
         assertEquals(8192, FatCache.resolveCacheSize(65536, "8192 elements"));
     }
 

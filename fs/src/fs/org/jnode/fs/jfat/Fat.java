@@ -667,7 +667,7 @@ public abstract class Fat {
 
     public String getCacheStat() {
         StrWriter out = new StrWriter();
-        out.println("Access: " + cache.getAccess() + " Hits: " + cache.getHit() + " Ratio: " +
+        out.print("Access: " + cache.getAccess() + " Hits: " + cache.getHit() + " Ratio: " +
             cache.getRatio() * 100 + "%");
         return out.toString();
     }
