@@ -25,6 +25,7 @@ import java.io.FileOutputStream;
 import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 import java.util.NoSuchElementException;
 
@@ -61,6 +62,20 @@ public class FatChain {
      * scratch itself; callers that need the bytes to stay stable must copy them.
      */
     private byte[] clusterDataScratch;
+
+    /**
+     * Deferred-zero ranges {@code [from, to)} in chain byte offsets. A range is
+     * recorded when this chain allocates clusters for a gap-extending grow
+     * instead of zeroing them on the device: the clusters are allocated, the
+     * bytes read through a hole as zeros, and {@link #flush()} realizes the
+     * zeros on the device in bulk multi-sector runs. The list is kept sorted,
+     * non-overlapping and merged; a stale range that outlives a truncate is
+     * harmless (the bytes are beyond the visible file and re-deferral merges
+     * over it), while ranges recorded by a failed write are rolled back via
+     * {@link WriteRollback#deferredZeros}.
+     */
+    private final List<long[]> holes = new ArrayList<long[]>();
+    private byte[] zeroScratch;
 
     /**
      * Debug-only double check for the cluster count/tail cache. When true,
@@ -117,7 +132,14 @@ public class FatChain {
         return dirty;
     }
 
-    public void flush() {
+    /**
+     * Realize any pending {@link #holes} on the device (bulk zero runs), then
+     * clear the chain dirty flag. A failure leaves the chain dirty and the
+     * unrealized hole ranges in place so the next flush retries them; the
+     * caller must not persist the directory entry before this method returns.
+     */
+    public void flush() throws IOException {
+        realizeHoles();
         dirty = false;
     }
 
@@ -193,6 +215,157 @@ public class FatChain {
             cachedClusterCount += n;
         }
         cachedTailCluster = segmentTail;
+    }
+
+    private void addHole(long from, long to) {
+        if (from >= to) {
+            return;
+        }
+        int i = 0;
+        while (i < holes.size() && holes.get(i)[1] < from) {
+            i++;
+        }
+        long newFrom = from;
+        long newTo = to;
+        int j = i;
+        while (j < holes.size() && holes.get(j)[0] <= newTo) {
+            long[] h = holes.get(j);
+            if (h[0] < newFrom) {
+                newFrom = h[0];
+            }
+            if (h[1] > newTo) {
+                newTo = h[1];
+            }
+            j++;
+        }
+        for (int k = j - 1; k >= i; k--) {
+            holes.remove(k);
+        }
+        holes.add(i, new long[] {newFrom, newTo});
+        dirty = true;
+    }
+
+    private void removeHoleRange(long from, long to) {
+        if (from >= to) {
+            return;
+        }
+        for (int i = 0; i < holes.size();) {
+            long[] h = holes.get(i);
+            if (h[1] <= from) {
+                i++;
+                continue;
+            }
+            if (h[0] >= to) {
+                break;
+            }
+            long[] left = (h[0] < from) ? new long[] {h[0], from} : null;
+            long[] right = (h[1] > to) ? new long[] {to, h[1]} : null;
+            holes.remove(i);
+            if (left != null) {
+                holes.add(i, left);
+                i++;
+            }
+            if (right != null) {
+                holes.add(i, right);
+                i++;
+            }
+        }
+    }
+
+    private boolean hasHoleIntersection(long from, long to) {
+        if (from >= to) {
+            return false;
+        }
+        for (int i = 0; i < holes.size(); i++) {
+            long[] h = holes.get(i);
+            if (h[1] <= from) {
+                continue;
+            }
+            if (h[0] >= to) {
+                break;
+            }
+            return true;
+        }
+        return false;
+    }
+
+    private void deferZero(WriteRollback rb, long from, long to) {
+        if (from >= to) {
+            return;
+        }
+        if (rb != null) {
+            rb.deferredZeros.add(new long[] {from, to});
+        }
+        addHole(from, to);
+    }
+
+    private void realizeHoles() throws IOException {
+        while (!holes.isEmpty()) {
+            long[] h = holes.get(0);
+            zeroHoleRange(h[0], h[1]);
+            holes.remove(0);
+        }
+    }
+
+    private void zeroHoleRange(long from, long to) throws IOException {
+        int clsize = fat.getClusterSize();
+        long pos = from;
+        long end = to;
+        long fromIndex = from / clsize;
+        if (fromIndex > Integer.MAX_VALUE) {
+            throw new IllegalArgumentException("hole start index " + fromIndex
+                + " exceeds the maximum chain index");
+        }
+        ChainIterator it;
+        try {
+            it = listIterator((int) fromIndex);
+        } catch (NoSuchElementException ex) {
+            log.warn("hole range [" + from + ", " + to + ") starts past the end of the chain; "
+                + "the range is dropped", ex);
+            return;
+        }
+        int runFirst = -1;
+        int runCount = 0;
+        while (pos < end) {
+            if (!it.hasNext()) {
+                log.warn("hole range [" + from + ", " + to + ") extends past the end of the chain; "
+                    + "the unreachable tail is dropped");
+                break;
+            }
+            int cluster = it.next();
+            int start = (int) (pos % clsize);
+            int stop = (int) Math.min(clsize, start + (end - pos));
+            if (start == 0 && stop == clsize) {
+                int maxRun = fat.getMaxRunClusters();
+                if (runCount > 0 && cluster == runFirst + runCount && runCount < maxRun) {
+                    runCount++;
+                } else {
+                    flushZeroRun(runFirst, runCount);
+                    runFirst = cluster;
+                    runCount = 1;
+                }
+            } else {
+                flushZeroRun(runFirst, runCount);
+                runFirst = -1;
+                runCount = 0;
+                fat.clearCluster(cluster, start, stop);
+            }
+            pos += stop - start;
+        }
+        flushZeroRun(runFirst, runCount);
+    }
+
+    private void flushZeroRun(int first, int count) throws IOException {
+        if (count <= 0) {
+            return;
+        }
+        int clsize = fat.getClusterSize();
+        int bytes = count * clsize;
+        if (zeroScratch == null || zeroScratch.length < bytes) {
+            zeroScratch = new byte[bytes];
+        }
+        Arrays.fill(zeroScratch, 0, bytes, (byte) 0);
+        fat.writeClusterRun(first, count, ByteBuffer.wrap(zeroScratch, 0, bytes));
     }
 
     /*
@@ -400,7 +573,7 @@ public class FatChain {
         linkWholeClusters(st, n - m - k, zero, allocated);
         if (offset > 0)
             linkPartialCluster(st, offset, zero, allocated);
-        linkRemainingClusters(st, n - 1, allocated);
+        linkRemainingClusters(st, n - 1, zero, allocated);
         if (st.found < n - 1)
             throw new FileSystemFullException("no free clusters");
         return st.l;
@@ -438,8 +611,8 @@ public class FatChain {
     /**
      * Phase 2 of {@link #appendAllocatedTail}: link at most one cluster, the partially
      * written head cluster that straddles the write offset. The cluster is fully cleared
-     * when {@code zero} is set, otherwise only the {@code [0, offset)} range is cleared
-     * (the remainder holds data the write will not touch here).
+     * when {@code zero} is set; when {@code zero} is not set its {@code [0, offset)}
+     * head range is covered by the deferred-zero hole recorded by the caller.
      *
      * <p>Precondition: {@code offset > 0}; phase 1 has run.
      *
@@ -453,8 +626,6 @@ public class FatChain {
             if (fat.isFreeEntry(st.i)) {
                 if (zero)
                     fat.clearCluster(st.i);
-                else
-                    fat.clearCluster(st.i, 0, offset);
                 fat.set(st.i, st.l);
                 allocated.add(st.i);
                 if (dolog)
@@ -468,9 +639,9 @@ public class FatChain {
 
     /**
      * Phase 3 of {@link #appendAllocatedTail}: link whole free clusters until
-     * {@code st.found} reaches {@code target}. Unlike phase 1 these clusters are always
-     * fully cleared because they sit below the write position and their previous
-     * contents (if any) must not survive.
+     * {@code st.found} reaches {@code target}. These clusters sit below the write
+     * position; they are fully cleared when {@code zero} is set, otherwise the
+     * caller records their byte range as a deferred-zero hole.
      *
      * <p>Precondition: phases 1 and 2 (when applicable) have run.
      *
@@ -478,11 +649,13 @@ public class FatChain {
      * each linked cluster points at the previous {@code st.l} and {@code st.l} is
      * updated to it; linked clusters are appended to {@code allocated}.</p>
      */
-    private void linkRemainingClusters(BackwardLink st, int target, List<Integer> allocated)
+    private void linkRemainingClusters(BackwardLink st, int target, boolean zero,
+            List<Integer> allocated)
             throws IOException {
         for (; st.found < target && st.i >= fat.firstCluster(); st.i--) {
             if (fat.isFreeEntry(st.i)) {
-                fat.clearCluster(st.i);
+                if (zero)
+                    fat.clearCluster(st.i);
                 fat.set(st.i, st.l);
                 allocated.add(st.i);
                 if (dolog)
@@ -863,9 +1036,11 @@ public class FatChain {
         }
 
         int lastCluster = 0;
+        boolean holeTracking = !holes.isEmpty();
+        long chunkAbs = offset;
 
         for (int l = dst.remaining(), sz = p.getPartial(), ofs = p.getOffset(), size; l > 0; l -=
-                size, sz = p.getSize(), ofs = 0) {
+                size, sz = p.getSize(), ofs = 0, chunkAbs += size) {
 
             int cluster;
             try {
@@ -879,7 +1054,12 @@ public class FatChain {
 
             int clsize = p.getSize();
 
-            if (ofs == 0 && size == clsize) {
+            if (holeTracking && hasHoleIntersection(chunkAbs, chunkAbs + size)) {
+                readChunkWithHoles(cluster, ofs, size, chunkAbs, dst);
+                continue;
+            }
+
+            if (!holeTracking && ofs == 0 && size == clsize) {
                 /*
                  * Whole clusters from a cluster-aligned offset: coalesce the
                  * physically contiguous run into one read request per
@@ -958,52 +1138,75 @@ public class FatChain {
         return count;
     }
 
-    /**
-     * Zero the byte range {@code [from, to)} of this chain, cluster by cluster, using a
-     * fresh iterator. This is the only place gap zeroing happens; the write path zeroes
-     * the gap between the old end of chain and a newly grown position exclusively
-     * through this method.
-     *
-     * <p>Precondition: the chain covers {@code [from, to)} as far as it currently
-     * reaches; the iteration stops at the end of the chain without error.
-     *
-     * <p>Postcondition: every cluster intersecting {@code [from, to)} is zeroed over the
-     * intersection. No FAT entry is modified.</p>
-     */
-    private void zeroRange(long from, long to) throws IOException {
-        if (from >= to)
-            return;
-        int clsize = fat.getClusterSize();
-        long pos = from;
-        long fromIndex = from / clsize;
-        if (fromIndex > Integer.MAX_VALUE)
-            throw new IllegalArgumentException("zeroRange start index " + fromIndex
-                + " exceeds the maximum chain index");
-        // from <= 0xFFFFFFFFL (callers pass the file length from the 32-bit BPB
-        // field or an already-validated offset) and clsize >= 512, so fromIndex
-        // fits in int; the check above is belt and braces
-        ChainIterator it = listIterator((int) fromIndex);
-        while (pos < to) {
-            if (!it.hasNext())
+    private void readChunkWithHoles(int cluster, int ofs, int size, long chunkAbs, ByteBuffer dst)
+            throws IOException {
+        long end = chunkAbs + size;
+        long pos = chunkAbs;
+        while (pos < end) {
+            long holeFrom = -1;
+            long holeTo = -1;
+            for (int i = 0; i < holes.size(); i++) {
+                long[] h = holes.get(i);
+                if (h[1] <= pos) {
+                    continue;
+                }
+                if (h[0] >= end) {
+                    break;
+                }
+                holeFrom = Math.max(h[0], pos);
+                holeTo = Math.min(h[1], end);
                 break;
-            int cluster = it.next();
-            // pos % clsize < clsize and clsize <= 130560, so both casts fit in int
-            int start = (int) (pos % clsize);
-            int end = (int) Math.min(clsize, start + (to - pos));
-            if (end > start)
-                fat.clearCluster(cluster, start, end);
-            pos += end - start;
+            }
+            if (holeFrom < 0) {
+                readDeviceSegment(cluster, ofs, chunkAbs, pos, end, dst);
+                return;
+            }
+            if (pos < holeFrom) {
+                readDeviceSegment(cluster, ofs, chunkAbs, pos, holeFrom, dst);
+            }
+            int zeroLen = (int) (holeTo - holeFrom);
+            if (zeroScratch == null || zeroScratch.length < zeroLen) {
+                zeroScratch = new byte[Math.max(zeroLen, 8192)];
+            }
+            Arrays.fill(zeroScratch, 0, zeroLen, (byte) 0);
+            dst.put(zeroScratch, 0, zeroLen);
+            pos = holeTo;
+        }
+    }
+
+    private void readDeviceSegment(int cluster, int ofs, long chunkAbs, long from, long to,
+            ByteBuffer dst) throws IOException {
+        int segOfs = ofs + (int) (from - chunkAbs);
+        int segLen = (int) (to - from);
+        int limit = dst.limit();
+        try {
+            dst.limit(dst.position() + segLen);
+            fat.readCluster(cluster, segOfs, dst);
+        } finally {
+            dst.limit(limit);
         }
     }
 
     /*
-     * length is used to zero the last cluster allocated to a chain when this is
-     * required i.e. from FatFile
+     * Every byte the write exposes beyond the old file length is either written
+     * here or recorded as a deferred-zero hole: [length, offset) is the gap a
+     * beyond-EOF write leaves behind, [writtenEnd, chain coverage end) is the
+     * slack of clusters grown by this write. Holes are realized on the device
+     * by flush(); reads through them return zeros in the meantime.
      *
-     * when there is no need to zero the cluster at the end of the chain, last
-     * cluster, we can use any clsize multiple or zero
+     * Callers that manage the file length themselves (FatFile) use
+     * {@link #write(long, long, ByteBuffer)}; the length argument is the
+     * authority for which bytes this write exposes. The two-argument overload
+     * passes length == 0 and is used by callers whose chain holds live content
+     * without a file length (FatDirectory); it must not defer exposure holes,
+     * because everything in those chains is legitimate content.
      */
     public void write(long length, long offset, ByteBuffer src) throws IOException {
+        writeInternal(true, length, offset, src);
+    }
+
+    private void writeInternal(boolean trackExposure, long length, long offset, ByteBuffer src)
+            throws IOException {
 
         if (length < 0)
             throw new IllegalArgumentException("length<0");
@@ -1012,16 +1215,23 @@ public class FatChain {
             throw new IllegalArgumentException("offset<0");
 
         WriteRollback rb = new WriteRollback(head);
-        boolean empty = (src.remaining() == 0);
 
         try {
             ChainPosition p = new ChainPosition(offset);
             ChainIterator i = listIterator();
-            GrowResult grown = ensureChainHasClusterIndex(rb, i, p, src, offset, length);
+            GrowResult grown = ensureChainHasClusterIndex(rb, i, p, src, offset);
+            long writtenEnd = offset + src.remaining();
             writeDataClusters(rb, i, p, src, grown.cluster);
+            removeHoleRange(offset, writtenEnd);
 
-            if (empty && !grown.allocated && offset > length)
-                zeroRange(length, offset);
+            if (trackExposure) {
+                if (offset > length)
+                    deferZero(rb, length, offset);
+                if (writtenEnd > length) {
+                    long coverageEnd = (long) size() * p.getSize();
+                    deferZero(rb, writtenEnd, coverageEnd);
+                }
+            }
         } catch (IOException ex) {
             rollbackTo(rb);
             throw ex;
@@ -1044,21 +1254,21 @@ public class FatChain {
      * <li>when the chain had to grow, every newly linked cluster is recorded in
      * {@code rb.allocatedClusters}, {@code rb.savedEnd} is captured at the first link,
      * and (for a non-empty write) the iterator is positioned at
-     * {@code p.getIndex()}; the newly allocated gap and the head of the
-     * {@code p.getIndex()} cluster are zeroed exclusively through
-     * {@link #zeroRange(long, long)};</li>
-     * <li>the tail of the pre-existing tail cluster beyond {@code length} is zeroed when
-     * {@code length} falls inside that cluster;</li>
+     * {@code p.getIndex()};</li>
      * <li>when the chain already covers {@code p.getIndex()}, the FAT is left
      * untouched.</li>
      * </ul>
+     *
+     * <p>Gap and tail zeroing is not this method's concern: {@code write()} records
+     * every newly exposed byte range as a deferred-zero hole ({@link #holes}) after
+     * the data copy, and {@link #flush()} realizes the holes on the device.</p>
      *
      * @return the grow outcome; {@code cluster} is the cluster at chain index
      *         {@code p.getIndex() - 1} (0 when there is none), used as link target by a
      *         mid-write append
      */
     private GrowResult ensureChainHasClusterIndex(WriteRollback rb, ChainIterator i,
-            ChainPosition p, ByteBuffer src, long offset, long length) throws IOException {
+            ChainPosition p, ByteBuffer src, long offset) throws IOException {
         int clsize = p.getSize();
         int clidx = p.getIndex();
         boolean empty = (src.remaining() == 0);
@@ -1071,7 +1281,6 @@ public class FatChain {
         if (!needsGrow)
             return new GrowResult(cluster, false);
 
-        int chainSize = last;
         int m = clidx - last;
 
         long lst = offset + src.remaining() - last * clsize;
@@ -1088,22 +1297,9 @@ public class FatChain {
         int n = (int) clustersNeeded;
 
         if (empty)
-            appendAllocatedChain(rb, i, cluster, n, n - 1, 0, true);
+            appendAllocatedChain(rb, i, cluster, n, n - 1, 0, false);
         else
             appendAllocatedChain(rb, i, cluster, n, m, p.getOffset(), false);
-
-        if (src.remaining() > 0)
-            zeroRange((long) chainSize * clsize, (long) clidx * clsize + p.getOffset());
-
-        /*
-         * here length is used to decide if we have to zero the data
-         * inside the last cluster tail
-         */
-        // length % clsize < clsize <= 130560, fits in int
-        int ofs = (int) (length % clsize);
-
-        if (ofs != 0 && cluster != 0)
-            fat.clearCluster(cluster, ofs, clsize);
 
         if (src.remaining() > 0) {
             try {
@@ -1261,6 +1457,10 @@ public class FatChain {
     private void rollbackTo(WriteRollback rb) {
         invalidateHints();
         invalidateClusterCache();
+        for (int idx = 0; idx < rb.deferredZeros.size(); idx++) {
+            long[] h = rb.deferredZeros.get(idx);
+            removeHoleRange(h[0], h[1]);
+        }
         if (rb.allocatedClusters.isEmpty()) {
             return;
         }
@@ -1278,10 +1478,14 @@ public class FatChain {
     }
 
     /*
-     * used when we don't need to zero the data inside the last cluster tail
+     * For callers that manage the exposed byte range themselves (FatDirectory)
+     * and whose chain carries live content without a file length: does not
+     * record deferred-zero holes for bytes beyond the data. The file-length
+     * overload {@link #write(long, long, ByteBuffer)} is for callers that know
+     * the length (FatFile).
      */
     public void write(long offset, ByteBuffer src) throws IOException {
-        write(0, offset, src);
+        writeInternal(false, 0, offset, src);
     }
 
     /**
@@ -1451,6 +1655,7 @@ public class FatChain {
         private int savedEnd;
         private boolean savedEndCaptured;
         private final List<Integer> allocatedClusters = new ArrayList<Integer>();
+        private final List<long[]> deferredZeros = new ArrayList<long[]>();
 
         private WriteRollback(int savedHead) {
             this.savedHead = savedHead;
