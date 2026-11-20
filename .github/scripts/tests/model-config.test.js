@@ -67,8 +67,8 @@ test("a MODEL override marker selects that model (second-opinion reviews)", () =
 });
 
 test("a MODEL override for a coding trigger still overrides", () => {
-  const r = resolveModel("/oc fix\n\n<!-- MODEL: opencode/inkling-2-small-free --> try this one");
-  assert.strictEqual(r.model, "opencode/inkling-2-small-free");
+  const r = resolveModel("/oc fix\n\n<!-- MODEL: opencode/beam-free --> try this one");
+  assert.strictEqual(r.model, "opencode/beam-free");
   assert.strictEqual(r.variant, "max");
 });
 

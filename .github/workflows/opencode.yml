@@ -55,7 +55,7 @@ jobs:
       # step below overrides this per role (review vs coding); both the value and
       # the effort variant come from .github/scripts/model-config.js, which is the
       # single place to change either.
-      OPENCODE_MODEL: opencode/deepseek-v4.1-flash-free
+      OPENCODE_MODEL: opencode/beam-free
     permissions:
       id-token: write
       contents: write

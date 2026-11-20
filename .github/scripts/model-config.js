@@ -28,9 +28,8 @@
 // included). OpenCode's accepted set is provider-dependent, so the record is
 // per model rather than one global value.
 const MODEL_VARIANTS = {
-  "opencode/deepseek-v4.1-flash-free": "max",
-  "opencode/crouton-alpha-free": "max",
-  "opencode/inkling-2-small-free": "max"
+  "opencode/beam-free": "max",
+  "opencode/deepseek-v4.1-flash-free": "max"
 };
 
 const DEFAULT_VARIANT = "high";
@@ -41,13 +40,21 @@ const DEFAULT_VARIANT = "high";
 // coding is the workhorse: every ticket's DEV turn and every /oc fix, and the
 // review role is deliberately a different model, so the work is checked by
 // something other than what wrote it. History of this slot, newest first:
-//   - inkling-2-small-free at max (from 2026-11-09, the second JFAT round):
-//     promoted out of the review slot at the maintainer's request. It earned
-//     coding on the review slot's own terms - five rounds on the #851
+//   - beam-free at max (from 2026-11-20): a coding-focused 501B sparse MoE
+//     (23B active) with a 1M context and an effort ladder to max. Promoted
+//     when inkling-2-small-free was marked deprecated and the endpoint began
+//     answering "Model unavailable" - the role would have failed every DEV
+//     turn. Chosen over the other active free models on status, coding and
+//     agentic positioning, structured output, and the fastest pass of a
+//     multi-file tool-use probe.
+//   - inkling-2-small-free at max (2026-11-09 to 2026-11-20, the second JFAT
+//     round): promoted out of the review slot at the maintainer's request. It
+//     earned coding on the review slot's own terms - five rounds on the #851
 //     robustness ticket, and it caught what the coder missed (#847's boundary
 //     regression at clidx == chainSize, #849's read-only HFS+ break, and a
 //     half-done formatter fix on #873 whose serial was still arbitrary). The
 //     same reads the disk and checks the claim, which is what a JFAT fix needs.
+//     Retired only because the provider deprecated it, not on merit.
 //   - crouton-alpha-free at max (from 2026-11-06 21:45): free, six-level effort
 //     ladder (minimal..max). Carried every DEV turn of the first JFAT batch
 //     (#841, #845, #847, #849, #853, #861, #865, #869, #873) and lost the slot
@@ -61,16 +68,16 @@ const DEFAULT_VARIANT = "high";
 //
 // review runs deepseek-v4.1-flash-free at max (from 2026-11-09), back in the
 // slot it held before inkling, at the maintainer's request for the second JFAT
-// round. The independence the slot exists for is preserved: inkling writes,
+// round. The independence the slot exists for is preserved: beam writes,
 // deepseek checks. Two consequences worth knowing, both benign:
 //   - review and triage are now the same model, so the reviewer is no longer a
 //     third family independent of the triager - only of the writer.
 //   - deepseek's quota was the single point of failure for every review round
 //     before inkling. If it 402s again, the per-run <!-- MODEL: --> override
-//     below posts an inkling review on the same PR without editing this file,
+//     below posts a review on another known model without editing this file,
 //     so a quota wall now costs a session, not the pipeline.
 const ROLE_MODELS = {
-  coding: "opencode/inkling-2-small-free",
+  coding: "opencode/beam-free",
   review: "opencode/deepseek-v4.1-flash-free",
   triage: "opencode/deepseek-v4.1-flash-free"
 };
