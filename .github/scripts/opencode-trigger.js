@@ -34,6 +34,24 @@ function isAnchoredNonExcluded(body) {
   );
 }
 
+// An anchored trigger whose own (first) verb is NOT triage. Such a comment has
+// already decided its verb, so a later quoted " /oc triage" in prose must not
+// start a Triage run (issue #866, mirrors #862's anchored exemption).
+function isAnchoredNonTriage(body) {
+  var text = body || "";
+  return startsWith(text, "/oc ") && !startsWith(text, "/oc triage");
+}
+
+function isTriageTrigger(body) {
+  var text = body || "";
+  var hasTriageTrigger =
+    startsWith(text, "/oc triage") || contains(text, " /oc triage");
+  if (!hasTriageTrigger) return false;
+  if (contains(text, "opencode.ai/s/")) return false;
+  if (isAnchoredNonTriage(text)) return false;
+  return true;
+}
+
 function isOpencodeTrigger(body) {
   var text = body || "";
   var hasTrigger = contains(text, " /oc ") || startsWith(text, "/oc ");
@@ -47,5 +65,7 @@ function isOpencodeTrigger(body) {
 
 module.exports = {
   isOpencodeTrigger: isOpencodeTrigger,
-  isAnchoredNonExcluded: isAnchoredNonExcluded
+  isAnchoredNonExcluded: isAnchoredNonExcluded,
+  isAnchoredNonTriage: isAnchoredNonTriage,
+  isTriageTrigger: isTriageTrigger
 };
