@@ -91,3 +91,13 @@ test("run_agent step timeout is below its job timeout and above a legitimate run
   const opencodeTimeout = Number(opencodeStep.text.match(/^\s*timeout-minutes:\s*(\d+)\s*$/m)[1]);
   assert.ok(opencodeTimeout >= 69, "opencode step timeout must exceed the 68m26s legitimate run");
 });
+
+test("preflight step exists in all three workflows", () => {
+  for (const name of WORKFLOWS) {
+    const text = readWorkflow(name);
+    const step = stepContaining(text, "Preflight: action release endpoint");
+    assert.match(step.text, /gh api repos\/anomalyco\/opencode\/releases\/latest/, name + ": preflight must hit release endpoint");
+    assert.match(step.text, /^\s*timeout-minutes:\s*2\s*$/m, name + ": preflight timeout must be 2");
+    assert.match(step.text, /^\s*id:\s*preflight\s*$/m, name + ": preflight id must be preflight");
+  }
+});

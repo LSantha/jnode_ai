@@ -3,7 +3,8 @@
  * the issue if the work product is the comment (not a PR).
  *
  * Triggered by: .github/workflows/opencode.yml (the "Apply agent/* label" step)
- * Reads:  context.payload.issue, context.payload.comment, PREV_CONCLUSION env var
+ * Reads:  context.payload.issue, context.payload.comment, PREV_CONCLUSION env var,
+ *          PREFLIGHT_OUTCOME/PREFLIGHT_CONCLUSION env var (action release endpoint preflight)
  * Writes: agent/* label, removes agent/in-progress, optionally closes the issue
  *
  * Idempotent: respects an existing agent/* label; safe to re-run.
@@ -57,7 +58,9 @@ function findLatestAgentComment(comments) {
   return '';
 }
 
-function decideAgentLabel({ existing, conclusion, latestComment, labels, isPR }) {
+function decideAgentLabel({ existing, conclusion, latestComment, labels, isPR, preflight, preflightConclusion, preflightOutcome, preflightResult, preflightStatus, versionOutcome }) {
+  const _pf = preflight || preflightConclusion || preflightOutcome || preflightResult || preflightStatus || versionOutcome;
+  const _pfFailed = !!_pf && /^(failure|failed|cancelled|canceled)$/i.test(String(_pf).trim());
   // Structured reports are deliberate work products: honor them even when the
   // run later died (triage runs often fail at action finalization after the
   // comment already landed). Failure maps to failed only with no report.
@@ -78,6 +81,9 @@ function decideAgentLabel({ existing, conclusion, latestComment, labels, isPR })
   }
   if (isTriageClearComment(latestComment)) {
     return { label: null, clearNeedsInfo: true, clearFailed: true, reason: 'clear triage, no blocking label' };
+  }
+  if (_pfFailed) {
+    return { label: 'agent/blocked', reason: 'preflight: action release endpoint failed' };
   }
   if (conclusion === 'failure' || conclusion === 'cancelled') {
     return { label: 'agent/failed', reason: 'run concluded: ' + conclusion };
@@ -101,11 +107,15 @@ function shouldClose({ isPR, latestComment, labels, agentLabel }) {
   return CLOSE_KINDS.some(k => labels.includes(k));
 }
 
-module.exports = async ({ github, context, core }) => {
+const _runPostStep = async ({ github, context, core }) => {
   const number = context.payload.issue.number;
   const isPR = isPRContext(context);
   const { owner, repo } = context.repo;
   const conclusion = process.env.PREV_CONCLUSION || 'success';
+  const preflightOutcome = process.env.PREFLIGHT_OUTCOME || process.env.PREFLIGHT_CONCLUSION ||
+    process.env.PREFLIGHT_RESULT || process.env.PREFLIGHT_STATUS || process.env.VERSION_STEP_OUTCOME ||
+    process.env.VERSION_OUTCOME || process.env.ACTION_RELEASE_OUTCOME || '';
+  core.info('Preflight outcome: ' + (preflightOutcome || '(none)'));
 
   core.info('Post-step for #' + number + ' (isPR=' + isPR + ', conclusion=' + conclusion + ')');
 
@@ -139,6 +149,7 @@ module.exports = async ({ github, context, core }) => {
     latestComment,
     labels,
     isPR,
+    preflightOutcome,
   });
   core.info('Decision: ' + decision.label + ' (' + decision.reason + ')');
 
@@ -211,3 +222,6 @@ module.exports = async ({ github, context, core }) => {
     core.info('Not closing #' + number);
   }
 };
+
+module.exports = _runPostStep;
+_runPostStep.decideAgentLabel = decideAgentLabel;

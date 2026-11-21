@@ -67,7 +67,15 @@ jobs:
             core.info('Model selection: role=triage model=' + sel.model + ' variant=' + sel.variant);
             core.exportVariable('SELECTED_MODEL', sel.model);
             core.exportVariable('SELECTED_VARIANT', sel.variant);
+      - name: 'Preflight: action release endpoint'
+        id: preflight
+        timeout-minutes: 2
+        env:
+          GH_TOKEN: ${{ secrets.GH_PAT }}
+        run: gh api repos/anomalyco/opencode/releases/latest --jq .tag_name
+
       - name: Run opencode triage
+        if: steps.preflight.outcome == 'success'
         id: run_agent
         timeout-minutes: 15
         uses: anomalyco/opencode/github@v1.19.6
@@ -85,6 +93,8 @@ jobs:
         if: success() || failure() || cancelled()
         env:
           PREV_CONCLUSION: ${{ steps.run_agent.outcome }}
+          PREFLIGHT_OUTCOME: ${{ steps.preflight.outcome }}
+          PREFLIGHT_CONCLUSION: ${{ steps.preflight.outcome }}
         uses: actions/github-script@v7
         with:
           github-token: ${{ secrets.GH_PAT || secrets.GITHUB_TOKEN }}

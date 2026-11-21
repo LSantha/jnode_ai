@@ -154,8 +154,16 @@ jobs:
       - name: Build ISO
         if: steps.dedupe.outputs.should_run == 'true' && steps.cache-iso.outputs.cache-hit != 'true'
         run: sh build.sh cd-x86-lite
-      - name: Run opencode
+      - name: 'Preflight: action release endpoint'
         if: steps.dedupe.outputs.should_run == 'true'
+        id: preflight
+        timeout-minutes: 2
+        env:
+          GH_TOKEN: ${{ secrets.GH_PAT }}
+        run: gh api repos/anomalyco/opencode/releases/latest --jq .tag_name
+
+      - name: Run opencode
+        if: steps.dedupe.outputs.should_run == 'true' && steps.preflight.outcome == 'success'
         id: run_agent
         timeout-minutes: 85
         uses: anomalyco/opencode/github@v1.19.6
@@ -172,6 +180,8 @@ jobs:
         if: (success() || failure() || cancelled()) && steps.dedupe.outputs.should_run == 'true'
         env:
           PREV_CONCLUSION: ${{ steps.run_agent.outcome }}
+          PREFLIGHT_OUTCOME: ${{ steps.preflight.outcome }}
+          PREFLIGHT_CONCLUSION: ${{ steps.preflight.outcome }}
         uses: actions/github-script@v7
         with:
           github-token: ${{ secrets.GH_PAT || secrets.GITHUB_TOKEN }}
