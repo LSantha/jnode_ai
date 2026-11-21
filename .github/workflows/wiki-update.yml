@@ -78,7 +78,8 @@ jobs:
       - name: Run opencode for wiki analysis
         if: steps.commits.outputs.skip != 'true'
         id: run_agent
-        uses: anomalyco/opencode/github@latest
+        timeout-minutes: 45
+        uses: anomalyco/opencode/github@v1.19.6
         env:
           GITHUB_TOKEN: ${{ secrets.GH_PAT }}
           OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY }}

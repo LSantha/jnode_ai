@@ -69,7 +69,8 @@ jobs:
             core.exportVariable('SELECTED_VARIANT', sel.variant);
       - name: Run opencode triage
         id: run_agent
-        uses: anomalyco/opencode/github@latest
+        timeout-minutes: 15
+        uses: anomalyco/opencode/github@v1.19.6
         env:
           GITHUB_TOKEN: ${{ secrets.GH_PAT }}
           OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY }}
