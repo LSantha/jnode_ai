@@ -85,10 +85,9 @@ kernel /jnode32.gz mp=no kdb lkd
 module /tests.jgz
 
 # ---------------------------
-# -- disabled
-#title JNode Install
-#kernel /jnode32.gz
-#module /install.jgz
+title JNode Install
+kernel /jnode32.gz
+module /install.jgz
 
 # ---------------------------
 title JNode via dhcp (all plugins)

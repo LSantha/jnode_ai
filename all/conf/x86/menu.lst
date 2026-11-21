@@ -66,8 +66,7 @@ kernel (hd0,0)/jnode32.gz
 module (hd0,0)/tests.jgz
 
 # ---------------------------
-# -- disabled
-#title JNode Install
-#kernel (hd0,0)/jnode32.gz
-#module (hd0,0)/install.jgz
+title JNode Install
+kernel (hd0,0)/jnode32.gz
+module (hd0,0)/install.jgz
 
