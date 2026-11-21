@@ -157,7 +157,7 @@ jobs:
       - name: Run opencode
         if: steps.dedupe.outputs.should_run == 'true'
         id: run_agent
-        timeout-minutes: 60
+        timeout-minutes: 85
         uses: anomalyco/opencode/github@v1.19.6
         env:
           GITHUB_TOKEN: ${{ secrets.GH_PAT }}

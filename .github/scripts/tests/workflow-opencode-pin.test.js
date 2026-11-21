@@ -68,3 +68,26 @@ test("run_agent step has a step-level timeout-minutes", () => {
     assert.match(step.text, /^\s*timeout-minutes:\s*\d+\s*$/m, name + ": run_agent step must set timeout-minutes");
   }
 });
+
+test("run_agent step timeout is below its job timeout and above a legitimate run", () => {
+  // A step cap must leave room for a real agent run (issue #870: 68m26s
+  // spent inside the Run opencode step) while staying under the job cap.
+  const jobTimeoutOf = (text) => {
+    const m = text.match(/^\s*timeout-minutes:\s*(\d+)\s*$/m);
+    assert.ok(m, "workflow must declare a job-level timeout-minutes");
+    return Number(m[1]);
+  };
+  for (const name of WORKFLOWS) {
+    const text = readWorkflow(name);
+    const step = stepContaining(text, ACTION_USES);
+    const m = step.text.match(/^\s*timeout-minutes:\s*(\d+)\s*$/m);
+    const stepTimeout = Number(m[1]);
+    const jobTimeout = jobTimeoutOf(text);
+    assert.ok(stepTimeout < jobTimeout, name + ": step timeout must be below job timeout");
+    assert.ok(stepTimeout > 0, name + ": step timeout must be positive");
+  }
+  // opencode.yml's cap must cover the observed 68m26s successful run.
+  const opencodeStep = stepContaining(readWorkflow("opencode.yml"), ACTION_USES);
+  const opencodeTimeout = Number(opencodeStep.text.match(/^\s*timeout-minutes:\s*(\d+)\s*$/m)[1]);
+  assert.ok(opencodeTimeout >= 69, "opencode step timeout must exceed the 68m26s legitimate run");
+});
