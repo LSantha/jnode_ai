@@ -70,9 +70,17 @@ jobs:
       - name: 'Preflight: action release endpoint'
         id: preflight
         timeout-minutes: 2
-        env:
-          GH_TOKEN: ${{ secrets.GH_PAT }}
-        run: gh api repos/anomalyco/opencode/releases/latest --jq .tag_name
+        run: |
+          remaining=$(curl -sS --max-time 60 https://api.github.com/rate_limit | jq -r '.resources.core.remaining')
+          echo "anonymous GitHub API rate limit remaining: $remaining"
+          if [ -z "$remaining" ] || [ "$remaining" = "null" ]; then
+            echo "::error::could not read anonymous rate limit"
+            exit 1
+          fi
+          if [ "$remaining" -le 1 ]; then
+            echo "::error::anonymous GitHub API rate limit exhausted (remaining=$remaining, threshold <= 1)"
+            exit 1
+          fi
 
       - name: Run opencode triage
         if: steps.preflight.outcome == 'success'
@@ -92,8 +100,8 @@ jobs:
       - name: Apply agent/* label and close if work-product is the comment
         if: success() || failure() || cancelled()
         env:
-           PREV_CONCLUSION: ${{ steps.run_agent.outcome }}
-           PREFLIGHT_OUTCOME: ${{ steps.preflight.outcome }}
+          PREV_CONCLUSION: ${{ steps.run_agent.outcome }}
+          PREFLIGHT_OUTCOME: ${{ steps.preflight.outcome }}
         uses: actions/github-script@v7
         with:
           github-token: ${{ secrets.GH_PAT || secrets.GITHUB_TOKEN }}

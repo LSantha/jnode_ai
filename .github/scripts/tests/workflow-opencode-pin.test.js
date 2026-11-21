@@ -96,9 +96,18 @@ test("preflight step exists in all three workflows", () => {
   for (const name of WORKFLOWS) {
     const text = readWorkflow(name);
     const step = stepContaining(text, "Preflight: action release endpoint");
-    assert.match(step.text, /gh api repos\/anomalyco\/opencode\/releases\/latest/, name + ": preflight must hit release endpoint");
+    assert.match(step.text, /curl -sS --max-time 60 https:\/\/api\.github\.com\/rate_limit/, name + ": preflight must query anonymous rate limit");
+    assert.match(step.text, /resources\.core\.remaining/, name + ": preflight must read resources.core.remaining");
     assert.match(step.text, /^\s*timeout-minutes:\s*2\s*$/m, name + ": preflight timeout must be 2");
     assert.match(step.text, /^\s*id:\s*preflight\s*$/m, name + ": preflight id must be preflight");
+  }
+});
+
+test("preflight step does not set GH_TOKEN", () => {
+  for (const name of WORKFLOWS) {
+    const text = readWorkflow(name);
+    const step = stepContaining(text, "Preflight: action release endpoint");
+    assert.doesNotMatch(step.text, /GH_TOKEN/, name + ": preflight must not set GH_TOKEN");
   }
 });
 

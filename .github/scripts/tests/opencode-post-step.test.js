@@ -286,7 +286,7 @@ test('opencode-post-step.js test suite', async (t) => {
     process.env.PREV_CONCLUSION = 'skipped';
     process.env.PREFLIGHT_OUTCOME = 'failure';
     setIssueData({ labels: [{ name: 'kind/bug' }], state: 'open' });
-    setComments([{ body: '## Triage\\n\\n- [x] **Suggested next:** fix' }]);
+    setComments([{ body: '## Triage\n\n- [x] **Suggested next:** fix' }]);
 
     await runPostStep({ github, context, core });
     assert.ok(calls.addLabels.includes('agent/blocked'));
