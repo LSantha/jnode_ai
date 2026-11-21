@@ -4,7 +4,7 @@
  *
  * Triggered by: .github/workflows/opencode.yml (the "Apply agent/* label" step)
  * Reads:  context.payload.issue, context.payload.comment, PREV_CONCLUSION env var,
- *          PREFLIGHT_OUTCOME/PREFLIGHT_CONCLUSION env var (action release endpoint preflight)
+ *          PREFLIGHT_OUTCOME env var (action release endpoint preflight)
  * Writes: agent/* label, removes agent/in-progress, optionally closes the issue
  *
  * Idempotent: respects an existing agent/* label; safe to re-run.
@@ -58,8 +58,8 @@ function findLatestAgentComment(comments) {
   return '';
 }
 
-function decideAgentLabel({ existing, conclusion, latestComment, labels, isPR, preflight, preflightConclusion, preflightOutcome, preflightResult, preflightStatus, versionOutcome }) {
-  const _pf = preflight || preflightConclusion || preflightOutcome || preflightResult || preflightStatus || versionOutcome;
+function decideAgentLabel({ existing, conclusion, latestComment, labels, isPR, preflightOutcome }) {
+  const _pf = preflightOutcome;
   const _pfFailed = !!_pf && /^(failure|failed|cancelled|canceled)$/i.test(String(_pf).trim());
   // Structured reports are deliberate work products: honor them even when the
   // run later died (triage runs often fail at action finalization after the
@@ -79,11 +79,11 @@ function decideAgentLabel({ existing, conclusion, latestComment, labels, isPR, p
   if (isPRCreationComment(latestComment)) {
     return { label: 'agent/done', reason: 'PR creation comment detected' };
   }
-  if (isTriageClearComment(latestComment)) {
-    return { label: null, clearNeedsInfo: true, clearFailed: true, reason: 'clear triage, no blocking label' };
-  }
   if (_pfFailed) {
     return { label: 'agent/blocked', reason: 'preflight: action release endpoint failed' };
+  }
+  if (isTriageClearComment(latestComment)) {
+    return { label: null, clearNeedsInfo: true, clearFailed: true, reason: 'clear triage, no blocking label' };
   }
   if (conclusion === 'failure' || conclusion === 'cancelled') {
     return { label: 'agent/failed', reason: 'run concluded: ' + conclusion };
@@ -112,9 +112,7 @@ const _runPostStep = async ({ github, context, core }) => {
   const isPR = isPRContext(context);
   const { owner, repo } = context.repo;
   const conclusion = process.env.PREV_CONCLUSION || 'success';
-  const preflightOutcome = process.env.PREFLIGHT_OUTCOME || process.env.PREFLIGHT_CONCLUSION ||
-    process.env.PREFLIGHT_RESULT || process.env.PREFLIGHT_STATUS || process.env.VERSION_STEP_OUTCOME ||
-    process.env.VERSION_OUTCOME || process.env.ACTION_RELEASE_OUTCOME || '';
+  const preflightOutcome = process.env.PREFLIGHT_OUTCOME || '';
   core.info('Preflight outcome: ' + (preflightOutcome || '(none)'));
 
   core.info('Post-step for #' + number + ' (isPR=' + isPR + ', conclusion=' + conclusion + ')');
@@ -224,4 +222,3 @@ const _runPostStep = async ({ github, context, core }) => {
 };
 
 module.exports = _runPostStep;
-_runPostStep.decideAgentLabel = decideAgentLabel;

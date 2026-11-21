@@ -101,3 +101,18 @@ test("preflight step exists in all three workflows", () => {
     assert.match(step.text, /^\s*id:\s*preflight\s*$/m, name + ": preflight id must be preflight");
   }
 });
+
+test("post-step receives PREFLIGHT_OUTCOME from preflight", () => {
+  for (const name of ["opencode.yml", "triage.yml"]) {
+    const text = readWorkflow(name);
+    assert.match(text, /PREFLIGHT_OUTCOME:\s*\$\{\{\s*steps\.preflight\.outcome\s*\}\}/, name + ": post-step must receive PREFLIGHT_OUTCOME");
+  }
+});
+
+test("run_agent step is gated on preflight success", () => {
+  for (const name of ["opencode.yml", "triage.yml"]) {
+    const text = readWorkflow(name);
+    const step = stepContaining(text, ACTION_USES);
+    assert.match(step.text, /steps\.preflight\.outcome == 'success'/, name + ": run_agent must be gated on preflight success");
+  }
+});

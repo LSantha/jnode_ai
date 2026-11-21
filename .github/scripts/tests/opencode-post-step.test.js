@@ -280,4 +280,16 @@ test('opencode-post-step.js test suite', async (t) => {
     assert.ok(calls.addLabels.includes('agent/failed'));
     assert.ok(!calls.addLabels.includes('agent/blocked'));
   });
+
+  await t.test('Preflight failure with clear triage applies agent/blocked', async () => {
+    const { core, github, context, calls, setIssueData, setComments } = createMocks();
+    process.env.PREV_CONCLUSION = 'skipped';
+    process.env.PREFLIGHT_OUTCOME = 'failure';
+    setIssueData({ labels: [{ name: 'kind/bug' }], state: 'open' });
+    setComments([{ body: '## Triage\\n\\n- [x] **Suggested next:** fix' }]);
+
+    await runPostStep({ github, context, core });
+    assert.ok(calls.addLabels.includes('agent/blocked'));
+    assert.ok(!calls.addLabels.includes('agent/failed'));
+  });
 });
