@@ -26,6 +26,7 @@ import java.io.IOException;
 import org.jnode.java.io.VMFileSystemAPI;
 import java.io.VMOpenMode;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.Iterator;
 import java.util.Map;
@@ -78,7 +79,7 @@ final class FileSystemAPIImpl implements VMFileSystemAPI {
         this.entryCache = new FSEntryCache();
         this.fhm = new FileHandleManager();
         this.vfs = vfs;
-        this.mountPoints = new HashMap<String, FileSystem<?>>();
+        this.mountPoints = Collections.synchronizedMap(new HashMap<String, FileSystem<?>>());
     }
 
     /**
@@ -498,7 +499,9 @@ final class FileSystemAPIImpl implements VMFileSystemAPI {
      * @return a copy of the internal map, sorted by fullPath
      */
     Map<String, FileSystem<?>> getMountPoints() {
-        return new TreeMap<String, FileSystem<?>>(mountPoints);
+        synchronized (mountPoints) {
+            return new TreeMap<String, FileSystem<?>>(mountPoints);
+        }
     }
 
     /**

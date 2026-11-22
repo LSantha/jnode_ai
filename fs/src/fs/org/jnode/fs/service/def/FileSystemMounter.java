@@ -126,51 +126,73 @@ final class FileSystemMounter implements DeviceListener {
      */
     protected void tryToMount(Device device, FSBlockDeviceAPI api, boolean removable,
             boolean readOnly) {
-        if (fileSystemService.getFileSystem(device) != null) {
-            log.info("device already mounted...");
+        /*
+         * A device claimed by the earlymount plugin is mounted by that
+         * plugin instead: it runs its mount from its own startPlugin, which
+         * would otherwise always lose the race against this listener (this
+         * method is driven by the deviceStarted event, the earlymount
+         * plugin by polling). Skip the probe-and-mount attempt so there is
+         * exactly one mount attempt per claimed device.
+         */
+        if (EarlyMountClaims.isClaimed(device.getId())) {
+            log.info("device " + device.getId() +
+                " is claimed by the early mount plugin, skipping");
             return;
         }
 
-        // if (removable) {
-        // log.error("Not mounting removable devices yet...");
-        // TODO Implement mounting of removable devices
-        // return;
-        // }
+        /*
+         * The check-create-register sequence must be atomic with respect to
+         * other mounters (e.g. the earlymount plugin), otherwise two threads
+         * can both create a filesystem on the same device. The device object
+         * itself is the shared monitor.
+         */
+        synchronized (device) {
+            if (fileSystemService.getFileSystem(device) != null) {
+                log.info("device already mounted...");
+                return;
+            }
 
-        log.info("Try to mount " + device.getId());
-        // Read the first sector
-        try {
-            final PartitionTableEntry ptEntry = api.getPartitionTableEntry();
-            final ByteBuffer bs = ByteBuffer.allocate(api.getSectorSize());
-            final String mountPath = File.separatorChar + MOUNT_ROOT + File.separatorChar;
+            // if (removable) {
+            // log.error("Not mounting removable devices yet...");
+            // TODO Implement mounting of removable devices
+            // return;
+            // }
 
-            api.read(0, bs);
-            for (FileSystemType<?> fst : fileSystemService.fileSystemTypes()) {
-                if (fst instanceof BlockDeviceFileSystemType) {
-                    if (((BlockDeviceFileSystemType<?>) fst).supports(ptEntry, bs.array(), api)) {
-                        try {
-                            final FileSystem<?> fs = fst.create(device, readOnly);
-                            fileSystemService.registerFileSystem(fs);
+            log.info("Try to mount " + device.getId());
+            // Read the first sector
+            try {
+                final PartitionTableEntry ptEntry = api.getPartitionTableEntry();
+                final ByteBuffer bs = ByteBuffer.allocate(api.getSectorSize());
+                final String mountPath = File.separatorChar + MOUNT_ROOT + File.separatorChar;
 
-                            final String fullPath = mountPath + device.getId();
-                            log.debug("Mounting " + device.getId() + " on " + fullPath);
-                            fileSystemService.mount(fullPath, fs, null);
+                api.read(0, bs);
+                for (FileSystemType<?> fst : fileSystemService.fileSystemTypes()) {
+                    if (fst instanceof BlockDeviceFileSystemType) {
+                        if (((BlockDeviceFileSystemType<?>) fst).supports(ptEntry, bs.array(), api)) {
+                            try {
+                                final FileSystem<?> fs = fst.create(device, readOnly);
+                                fileSystemService.registerFileSystem(fs);
 
-                            log.info("Mounted " + fst.getName() + " on " + fullPath);
-                            return;
-                        } catch (FileSystemException ex) {
-                            log.error("Cannot mount " + fst.getName() + " filesystem on " +
-                                    device.getId(), ex);
-                        } catch (IOException ex) {
-                            log.error("Cannot mount " + fst.getName() + " filesystem on " +
-                                    device.getId(), ex);
+                                final String fullPath = mountPath + device.getId();
+                                log.debug("Mounting " + device.getId() + " on " + fullPath);
+                                fileSystemService.mount(fullPath, fs, null);
+
+                                log.info("Mounted " + fst.getName() + " on " + fullPath);
+                                return;
+                            } catch (FileSystemException ex) {
+                                log.error("Cannot mount " + fst.getName() + " filesystem on " +
+                                        device.getId(), ex);
+                            } catch (IOException ex) {
+                                log.error("Cannot mount " + fst.getName() + " filesystem on " +
+                                        device.getId(), ex);
+                            }
                         }
                     }
                 }
+                log.info("No filesystem found for " + device.getId());
+            } catch (IOException ex) {
+                log.error("Cannot read bootsector of " + device.getId());
             }
-            log.info("No filesystem found for " + device.getId());
-        } catch (IOException ex) {
-            log.error("Cannot read bootsector of " + device.getId());
         }
     }
 
