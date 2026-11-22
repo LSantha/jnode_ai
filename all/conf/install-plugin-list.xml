@@ -21,11 +21,16 @@
 
 <plugin-list name="install">
   <manifest>
-    <attribute key="Main-Class" value="org.jnode.install.Main"/>
+    <attribute key="Main-Class" value="org.jnode.shell.CommandShell"/>
+    <attribute key="Main-Class-Arg" value="boot"/>
   </manifest>
 
   <plugin id="org.apache.commons.net"/>
   <plugin id="org.xbill.dns"/>
+
+  <plugin id="org.classpath.ext"/>
+  <plugin id="org.classpath.ext.core"/>
+  <plugin id="org.classpath.ext.xml"/>
 
   <plugin id="org.jnode.driver.console"/>
   <plugin id="org.jnode.driver.console.core"/>
