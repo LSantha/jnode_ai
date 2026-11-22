@@ -54,6 +54,9 @@ help         Output these messages
             <test name="org.jnode.test.fs.driver.tests.BlockDeviceAPITest" todir="${basedir}/build/reports/junit"/>
             <test name="org.jnode.test.fs.command.SyncCommandTest" todir="${basedir}/build/reports/junit"/>
             <test name="org.jnode.fs.service.def.FileSystemAPIImplTest" todir="${basedir}/build/reports/junit"/>
+            <test name="org.jnode.fs.service.def.FileSystemMounterClaimTest" todir="${basedir}/build/reports/junit"/>
+            <test name="org.jnode.test.fs.earlymount.EarlyMountClaimsTest" todir="${basedir}/build/reports/junit"/>
+            <test name="org.jnode.test.fs.earlymount.EarlyMountPluginTest" todir="${basedir}/build/reports/junit"/>
             <test name="org.jnode.fs.iso9660.EntryRecordTest" todir="${basedir}/build/reports/junit"/>
             <test name="org.jnode.test.partitions.ibm.IBMPartitionTableEntryTest" todir="${basedir}/build/reports/junit"/>
             <test name="org.jnode.test.fs.ramfs.RAMFileReadTest" todir="${basedir}/build/reports/junit"/>
