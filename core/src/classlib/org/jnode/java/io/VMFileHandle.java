@@ -79,6 +79,18 @@ public interface VMFileHandle {
     public void close() throws IOException;
 
     /**
+     * Flushes any cached data of this file to the underlying device.
+     * <p>
+     * JNode specific: the classlib has no other way to implement
+     * {@code java.io.FileDescriptor.sync()}, which the adopted OpenJDK
+     * streams declare as a native method (implemented by
+     * {@code NativeFileDescriptor}).
+     *
+     * @throws IOException if the data could not be flushed.
+     */
+    public void flush() throws IOException;
+
+    /**
      * Has this handle been closed?
      */
     public boolean isClosed();

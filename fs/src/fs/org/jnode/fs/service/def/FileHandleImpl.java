@@ -222,6 +222,14 @@ final class FileHandleImpl implements VMFileHandle {
         fhm.close(this);
     }
 
+    /**
+     * Flush any cached data to the device.
+     * @see VMFileHandle#flush()
+     */
+    public synchronized void flush() throws IOException {
+        file.flush();
+    }
+
     void closeFromManager() throws IOException {
         try {
             file.flush();
