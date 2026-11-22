@@ -23,7 +23,6 @@ package org.jnode.fs.jfat;
 import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
 import java.util.Properties;
@@ -398,6 +397,16 @@ public abstract class Fat {
 
     protected abstract long offset(int index);
 
+    /**
+     * Decode FAT entry {@code index} from a raw FAT buffer holding the whole
+     * active FAT (see {@link #freeEntries()}).
+     *
+     * @param fat the FAT bytes, starting at the first FAT sector
+     * @param index the FAT entry index
+     * @return the entry value, decoded exactly like {@link #get(int)}
+     */
+    protected abstract int getFromBuffer(byte[] fat, int index);
+
     public abstract boolean isEofChain(int entry);
 
     public abstract int eofChain();
@@ -520,29 +529,59 @@ public abstract class Fat {
         if (sectorsPerFat <= 0 || bytesPerSector <= 0) {
             return divergent;
         }
-        byte[] copy0 = new byte[bytesPerSector];
-        byte[] copyN = new byte[bytesPerSector];
+
+        /*
+         * Compare in 1 MiB chunks (rounded to whole sectors) instead of one
+         * device read per sector per FAT. The per-sector form costs
+         * 2 x sectorsPerFat single-sector reads, which dominated the mount
+         * time under emulation; chunked bulk reads turn that into one read
+         * per chunk per FAT.
+         */
+        final int maxChunkSectors = Math.max(1, (1 << 20) / bytesPerSector);
+        final int chunkSectors = (int) Math.min(sectorsPerFat, maxChunkSectors);
+        final int chunkBytes = chunkSectors * bytesPerSector;
+        final byte[] copy0 = new byte[chunkBytes];
+        final byte[] copyN = new byte[chunkBytes];
+
         for (int fatNum = 1; fatNum < nrFats; fatNum++) {
-            for (long s = 0; s < sectorsPerFat; s++) {
+            boolean readFailed = false;
+            for (long base = 0; base < sectorsPerFat; base += chunkSectors) {
+                final int sectors = (int) Math.min((long) chunkSectors, sectorsPerFat - base);
+                final int len = sectors * bytesPerSector;
                 try {
-                    api.read(getFirst(0) + s * bytesPerSector, ByteBuffer.wrap(copy0));
-                    api.read(getFirst(fatNum) + s * bytesPerSector, ByteBuffer.wrap(copyN));
+                    api.read(getFirst(0) + base * bytesPerSector, ByteBuffer.wrap(copy0, 0, len));
+                    api.read(getFirst(fatNum) + base * bytesPerSector, ByteBuffer.wrap(copyN, 0, len));
                 } catch (IOException ex) {
                     log.warn("FAT copy " + fatNum + " comparison failed at sector "
-                        + (getFirstSector(fatNum) + s) + ", continuing with FAT copy 0", ex);
+                        + (getFirstSector(fatNum) + base) + ", continuing with FAT copy 0", ex);
+                    readFailed = true;
                     break;
                 } catch (RuntimeException ex) {
                     log.warn("FAT copy " + fatNum + " comparison failed at sector "
-                        + (getFirstSector(fatNum) + s) + ", continuing with FAT copy 0", ex);
+                        + (getFirstSector(fatNum) + base) + ", continuing with FAT copy 0", ex);
+                    readFailed = true;
                     break;
                 }
-                if (!Arrays.equals(copy0, copyN)) {
-                    long sector = getFirstSector(fatNum) + s;
-                    divergent.add(sector);
-                    log.warn("FAT copy " + fatNum + " differs from FAT copy 0 at sector " + sector
-                        + " (FAT copy 0 sector " + (getFirstSector(0) + s)
-                        + "), continuing with FAT copy 0");
+                for (int s = 0; s < sectors; s++) {
+                    final int off = s * bytesPerSector;
+                    boolean same = true;
+                    for (int i = 0; i < bytesPerSector; i++) {
+                        if (copy0[off + i] != copyN[off + i]) {
+                            same = false;
+                            break;
+                        }
+                    }
+                    if (!same) {
+                        long sector = getFirstSector(fatNum) + base + s;
+                        divergent.add(sector);
+                        log.warn("FAT copy " + fatNum + " differs from FAT copy 0 at sector "
+                            + sector + " (FAT copy 0 sector " + (getFirstSector(0) + base + s)
+                            + "), continuing with FAT copy 0");
+                    }
                 }
+            }
+            if (readFailed) {
+                break;
             }
         }
         return divergent;
@@ -599,6 +638,55 @@ public abstract class Fat {
     }
 
     public final int freeEntries() throws IOException {
+        /*
+         * Bulk-read the whole active FAT once and count free entries from the
+         * buffer. The previous per-entry scan went through the FatCache, which
+         * fills one 512-byte element per device command: for a 1024-sector FAT
+         * that is a thousand single-sector reads, and at ~10 ms per
+         * interrupt-driven IDE command under emulation the free count alone
+         * cost tens of seconds of mount time.
+         *
+         * Two cases keep the original cache-backed scan:
+         * <ul>
+         * <li>the cache holds unflushed writes: the counter and a fresh device
+         * read would disagree, and the counter tracks the cache view (the
+         * caller of a failed-flush rescan needs the pre-flush values);</li>
+         * <li>the FAT byte size does not fit an int, or the entries need more
+         * bytes than any sane FAT buffer (degenerate/cross-mounted images).</li>
+         * </ul>
+         *
+         * The buffer is one byte longer than the last byte any entry needs on
+         * purpose: a FAT12 odd entry at the end of the last FAT sector
+         * straddles into the first byte after the FAT (the same over-read the
+         * cache element performs with elementSize + 1).
+         */
+        if (cache.hasDirtyElements()) {
+            return freeEntriesViaCache();
+        }
+        final long fatBytesLong = bs.getSectorsPerFat() * bs.getBytesPerSector();
+        final int entries = size();
+        final long lastOffset = (entries > 0) ? offset(entries - 1) : 0;
+        final long neededLong = Math.max(fatBytesLong, lastOffset + 4) + 1;
+        if ((fatBytesLong <= 0) || (neededLong > 0x7FFFFFF0L)) {
+            return freeEntriesViaCache();
+        }
+        final ByteBuffer buf = ByteBuffer.allocate((int) neededLong);
+        api.read(getFirst(bs.getActiveFat()), buf);
+        final byte[] fat = buf.array();
+        int count = 0;
+        for (int i = 0; i < entries; i++) {
+            if (isFree(getFromBuffer(fat, i))) {
+                count++;
+            }
+        }
+        return count;
+    }
+
+    /**
+     * The original per-entry free count, kept as a fallback for FATs whose
+     * byte size does not fit an int.
+     */
+    private int freeEntriesViaCache() throws IOException {
         int count = 0;
         for (int i = 0; i < size(); i++) {
             if (isFreeEntry(i)) {

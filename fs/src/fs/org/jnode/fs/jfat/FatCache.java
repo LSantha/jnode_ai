@@ -197,6 +197,20 @@ public class FatCache {
         return map.freeEntries();
     }
 
+    /**
+     * Does the cache currently hold elements with unflushed writes?
+     *
+     * <p>
+     * Note that the dirty set may contain stale entries (elements that were
+     * flushed or recycled in the meantime); callers that need a
+     * cache-consistent view of the FAT (such as the free-cluster rescan)
+     * must treat a non-empty dirty set as "the device may be behind the
+     * cache" and read through the cache, not the device.
+     */
+    public synchronized boolean hasDirtyElements() {
+        return !dirtyElements.isEmpty();
+    }
+
     private CacheElement put(long address) throws IOException {
         /**
          * get a CacheElement from the free list object pool

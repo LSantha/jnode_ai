@@ -23,6 +23,7 @@ package org.jnode.fs.jfat;
 import java.io.IOException;
 
 import org.jnode.driver.block.BlockDeviceAPI;
+import org.jnode.util.LittleEndian;
 
 
 /**
@@ -57,6 +58,11 @@ public class Fat32 extends Fat {
 
     public int get(int index) throws IOException {
         return (int) (getUInt32(index) & 0x0FFFFFFF);
+    }
+
+    @Override
+    protected int getFromBuffer(byte[] fat, int index) {
+        return (int) (LittleEndian.getUInt32(fat, (int) offset(index)) & 0x0FFFFFFF);
     }
 
     public synchronized int set(int index, int element) throws IOException {

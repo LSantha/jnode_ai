@@ -22,6 +22,7 @@ package org.jnode.fs.jfat;
 
 import java.io.IOException;
 import org.jnode.driver.block.BlockDeviceAPI;
+import org.jnode.util.LittleEndian;
 
 /**
  * A FAT implementation for FAT-16.
@@ -39,6 +40,11 @@ public class Fat16 extends Fat {
 
     public int get(int index) throws IOException {
         return (int) getUInt16(index);
+    }
+
+    @Override
+    protected int getFromBuffer(byte[] fat, int index) {
+        return LittleEndian.getUInt16(fat, (int) offset(index));
     }
 
     public synchronized int set(int index, int element) throws IOException {
