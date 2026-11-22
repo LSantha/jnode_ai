@@ -28,6 +28,10 @@
   <plugin id="org.apache.commons.net"/>
   <plugin id="org.xbill.dns"/>
 
+  <plugin id="org.classpath.ext"/>
+  <plugin id="org.classpath.ext.core"/>
+  <plugin id="org.classpath.ext.xml"/>
+
   <plugin id="org.jnode.driver.console"/>
   <plugin id="org.jnode.driver.console.core"/>
   <plugin id="org.jnode.driver.console.textscreen"/>
