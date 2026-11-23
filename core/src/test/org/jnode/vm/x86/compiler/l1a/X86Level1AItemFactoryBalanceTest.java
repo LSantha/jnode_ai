@@ -33,16 +33,18 @@ import org.jnode.vm.classmgr.VmType;
 import org.jnode.vm.facade.VmUtils;
 import org.jnode.vm.x86.VmX86Architecture32;
 import org.jnode.vm.x86.X86CpuID;
+import org.junit.AfterClass;
 import org.junit.BeforeClass;
 import org.junit.Test;
 
+import static org.junit.Assert.assertNotSame;
 import static org.junit.Assert.assertTrue;
 
 /**
  * Regression test for issue #986: nested compilations triggered by constant
  * resolution must not corrupt the outer method's item accounting. Compiling the
  * two methods that exposed the bug must leave the per-visitor {@link ItemFactory}
- * balanced.
+ * balanced, and simultaneously-live visitors must not share one factory.
  */
 public class X86Level1AItemFactoryBalanceTest {
 
@@ -50,6 +52,7 @@ public class X86Level1AItemFactoryBalanceTest {
     private static X86Level1ACompiler compiler;
     private static ThreadLocal holder;
     private static Field ifacField;
+    private static Object previousVm;
 
     private static File findFile(String... candidates) {
         for (String c : candidates) {
@@ -63,26 +66,32 @@ public class X86Level1AItemFactoryBalanceTest {
 
     @BeforeClass
     public static void setUpClass() throws Exception {
-        if (VmUtils.getVm() == null) {
-            final VmX86Architecture32 arch = new VmX86Architecture32();
-            final File coreClasses = findFile("./core/build/classes", "core/build/classes", "../core/build/classes");
-            final File classlibJar = findFile("./all/lib/classlib.jar", "all/lib/classlib.jar", "../all/lib/classlib.jar");
-            final URL[] urls = new URL[] {
-                coreClasses.getCanonicalFile().toURI().toURL(),
-                new URL("jar:" + classlibJar.getCanonicalFile().toURI().toURL() + "!/")
-            };
-            cl = new VmSystemClassLoader(urls, arch);
-            final VmImpl vm = new VmImpl("?", arch, cl.getSharedStatics(), false, cl, null);
-            vm.toString();
-            VmType.initializeForBootImage(cl);
-            compiler = new X86Level1ACompiler(false);
-            compiler.initialize(cl);
-            final Field holderField = X86Level1ACompiler.class.getDeclaredField("byteCodeVisitorHolder");
-            holderField.setAccessible(true);
-            holder = (ThreadLocal) holderField.get(compiler);
-            ifacField = X86BytecodeVisitor.class.getDeclaredField("ifac");
-            ifacField.setAccessible(true);
-        }
+        previousVm = VmUtils.getVm();
+        final VmX86Architecture32 arch = new VmX86Architecture32();
+        final File coreClasses = findFile("./core/build/classes", "core/build/classes", "../core/build/classes");
+        final File classlibJar = findFile("./all/lib/classlib.jar", "all/lib/classlib.jar", "../all/lib/classlib.jar");
+        final URL[] urls = new URL[] {
+            coreClasses.getCanonicalFile().toURI().toURL(),
+            new URL("jar:" + classlibJar.getCanonicalFile().toURI().toURL() + "!/")
+        };
+        cl = new VmSystemClassLoader(urls, arch);
+        final VmImpl vm = new VmImpl("?", arch, cl.getSharedStatics(), false, cl, null);
+        vm.toString();
+        VmType.initializeForBootImage(cl);
+        compiler = new X86Level1ACompiler(false);
+        compiler.initialize(cl);
+        final Field holderField = X86Level1ACompiler.class.getDeclaredField("byteCodeVisitorHolder");
+        holderField.setAccessible(true);
+        holder = (ThreadLocal) holderField.get(compiler);
+        ifacField = X86BytecodeVisitor.class.getDeclaredField("ifac");
+        ifacField.setAccessible(true);
+    }
+
+    @AfterClass
+    public static void tearDownClass() throws Exception {
+        final Field vmField = VmUtils.class.getDeclaredField("VM_INSTANCE");
+        vmField.setAccessible(true);
+        vmField.set(null, previousVm);
     }
 
     private void compileAndCheck(String clsName, String methodName) throws Exception {
@@ -112,5 +121,19 @@ public class X86Level1AItemFactoryBalanceTest {
     @Test
     public void reflectionFactoryNewMethodIsBalanced() throws Exception {
         compileAndCheck("sun.reflect.ReflectionFactory", "newMethod");
+    }
+
+    @Test
+    public void nestedCompilationsUseDistinctItemFactories() throws Exception {
+        holder.remove();
+        final StringWriter sw = new StringWriter();
+        final X86TextAssembler os = new X86TextAssembler(sw, X86CpuID.createID("p5"), Mode.CODE32, "nested");
+        final X86BytecodeVisitor v1 =
+            (X86BytecodeVisitor) compiler.createBytecodeVisitor(null, null, os, 0, false);
+        final X86BytecodeVisitor v2 =
+            (X86BytecodeVisitor) compiler.createBytecodeVisitor(null, null, os, 0, false);
+        final ItemFactory f1 = (ItemFactory) ifacField.get(v1);
+        final ItemFactory f2 = (ItemFactory) ifacField.get(v2);
+        assertNotSame("simultaneously-live visitors must not share an ItemFactory", f1, f2);
     }
 }
