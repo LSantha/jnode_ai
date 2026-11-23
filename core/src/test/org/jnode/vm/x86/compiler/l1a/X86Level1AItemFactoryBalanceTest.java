@@ -67,6 +67,9 @@ public class X86Level1AItemFactoryBalanceTest {
     @BeforeClass
     public static void setUpClass() throws Exception {
         previousVm = VmUtils.getVm();
+        final Field vmField = VmUtils.class.getDeclaredField("VM_INSTANCE");
+        vmField.setAccessible(true);
+        vmField.set(null, null);
         final VmX86Architecture32 arch = new VmX86Architecture32();
         final File coreClasses = findFile("./core/build/classes", "core/build/classes", "../core/build/classes");
         final File classlibJar = findFile("./all/lib/classlib.jar", "all/lib/classlib.jar", "../all/lib/classlib.jar");
