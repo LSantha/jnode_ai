@@ -280,7 +280,7 @@ final class X86BytecodeVisitor extends InlineBytecodeVisitor {
             gprPool = new X86RegisterPool.GPRs64();
             xmmPool = new X86RegisterPool.XMMs64();
         }
-        this.ifac = ItemFactory.getFactory();
+        this.ifac = new ItemFactory();
         final AbstractX86StackManager stackMgr = vstack.createStackMgr(gprPool, ifac);
         this.helper = new X86CompilerHelper(os, stackMgr, context, isBootstrap);
         this.cm = cm;

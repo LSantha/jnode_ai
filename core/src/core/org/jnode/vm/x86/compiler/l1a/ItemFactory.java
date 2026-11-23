@@ -309,9 +309,9 @@ final class ItemFactory {
     }
 
     /**
-     * Hidden constructor.
+     * Constructor.
      */
-    private ItemFactory() {
+    ItemFactory() {
     }
 
     /**
