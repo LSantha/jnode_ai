@@ -23,35 +23,23 @@ package java.nio;
 import gnu.classpath.Pointer;
 
 import org.jnode.system.resource.MemoryResource;
-import org.jnode.system.resource.ResourceManager;
-import org.jnode.system.resource.ResourceNotFreeException;
-import org.jnode.system.resource.ResourceOwner;
-import org.jnode.system.resource.SimpleResourceOwner;
-import org.jnode.naming.InitialNaming;
 import org.vmmagic.unboxed.Address;
-import javax.naming.NameNotFoundException;
+import sun.misc.Cleaner;
+import sun.nio.ch.DirectBuffer;
 
 /**
- *
+ * JNode binding of a {@link MemoryResource} to a direct {@link ByteBuffer}.
+ * <p>
+ * Implementing {@link DirectBuffer} lets the OpenJDK direct buffer
+ * constructors keep this object (and therefore the resource and its owner)
+ * reachable through their {@code viewedBuffer} chain. Otherwise a buffer that
+ * wraps memory owned by e.g. a file mapping could outlive the owner that is
+ * responsible for releasing the resource.
  */
-public class MemoryRawData extends Pointer {
+public class MemoryRawData extends Pointer implements DirectBuffer {
 
     final MemoryResource resource;
     final Address address;
-
-    MemoryRawData(int size) {
-        try {
-            final ResourceManager rm = InitialNaming.lookup(ResourceManager.NAME);
-            final ResourceOwner owner = new SimpleResourceOwner("java.nio");
-            this.resource = rm.claimMemoryResource(owner, null, size,
-                ResourceManager.MEMMODE_NORMAL);
-            this.address = resource.getAddress();
-        } catch (NameNotFoundException ex) {
-            throw new Error("Cannot find ResourceManager", ex);
-        } catch (ResourceNotFreeException ex) {
-            throw new Error("Cannot allocate direct memory", ex);
-        }
-    }
 
     MemoryRawData(MemoryResource resource) {
         this.resource = resource;
@@ -59,16 +47,41 @@ public class MemoryRawData extends Pointer {
     }
 
     /**
+     * @see sun.nio.ch.DirectBuffer#address()
+     */
+    public long address() {
+        return address.toLong();
+    }
+
+    /**
+     * @see sun.nio.ch.DirectBuffer#viewedBuffer()
+     */
+    public Object viewedBuffer() {
+        return null;
+    }
+
+    /**
+     * @see sun.nio.ch.DirectBuffer#cleaner()
+     */
+    public Cleaner cleaner() {
+        return null;
+    }
+
+    /**
      * Wrap a bytebuffer around the given memory resource.
+     * <p>
+     * The buffer is created through the "viewed buffer" constructor, which
+     * makes it hold a reference to this {@code MemoryRawData}. That keeps the
+     * resource and its owner alive for as long as the buffer (or one of its
+     * duplicates/slices) is reachable.
      *
      * @param resource a memory resource to wrap
      * @return the new ByteBuffer
      */
     public static ByteBuffer wrap(MemoryResource resource) {
-        final Object owner = resource.getOwner();
-        final Pointer address = new MemoryRawData(resource);
+        final MemoryRawData data = new MemoryRawData(resource);
         final int size = resource.getSize().toInt();
-        final ByteBuffer result = new DirectByteBufferImpl.ReadWrite(owner, address, size, size, 0);
+        final ByteBuffer result = new DirectByteBuffer(data, -1, 0, size, size, 0);
         result.mark();
         return result;
     }

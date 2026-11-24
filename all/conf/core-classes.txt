@@ -24,8 +24,10 @@ java.lang.ref
 java.net.URL
 
 java.nio.Buffer
+java.nio.Bits
 java.nio.ByteBuffer*
 java.nio.DirectByteBuffer*
+java.nio.HeapByteBuffer*
 java.nio.ByteOrder
 java.nio.Char*
 java.nio.charset.spi
