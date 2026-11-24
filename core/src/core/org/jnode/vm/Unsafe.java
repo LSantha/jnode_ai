@@ -699,6 +699,31 @@ public final class Unsafe {
     }
 
     /**
+     * Allocate a block of raw memory outside the Java heap. The block is
+     * aligned to the VM memory block size and must be released with
+     * {@link #freeMemoryBlock(Address, Extent)} using the same size.
+     *
+     * @param size requested size
+     * @return the block address, or {@code null} if no memory is available
+     */
+    @Internal
+    public static Address allocateMemoryBlock(Extent size) {
+        return MemoryBlockManager.allocateBlock(size);
+    }
+
+    /**
+     * Release a block previously returned by
+     * {@link #allocateMemoryBlock(Extent)}.
+     *
+     * @param address block address
+     * @param size the size that was passed to allocateMemoryBlock
+     */
+    @Internal
+    public static void freeMemoryBlock(Address address, Extent size) {
+        MemoryBlockManager.freeBlock(address, size);
+    }
+
+    /**
      * List the current stacktrace on the kernel debug output.
      *
      * @throws UninterruptiblePragma

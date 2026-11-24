@@ -31,6 +31,7 @@ import java.util.Map;
 import java.util.HashMap;
 import org.vmmagic.unboxed.ObjectReference;
 import org.vmmagic.unboxed.Address;
+import org.vmmagic.unboxed.Extent;
 import org.jnode.vm.classmgr.VmStaticField;
 import org.jnode.vm.classmgr.VmInstanceField;
 import org.jnode.vm.classmgr.VmConstString;
@@ -205,88 +206,179 @@ class NativeUnsafe {
     }
 
     public static byte getByte(Unsafe instance, long address) {
-        throw new UnsupportedOperationException();
+        return Address.fromLong(address).loadByte();
     }
 
     public static void putByte(Unsafe instance, long address, byte x) {
-        throw new UnsupportedOperationException();
+        Address.fromLong(address).store(x);
     }
 
     public static short getShort(Unsafe instance, long address) {
-        throw new UnsupportedOperationException();
+        return Address.fromLong(address).loadShort();
     }
 
     public static void putShort(Unsafe instance, long address, short x) {
-        throw new UnsupportedOperationException();
+        Address.fromLong(address).store(x);
     }
 
     public static char getChar(Unsafe instance, long address) {
-        throw new UnsupportedOperationException();
+        return Address.fromLong(address).loadChar();
     }
 
     public static void putChar(Unsafe instance, long address, char x) {
-        throw new UnsupportedOperationException();
+        Address.fromLong(address).store(x);
     }
 
     public static int getInt(Unsafe instance, long address) {
-        throw new UnsupportedOperationException();
+        return Address.fromLong(address).loadInt();
     }
 
     public static void putInt(Unsafe instance, long address, int x) {
-        throw new UnsupportedOperationException();
+        Address.fromLong(address).store(x);
     }
 
     public static long getLong(Unsafe instance, long address) {
-        throw new UnsupportedOperationException();
+        return Address.fromLong(address).loadLong();
     }
 
     public static void putLong(Unsafe instance, long address, long x) {
-        throw new UnsupportedOperationException();
+        Address.fromLong(address).store(x);
     }
 
     public static float getFloat(Unsafe instance, long address) {
-        throw new UnsupportedOperationException();
+        return Address.fromLong(address).loadFloat();
     }
 
     public static void putFloat(Unsafe instance, long address, float x) {
-        throw new UnsupportedOperationException();
+        Address.fromLong(address).store(x);
     }
 
     public static double getDouble(Unsafe instance, long address) {
-        throw new UnsupportedOperationException();
+        return Address.fromLong(address).loadDouble();
     }
 
     public static void putDouble(Unsafe instance, long address, double x) {
-        throw new UnsupportedOperationException();
+        Address.fromLong(address).store(x);
     }
 
     public static long getAddress(Unsafe instance, long address) {
-        throw new UnsupportedOperationException();
+        return Address.fromLong(address).loadAddress().toLong();
     }
 
     public static void putAddress(Unsafe instance, long address, long x) {
-        throw new UnsupportedOperationException();
+        Address.fromLong(address).store(Address.fromLong(x));
+    }
+
+    /**
+     * Size of the private header placed in front of every direct memory block.
+     * It stores the requested block size so that {@code freeMemory} and
+     * {@code reallocateMemory} do not need global bookkeeping. Eight bytes
+     * keep the returned payload aligned for long/double access.
+     */
+    private static final int MEMORY_HEADER_SIZE = 8;
+
+    /**
+     * Early-boot fallback backing store. It is only used while the
+     * memory block manager is not available yet (e.g. when {@code java.nio.Bits}
+     * runs its byte-order probe in its static initializer). At most one
+     * fallback block may be outstanding at a time; the memory is never
+     * relocated during the short window between allocation and release
+     * because no allocation happens between the writes and reads.
+     */
+    private static byte[] fallbackBuffer;
+    private static long fallbackAddress;
+
+    private static long allocateFallback(int size) {
+        if (fallbackAddress != 0) {
+            throw new OutOfMemoryError(
+                "Direct memory is not available during early boot");
+        }
+        if (fallbackBuffer == null || fallbackBuffer.length < size) {
+            fallbackBuffer = new byte[size];
+        }
+        final int dataOffset = VmArray.DATA_OFFSET *
+            VmProcessor.current().getArchitecture().getReferenceSize();
+        fallbackAddress = ObjectReference.fromObject(fallbackBuffer).toAddress()
+            .add(dataOffset).toLong();
+        return fallbackAddress;
     }
 
     public static long allocateMemory(Unsafe instance, long bytes) {
-        throw new UnsupportedOperationException();
+        if (bytes <= 0) {
+            bytes = 1;
+        }
+        if (bytes > Integer.MAX_VALUE - MEMORY_HEADER_SIZE) {
+            throw new OutOfMemoryError("Direct memory block too large: " + bytes);
+        }
+        final int size = (int) bytes;
+        final Extent extent = Extent.fromIntZeroExtend(size + MEMORY_HEADER_SIZE);
+        final Address base = org.jnode.vm.Unsafe.allocateMemoryBlock(extent);
+        if (base == null) {
+            /*
+             * The memory block manager is not available during the very first
+             * phase of the boot image bootstrap (java.nio.Bits probes the byte
+             * order from its <clinit>). Fall back to a short-lived byte array
+             * just for that window.
+             */
+            return allocateFallback(size);
+        }
+        base.store(size);
+        return base.add(MEMORY_HEADER_SIZE).toLong();
     }
 
     public static long reallocateMemory(Unsafe instance, long address, long bytes) {
-        throw new UnsupportedOperationException();
+        if (address == 0) {
+            return allocateMemory(instance, bytes);
+        }
+        final int oldSize = Address.fromLong(address)
+            .sub(MEMORY_HEADER_SIZE).loadInt();
+        final long newAddress = allocateMemory(instance, bytes);
+        final long copySize = Math.min(oldSize, bytes);
+        if (copySize > 0) {
+            copyMemory(instance, address, newAddress, copySize);
+        }
+        freeMemory(instance, address);
+        return newAddress;
     }
 
     public static void setMemory(Unsafe instance, long address, long bytes, byte value) {
-        throw new UnsupportedOperationException();
+        final int len = (int) bytes;
+        final Address dst = Address.fromLong(address);
+        int word = value & 0xFF;
+        word = word | (word << 8);
+        word = word | (word << 16);
+        int i = 0;
+        for (; i + 4 <= len; i += 4) {
+            dst.add(i).store(word);
+        }
+        for (; i < len; i++) {
+            dst.add(i).store(value);
+        }
     }
 
     public static void copyMemory(Unsafe instance, long srcAddress, long destAddress,
                            long bytes) {
-        throw new UnsupportedOperationException();
+        final int len = (int) bytes;
+        final Address src = Address.fromLong(srcAddress);
+        final Address dst = Address.fromLong(destAddress);
+        int i = 0;
+        for (; i + 4 <= len; i += 4) {
+            dst.add(i).store(src.add(i).loadInt());
+        }
+        for (; i < len; i++) {
+            dst.add(i).store(src.add(i).loadByte());
+        }
     }
 
     public static void freeMemory(Unsafe instance, long address) {
-        throw new UnsupportedOperationException();
+        if (fallbackAddress != 0 && address == fallbackAddress) {
+            fallbackAddress = 0;
+            return;
+        }
+        final Address base = Address.fromLong(address).sub(MEMORY_HEADER_SIZE);
+        final int size = base.loadInt();
+        org.jnode.vm.Unsafe.freeMemoryBlock(base,
+            Extent.fromIntZeroExtend(size + MEMORY_HEADER_SIZE));
     }
     
     @MagicPermission
@@ -485,7 +577,7 @@ class NativeUnsafe {
     }
 
     public static int pageSize(Unsafe instance) {
-        throw new UnsupportedOperationException();
+        return VmProcessor.current().getArchitecture().getNativePageSize();
     }
 
     public static Class<?> defineClass(Unsafe instance, String name, byte[] b, int off, int len,

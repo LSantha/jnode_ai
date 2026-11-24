@@ -64,6 +64,22 @@ public abstract class VmX86Architecture extends BaseVmArchitecture {
      */
     public static final int BOOT_IMAGE_START = 0x00100000;
 
+    /**
+     * Native page size of x86 CPUs (4 KB). This is the smallest page size
+     * used by the hardware and the unit expected by native memory alignment
+     * interfaces, as opposed to the larger virtual-memory mapping sizes in
+     * {@link #getPageSize(int)}.
+     */
+    public static final int NATIVE_PAGE_SIZE = 0x1000;
+
+    /**
+     * {@inheritDoc}
+     */
+    @Override
+    public final int getNativePageSize() {
+        return NATIVE_PAGE_SIZE;
+    }
+
     // Page entry flags
     protected static final int PF_PRESENT = 0x00000001;
 
