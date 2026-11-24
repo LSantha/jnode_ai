@@ -158,6 +158,12 @@ public abstract class AbstractBootImageBuilder extends AbstractPluginsTask {
 
     private File coreClassListFile;
 
+    /**
+     * Additional files whose modification must invalidate the boot image
+     * (e.g. the architecture class list).
+     */
+    private final List<File> extraInputFiles = new ArrayList<File>();
+
     private int totalHighMethods;
 
     private int totalHighMethodSize;
@@ -268,6 +274,41 @@ public abstract class AbstractBootImageBuilder extends AbstractPluginsTask {
 
     protected final void addPreloadPackage(String name) {
         preloadPackages.add(name);
+    }
+
+    /**
+     * Register an additional input file whose modification must invalidate the
+     * boot image. Used for the architecture class list.
+     *
+     * @param file the input file (ignored when {@code null})
+     */
+    protected final void addBootImageInput(File file) {
+        if (file != null) {
+            extraInputFiles.add(file);
+        }
+    }
+
+    /**
+     * Gets the newest modification time of the given file or, for a
+     * directory, of any file below it.
+     *
+     * @param file file or directory
+     * @return newest modification time in millis, or 0 if absent
+     */
+    private static long newestModified(File file) {
+        if (file == null || !file.exists()) {
+            return 0;
+        }
+        long lm = file.lastModified();
+        if (file.isDirectory()) {
+            final File[] children = file.listFiles();
+            if (children != null) {
+                for (int i = 0; i < children.length; i++) {
+                    lm = Math.max(lm, newestModified(children[i]));
+                }
+            }
+        }
+        return lm;
     }
 
     protected void cleanup() {
@@ -557,6 +598,19 @@ public abstract class AbstractBootImageBuilder extends AbstractPluginsTask {
         final long lmKernel = kernelFile.lastModified();
         final long lmDest = destFile.lastModified();
         final long lmPIL = getPluginListFile().lastModified();
+        // Class lists and nano-kernel sources are not represented by the
+        // plugin list, yet both shape the image. Without these checks the
+        // bootimage task silently reuses a stale image after e.g. editing
+        // core-classes.txt or an included .asm file (JNasm builds compile the
+        // kernel inside this task, so jnode.o never changes).
+        long lmInputs = newestModified(coreClassListFile);
+        for (File f : extraInputFiles) {
+            lmInputs = Math.max(lmInputs, newestModified(f));
+        }
+        lmInputs = Math.max(lmInputs, newestModified(asmSourceInfo.getSrcFile()));
+        for (File dir : asmSourceInfo.includeDirs()) {
+            lmInputs = Math.max(lmInputs, newestModified(dir));
+        }
 
         if (version == null) {
             throw new BuildException("Version property must be set");
@@ -579,7 +633,8 @@ public abstract class AbstractBootImageBuilder extends AbstractPluginsTask {
             throw new BuildException(ex);
         }
 
-        if ((lmKernel < lmDest) && (lmPIL < lmDest) && (lmPI < lmDest)) {
+        if ((lmKernel < lmDest) && (lmPIL < lmDest) && (lmPI < lmDest)
+            && (lmInputs < lmDest)) {
             // No need to do anything, skip
             return;
         }
