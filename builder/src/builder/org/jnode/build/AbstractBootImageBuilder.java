@@ -555,9 +555,12 @@ public abstract class AbstractBootImageBuilder extends AbstractPluginsTask {
         noCopyPatterns.add("sun.misc.SharedSecrets");
         noCopyPatterns.add("org.jnode.vm.x86.compiler.l1a.ItemFactory");
         noCopyPatterns.add("gnu.classpath.ServiceFactory");
-        // Batch 2 (proven dead, boot-validated below):
-        // - sun.misc.Cleaner: zero users in core/classlib-nio (JNode NIO
-        //   overlay does not use it); dummyQueue never filled.
+        // Batch 2 (boot-validated below):
+        // - sun.misc.Cleaner: OpenJDK DirectByteBuffer now creates cleaners.
+        //   Copying the host statics would plant a host ReferenceQueue in the
+        //   image; the no-copy leaves them null and Cleaner.<clinit> creates
+        //   dummyQueue on first use (exercised by the direct-buffer smoke
+        //   test during boot validation).
         // - sun.misc.Signal: only JNode's NativeSignal overlay references it,
         //   and only in javadoc @see tags; the handler tables are untouched.
         noCopyPatterns.add("sun.misc.Cleaner");
@@ -584,6 +587,14 @@ public abstract class AbstractBootImageBuilder extends AbstractPluginsTask {
         noCopyPatterns.add("sun.util.LocaleServiceProviderPool");
         noCopyPatterns.add("sun.security.jca.ProviderList");
         noCopyPatterns.add("sun.security.jca.Providers");
+        // java.nio.Bits holds a host Unsafe instance (Unsafe.getUnsafe()) and
+        // host-detected byteOrder in its <clinit>; the classlib-src copy is
+        // compiled into the boot image, so the host statics must not leak in.
+        // Nulling them lets <clinit> re-materialize the JNode Unsafe at boot.
+        noCopyPatterns.add("java.nio.Bits");
+        // sun.misc.Unsafe holds a host Unsafe instance in theUnsafe; same
+        // reasoning as java.nio.Bits - <clinit> re-materializes it at boot.
+        noCopyPatterns.add("sun.misc.Unsafe");
         final String noCopyProp = getProject().getProperty("jnode.bootimage.nocopy");
         if (noCopyProp != null) {
             parseNoCopyClasses(noCopyProp);
