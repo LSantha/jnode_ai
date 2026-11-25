@@ -33,8 +33,6 @@ import org.jnode.vm.facade.VmUtils;
 final class ItemFactory {
     public static final boolean CHECK_BALANCED_ITEM_FACTORY = true;
 
-    private static ThreadLocal itemFactory = new ThreadLocal();
-
     private final ArrayList<IntItem> intItems = new ArrayList<IntItem>();
 
     private final ArrayList<LongItem> longItems = new ArrayList<LongItem>();
@@ -309,23 +307,9 @@ final class ItemFactory {
     }
 
     /**
-     * Hidden constructor.
+     * Constructor.
      */
-    private ItemFactory() {
-    }
-
-    /**
-     * Gets the item factory. This item factory is singleton per thread.
-     *
-     * @return
-     */
-    static ItemFactory getFactory() {
-        ItemFactory fac = (ItemFactory) itemFactory.get();
-        if (fac == null) {
-            fac = new ItemFactory();
-            itemFactory.set(fac);
-        }
-        return fac;
+    ItemFactory() {
     }
 
     boolean isBalanced() {

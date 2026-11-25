@@ -31,6 +31,7 @@ import org.jnode.vm.classmgr.VmTypeStateTest;
 import org.jnode.vm.memmgr.VmHeapManagerOomeTest;
 import org.jnode.vm.scheduler.VmThreadSchedulingTest;
 import org.jnode.vm.x86.compiler.l1a.X86Level1ACompilerVisitorTest;
+import org.jnode.vm.x86.compiler.l1a.X86Level1AItemFactoryBalanceTest;
 import org.jnode.vm.x86.compiler.l1a.X86RegisterPoolTest;
 import org.junit.runner.RunWith;
 import org.junit.runners.Suite;
@@ -55,6 +56,7 @@ import org.junit.runners.Suite.SuiteClasses;
     WaitTest.class,
     JavaCommandParserTest.class,
     ThreadingTestJUnit4.class,
+    X86Level1AItemFactoryBalanceTest.class,
     X86Level1ACompilerVisitorTest.class,
     X86RegisterPoolTest.class,
     X86StreamTest.class,

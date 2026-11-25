@@ -129,6 +129,12 @@ jobs:
 
           if timeout 300s bash -c 'until grep -q -i "System has finished" /tmp/com1.txt; do sleep 1; done'; then
             echo "Successfully booted JNode 32-bit!"
+            if grep -q "Unbalanced item handling" /tmp/com1.txt; then
+              echo "Unbalanced item handling detected in boot log!"
+              kill $qemu_pid $tail_pid || true
+              cat /tmp/com1.txt
+              exit 1
+            fi
             kill $qemu_pid $tail_pid || true
             exit 0
           fi
@@ -190,6 +196,12 @@ jobs:
 
           if timeout 300s bash -c 'until grep -q -i "System has finished" /tmp/com1_64.txt; do sleep 1; done'; then
             echo "Successfully booted JNode 64-bit!"
+            if grep -q "Unbalanced item handling" /tmp/com1_64.txt; then
+              echo "Unbalanced item handling detected in boot log!"
+              kill $qemu_pid $tail_pid || true
+              cat /tmp/com1_64.txt
+              exit 1
+            fi
             kill $qemu_pid $tail_pid || true
             exit 0
           fi

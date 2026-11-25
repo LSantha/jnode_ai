@@ -280,7 +280,10 @@ final class X86BytecodeVisitor extends InlineBytecodeVisitor {
             gprPool = new X86RegisterPool.GPRs64();
             xmmPool = new X86RegisterPool.XMMs64();
         }
-        this.ifac = ItemFactory.getFactory();
+        // Each visitor gets its own factory: visitors are pooled per thread and
+        // reused across methods via reset(), but simultaneously-live (nested)
+        // visitors must not share item accounting.
+        this.ifac = new ItemFactory();
         final AbstractX86StackManager stackMgr = vstack.createStackMgr(gprPool, ifac);
         this.helper = new X86CompilerHelper(os, stackMgr, context, isBootstrap);
         this.cm = cm;
