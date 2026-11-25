@@ -314,8 +314,11 @@ final class FileHandleImpl implements VMFileHandle {
         return true;
     }
 
-    public MappedByteBuffer mapImpl(char mode, long position, int size) {
-        // TODO Auto-generated method stub
-        return null;
+    public MappedByteBuffer mapImpl(char mode, long position, int size) throws IOException {
+        // JNode has no page cache or demand paging and no write-back path for
+        // shared file mappings, so FileChannel.map() is not supported yet.
+        // Returning null here violated FileChannel.map()'s contract and made
+        // callers fail with a NullPointerException instead.
+        throw new IOException("Memory-mapped files are not supported");
     }
 }

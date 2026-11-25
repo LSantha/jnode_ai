@@ -24,8 +24,10 @@ java.lang.ref
 java.net.URL
 
 java.nio.Buffer
+java.nio.Bits
 java.nio.ByteBuffer*
 java.nio.DirectByteBuffer*
+java.nio.HeapByteBuffer*
 java.nio.ByteOrder
 java.nio.Char*
 java.nio.charset.spi
@@ -115,6 +117,9 @@ org.jnode.vm.memmgr.def
 //sun.reflect.generics.tree
 //sun.reflect.generics.visitor
 //sun.reflect.misc
+sun.misc.Unsafe
+sun.misc.NativeUnsafe
+sun.reflect.Reflection
 sun.misc.VM
 sun.net.ApplicationProxy
 sun.nio

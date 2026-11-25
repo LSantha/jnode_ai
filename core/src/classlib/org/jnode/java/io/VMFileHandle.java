@@ -105,5 +105,5 @@ public interface VMFileHandle {
 
     public boolean lock();
 
-    public MappedByteBuffer mapImpl(char mode, long position, int size);
+    public MappedByteBuffer mapImpl(char mode, long position, int size) throws IOException;
 }

@@ -105,6 +105,20 @@ public abstract class BaseVmArchitecture extends VmSystemObject implements org.j
     }
 
     /**
+     * Gets the native page size of the CPU, i.e. the granularity used for
+     * native memory address alignment and reported by
+     * {@code sun.misc.Unsafe.pageSize()}.
+     * <p>
+     * This is deliberately distinct from {@link #getPageSize(int)}: the
+     * latter reports JNode's virtual-memory mapping granularity, which can be
+     * much larger (x86 uses 4 MB PSE pages for several regions), while the
+     * native page size is the smallest unit used by the hardware.
+     *
+     * @return native page size in bytes
+     */
+    public abstract int getNativePageSize();
+
+    /**
      * {@inheritDoc}
      */
     public abstract TypeSizeInfo getTypeSizeInfo();

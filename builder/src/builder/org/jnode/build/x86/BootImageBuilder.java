@@ -771,5 +771,6 @@ public class BootImageBuilder extends AbstractBootImageBuilder {
      */
     public void setArchClassListFile(File archClassListFile) {
         this.archClassListFile = archClassListFile;
+        addBootImageInput(archClassListFile);
     }
 }

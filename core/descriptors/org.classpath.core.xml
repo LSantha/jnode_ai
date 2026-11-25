@@ -64,6 +64,7 @@
       <export name="sun.net.spi.nameservice.NameService"/>
       <export name="sun.net.spi.nameservice.NameServiceDescriptor"/>
       <export name="sun.nio.ByteBuffered"/>
+      <export name="sun.nio.ch.DirectBuffer"/>
       <export name="sun.nio.ch.Interruptible"/>
       <export name="sun.security.acl.GroupImpl"/>
       <export name="sun.security.action.*"/>
@@ -97,7 +98,6 @@
       <export name="gnu.java.net.*"/>      
       <export name="gnu.java.nio.*"/>
       <export name="gnu.java.nio.channels.*"/>
-      <export name="gnu.java.nio.charset.*"/>
       <export name="gnu.java.lang.*"/>
       <export name="gnu.java.lang.reflect.*"/>
       <export name="org.jnode.java.nio.VmChannel"/>
