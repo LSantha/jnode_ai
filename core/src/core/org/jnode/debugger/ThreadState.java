@@ -79,7 +79,13 @@ public class ThreadState extends DebugState {
     private void showThread(PrintStream out, Thread thread) {
         DebuggerUtils.showThreadHeading(out, thread);
         out.println();
-        final Object[] trace = VmThread.getStackTrace(ThreadHelper.getVmThread(thread));
+        final VmThread vmThread = ThreadHelper.getVmThread(thread);
+        final Object[] trace = VmThread.getStackTrace(vmThread);
+        if (trace == null) {
+            out.println("<stack trace unavailable>");
+            out.println();
+            return;
+        }
         final int traceLen = Math.min(trace.length, 10);
         for (int k = 0; k < traceLen; k++) {
             out.println(trace[k]);

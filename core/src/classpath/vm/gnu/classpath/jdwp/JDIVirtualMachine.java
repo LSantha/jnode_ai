@@ -280,13 +280,9 @@ public class JDIVirtualMachine {
      */
     private static VmThread getVmThread(Thread thread) {
         if (thread == null) return null;
-        try {
-            Field vmThreadField = Thread.class.getDeclaredField("vmThread");
-            vmThreadField.setAccessible(true);
-            return (VmThread) vmThreadField.get(thread);
-        } catch (Exception e) {
-            return null;
-        }
+        // The vmThread field is package-private in Thread, so use the VM
+        // helper (ThreadHelper) rather than reflection.
+        return ThreadHelper.getVmThreadInternal(thread);
     }
  
     /**
@@ -480,10 +476,7 @@ public class JDIVirtualMachine {
         // JDWP thread status constants:
         // ZOMBIE = 0, RUNNING = 1, SLEEPING = 2, MONITOR = 3, WAIT = 4
         try {
-            // Access vmThread field via reflection (it's package-private in Thread)
-            Field vmThreadField = Thread.class.getDeclaredField("vmThread");
-            vmThreadField.setAccessible(true);
-            VmThread vmThread = (VmThread) vmThreadField.get(thread);
+            VmThread vmThread = ThreadHelper.getVmThreadInternal(thread);
             if (vmThread == null) return 0; // ZOMBIE
 
             // Use public boolean methods to determine state

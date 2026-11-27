@@ -171,7 +171,7 @@ public class ThreadCommand extends AbstractCommand {
                             t.getPriority() + SEPARATOR + vmThread.getThreadStateName());
                     if (threadName != null) {
                         final Object[] trace = VmThread.getStackTrace(vmThread);
-                        final int traceLen = trace.length;
+                        final int traceLen = (trace != null) ? trace.length : 0;
                         out.println(SLASH_T + SLASH_T + TRACE);
                         for (int k = 0; k < traceLen; k++) {
                             out.println(SLASH_T + SLASH_T + trace[k]);

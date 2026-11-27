@@ -33,6 +33,8 @@ public class NativeProxy {
 					     byte[] b, int off, int len){
         if (loader == null)
             loader = Thread.currentThread().getContextClassLoader();
+        if (loader == null)
+            loader = ClassLoader.getSystemClassLoader();
         return ((VmClassLoader)loader.getVmClassLoader()).
             defineClass(name, b, off, len, Object.class.getProtectionDomain()).asClass();
     }

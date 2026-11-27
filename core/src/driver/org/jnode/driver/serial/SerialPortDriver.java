@@ -47,6 +47,8 @@ public class SerialPortDriver extends Driver implements SerialPortAPI,
 
     private int basePort;
 
+    private final Object lsrLock = new Object();
+
     /**
      * Create new driver instance of this driver
      */
@@ -135,8 +137,16 @@ public class SerialPortDriver extends Driver implements SerialPortAPI,
 
     /**
      * Wait until the Line Status Register satisfies the given condition.
-     * Uses a spin-yield-sleep escalation to avoid burning CPU while
-     * remaining responsive to fast UART turnarounds.
+     * Uses a spin-yield-wait escalation to avoid burning CPU while remaining
+     * responsive to fast UART turnarounds.
+     * <p>
+     * The blocking step is a monitor wait rather than Thread.sleep because the
+     * same helper is called with the console/serial locks held (writeSingle,
+     * flush). Nobody ever notifies lsrLock, so a wait here is ended only by
+     * its 10 ms timeout, by the thread's interrupt, or spuriously -- the
+     * timeout only gates the first byte of an input burst, and measured idle
+     * CPU is identical to sleep(1) because JNode's sleep queue is drained on
+     * the same 8 ms tick that a sleep would use.
      *
      * @param mask     bitmask to apply to the LSR value.
      * @param expected the expected result after masking.
@@ -147,11 +157,13 @@ public class SerialPortDriver extends Driver implements SerialPortAPI,
         while ((port.inPortByte(basePort + 5) & mask) != expected) {
             if (Thread.currentThread().isInterrupted()) return false;
             if (++spinCount > 100) {
-                try {
-                    Thread.sleep(1);
-                } catch (InterruptedException e) {
-                    Thread.currentThread().interrupt();
-                    return false;
+                synchronized (lsrLock) {
+                    try {
+                        lsrLock.wait(10);
+                    } catch (InterruptedException e) {
+                        Thread.currentThread().interrupt();
+                        return false;
+                    }
                 }
             } else {
                 Thread.yield();

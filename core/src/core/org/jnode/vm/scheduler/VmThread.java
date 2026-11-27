@@ -257,7 +257,7 @@ public abstract class VmThread extends VmSystemObject implements org.jnode.vm.fa
      * bootstrap phase.
      */
     protected VmThread(VmIsolatedStatics isolatedStatics, int slotSize) {
-        this.threadState = RUNNING;
+        setThreadState(RUNNING);
         this.stackSize = DEFAULT_STACK_SLOTS * slotSize;
         this.id = (1 << ObjectFlags.THREAD_ID_SHIFT);
         MonitorManager.testThreadId(this.id);
@@ -272,7 +272,7 @@ public abstract class VmThread extends VmSystemObject implements org.jnode.vm.fa
     protected VmThread(VmIsolatedStatics isolatedStatics, Object stack,
                        Address stackEnd, int stackSize) {
         this.isolatedStatics = isolatedStatics;
-        this.threadState = RUNNING;
+        setThreadState(RUNNING);
         this.stackSize = stackSize;
         this.stack = stack;
         this.stackEnd = stackEnd;
@@ -288,11 +288,11 @@ public abstract class VmThread extends VmSystemObject implements org.jnode.vm.fa
     public VmThread(VmIsolatedStatics isolatedStatics, Thread javaThread) {
         this.isolatedStatics = isolatedStatics;
         this.javaThread = javaThread;
-        this.threadState = CREATED;
         this.stackSize = DEFAULT_STACK_SLOTS * VmUtils.getVm().getArch().getReferenceSize();
         this.id = createId();
         MonitorManager.testThreadId(this.id);
         this.context = VmAccessController.getContext();
+        setThreadState(CREATED);
     }
 
     /**
@@ -331,7 +331,7 @@ public abstract class VmThread extends VmSystemObject implements org.jnode.vm.fa
      */
     public final Thread asThread() {
         if (javaThread == null) {
-            javaThread = new Thread(this);
+            javaThread = ThreadHelper.createJavaThread(this);
         }
         return javaThread;
     }
@@ -359,7 +359,7 @@ public abstract class VmThread extends VmSystemObject implements org.jnode.vm.fa
                 Unsafe.initThread(this, stack, stackSize);
                 stackEnd = getStackEnd(stack, stackSize);
                 scheduler.registerThread(this);
-                threadState = RUNNING;
+                setThreadState(RUNNING);
                 scheduler.addToReadyQueue(this, false, "thread.start");
                 break;
             }
@@ -389,7 +389,7 @@ public abstract class VmThread extends VmSystemObject implements org.jnode.vm.fa
     public final void stop(Throwable ex) throws UninterruptiblePragma {
         this.stopping = true;
         if (javaThread != null) {
-            javaThread.onExit();
+            exitBookkeeping();
             //exit the current isolate if needed
             if (ex instanceof ThreadDeath) {
                 VmIsolate.currentIsolate().implicitExit(this, 0);
@@ -407,6 +407,26 @@ public abstract class VmThread extends VmSystemObject implements org.jnode.vm.fa
     }
 
     /**
+     * The Java-level half of a thread stop. Full exit cleanup
+     * ({@link ThreadHelper#onExit}) runs only on the dying thread itself --
+     * the path {@code VmThread.runThread}'s finally takes -- because a stop
+     * request made by another thread leaves the target still running, and a
+     * cleared ThreadGroup or uncaught-exception handler would be visible to it
+     * (JDWP, ThreadGroup.activeCount, isolate exit accounting).
+     */
+    private void exitBookkeeping() {
+        // VmMagic.currentProcessor(), not this.getCurrentProcessor(): that
+        // field is only maintained while the thread sits in a scheduler queue
+        // and may be null here.
+        final VmProcessor proc = VmMagic.currentProcessor();
+        if (proc.getCurrentThread() == this) {
+            ThreadHelper.onExit(javaThread);
+        } else {
+            ThreadHelper.onStopRequest(javaThread);
+        }
+    }
+
+    /**
      * Stop the thread permanently.
      *
      * @param ex
@@ -415,7 +435,7 @@ public abstract class VmThread extends VmSystemObject implements org.jnode.vm.fa
     public final void stopForced(Throwable ex) throws UninterruptiblePragma {
         this.stopping = true;
         if (javaThread != null) {
-            javaThread.onExit();
+            exitBookkeeping();
             // Notify joining threads
             synchronized (javaThread) {
                 javaThread.notifyAll();
@@ -450,7 +470,7 @@ public abstract class VmThread extends VmSystemObject implements org.jnode.vm.fa
         proc.getScheduler().unregisterThread(this);
         // Go into low level stuff
         proc.disableReschedule(true);
-        this.threadState = STOPPED;
+        setThreadState(STOPPED);
         if (current == this) {
             proc.suspend(true);
         } else {
@@ -523,7 +543,7 @@ public abstract class VmThread extends VmSystemObject implements org.jnode.vm.fa
             throw new IllegalThreadStateException("Not suspended");
         } else {
             final VmProcessor proc = VmProcessor.current();
-            threadState = RUNNING;
+            setThreadState(RUNNING);
             // FIXME make multi cpu safe
             proc.getScheduler().addToReadyQueue(this, false, "thread.resume");
         }
@@ -537,7 +557,7 @@ public abstract class VmThread extends VmSystemObject implements org.jnode.vm.fa
     final void unsecureResume() {
         final VmProcessor proc = VmMagic.currentProcessor();
         if (threadState == SUSPENDED) {
-            threadState = RUNNING;
+            setThreadState(RUNNING);
             // FIXME make multi cpu safe
             proc.getScheduler().addToReadyQueue(this, false,
                 "thread.unsecureResume");
@@ -556,7 +576,7 @@ public abstract class VmThread extends VmSystemObject implements org.jnode.vm.fa
         } else {
             final VmProcessor proc = VmMagic.currentProcessor();
             proc.disableReschedule(true);
-            this.threadState = SUSPENDED;
+            setThreadState(SUSPENDED);
             proc.suspend(true);
         }
     }
@@ -587,7 +607,7 @@ public abstract class VmThread extends VmSystemObject implements org.jnode.vm.fa
      */
     final void setYieldingState() throws UninterruptiblePragma {
         if (threadState == RUNNING) {
-            threadState = YIELDING;
+            setThreadState(YIELDING);
         }
     }
 
@@ -618,7 +638,7 @@ public abstract class VmThread extends VmSystemObject implements org.jnode.vm.fa
         final VmProcessor proc = VmProcessor.current();
         proc.disableReschedule(true);
         this.wakeupTime = wakeupTime;
-        this.threadState = ASLEEP;
+        setThreadState(ASLEEP);
         proc.getScheduler().addToSleepQueue(this);
 
         /* Now un-schedule myself */
@@ -674,6 +694,53 @@ public abstract class VmThread extends VmSystemObject implements org.jnode.vm.fa
     }
 
     /**
+     * Update the VM-level thread state and mirror it into the Java
+     * {@code Thread.threadStatus} field, which is what {@link Thread#getState()}
+     * reads. Without this mirroring that field is only ever written by
+     * {@code start0} (RUNNABLE) and {@code onExit} (TERMINATED), so every live
+     * thread would report {@code RUNNABLE} however long it is asleep or
+     * blocked.
+     */
+    private void setThreadState(int state) {
+        this.threadState = state;
+        final Thread javaThread = this.javaThread;
+        if (javaThread != null) {
+            ThreadHelper.setThreadStatus(javaThread, toJavaThreadStatus(state));
+        }
+    }
+
+    /**
+     * Map a JNode VM-level thread state onto the HotSpot {@code threadStatus}
+     * value understood by {@code sun.misc.VM.toThreadState(int)}. The values
+     * are those advertised by {@code NativeVM.getThreadStateValues()}.
+     *
+     * @param state one of the VmThread state constants
+     * @return the HotSpot threadStatus value
+     */
+    private static int toJavaThreadStatus(int state) {
+        switch (state) {
+            case CREATED:
+                return 0; // NEW
+            case RUNNING:
+            case YIELDING:
+            case SUSPENDED:
+                return 1; // RUNNABLE (no Java equivalent for a suspended thread)
+            case WAITING_ENTER:
+                return 2; // BLOCKED
+            case WAITING_NOTIFY:
+                return 4; // WAITING
+            case WAITING_NOTIFY_TIMEOUT:
+            case ASLEEP:
+                return 8; // TIMED_WAITING (sleep, wait(t), join(t))
+            case STOPPED:
+            case DESTROYED:
+                return 16; // TERMINATED
+            default:
+                return 1;
+        }
+    }
+
+    /**
      * Is this thread in the yielding state?
      *
      * @return boolean
@@ -683,6 +750,17 @@ public abstract class VmThread extends VmSystemObject implements org.jnode.vm.fa
     @Uninterruptible
     public final boolean isYielding() {
         return (threadState == YIELDING);
+    }
+
+    /**
+     * Is this thread suspended?
+     *
+     * @return {@code true} if the thread is suspended, {@code false} otherwise.
+     */
+    @KernelSpace
+    @Uninterruptible
+    public final boolean isSuspended() {
+        return (threadState == SUSPENDED);
     }
 
     /**
@@ -773,7 +851,27 @@ public abstract class VmThread extends VmSystemObject implements org.jnode.vm.fa
                         ex.printStackTrace();
                     }
                 } else {
-                    ex.printStackTrace();
+                    // HotSpot routes an uncaught exception to the thread's
+                    // handler chain before the thread is torn down
+                    // (JavaThread::exit -> dispatchUncaughtException); it has to
+                    // happen here because ThreadHelper.onExit() clears the handler
+                    // during the exit cleanup. A ThreadGroup or a custom handler
+                    // reports the throwable itself, so print only when there is no
+                    // handler at all (VM-internal threads have no group) -- which
+                    // also avoids the duplicate stack trace. hasJavaThread() keeps
+                    // a Java-side facade (and a name) from being materialized just
+                    // to run a handler chain that does not exist.
+                    try {
+                        if (thread.hasJavaThread()
+                                && thread.asThread().getUncaughtExceptionHandler() != null) {
+                            ThreadHelper.dispatchUncaughtException(thread.asThread(), ex);
+                        } else {
+                            ex.printStackTrace();
+                        }
+                    } catch (Throwable handlerEx) {
+                        // A failing handler must not break the shutdown path.
+                        handlerEx.printStackTrace();
+                    }
                 }
             } catch (Throwable ex2) {
                 /* Ignore */
@@ -816,7 +914,7 @@ public abstract class VmThread extends VmSystemObject implements org.jnode.vm.fa
     final void prepareWait(Monitor monitor, int waitState) {
         // Keep this order of assignments!
         this.waitForMonitor = monitor;
-        this.threadState = waitState;
+        setThreadState(waitState);
     }
 
     /**
@@ -831,7 +929,7 @@ public abstract class VmThread extends VmSystemObject implements org.jnode.vm.fa
             final VmProcessor proc = VmMagic.currentProcessor();
             proc.disableReschedule(true);
             try {
-                this.threadState = RUNNING;
+                setThreadState(RUNNING);
                 proc.getScheduler().addToReadyQueue(this, false,
                     "thread.wakeupAfterMonitor");
             } finally {
@@ -872,7 +970,7 @@ public abstract class VmThread extends VmSystemObject implements org.jnode.vm.fa
                 break;
             }
         }
-        threadState = RUNNING;
+        setThreadState(RUNNING);
         return true;
     }
 
@@ -1272,6 +1370,22 @@ public abstract class VmThread extends VmSystemObject implements org.jnode.vm.fa
      * @return The stacktrace
      */
     public static Object[] getStackTrace(VmThread current) {
+        return getStackTrace(current, true);
+    }
+
+    /**
+     * Gets the stacktrace of a given thread as-is, without skipping the
+     * throwable-related top frames. Used for thread dumps
+     * ({@link Thread#getStackTrace()} / {@link Thread#getAllStackTraces()}).
+     *
+     * @param current the thread to dump
+     * @return the stacktrace, or {@code null} if it is unavailable
+     */
+    public static Object[] getThreadStackTrace(VmThread current) {
+        return getStackTrace(current, false);
+    }
+
+    private static Object[] getStackTrace(VmThread current, boolean forThrowable) {
         if (current.inException) {
             Unsafe.debug("Exception in getStackTrace");
             VmProcessor.current().getArchitecture().getStackReader()
@@ -1320,35 +1434,38 @@ public abstract class VmThread extends VmSystemObject implements org.jnode.vm.fa
         VmType<?> lastClass = null;
 
         // skip the first element which is VMThrowable.fillInStackTrace() ...
-        // unless this is a system exception 
-        int i = inSystemException ? 0 : 1;
-        while (i < cnt) {
-            final VmStackFrame f = mt[i];
-            if (f == null) {
-                break;
+        // unless this is a system exception
+        int i = 0;
+        if (forThrowable) {
+            i = inSystemException ? 0 : 1;
+            while (i < cnt) {
+                final VmStackFrame f = mt[i];
+                if (f == null) {
+                    break;
+                }
+                final VmMethod method = f.getMethod();
+                if (method == null) {
+                    break;
+                }
+                final VmType<?> vmClass = method.getDeclaringClass();
+                if (vmClass == null) {
+                    break;
+                }
+                final VmType<?> sClass = vmClass.getSuperClass();
+                if (lastClass != null && sClass != lastClass && vmClass != lastClass) {
+                    break;
+                }
+                final String mname = method.getName();
+                if (mname == null) {
+                    break;
+                }
+                if (!("<init>".equals(mname) || "fillInStackTrace".equals(mname) || "getStackTrace"
+                    .equals(mname))) {
+                    break;
+                }
+                lastClass = vmClass;
+                i++;
             }
-            final VmMethod method = f.getMethod();
-            if (method == null) {
-                break;
-            }
-            final VmType<?> vmClass = method.getDeclaringClass();
-            if (vmClass == null) {
-                break;
-            }
-            final VmType<?> sClass = vmClass.getSuperClass();
-            if (lastClass != null && sClass != lastClass && vmClass != lastClass) {
-                break;
-            }
-            final String mname = method.getName();
-            if (mname == null) {
-                break;
-            }
-            if (!("<init>".equals(mname) || "fillInStackTrace".equals(mname) || "getStackTrace"
-                .equals(mname))) {
-                break;
-            }
-            lastClass = vmClass;
-            i++;
         }
 
         final VmStackFrame[] st = new VmStackFrame[cnt - i];

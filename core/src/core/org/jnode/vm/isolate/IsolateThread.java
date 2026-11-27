@@ -50,8 +50,8 @@ public final class IsolateThread extends Thread {
     IsolateThread(ThreadGroup group, VmIsolate isolate,
                   PluginManager piManager, PrintStream stdout, PrintStream stderr,
                   InputStream stdin) {
-        super(group, null, isolate.getMainClassName(), isolate
-            .getIsolatedStaticsTable());
+        super(group, null, isolate.getMainClassName());
+        ThreadHelper.setIsolatedStatics(this, isolate.getIsolatedStaticsTable());
         this.isolate = isolate;
         this.piManager = piManager;
         this.stdout = stdout;

@@ -39,7 +39,8 @@ class IsolateThreadFactory implements ThreadFactory {
     public Thread newThread(final Runnable r) {
         class IsolateFactoryThread extends Thread {
             IsolateFactoryThread(ThreadGroup group, String name, VmIsolatedStatics isolatedStatics) {
-                super(group, r, name, isolatedStatics);
+                super(group, r, name);
+                ThreadHelper.setIsolatedStatics(this, isolatedStatics);
             }
         }
 

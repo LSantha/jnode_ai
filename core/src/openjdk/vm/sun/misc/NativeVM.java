@@ -29,7 +29,27 @@ class NativeVM {
      */
     private static void getThreadStateValues(int[][] vmThreadStateValues,
                                                     String[][] vmThreadStateNames){
-        throw new UnsupportedOperationException();
+        // HotSpot-compatible threadStatus values. JNode's VmThread mirrors its
+        // scheduler state into java.lang.Thread.threadStatus using the same
+        // values (see VmThread#toJavaThreadStatus).
+        setState(vmThreadStateValues, vmThreadStateNames,
+            Thread.State.NEW.ordinal(), 0, "NEW");
+        setState(vmThreadStateValues, vmThreadStateNames,
+            Thread.State.RUNNABLE.ordinal(), 1, "RUNNABLE");
+        setState(vmThreadStateValues, vmThreadStateNames,
+            Thread.State.BLOCKED.ordinal(), 2, "BLOCKED");
+        setState(vmThreadStateValues, vmThreadStateNames,
+            Thread.State.WAITING.ordinal(), 4, "WAITING");
+        setState(vmThreadStateValues, vmThreadStateNames,
+            Thread.State.TIMED_WAITING.ordinal(), 8, "TIMED_WAITING");
+        setState(vmThreadStateValues, vmThreadStateNames,
+            Thread.State.TERMINATED.ordinal(), 16, "TERMINATED");
+    }
+
+    private static void setState(int[][] values, String[][] names,
+                                 int index, int value, String name) {
+        values[index] = new int[]{value};
+        names[index] = new String[]{name};
     }
 
     /**

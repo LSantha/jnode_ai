@@ -28,7 +28,7 @@ import java.security.CodeSource;
 import java.security.Policy;
 import java.security.cert.Certificate;
 import java.util.Map;
-import java.util.HashMap;
+import java.util.WeakHashMap;
 import org.vmmagic.unboxed.ObjectReference;
 import org.vmmagic.unboxed.Address;
 import org.vmmagic.unboxed.Extent;
@@ -770,68 +770,86 @@ class NativeUnsafe {
         putLong(instance, o, offset, x);
     }
 
-    static final Map<Object, ThreadParker> parking = new HashMap<Object, ThreadParker>();
+    static final Map<Object, ThreadParker> parking = new WeakHashMap<Object, ThreadParker>();
+
     @SharedStatics
     private static class ThreadParker {
-        private synchronized void park(long time){
+        private boolean permit;
+
+        private synchronized void park(long time) {
+            if (permit) {
+                permit = false;
+                return;
+            }
+            // Guarded wait: the permit is re-checked after every wakeup, so a
+            // spurious or timeout wakeup is harmless and an unpark can never be
+            // lost. The permit is consumed exactly once, whether it was already
+            // available on entry or was what made this wait(time) return early
+            // -- that is what makes a second park() block again (HotSpot takes
+            // exactly one permit per wakeup).
             try {
-                wait(time);
-            }catch (InterruptedException x){
-                //ignore
+                if (time <= 0) {
+                    while (!permit) {
+                        wait(0);
+                    }
+                } else {
+                    final long deadline = System.currentTimeMillis() + time;
+                    while (!permit) {
+                        final long remaining = deadline - System.currentTimeMillis();
+                        if (remaining <= 0) {
+                            break;
+                        }
+                        wait(remaining);
+                    }
+                }
+            } catch (InterruptedException x) {
+                // HotSpot leaves the interrupt status set when park() returns
+                // because of an interrupt (LockSupport.park does not clear it),
+                // and java.util.concurrent relies on that: e.g.
+                // AbstractQueuedSynchronizer.parkAndInterrupt() returns
+                // Thread.interrupted(). Swallowing the interrupt here loses
+                // the wakeup, so restore the flag.
+                Thread.currentThread().interrupt();
+            } finally {
+                if (permit) {
+                    permit = false;
+                }
             }
         }
 
         private synchronized void unpark() {
+            permit = true;
             notifyAll();
         }
     }
-    /**
-     * @see Unsafe#unpark(Object)
-     */
+
     public static void unpark(Unsafe instance, Object thread) {
-        synchronized (parking){
-            ThreadParker p =parking.get(thread);
-            if(p != null){
-                p.unpark();
-            } else {
-                parking.put(thread, new ThreadParker());
-            }
+        if (thread == null) return;
+        ThreadParker p;
+        synchronized (parking) {
+            p = parking.get(thread);
+            if (p == null) { p = new ThreadParker(); parking.put(thread, p); }
         }
+        p.unpark();
     }
 
-    /**
-     * @see Unsafe#park(boolean, long)
-     */
     public static void park(Unsafe instance, boolean isAbsolute, long time) {
-        //todo add proper support for nanotime parking
+        final Thread thread = Thread.currentThread();
         ThreadParker p;
-        synchronized (parking){
-            Thread thread = Thread.currentThread();
+        synchronized (parking) {
             p = parking.get(thread);
-            if(p == null){
-                if(isAbsolute){
-                    time = time - System.currentTimeMillis();
-                    if(time < 0) time = 1;
-                } else if(time > 0) {
-                    time = time / 10000000;
-                    if(time == 0)
-                        time = 1;
-                } else if (time < 0){
-                    time = 1;
-                }
-                p = new ThreadParker();
-                parking.put(thread, p);
-            } else {                
-                p = null;
-            }
+            if (p == null) { p = new ThreadParker(); parking.put(thread, p); }
         }
-
-        if(p != null){
-            p.park(time);
-            synchronized (parking){
-                parking.remove(Thread.currentThread());
-            }
+        if (isAbsolute) {
+            time = time - System.currentTimeMillis();
+            if (time < 0) time = 1;
+        } else if (time > 0) {
+            time = time / 1000000;
+            if (time == 0) time = 1;
+        } else if (time < 0) {
+            time = 1;
         }
+        p.park(time);
     }
 
     public static int getLoadAverage(Unsafe instance, double[] loadavg, int nelems) {
