@@ -27,6 +27,8 @@ import java.util.Iterator;
 import org.jnode.fs.FSAccessRights;
 import org.jnode.fs.FSDirectory;
 import org.jnode.fs.FSEntry;
+import org.jnode.fs.FSEntryCreated;
+import org.jnode.fs.FSEntryLastAccessed;
 import org.jnode.fs.FSFile;
 import org.jnode.fs.FileSystem;
 
@@ -36,13 +38,24 @@ import org.jnode.fs.FileSystem;
  *
  * @author Andreas H\u00e4nel
  */
-public class JIFSFile implements ExtFSEntry, FSFile {
+public class JIFSFile implements ExtFSEntry, FSFile, FSEntryCreated, FSEntryLastAccessed {
 
     protected String name;
     protected StringBuffer data = new StringBuffer();
     protected boolean isvalid = true;
 
     private FSDirectory parent = null;
+
+    private final long created;
+    private final long lastModified;
+    private final long lastAccessed;
+
+    {
+        long now = System.currentTimeMillis();
+        created = now;
+        lastModified = now;
+        lastAccessed = now;
+    }
 
     public JIFSFile() {
         refresh();
@@ -133,11 +146,37 @@ public class JIFSFile implements ExtFSEntry, FSFile {
         return this;
     }
 
-    public long getLastModified() {
-        return 0;
+    public long getCreated() {
+        return created;
     }
 
+    public long getLastModified() {
+        return lastModified;
+    }
+
+    public long getLastAccessed() {
+        return lastAccessed;
+    }
+
+    /**
+     * No-op: a JIFSFile is a read-only synthesized view and cannot be
+     * stamped.
+     */
+    public void setCreated(long created) {
+    }
+
+    /**
+     * No-op: a JIFSFile is a read-only synthesized view and cannot be
+     * stamped.
+     */
     public void setLastModified(long lastModified) {
+    }
+
+    /**
+     * No-op: a JIFSFile is a read-only synthesized view and cannot be
+     * stamped.
+     */
+    public void setLastAccessed(long lastAccessed) {
     }
 
     public void setName(String name) {

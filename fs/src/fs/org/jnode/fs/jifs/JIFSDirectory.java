@@ -27,6 +27,8 @@ import java.util.Map;
 import org.jnode.fs.FSAccessRights;
 import org.jnode.fs.FSDirectory;
 import org.jnode.fs.FSEntry;
+import org.jnode.fs.FSEntryCreated;
+import org.jnode.fs.FSEntryLastAccessed;
 import org.jnode.fs.FSFile;
 import org.jnode.fs.FileSystem;
 import org.jnode.fs.ReadOnlyFileSystemException;
@@ -34,15 +36,20 @@ import org.jnode.fs.ReadOnlyFileSystemException;
 /**
  * @author Andreas H\u00e4nel
  */
-public class JIFSDirectory implements ExtFSEntry, FSDirectory {
+public class JIFSDirectory implements ExtFSEntry, FSDirectory, FSEntryCreated, FSEntryLastAccessed {
 
     private String label;
 
     private FSDirectory parent;
 
+    private final long created;
+    private final long lastModified;
+    private final long lastAccessed;
+
     private final Map<String, FSEntry> entries;
 
     public JIFSDirectory() {
+        this.created = this.lastModified = this.lastAccessed = System.currentTimeMillis();
         entries = new HashMap<String, FSEntry>();
     }
 
@@ -125,11 +132,37 @@ public class JIFSDirectory implements ExtFSEntry, FSDirectory {
         return null;
     }
 
-    public long getLastModified() {
-        return 0;
+    public long getCreated() {
+        return created;
     }
 
+    public long getLastModified() {
+        return lastModified;
+    }
+
+    public long getLastAccessed() {
+        return lastAccessed;
+    }
+
+    /**
+     * No-op: a JIFSDirectory is a read-only synthesized view and cannot be
+     * stamped.
+     */
+    public void setCreated(long created) {
+    }
+
+    /**
+     * No-op: a JIFSDirectory is a read-only synthesized view and cannot be
+     * stamped.
+     */
     public void setLastModified(long lastModified) {
+    }
+
+    /**
+     * No-op: a JIFSDirectory is a read-only synthesized view and cannot be
+     * stamped.
+     */
+    public void setLastAccessed(long lastAccessed) {
     }
 
     public void setName(String name) {
