@@ -20,6 +20,7 @@
 
 package org.jnode.test.fs.filesystem;
 
+import org.jnode.fs.jifs.JIFSTimestampTest;
 import org.jnode.fs.jifs.files.JIFSFpluginJarTest;
 import org.jnode.fs.service.def.FileHandleManagerTest;
 import org.jnode.fs.service.def.FileHandleBarrierTest;
@@ -145,6 +146,7 @@ import org.junit.runners.Suite.SuiteClasses;
     FileHandleManagerTest.class,
     FileHandleBarrierTest.class,
     JIFSFpluginJarTest.class,
+    JIFSTimestampTest.class,
     FatApiConsistencyTest.class,
     FatUtilsConcurrencyTest.class,
 }
